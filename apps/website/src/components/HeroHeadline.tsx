@@ -123,13 +123,18 @@ function enumerationGroups(line: string, extra?: Omit<WordSpec, 'text'>): Group[
         .map((segment) => ({ words: words(segment, extra) }));
 }
 
-function renderWord(word: WordSpec, absoluteIndex: number) {
+function renderWord(word: WordSpec, absoluteIndex: number, indexInGroup: number) {
     const delay = BASE_DELAY + absoluteIndex * STAGGER;
     const wordStyle: Record<string, unknown> = {
         ['--delay']: `${delay}ms`,
     };
     if (word.small) {
-        wordStyle.marginLeft = '0.55em';
+        // Only the LEAD word of the aside carries this. It is the gap that holds
+        // "& 9 more" off the name before it; the words after it are already
+        // separated by their own joiner space, and giving every word a margin
+        // stacked that margin on top of each space — which is half of why the
+        // aside rendered with roughly 30px between its three words.
+        if (indexInGroup === 0) wordStyle.marginLeft = '0.55em';
         wordStyle.letterSpacing = '-0.005em';
         wordStyle.fontWeight = 500;
         wordStyle.color = 'var(--muted)';
@@ -163,12 +168,21 @@ function WordsLine({ groups, startIndex }: { groups: ReadonlyArray<Group>; start
                 // The small aside sets its own `margin-left`, so an extra space
                 // in front of it would double the gap.
                 const separator = isLastGroup || next?.words[0]?.small ? '' : ' ';
+                // The joiners between words are plain text nodes in THIS span, so
+                // they take their width from THIS span's font-size — not from the
+                // 16/18px the small words set on themselves. Left at the headline
+                // size, a single space between "&" and "9" was ~20px wide. The
+                // group carries the small size so its own spaces are small too.
+                const small = group.words[0]?.small === true;
                 return (
                     <Fragment key={groupIdx}>
-                        <span style={{ whiteSpace: 'nowrap' }}>
+                        <span
+                            className={small ? 'text-[16px] lg:text-[18px]' : undefined}
+                            style={{ whiteSpace: 'nowrap' }}
+                        >
                             {group.words.map((word, i) => (
                                 <Fragment key={i}>
-                                    {renderWord(word, at + i)}
+                                    {renderWord(word, at + i, i)}
                                     {word.joiner}
                                 </Fragment>
                             ))}
