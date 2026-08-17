@@ -30,6 +30,20 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile('apps/stack/scripts/runtime.real.integration.test.mjs'), 'stack:test:real-integration');
 });
 
+test('maps Channels and automation package unit tests to the root unit lane', () => {
+  const packageTestPaths = [
+    'packages/channels-protocol/src/v1/index.test.ts',
+    'packages/plugins/channels/src/automationResultDelivery.test.ts',
+    'packages/plugins/channel-telegram/src/telegramBotApi.test.ts',
+    'packages/plugins/channel-discord/src/discordGateway.test.ts',
+    'packages/plugins/scm-github/src/githubAutomationEventActions.test.ts',
+  ];
+
+  for (const packageTestPath of packageTestPaths) {
+    assert.equal(classifyTestFile(packageTestPath), 'test', packageTestPath);
+  }
+});
+
 test('accepts valid feature ids and flags invalid ones', () => {
   const validFeatureId = FEATURE_IDS[0];
   assert.equal(resolveFeatureTagIssue(`apps/server/sources/app/features/example.feat.${validFeatureId}.spec.ts`), null);

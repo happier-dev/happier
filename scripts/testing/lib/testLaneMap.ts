@@ -99,6 +99,7 @@ const SERVER_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration
 const UNIT_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 const ROOT_UNIT_PACKAGE_PREFIXES = [
+  'packages/channels-protocol/',
   'packages/peer-mediation/',
   'packages/plugin-sdk/',
   'packages/protocol/',
@@ -108,6 +109,10 @@ const ROOT_UNIT_PACKAGE_PREFIXES = [
   'packages/support/',
   'packages/connection-supervisor/',
   'packages/relay-server/',
+  'packages/plugins/channels/',
+  'packages/plugins/channel-discord/',
+  'packages/plugins/channel-telegram/',
+  'packages/plugins/scm-github/',
 ];
 
 export function resolveFeatureTagIssue(relativePath: string): string | null {
