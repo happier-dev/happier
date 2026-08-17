@@ -71,6 +71,28 @@ export const SHIPPED_MANIFEST_SOURCE = 'packages/agents/src/manifest.ts';
 export const SHIPPED_CLI_RUNTIME_SOURCE = 'packages/agents/src/providers/providerCliRuntime.ts';
 
 /**
+ * The same arrangement, pointing the other way.
+ *
+ * UPCOMING is defined as "in the unreleased tree and not in the release", so the
+ * guard needs to read the unreleased registry too. That used to be a static
+ * `import ... from '../../../../packages/agents/src/generated/agentIds'`, which
+ * silently assumed this site lives in the unreleased checkout. It does not
+ * always: the site is promoted into the release tree to be built and deployed,
+ * and there that path resolves to a file which does not exist — so `tsc` failed
+ * on the marketing site because of where the marketing site happened to sit.
+ *
+ * Reading it off disk the way the released tree is already read removes the
+ * assumption. `resolveUnreleasedTreeRoot()` tries the local repository first
+ * (correct in the unreleased checkout) and the sibling `dev` next (correct in
+ * the release checkout), so one implementation is right in both and the file
+ * does not have to diverge between them.
+ */
+export const UNRELEASED_TREE_ENV_VAR = 'HAPPIER_UNRELEASED_TREE';
+export const UNRELEASED_TREE_LOCAL_RELATIVE_PATH = '../../../..';
+export const UNRELEASED_TREE_SIBLING_RELATIVE_PATH = '../../../../../dev';
+export const UNRELEASED_AGENT_IDS_SOURCE = 'packages/agents/src/generated/agentIds.ts';
+
+/**
  * AGENT_IDS as the released build declares it.
  *
  * Order preserved from the source so a diff against it reads cleanly.

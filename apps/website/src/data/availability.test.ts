@@ -2,9 +2,15 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS as UNRELEASED_AGENT_IDS } from '../../../../packages/agents/src/generated/agentIds';
 import { AGENTS, AGENT_META, UNLISTED_AGENTS, UPCOMING_AGENTS } from './agents';
-import { SHIPPED_AGENT_IDS, UPCOMING_LABEL, UPCOMING_RELEASE, isShippedAgentId } from './availability';
+import {
+    SHIPPED_AGENT_IDS,
+    UNRELEASED_TREE_ENV_VAR,
+    UPCOMING_LABEL,
+    UPCOMING_RELEASE,
+    isShippedAgentId,
+} from './availability';
+import { readUnreleasedAgentIds, resolveUnreleasedTreeRoot } from './unreleasedTree';
 import { GRID_FEATURES, PRIMARY_FEATURES } from './features';
 import { ROUTES } from '../routes';
 import { AgentsIndex } from '../pages/AgentsIndex';
@@ -24,16 +30,36 @@ import { AgentsIndex } from '../pages/AgentsIndex';
  *   2. The FAQ named two voice modes from a dev-only lab in this repository.
  *      The released build offers four different ones.
  *
- * Note the ONE import from the unreleased registry below. It is deliberate and
- * it is the only legitimate use of that path on this site: the unreleased set
- * MINUS the shipped set is exactly the definition of UPCOMING. It is never used
- * to decide what the site may claim.
+ * Note the ONE reading of the unreleased registry below. It is deliberate and
+ * it is the only legitimate use of it on this site: the unreleased set MINUS
+ * the shipped set is exactly the definition of UPCOMING. It is never used to
+ * decide what the site may claim.
+ *
+ * It is read off disk rather than imported, for the same reason the released
+ * tree is — see unreleasedTree.ts. A static import assumed this site sits in
+ * the unreleased checkout, and broke the build in the one place it does not.
  */
 
-const unreleasedOnly = UNRELEASED_AGENT_IDS.filter((id) => !isShippedAgentId(id));
+const unreleasedAgentIds = readUnreleasedAgentIds();
+const unreleasedOnly = (unreleasedAgentIds ?? []).filter((id) => !isShippedAgentId(id));
 
 describe('the upcoming set is computed, not asserted', () => {
+    /**
+     * The guard's own guard, matching agents.test.ts: a cross-tree check that
+     * cannot find the other tree is a check that did not happen.
+     */
+    it('can see the unreleased tree', () => {
+        expect(
+            resolveUnreleasedTreeRoot(),
+            `The unreleased checkout was not found. UPCOMING is defined as the unreleased ` +
+                `registry minus the shipped one, so without it this file cannot tell an ` +
+                `unreleased agent from a shipped one and every assertion below is empty. ` +
+                `Point ${UNRELEASED_TREE_ENV_VAR} at the unreleased checkout.`,
+        ).not.toBeNull();
+    });
+
     it('derives upcoming from the unreleased registry minus the shipped one', () => {
+        if (!unreleasedAgentIds) return; // reported by the test above
         expect(
             UPCOMING_AGENTS.map((a) => a.id).sort(),
             'UPCOMING_AGENTS is out of step with the registries. Everything in the unreleased ' +
@@ -42,6 +68,7 @@ describe('the upcoming set is computed, not asserted', () => {
     });
 
     it('never lets an unreleased agent into a shipped-facing collection', () => {
+        if (!unreleasedAgentIds) return; // reported by the test above
         const shippedFacing = new Map<string, string>([
             ...AGENTS.map((a) => [a.id, `AGENTS (/agents/${a.slug})`] as const),
             ...Object.keys(UNLISTED_AGENTS).map((id) => [id, 'UNLISTED_AGENTS'] as const),
