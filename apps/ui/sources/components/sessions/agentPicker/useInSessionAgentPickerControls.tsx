@@ -355,7 +355,9 @@ export function useInSessionAgentPickerControls(
     );
 
     const targetOptions = React.useMemo(() => {
-        if (!railOffersRows) return [];
+        // `railOffersRows` includes this proof, but TypeScript cannot carry the
+        // correlation through the derived boolean into the nested callbacks.
+        if (!railOffersRows || currentAgentId === null) return [];
         const eligibilityByTargetKey = new Map(
             targetRows.map(({ entry, eligibility }) => [entry.targetKey, eligibility] as const),
         );
