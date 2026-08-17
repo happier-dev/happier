@@ -31,7 +31,9 @@ function resolveCliTsconfigPath(snapshotDir: string): string {
 }
 
 function resolvePreparedDistSnapshotEntrypoint(snapshotDir: string): string {
-  const entrypoint = resolve(snapshotDir, 'dist', 'index.mjs');
+  const packageEntrypoint = resolve(snapshotDir, 'dist', 'index.mjs');
+  const releaseEntrypoint = resolve(snapshotDir, 'package-dist', 'index.mjs');
+  const entrypoint = existsSync(packageEntrypoint) ? packageEntrypoint : releaseEntrypoint;
   const readyMarker = resolve(snapshotDir, '.cli-dist-snapshot.ready.json');
   const nodeModulesDir = resolve(snapshotDir, 'node_modules');
   if (!existsSync(readyMarker) || !existsSync(entrypoint) || !existsSync(nodeModulesDir)) {
