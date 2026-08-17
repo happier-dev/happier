@@ -9,6 +9,24 @@ export const PLUGIN_MANIFEST = {
   displayName: 'Ollama',
   description: 'Use models served locally by Ollama.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
-  hostAccess: { required: [], optional: [] },
-  contributes: { providers: [OLLAMA_PROVIDER_CONTRIBUTION] },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'ollama-process',
+      capability: 'process',
+      reason: 'Run the declared Ollama executable.',
+      scope: {
+        executables: [{ kind: 'systemTool', id: 'ollama-cli' }],
+      },
+    }],
+    optional: [],
+  },
+  contributes: {
+    providers: [OLLAMA_PROVIDER_CONTRIBUTION],
+    systemTools: [{
+      id: 'ollama-cli',
+      title: 'Ollama CLI',
+      executableNames: ['ollama'],
+    }],
+  },
 } satisfies PluginManifest;

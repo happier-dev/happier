@@ -1,0 +1,244 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": true,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "GEMINI_API_KEY",
+                "GOOGLE_API_KEY",
+                "GOOGLE_GENAI_USE_VERTEXAI",
+                "GOOGLE_CLOUD_PROJECT",
+                "GOOGLE_CLOUD_LOCATION"
+              ],
+              "parser": "envOnly",
+              "statusArgs": null
+            },
+            "support": "unsupported"
+          },
+          "displayName": "Google Gemini CLI",
+          "executable": {
+            "binaryName": "gemini",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://goo.gle/gemini-cli-auth-docs",
+            "guideUrl": null,
+            "managed": {
+              "binaryName": "gemini",
+              "kind": "managed_package",
+              "packageName": "@google/gemini-cli"
+            },
+            "manual": {
+              "kind": "command"
+            },
+            "recommendationOrder": 30
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "files",
+              "environment"
+            ],
+            "purpose": "model_upstream",
+            "required": false,
+            "service": "gemini-account"
+          }
+        ],
+        "id": "gemini",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "Gemini"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "defaultModeId": "api-key",
+          "modes": [
+            {
+              "fields": [
+                {
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Gemini API key"
+                }
+              ],
+              "id": "api-key",
+              "kind": "manual",
+              "outcomeReconciliation": "none"
+            },
+            {
+              "fields": [
+                {
+                  "id": "credentialsJson",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Service-account JSON"
+                }
+              ],
+              "id": "service-account",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Google service account"
+            }
+          ]
+        },
+        "id": "gemini-account",
+        "title": "Gemini"
+      }
+    ],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "gemini"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      }
+    ],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "gemini"
+        ],
+        "id": "gemini-cli",
+        "title": "Google Gemini CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Gemini",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "gemini-process",
+        "reason": "Run the declared Gemini CLI executable.",
+        "scope": {
+          "envKeys": [
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "HAPPIER_GEMINI_ACP_AUTH_METHOD",
+            "HAPPIER_GEMINI_ACP_AUTH_META",
+            "GEMINI_CLI_HOME",
+            "HOME",
+            "XDG_CONFIG_HOME"
+          ],
+          "executables": [
+            {
+              "id": "gemini-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.gemini",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

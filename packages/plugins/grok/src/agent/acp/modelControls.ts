@@ -1,4 +1,4 @@
-import type { AgentAcpModel, AgentAcpModelOption } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpModel, AgentAcpModelOption } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type JsonObject = Readonly<Record<string, unknown>>;
 

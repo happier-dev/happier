@@ -1,4 +1,8 @@
-import type { VoiceClientAuthArtifact, VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type {
+  VoiceClientAuthArtifact } from '@happier-dev/plugin-sdk/voice/client';
+import type {
+  VoiceRealtimeJsonValue,
+} from '@happier-dev/plugin-sdk/voice';
 
 type CloseReason = Readonly<{ code: 'user_stop' | 'aborted' | 'remote_close' | 'replaced' | 'error'; detail?: string }>;
 type TransportEvent = Readonly<{ type: 'session_identity'; sessionId: string }>;
@@ -9,7 +13,7 @@ type OpenInput = Readonly<{
   onRemoteClose: (reason: string) => void;
 }>;
 
-type WebSocketLike = Readonly<{
+export type XaiWebSocketLike = Readonly<{
   readyState: number;
   bufferedAmount: number;
   send(value: string): void;
@@ -18,7 +22,11 @@ type WebSocketLike = Readonly<{
   removeEventListener(type: string, listener: (event: unknown) => void): void;
 }>;
 
-type CreateWebSocket = (url: string, protocols?: string | string[], headers?: Readonly<Record<string, string>>) => WebSocketLike;
+export type CreateXaiWebSocket = (
+  url: string,
+  protocols?: string | string[],
+  headers?: Readonly<Record<string, string>>,
+) => XaiWebSocketLike;
 
 // xAI shares the canonical Voice JSON event envelope. Its worst-case currently
 // admitted final is 394,440 UTF-8 bytes; 512 KiB leaves 129,848 bytes for the
@@ -33,29 +41,31 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function defaultCreateWebSocket(url: string, protocols?: string | string[]): WebSocketLike {
+function defaultCreateWebSocket(url: string, protocols?: string | string[]): XaiWebSocketLike {
   if (typeof WebSocket !== 'function') throw providerError('provider_response_invalid');
   return new WebSocket(url, protocols);
 }
 
-export function createXaiWebSocketDriver(input: Readonly<{
+export type XaiWebSocketDriverInput = Readonly<{
   auth: VoiceClientAuthArtifact;
   model: string;
   conversationId: string | null;
   sessionUpdate: VoiceRealtimeJsonValue;
-  createWebSocket?: CreateWebSocket;
+  createWebSocket?: CreateXaiWebSocket;
   endpoint?: string;
   onAudioDelta?: (base64Pcm16: string) => boolean;
   onOutputDone?: () => void;
   onConversationId?: (conversationId: string) => void | Promise<void>;
   maxBufferedAmountBytes?: number;
   maxEarlyAudioBytes?: number;
-}>) {
+}>;
+
+export function createXaiWebSocketDriver(input: XaiWebSocketDriverInput) {
   const createWebSocket = input.createWebSocket ?? defaultCreateWebSocket;
   const maxBufferedAmountBytes = input.maxBufferedAmountBytes ?? 512 * 1024;
   const maxEarlyAudioBytes = input.maxEarlyAudioBytes ?? 256 * 1024;
   const textEncoder = new TextEncoder();
-  let socket: WebSocketLike | null = null;
+  let socket: XaiWebSocketLike | null = null;
   let opened = false;
   let closing = false;
   let openInput: OpenInput | null = null;
@@ -64,7 +74,7 @@ export function createXaiWebSocketDriver(input: Readonly<{
   const earlyAudio: string[] = [];
   const listeners: Array<() => void> = [];
 
-  const listen = (target: WebSocketLike, type: string, listener: (event: unknown) => void): void => {
+  const listen = (target: XaiWebSocketLike, type: string, listener: (event: unknown) => void): void => {
     target.addEventListener(type, listener);
     listeners.push(() => target.removeEventListener(type, listener));
   };

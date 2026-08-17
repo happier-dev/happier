@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import {
   GROK_PREFLIGHT_SESSION_CONTROLS,
@@ -50,7 +50,7 @@ describe('GROK_PREFLIGHT_SESSION_CONTROLS', () => {
       spawn: async () => { throw new Error('spawn should not be used'); },
       clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
       agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies PluginExecService;
+    } satisfies ExecService;
 
     await expect(GROK_PREFLIGHT_SESSION_CONTROLS.probeModelsRaw({
       exec,

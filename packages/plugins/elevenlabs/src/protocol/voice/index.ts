@@ -2,19 +2,19 @@ import { z } from 'zod';
 import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
-  PluginVoiceProviderContributionV1Schema,
-  SecretStringV1Schema,
-  VoiceRealtimeJsonValueSchema,
-} from '@happier-dev/protocol';
-import type {
-  VoiceConversationProviderDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/manifest';
+import { SecretStringV1Schema } from '@happier-dev/plugin-sdk/secrets';
+import {
+  createVoiceRecordSchema,
+  VoiceProviderContributionSchema,
+  withVoiceSchemaField,
+} from '@happier-dev/plugin-sdk/voice';
+import { VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 
-export const ELEVENLABS_VOICE_PROVIDER_ID = 'realtime_elevenlabs' as const;
 export const ELEVENLABS_VOICE_CREDENTIAL_KIND = 'api_key' as const;
 const ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION =
-  PluginVoiceProviderContributionV1Schema.parse(
+  VoiceProviderContributionSchema.parse(
     PLUGIN_MANIFEST.contributes.voiceProviders[0],
   );
 if (
@@ -48,6 +48,9 @@ export const ElevenLabsModelIdSchema = z.string().trim().min(1).max(256);
 
 const ElevenLabsUnitIntervalSchema = z.number().min(0).max(1);
 const ElevenLabsTtsSpeedSchema = z.number().min(0.7).max(1.2);
+const ElevenLabsProvisionToolParametersSchema = createVoiceRecordSchema(
+  VoiceRealtimeJsonValueSchema,
+);
 
 export const ElevenLabsVoiceProviderSettingsLegacySchema = z.object({
   assistantLanguage: z.string().nullable().default(null),
@@ -75,7 +78,6 @@ export const ElevenLabsVoiceProviderSettingsLegacySchema = z.object({
 });
 
 export type ElevenLabsVoiceProviderSettings = Readonly<{
-  mode: 'default';
   billingMode: 'happier' | 'byo';
   tts: Readonly<{
     voiceId: string;
@@ -83,24 +85,20 @@ export type ElevenLabsVoiceProviderSettings = Readonly<{
     voiceSettings: Readonly<{
       stability: number | null;
       similarityBoost: number | null;
-      style: number | null;
-      useSpeakerBoost: boolean | null;
       speed: number | null;
     }>;
   }>;
-  byo: Readonly<{ agentId: string | null }>;
+  agentId: string;
 }>;
 
 const validateElevenLabsVoiceProviderSettings = compilePluginJsonSchema({
   type: 'object',
   properties: {
-    mode: { type: 'string', const: 'default' },
     ...Object.fromEntries(ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map(
       (field) => [field.id, field.schema],
     )),
   },
   required: [
-    'mode',
     ...ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map((field) => field.id),
   ],
   additionalProperties: false,
@@ -135,7 +133,6 @@ export const ElevenLabsVoiceProviderSettingsSchema = Object.freeze({
 });
 
 const parsedElevenLabsVoiceProviderDefaultSettings = ElevenLabsVoiceProviderSettingsSchema.safeParse({
-  mode: 'default',
   ...Object.fromEntries(ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map(
     (field) => [field.id, field.default],
   )),
@@ -165,16 +162,16 @@ export function parseElevenLabsConversationAuthAudience(value: string): Readonly
   return Object.freeze({ kind: match[1] as 'conversation_token' | 'signed_url', agentId: agentId.data });
 }
 
-export type ElevenLabsVoiceUiEntry = VoiceConversationProviderDescriptorV1 & Readonly<{
-  pluginId: 'happier.voice.elevenlabs';
-  providerId: 'realtime_elevenlabs';
-}>;
-
-export const ElevenLabsProvisionToolSchema = z.object({
+const ElevenLabsProvisionToolBaseSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().trim().min(1).max(2_000),
-  parameters: z.record(z.string(), VoiceRealtimeJsonValueSchema),
+  parameters: z.unknown().nonoptional(),
 }).strict();
+export const ElevenLabsProvisionToolSchema = withVoiceSchemaField(
+  ElevenLabsProvisionToolBaseSchema,
+  'parameters',
+  ElevenLabsProvisionToolParametersSchema,
+);
 
 export const ElevenLabsTtsConfigSchema = z.object({
   voiceId: ElevenLabsVoiceIdSchema,
@@ -182,29 +179,34 @@ export const ElevenLabsTtsConfigSchema = z.object({
   voiceSettings: z.object({
     stability: ElevenLabsUnitIntervalSchema.nullable(),
     similarityBoost: ElevenLabsUnitIntervalSchema.nullable(),
-    style: ElevenLabsUnitIntervalSchema.nullable(),
-    useSpeakerBoost: z.boolean().nullable(),
     speed: ElevenLabsTtsSpeedSchema.nullable(),
   }).strict(),
 }).strict();
 
-export const ElevenLabsProvisionRequestSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('list') }).strict(),
+const ElevenLabsProvisionRequestBaseSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('list'), tools: z.never().optional() }).strict(),
   z.object({
     kind: z.literal('create'),
     prompt: z.string().min(1).max(100_000),
-    tools: z.array(ElevenLabsProvisionToolSchema).max(100),
+    tools: z.array(z.unknown()).max(100),
     tts: ElevenLabsTtsConfigSchema,
   }).strict(),
   z.object({
     kind: z.literal('update'),
     agentId: ElevenLabsAgentIdSchema,
     prompt: z.string().min(1).max(100_000),
-    tools: z.array(ElevenLabsProvisionToolSchema).max(100),
+    tools: z.array(z.unknown()).max(100),
     tts: ElevenLabsTtsConfigSchema,
   }).strict(),
 ]);
-export type ElevenLabsProvisionRequest = z.infer<typeof ElevenLabsProvisionRequestSchema>;
+export const ElevenLabsProvisionRequestSchema = withVoiceSchemaField(
+  ElevenLabsProvisionRequestBaseSchema,
+  'tools',
+  ElevenLabsProvisionToolSchema.array(),
+);
+export type ElevenLabsProvisionRequest = ReturnType<
+  typeof ElevenLabsProvisionRequestSchema.parse
+>;
 
 export const ElevenLabsProvisionResponseSchema = z.union([
   z.object({ ok: z.literal(true), agents: z.array(z.object({ agentId: ElevenLabsAgentIdSchema, name: z.string().min(1).max(256) }).strict()).max(50) }).strict(),

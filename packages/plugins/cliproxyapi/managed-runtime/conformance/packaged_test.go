@@ -1,7 +1,6 @@
 package conformance
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -39,51 +39,22 @@ func TestPackagedWrapper(t *testing.T) {
 	commandEnvironment, credentialSentinels := minimalPackagedEnvironment()
 	sensitiveMaterial := append(credentialSentinels, downstreamBearer)
 	tempDir := t.TempDir()
-	runtimeDir := filepath.Join(tempDir, "runtime")
-	if err := os.Mkdir(runtimeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	capabilityPath := filepath.Join(tempDir, "request-auth-capability.json")
-	configPath := filepath.Join(tempDir, "managed-runtime.json")
-	writePrivateJSON(t, configPath, map[string]any{
-		"v":                   1,
-		"materializationId":   "packaged-materialization",
-		"wrapperBuildVersion": wrapperBuildVersion,
-		"gateway": map[string]any{
-			"downstreamBearer": downstreamBearer,
-			"runtimeDir":       runtimeDir,
-			"authEntries": []any{
-				map[string]any{
-					"id":       "codex",
-					"provider": "codex",
-					"purpose":  packagedPurpose("openai-upstream"),
-				},
-				map[string]any{
-					"id":       "claude",
-					"provider": "claude",
-					"purpose":  packagedPurpose("anthropic-upstream"),
-				},
-			},
-			"protocols":        []string{"openai-responses", "anthropic"},
-			"modelListEnabled": true,
-		},
-		"requestAuth": map[string]any{
-			"capabilityPath": capabilityPath,
-		},
-	})
+	capabilityPath := filepath.Join(tempDir, "request-auth", "capability.json")
+	runtimeDir := tempDir
 
 	port := reservePort(t)
-	command := exec.Command(executable, "--config", configPath)
+	command := exec.Command(executable)
 	command.Env = append(commandEnvironment,
 		"HOST=127.0.0.1",
 		"PORT="+strconv.Itoa(port),
+		managedruntime.DownstreamBearerEnvironmentVariable+"="+downstreamBearer,
+		managedruntime.RequestAuthCapabilityPathEnvironmentVariable+"="+capabilityPath,
+		managedruntime.ManagedPurposeConfigurationEnvironmentVariable+"="+
+			`{"v":2,"purposes":[{"id":"codex","provider":"codex","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"openai-upstream","allowedHttpsOrigin":"https://chatgpt.com","protocols":["openai-chat","openai-responses"]},{"id":"claude","provider":"claude","consumer":{"pluginId":"happier.provider.cliproxyapi","localId":"cliproxyapi"},"purpose":"anthropic-upstream","allowedHttpsOrigin":"https://api.anthropic.com","protocols":["anthropic"]}]}`,
 	)
-	stdoutPipe, err := command.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	command.Stdout = &stdout
 	command.Stderr = &stderr
 	var healthEvidence []byte
 	defer func() {
@@ -103,76 +74,94 @@ func TestPackagedWrapper(t *testing.T) {
 	}()
 	stopped := false
 
-	readinessResult := make(chan managedruntime.Readiness, 1)
-	scanError := make(chan error, 1)
-	scanDone := make(chan struct{})
-	go func() {
-		defer close(scanDone)
-		scanReadiness(io.TeeReader(stdoutPipe, &stdout), readinessResult, scanError)
-	}()
 	defer func() {
-		defer func() {
-			select {
-			case <-scanDone:
-			case <-time.After(time.Second):
-				t.Error("packaged wrapper stdout scanner did not stop")
-			}
-		}()
 		if !stopped {
 			stopProcess(t, command, waitResult)
 			stopped = true
 		}
 	}()
-	var readiness managedruntime.Readiness
-	select {
-	case readiness = <-readinessResult:
-	case err := <-scanError:
-		t.Fatalf(
-			"scan packaged readiness: %v; stderr=%s",
-			err,
-			redactPackagedDiagnostics(stderr.String(), sensitiveMaterial),
-		)
-	case err := <-waitResult:
-		stopped = true
-		t.Fatalf(
-			"packaged wrapper exited before readiness: %v; stderr=%s",
-			err,
-			redactPackagedDiagnostics(stderr.String(), sensitiveMaterial),
-		)
-	case <-time.After(10 * time.Second):
-		t.Fatalf(
-			"packaged wrapper readiness timed out; stderr=%s",
-			redactPackagedDiagnostics(stderr.String(), sensitiveMaterial),
-		)
+	wantProtocols := []managedruntime.ProviderProtocol{
+		managedruntime.ProtocolOpenAIChat,
+		managedruntime.ProtocolOpenAIResponses,
+		managedruntime.ProtocolAnthropic,
 	}
-
-	if readiness.ContractVersion != managedruntime.WrapperContractVersion ||
-		readiness.SDKVersion != managedruntime.PinnedSDKVersion ||
-		len(readiness.Protocols) != 2 ||
-		len(readiness.Purposes) != 2 {
-		t.Fatalf("packaged readiness = %#v", readiness)
+	wantPurposes := []managedruntime.QualifiedPurpose{
+		{
+			Consumer: managedruntime.ContributionIdentity{
+				PluginID: "happier.provider.cliproxyapi",
+				LocalID:  "cliproxyapi",
+			},
+			Purpose: "openai-upstream",
+		},
+		{
+			Consumer: managedruntime.ContributionIdentity{
+				PluginID: "happier.provider.cliproxyapi",
+				LocalID:  "cliproxyapi",
+			},
+			Purpose: "anthropic-upstream",
+		},
 	}
-	healthIdentity, healthEvidence := getManagedHealthIdentity(t, port)
+	healthIdentity, healthEvidence := awaitManagedHealthIdentity(t, port, waitResult, &stopped, stderr.String(), sensitiveMaterial)
 	if healthIdentity.V != managedruntime.ManagedHealthIdentityVersion ||
 		healthIdentity.ContractVersion != managedruntime.WrapperContractVersion ||
 		healthIdentity.SDKVersion != managedruntime.PinnedSDKVersion ||
 		healthIdentity.WrapperBuildVersion != wrapperBuildVersion ||
-		healthIdentity.MaterializationID != "packaged-materialization" ||
 		!healthIdentity.ModelListEnabled ||
-		len(healthIdentity.Protocols) != 2 ||
-		len(healthIdentity.Purposes) != 2 {
+		!slices.Equal(healthIdentity.Protocols, wantProtocols) ||
+		!slices.Equal(healthIdentity.Purposes, wantPurposes) {
 		t.Fatalf("packaged health identity = %#v", healthIdentity)
 	}
 	assertStatus(t, port, "/v1/models", downstreamBearer, http.StatusOK)
 	assertStatus(t, port, "/v0/management/config", downstreamBearer, http.StatusNotFound)
 	assertModelRequestFailsClosed(t, port, downstreamBearer)
-	assertNoFiles(t, runtimeDir)
+	if _, err := os.Stat(filepath.Join(runtimeDir, "request-auth", "cliproxyapi-runtime")); !os.IsNotExist(err) {
+		t.Fatalf("wrapper created a private child directory beneath the host-owned root: %v", err)
+	}
 	if _, err := os.Stat(capabilityPath); !os.IsNotExist(err) {
 		t.Fatalf("packaged wrapper wrote request-auth capability path before activation: %v", err)
 	}
 
 	stopProcess(t, command, waitResult)
 	stopped = true
+	if info, err := os.Stat(runtimeDir); err != nil || !info.IsDir() {
+		t.Fatalf("wrapper removed host-owned materialized root after shutdown: info=%v err=%v", info, err)
+	}
+}
+
+func awaitManagedHealthIdentity(
+	t *testing.T,
+	port int,
+	waitResult <-chan error,
+	stopped *bool,
+	stderr string,
+	sensitiveMaterial []string,
+) (managedruntime.ManagedHealthIdentity, []byte) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port))
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return getManagedHealthIdentity(t, port)
+			}
+		}
+		select {
+		case err := <-waitResult:
+			*stopped = true
+			t.Fatalf(
+				"packaged wrapper exited before HTTP health: %v; stderr=%s",
+				err,
+				redactPackagedDiagnostics(stderr, sensitiveMaterial),
+			)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Fatalf(
+		"packaged wrapper HTTP health timed out; stderr=%s",
+		redactPackagedDiagnostics(stderr, sensitiveMaterial),
+	)
+	return managedruntime.ManagedHealthIdentity{}, nil
 }
 
 func getManagedHealthIdentity(
@@ -226,51 +215,6 @@ func assertModelRequestFailsClosed(t *testing.T, port int, bearer string) {
 	}
 }
 
-func scanReadiness(
-	stdout interface{ Read([]byte) (int, error) },
-	readiness chan<- managedruntime.Readiness,
-	scanError chan<- error,
-) {
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 512*1024)
-	readinessSent := false
-	for scanner.Scan() {
-		if readinessSent {
-			continue
-		}
-		line := scanner.Bytes()
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(line, &fields) != nil || len(fields) != 4 {
-			continue
-		}
-		for _, field := range []string{"contractVersion", "sdkVersion", "protocols", "purposes"} {
-			if _, ok := fields[field]; !ok {
-				fields = nil
-				break
-			}
-		}
-		if fields == nil {
-			continue
-		}
-		var value managedruntime.Readiness
-		if err := json.Unmarshal(line, &value); err != nil {
-			scanError <- err
-			return
-		}
-		readiness <- value
-		readinessSent = true
-	}
-	if err := scanner.Err(); err != nil {
-		if !readinessSent {
-			scanError <- err
-		}
-		return
-	}
-	if !readinessSent {
-		scanError <- fmt.Errorf("readiness JSON line was not emitted")
-	}
-}
-
 func stopProcess(t *testing.T, command *exec.Cmd, waitResult <-chan error) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -305,27 +249,6 @@ func assertStatus(t *testing.T, port int, path, bearer string, want int) {
 	defer response.Body.Close()
 	if response.StatusCode != want {
 		t.Fatalf("GET %s status = %d, want %d", path, response.StatusCode, want)
-	}
-}
-
-func writePrivateJSON(t *testing.T, path string, value any) {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func packagedPurpose(purpose string) map[string]any {
-	return map[string]any{
-		"consumer": map[string]any{
-			"pluginId": "happier.provider.cliproxyapi",
-			"localId":  "cliproxyapi",
-		},
-		"purpose": purpose,
 	}
 }
 
@@ -364,7 +287,6 @@ func minimalPackagedEnvironment() ([]string, []string) {
 		{"ANTHROPIC_AUTH_TOKEN", "packaged-anthropic-auth-token-sentinel"},
 		{"CLAUDE_CODE_OAUTH_TOKEN", "packaged-claude-oauth-token-sentinel"},
 		{"MANAGEMENT_PASSWORD", "packaged-management-password-sentinel"},
-		{"HAPPIER_PLUGIN_LOCAL_SERVICES_BRIDGE_TOKEN", "packaged-request-auth-capability-sentinel"},
 	}
 	values := make([]string, 0, len(sentinels))
 	for _, sentinel := range sentinels {
@@ -418,26 +340,7 @@ func assertNoSensitiveFiles(t *testing.T, root string, sensitiveMaterial []strin
 			}
 		}
 		return nil
-	}); err != nil {
+	}); err != nil && !os.IsNotExist(err) {
 		t.Errorf("scan packaged runtime files for credential material: %v", err)
-	}
-}
-
-func assertNoFiles(t *testing.T, root string) {
-	t.Helper()
-	var files []string
-	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !entry.IsDir() {
-			files = append(files, path)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("packaged wrapper persisted runtime files: %#v", files)
 	}
 }

@@ -5,17 +5,32 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "package.json"],
+  "files": [
+    "dist",
+    ".happier-plugin/plugin.json",
+    "package.json"
+  ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./manifest": { "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" },
-    "./protocol/voice": { "types": "./dist/protocol/voice/index.d.ts", "default": "./dist/protocol/voice/index.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./protocol/voice": {
+      "types": "./dist/protocol/voice/index.d.ts",
+      "default": "./dist/protocol/voice/index.js"
+    },
     "./ui/voice": {
       "types": "./dist/ui/voice/index.d.ts",
       "react-native": "./dist/ui/voice/index.native.js",
@@ -24,11 +39,19 @@
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "zod": "4.3.6"
   },
+  "peerDependencies": {
+    "expo": ">=55.0.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@happier-dev/bundled-voice-runtime-contract": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
+    "expo": "^55.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

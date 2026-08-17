@@ -1,4 +1,4 @@
-import type { ProviderContributionV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
 
 const LMSTUDIO_LOCAL_ORIGINS = [
   'http://127.0.0.1:1234',

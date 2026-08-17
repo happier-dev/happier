@@ -1,4 +1,4 @@
-import type { AgentAcpExtensionContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpExtensionContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const GROK_MCP_SERVERS_UPDATED_METHOD = '_x.ai/mcp/servers_updated' as const;
 

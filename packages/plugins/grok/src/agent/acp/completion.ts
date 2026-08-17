@@ -1,4 +1,4 @@
-import type { AgentAcpExtensionContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpExtensionContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const GROK_PROMPT_COMPLETE_METHODS = Object.freeze([
   'x.ai/session/prompt_complete',

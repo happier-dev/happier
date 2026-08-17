@@ -59,6 +59,12 @@ export {
 } from './sha256Digest.js';
 
 export {
+  parseVoiceModelPackArtifactBindingV1,
+  voiceModelPackArtifactBindingsEqualV1,
+  type VoiceModelPackArtifactBindingV1,
+} from './artifactBinding.js';
+
+export {
   decideInstalledVoiceModelPackLifecycleV1,
   type InstalledVoiceModelPackLifecycleDecisionV1,
   type InstalledVoiceModelPackMetadataV1,

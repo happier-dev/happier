@@ -1,0 +1,200 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "lmstudio-openai-responses",
+              "parser": "lmstudio-native-models",
+              "path": "/api/v1/models"
+            },
+            {
+              "endpointTemplateId": "lmstudio-openai-responses",
+              "parser": "openai-models",
+              "path": "/v1/models"
+            }
+          ],
+          "source": "probe"
+        },
+        "credential": {
+          "keyUrl": "https://lmstudio.ai/docs/app/api/tools/auth",
+          "kind": "apiKey",
+          "required": false,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "lmstudio-http-bearer",
+              "protocols": [
+                "openai-chat",
+                "openai-responses",
+                "anthropic"
+              ],
+              "uses": [
+                "probe",
+                "runtime",
+                "management"
+              ]
+            }
+          ]
+        },
+        "discovery": {
+          "availabilityProbe": {
+            "endpointTemplateId": "lmstudio-openai-responses",
+            "parser": "lmstudio-native-models",
+            "path": "/api/v1/models"
+          },
+          "installedCheck": {
+            "lookupNames": [
+              "lms"
+            ]
+          },
+          "listener": {
+            "defaultPorts": [
+              1234
+            ],
+            "executableBasenames": [
+              "llmster"
+            ]
+          },
+          "presenceCheck": {
+            "fixedArgs": [
+              "daemon",
+              "status",
+              "--json"
+            ],
+            "lookupNames": [
+              "lms"
+            ],
+            "parser": "lms-status-json"
+          },
+          "v": 1
+        },
+        "endpointTemplates": [
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "supported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "lmstudio-openai-responses",
+            "localUrlCandidates": [
+              "http://127.0.0.1:1234/v1",
+              "http://localhost:1234/v1"
+            ],
+            "protocol": "openai-responses"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "lmstudio-openai-chat",
+            "localUrlCandidates": [
+              "http://127.0.0.1:1234/v1",
+              "http://localhost:1234/v1"
+            ],
+            "protocol": "openai-chat"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "lmstudio-anthropic",
+            "localUrlCandidates": [
+              "http://127.0.0.1:1234/",
+              "http://localhost:1234/"
+            ],
+            "protocol": "anthropic"
+          }
+        ],
+        "id": "lmstudio",
+        "kind": "local",
+        "modelLoad": {
+          "confirmation": "refresh-catalog-load-state",
+          "endpointTemplateId": "lmstudio-openai-responses",
+          "path": "/api/v1/models/load",
+          "preflightPolicy": "advisory",
+          "request": "json-model-id-v1"
+        },
+        "name": "LM Studio",
+        "v": 1,
+        "websiteUrl": "https://lmstudio.ai"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use models served locally by LM Studio 0.4.1 or newer.",
+  "displayName": "LM Studio",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.lmstudio",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -10,7 +10,10 @@ const metadata: InstalledVoiceModelPackMetadataV1 = {
   identity: { pluginId: 'acme.speech', packId: 'english' },
   directoryKey: 'vp-key',
   pluginVersion: '2.0.0',
-  pluginSourceDigest: `sha256:${'b'.repeat(64)}`,
+  artifactBinding: {
+    kind: 'sourceIntegrity',
+    integrity: `sha512-${'b'.repeat(86)}==`,
+  },
   packVersion: '1.0.0',
   manifestDigest: 'c'.repeat(64),
   verifiedAtMs: 100,
@@ -20,7 +23,7 @@ const source = {
   enabled: true,
   trusted: true,
   pluginVersion: metadata.pluginVersion,
-  pluginSourceDigest: metadata.pluginSourceDigest,
+  artifactBinding: metadata.artifactBinding,
   packVersion: metadata.packVersion,
   manifestDigest: metadata.manifestDigest,
 } as const;
@@ -42,8 +45,11 @@ describe('installed public voice model-pack lifecycle', () => {
     })).toMatchObject({ state: 'active', reclaimable: true, loadable: true });
     expect(decideInstalledVoiceModelPackLifecycleV1({
       metadata,
-      source: { ...source, pluginSourceDigest: `sha256:${'d'.repeat(64)}` },
-    })).toMatchObject({ state: 'orphaned', reason: 'source_digest_changed', reclaimable: false, loadable: false });
+      source: {
+        ...source,
+        artifactBinding: { kind: 'sourceIntegrity', integrity: `sha512-${'d'.repeat(86)}==` },
+      },
+    })).toMatchObject({ state: 'orphaned', reason: 'artifact_binding_changed', reclaimable: false, loadable: false });
     expect(decideInstalledVoiceModelPackLifecycleV1({
       metadata,
       source: { ...source, pluginVersion: '2.0.1' },
@@ -71,14 +77,65 @@ describe('installed public voice model-pack lifecycle', () => {
     });
   });
 
-  it('treats sha256-prefixed and bare persisted digests as the same immutable bytes', () => {
+  it('keeps manifest-digest prefix normalization separate from the exact artifact binding', () => {
     expect(decideInstalledVoiceModelPackLifecycleV1({
       metadata,
       source: {
         ...source,
-        pluginSourceDigest: metadata.pluginSourceDigest.replace(/^sha256:/, ''),
         manifestDigest: `sha256:${metadata.manifestDigest}`,
       },
     })).toMatchObject({ state: 'active', reason: null, loadable: true });
+  });
+
+  it('fails closed when a Voice artifact-binding variant or value changes', () => {
+    const sourceIntegrity = Object.freeze({
+      kind: 'sourceIntegrity' as const,
+      integrity: `sha512-${'a'.repeat(86)}==`,
+    });
+    const boundMetadata: InstalledVoiceModelPackMetadataV1 = {
+      ...metadata,
+      artifactBinding: sourceIntegrity,
+    };
+    const boundSource = {
+      ...source,
+      artifactBinding: sourceIntegrity,
+    };
+
+    expect(decideInstalledVoiceModelPackLifecycleV1({
+      metadata: boundMetadata,
+      source: boundSource,
+    })).toMatchObject({ state: 'active', reason: null, loadable: true });
+
+    expect(decideInstalledVoiceModelPackLifecycleV1({
+      metadata: boundMetadata,
+      source: {
+        ...boundSource,
+        artifactBinding: Object.freeze({
+          kind: 'sourceIntegrity' as const,
+          integrity: `sha512-${'b'.repeat(86)}==`,
+        }),
+      },
+    })).toMatchObject({
+      state: 'orphaned',
+      reason: 'artifact_binding_changed',
+      reclaimable: false,
+      loadable: false,
+    });
+
+    expect(decideInstalledVoiceModelPackLifecycleV1({
+      metadata: boundMetadata,
+      source: {
+        ...boundSource,
+        artifactBinding: Object.freeze({
+          kind: 'materialization' as const,
+          immutableGenerationId: 'generation-local-2',
+        }),
+      },
+    })).toMatchObject({
+      state: 'orphaned',
+      reason: 'artifact_binding_changed',
+      reclaimable: false,
+      loadable: false,
+    });
   });
 });

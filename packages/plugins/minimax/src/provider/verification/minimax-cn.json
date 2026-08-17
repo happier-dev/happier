@@ -1,0 +1,251 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.minimax/minimax-cn",
+  "reviewedAt": "2026-07-30",
+  "sources": [
+    {
+      "id": "anthropic-api",
+      "kind": "official-doc",
+      "url": "https://platform.minimax.io/docs/api-reference/text-anthropic-api",
+      "accessedAt": "2026-07-29",
+      "revision": "current-2026-07-29"
+    },
+    {
+      "id": "claude-code-setup",
+      "kind": "official-doc",
+      "url": "https://platform.minimax.io/docs/token-plan/claude-code",
+      "accessedAt": "2026-07-30",
+      "revision": "current-2026-07-30"
+    },
+    {
+      "id": "codex-cli-setup",
+      "kind": "official-doc",
+      "url": "https://platform.minimax.io/docs/token-plan/codex-cli",
+      "accessedAt": "2026-07-29",
+      "revision": "current-2026-07-29"
+    },
+    {
+      "id": "legacy-profile",
+      "kind": "repository-history",
+      "locator": "packages/protocol/src/providers/claude/builtInBackendProfiles.ts",
+      "accessedAt": "2026-07-30",
+      "revision": "remote-dev@22cd233a3-minimax-built-in-profiles"
+    }
+  ],
+  "facts": [
+    {
+      "path": "catalog.source",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "catalog.staticModels.MiniMax-M2.7",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "catalog.staticModels.MiniMax-M3",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "credential.keyUrl",
+      "sourceIds": [
+        "claude-code-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "credential.kind",
+      "sourceIds": [
+        "claude-code-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "credential.required",
+      "sourceIds": [
+        "claude-code-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "credential.transports.minimax-cn-http-bearer",
+      "sourceIds": [
+        "claude-code-setup",
+        "codex-cli-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-anthropic.baseUrl",
+      "sourceIds": [
+        "claude-code-setup",
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-anthropic.capabilities.streaming",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-anthropic.capabilities.toolRoundTrips",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-anthropic.protocol",
+      "sourceIds": [
+        "claude-code-setup",
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-openai-responses.baseUrl",
+      "sourceIds": [
+        "codex-cli-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-openai-responses.capabilities.streaming",
+      "sourceIds": [
+        "codex-cli-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-openai-responses.capabilities.toolRoundTrips",
+      "sourceIds": [
+        "codex-cli-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "endpointTemplates.minimax-cn-openai-responses.protocol",
+      "sourceIds": [
+        "codex-cli-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "kind",
+      "sourceIds": [
+        "anthropic-api"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.credentialBinding",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.descriptorRevision",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.implicitModelAliasReplacements.MiniMax-M3[1m]",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.migratedEnvironmentVariables.ANTHROPIC_AUTH_TOKEN",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.migratedEnvironmentVariables.ANTHROPIC_BASE_URL",
+      "sourceIds": [
+        "legacy-profile",
+        "claude-code-setup"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.migratedEnvironmentVariables.ANTHROPIC_MODEL",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.primaryModel",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.API_TIMEOUT_MS",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "legacyProfileMigrations.minimax-cn.retainedEnvironmentVariables.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+      "sourceIds": [
+        "legacy-profile"
+      ],
+      "status": "verified"
+    },
+    {
+      "path": "websiteUrl",
+      "sourceIds": [
+        "claude-code-setup"
+      ],
+      "status": "verified"
+    }
+  ]
+}

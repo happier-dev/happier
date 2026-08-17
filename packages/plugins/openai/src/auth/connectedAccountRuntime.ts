@@ -1,8 +1,10 @@
 import type {
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+
+type ConnectedAccountCredentialReader =
+  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 const TOKEN_CREDENTIAL_KEY = 'token';
 const OPENAI_ORIGIN = 'https://api.openai.com';
@@ -11,12 +13,12 @@ function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
 
-async function readToken(credentials: PluginConnectedAccountCredentialReader): Promise<string> {
+async function readToken(credentials: ConnectedAccountCredentialReader): Promise<string> {
   return (await credentials.get(TOKEN_CREDENTIAL_KEY))?.trim() ?? '';
 }
 
 async function readHealth(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
 ): Promise<PluginConnectedAccountHealthResult> {
   return await readToken(credentials)
     ? { status: 'connected', displayName: 'OpenAI API key', scopes: [] }

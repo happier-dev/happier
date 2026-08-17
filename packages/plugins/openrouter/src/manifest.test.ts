@@ -33,8 +33,8 @@ describe('OpenRouter plugin manifest', () => {
       identityKind: 'delegatedDomain',
       stability: 'delegated',
       disposition: 'delegated',
-      activationDemand: 'none',
-      allowedRuntimeRegistration: null,
+      activationDemand: 'conditional',
+      allowedRuntimeRegistration: 'providers',
     });
     expect(providerFamily?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({
       localId: null,

@@ -1,4 +1,4 @@
-import type { ProviderContributionV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 

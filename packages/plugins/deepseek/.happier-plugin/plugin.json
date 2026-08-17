@@ -1,0 +1,211 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "deepseek-openai-chat",
+              "parser": "openai-models",
+              "path": "/v1/models"
+            }
+          ],
+          "source": "static+probe",
+          "staticModels": [
+            {
+              "id": "deepseek-v4-flash",
+              "name": "DeepSeek V4 Flash"
+            },
+            {
+              "id": "deepseek-v4-pro",
+              "name": "DeepSeek V4 Pro"
+            }
+          ]
+        },
+        "credential": {
+          "keyUrl": "https://platform.deepseek.com/api_keys",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "raw",
+                "kind": "httpHeader",
+                "name": "x-api-key"
+              },
+              "id": "deepseek-anthropic-x-api-key",
+              "protocols": [
+                "anthropic"
+              ],
+              "uses": [
+                "runtime"
+              ]
+            },
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "deepseek-openai-bearer",
+              "protocols": [
+                "openai-chat"
+              ],
+              "uses": [
+                "probe",
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "deepseek-anthropic",
+            "protocol": "anthropic"
+          },
+          {
+            "baseUrl": "https://api.deepseek.com/v1",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "deepseek-openai-chat",
+            "protocol": "openai-chat"
+          }
+        ],
+        "id": "deepseek",
+        "kind": "frontier",
+        "legacyProfileMigrations": [
+          {
+            "credentialBinding": {
+              "credentialSlotId": "apiKey",
+              "legacyEnvVarName": "DEEPSEEK_AUTH_TOKEN"
+            },
+            "descriptorRevision": 2,
+            "implicitModelAliasReplacements": [
+              {
+                "legacyModelId": "deepseek-chat",
+                "replacementModelId": "deepseek-v4-flash"
+              },
+              {
+                "legacyModelId": "deepseek-reasoner",
+                "replacementModelId": "deepseek-v4-flash"
+              }
+            ],
+            "migratedEnvironmentVariables": [
+              {
+                "name": "ANTHROPIC_BASE_URL",
+                "value": "${DEEPSEEK_BASE_URL:-https://api.deepseek.com/anthropic}"
+              },
+              {
+                "name": "ANTHROPIC_AUTH_TOKEN",
+                "value": "${DEEPSEEK_AUTH_TOKEN}"
+              },
+              {
+                "name": "ANTHROPIC_MODEL",
+                "value": "${DEEPSEEK_MODEL:-deepseek-v4-flash}"
+              }
+            ],
+            "primaryModel": {
+              "agentTargetKey": "agent:claude",
+              "defaultModelId": "deepseek-v4-flash",
+              "legacyEnvVarName": "ANTHROPIC_MODEL",
+              "legacyProcessEnvAlias": "DEEPSEEK_MODEL"
+            },
+            "retainedEnvironmentVariables": [
+              {
+                "name": "API_TIMEOUT_MS",
+                "value": "${DEEPSEEK_API_TIMEOUT_MS:-600000}"
+              },
+              {
+                "name": "ANTHROPIC_SMALL_FAST_MODEL",
+                "value": "${DEEPSEEK_SMALL_FAST_MODEL:-deepseek-v4-flash}"
+              },
+              {
+                "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                "value": "${DEEPSEEK_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
+              }
+            ],
+            "sourceProfileId": "deepseek"
+          }
+        ],
+        "name": "DeepSeek",
+        "v": 1,
+        "websiteUrl": "https://www.deepseek.com"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use DeepSeek models through Anthropic- or OpenAI-compatible agents.",
+  "displayName": "DeepSeek",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.deepseek",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

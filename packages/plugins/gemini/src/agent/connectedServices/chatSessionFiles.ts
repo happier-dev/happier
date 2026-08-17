@@ -2,7 +2,7 @@ import { copyFile, mkdir, open, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
+import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
 
 const GEMINI_CHAT_SESSION_FILE_HEAD_BYTES = 16_384;
 

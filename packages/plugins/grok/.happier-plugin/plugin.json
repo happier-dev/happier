@@ -1,0 +1,214 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "configuration": true,
+            "conversationRollback": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume",
+              "fork"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "login"
+                ],
+                "kind": "primary"
+              },
+              {
+                "args": [
+                  "login",
+                  "--device-auth"
+                ],
+                "kind": "device_code"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "XAI_API_KEY"
+              ],
+              "parser": "unknown",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "executable": {
+            "binaryName": "grok",
+            "knownUserBinDirSuffixes": [
+              ".grok/bin",
+              ".local/bin"
+            ],
+            "sourcePreference": "system-first",
+            "systemCommandResolutionStrategy": "path-first"
+          },
+          "install": {
+            "docsUrl": "https://x.ai",
+            "guideUrl": "https://x.ai/cli",
+            "managed": null,
+            "manual": {
+              "kind": "vendor_recipe",
+              "recipes": {
+                "darwin": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://x.ai/cli/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "linux": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://x.ai/cli/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "win32": [
+                  {
+                    "args": [
+                      "-NoProfile",
+                      "-ExecutionPolicy",
+                      "Bypass",
+                      "-Command",
+                      "irm https://x.ai/cli/install.ps1 | iex"
+                    ],
+                    "cmd": "powershell"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "description": {
+          "fallback": "Grok Build CLI (experimental)",
+          "key": "profiles.aiBackend.grokSubtitleExperimental"
+        },
+        "id": "grok",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": {
+          "fallback": "Grok",
+          "key": "agentInput.agent.grok"
+        }
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "grok"
+        ],
+        "id": "grok-cli",
+        "title": "Grok Build CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "agentInput.agent.grok": "Grok",
+            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
+            "sessionInfo.grokSessionId": "Grok session ID",
+            "sessionInfo.grokSessionIdCopied": "Grok session ID copied"
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Grok",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "grok-process",
+        "reason": "Run the declared Grok CLI executable with its declared xAI API-key environment.",
+        "scope": {
+          "envKeys": [
+            "XAI_API_KEY"
+          ],
+          "executables": [
+            {
+              "id": "grok-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.grok",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

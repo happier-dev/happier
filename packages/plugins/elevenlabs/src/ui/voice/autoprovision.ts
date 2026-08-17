@@ -1,10 +1,5 @@
 import { buildElevenLabsVoiceAgentPrompt } from '@happier-dev/agents';
-import {
-  actionSpecToElevenLabsClientToolParameters,
-  describeActionForVoiceTool,
-  isVoiceSdkSafeActionSpec,
-  type ActionSpec,
-} from '@happier-dev/protocol';
+import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
 
 import {
   ElevenLabsProvisionToolSchema,
@@ -17,8 +12,6 @@ export type ElevenLabsTtsConfigInput = Readonly<{
   voiceSettings?: Readonly<{
     stability?: number | null;
     similarityBoost?: number | null;
-    style?: number | null;
-    useSpeakerBoost?: boolean | null;
     speed?: number | null;
   }> | null;
 }>;
@@ -33,33 +26,18 @@ type ProvisionClient = Readonly<{
 export function createElevenLabsAutoprovision(input: Readonly<{
   client: ProvisionClient;
   defaultVoiceId: string;
-  buildContext(): Promise<Readonly<{
-    disabledActionIds: readonly string[];
-    extraSystemAppendBlocks: readonly string[];
-    actionSpecs: readonly ActionSpec[];
-  }>>;
+  tools: readonly VoiceClientToolDefinition[];
 }>) {
   const buildProvisionInput = async (
     signal: AbortSignal,
     tts?: ElevenLabsTtsConfigInput | null,
   ) => {
     signal.throwIfAborted();
-    const context = await input.buildContext();
-    signal.throwIfAborted();
-    const actionSpecs = context.actionSpecs.filter(isVoiceSdkSafeActionSpec);
-    const prompt = buildElevenLabsVoiceAgentPrompt({
-      disabledActionIds: context.disabledActionIds,
-      extraSystemAppendBlocks: context.extraSystemAppendBlocks,
-      actionSpecs,
-    }).replace(/Claude Code/giu, 'the coding assistant');
-    const availableActionIds = actionSpecs.map((spec) => spec.id);
-    const tools = ElevenLabsProvisionToolSchema.array().parse(actionSpecs.map((spec) => Object.freeze({
-      name: String(spec.bindings?.voiceClientToolName ?? '').trim(),
-      description: describeActionForVoiceTool(spec).trim(),
-      parameters: actionSpecToElevenLabsClientToolParameters(spec, {
-        disabledActionIds: context.disabledActionIds,
-        availableActionIds,
-      }),
+    const prompt = buildElevenLabsVoiceAgentPrompt().replace(/Claude Code/giu, 'the coding assistant');
+    const tools = ElevenLabsProvisionToolSchema.array().parse(input.tools.map((tool) => Object.freeze({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
     })));
     return Object.freeze({
       prompt,
@@ -70,8 +48,6 @@ export function createElevenLabsAutoprovision(input: Readonly<{
         voiceSettings: Object.freeze({
           stability: tts?.voiceSettings?.stability ?? null,
           similarityBoost: tts?.voiceSettings?.similarityBoost ?? null,
-          style: tts?.voiceSettings?.style ?? null,
-          useSpeakerBoost: tts?.voiceSettings?.useSpeakerBoost ?? null,
           speed: tts?.voiceSettings?.speed ?? null,
         }),
       }),

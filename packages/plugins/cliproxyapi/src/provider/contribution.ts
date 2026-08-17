@@ -1,4 +1,9 @@
-import type { ProviderContributionV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
+import {
+  CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS,
+  CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS,
+  CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES,
+} from './managedContract.js';
 
 const CLIPROXYAPI_LOCAL_ORIGINS = [
   'http://127.0.0.1:8317',
@@ -79,5 +84,29 @@ export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
       path: '/v1/models',
       parser: 'openai-models',
     },
+  },
+  managedRuntime: {
+    kind: 'managed',
+    connectedAccounts: CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS.map(
+      (declaration) => ({
+        ...declaration,
+        service: { ...declaration.service },
+        materializationKinds: [
+          ...declaration.materializationKinds,
+        ],
+      }),
+    ),
+    requestAuthUses: CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES.map(
+      (use) => ({
+        ...use,
+        materialization: {
+          ...use.materialization,
+          headerNames: [...use.materialization.headerNames],
+        },
+      }),
+    ),
+    endpointTemplateIds: [
+      ...CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS,
+    ],
   },
 } satisfies ProviderContributionV1;

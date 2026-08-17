@@ -1,7 +1,7 @@
 import type {
   AgentAcpRuntimeDefinition,
   AgentSessionConversationRollbackControl,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 const GROK_PROMPT_CHECKPOINT_KIND = 'grok_prompt_index';

@@ -1,0 +1,318 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "settingsVoice.realtimeProviders.google.privacyDisclosure": "Audio sent for transcription is processed by Google Gemini, and text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms."
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [
+      {
+        "catalogs": [
+          {
+            "allowCustom": true,
+            "kind": "models",
+            "settingFieldId": "model"
+          }
+        ],
+        "credentials": {
+          "requirement": {
+            "kind": "always"
+          },
+          "slot": {
+            "id": "api_key",
+            "purpose": "voice.speech.transcribe",
+            "title": "Google Gemini API key"
+          },
+          "sources": [
+            {
+              "kind": "savedSecret",
+              "rawGrants": [
+                {
+                  "phase": "speech",
+                  "realm": "daemon",
+                  "request": {
+                    "headerNames": [
+                      "x-goog-api-key"
+                    ],
+                    "kind": "httpHeaders",
+                    "origin": "https://generativelanguage.googleapis.com"
+                  }
+                }
+              ],
+              "secretKinds": [
+                "apiKey"
+              ]
+            }
+          ]
+        },
+        "id": "gemini-stt",
+        "kind": "speech",
+        "limits": {
+          "transcribe": {
+            "maxInputBytes": 8388608
+          }
+        },
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "roles": [
+          "dictation_stt",
+          "conversation_stt"
+        ],
+        "settings": {
+          "fields": [
+            {
+              "default": "gemini-2.5-flash",
+              "id": "model",
+              "presentation": {
+                "control": "select"
+              },
+              "schema": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": "Model"
+            },
+            {
+              "default": "",
+              "id": "language",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "title": "Language"
+            }
+          ],
+          "privacyDisclosure": {
+            "fallback": "Audio sent for transcription is processed by Google Gemini, and text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
+            "key": "settingsVoice.realtimeProviders.google.privacyDisclosure"
+          },
+          "schemaVersion": 2
+        },
+        "title": "Google Gemini Speech-to-Text"
+      },
+      {
+        "catalogs": [
+          {
+            "allowCustom": true,
+            "kind": "voices",
+            "settingFieldId": "voiceName"
+          }
+        ],
+        "credentials": {
+          "requirement": {
+            "kind": "always"
+          },
+          "slot": {
+            "id": "api_key",
+            "purpose": "voice.speech.synthesize",
+            "title": "Google Cloud API key"
+          },
+          "sources": [
+            {
+              "kind": "savedSecret",
+              "rawGrants": [
+                {
+                  "phase": "speech",
+                  "realm": "daemon",
+                  "request": {
+                    "headerNames": [
+                      "x-goog-api-key"
+                    ],
+                    "kind": "httpHeaders",
+                    "origin": "https://texttospeech.googleapis.com"
+                  }
+                }
+              ],
+              "secretKinds": [
+                "apiKey"
+              ]
+            }
+          ]
+        },
+        "id": "google-cloud-tts",
+        "kind": "speech",
+        "limits": {
+          "synthesize": {
+            "maxInputCharacters": 1666,
+            "maxOutputBytes": 3000000
+          }
+        },
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "roles": [
+          "conversation_tts"
+        ],
+        "settings": {
+          "fields": [
+            {
+              "default": "",
+              "id": "voiceName",
+              "presentation": {
+                "control": "select"
+              },
+              "schema": {
+                "maxLength": 256,
+                "type": "string"
+              },
+              "title": "Voice"
+            },
+            {
+              "default": "",
+              "id": "languageCode",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "title": "Language"
+            },
+            {
+              "default": "mp3",
+              "id": "format",
+              "presentation": {
+                "control": "select",
+                "options": [
+                  {
+                    "title": "MP3",
+                    "value": "mp3"
+                  },
+                  {
+                    "title": "WAV",
+                    "value": "wav"
+                  }
+                ]
+              },
+              "schema": {
+                "enum": [
+                  "mp3",
+                  "wav"
+                ],
+                "type": "string"
+              },
+              "title": "Audio format"
+            },
+            {
+              "default": 1,
+              "id": "speakingRate",
+              "presentation": {
+                "control": "number",
+                "step": 0.05
+              },
+              "schema": {
+                "maximum": 4,
+                "minimum": 0.25,
+                "type": "number"
+              },
+              "title": "Speaking rate"
+            },
+            {
+              "default": 0,
+              "id": "pitch",
+              "presentation": {
+                "control": "number",
+                "step": 0.5
+              },
+              "schema": {
+                "maximum": 20,
+                "minimum": -20,
+                "type": "number"
+              },
+              "title": "Pitch"
+            }
+          ],
+          "privacyDisclosure": {
+            "fallback": "Audio sent for transcription is processed by Google Gemini, and text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
+            "key": "settingsVoice.realtimeProviders.google.privacyDisclosure"
+          },
+          "readiness": [
+            {
+              "kind": "setting_nonempty",
+              "settingId": "voiceName"
+            }
+          ],
+          "schemaVersion": 2
+        },
+        "title": "Google Cloud Text-to-Speech"
+      }
+    ],
+    "webhooks": []
+  },
+  "description": "Google Gemini speech-to-text and Google Cloud text-to-speech.",
+  "displayName": "Google Voice",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.voice.google",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

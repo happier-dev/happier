@@ -1,4 +1,4 @@
-import type { ProviderContributionV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
 
 export const OPENROUTER_PROVIDER_CONTRIBUTION = {
   v: 1,

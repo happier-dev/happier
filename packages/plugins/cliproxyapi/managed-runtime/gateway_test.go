@@ -24,8 +24,8 @@ func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *test
 		DownstreamBearer: "session-secret",
 		RuntimeDir:       t.TempDir(),
 		AuthEntries: []AuthEntry{
-			{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")},
-			{ID: "claude", Provider: ProviderClaude, Purpose: testPurpose("anthropic-upstream")},
+			testAuthEntry("codex", ProviderCodex, "openai-upstream"),
+			testAuthEntry("claude", ProviderClaude, "anthropic-upstream"),
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses, ProtocolAnthropic},
 	}
@@ -60,14 +60,20 @@ func TestValidateConfigRejectsCompetingAuthEntriesAndUnsafeServingInputs(t *test
 		{name: "unsupported provider", mutate: func(cfg *Config) { cfg.AuthEntries[0].Provider = Provider("gemini") }},
 		{name: "duplicate auth id", mutate: func(cfg *Config) { cfg.AuthEntries[1].ID = cfg.AuthEntries[0].ID }},
 		{name: "second codex selector entry", mutate: func(cfg *Config) {
-			cfg.AuthEntries = append(cfg.AuthEntries, AuthEntry{
-				ID: "codex-backup", Provider: ProviderCodex, Purpose: testPurpose("openai-backup"),
-			})
+			cfg.AuthEntries = append(cfg.AuthEntries, testAuthEntry(
+				"codex-backup", ProviderCodex, "openai-backup",
+			))
 		}},
 		{name: "second claude selector entry", mutate: func(cfg *Config) {
-			cfg.AuthEntries = append(cfg.AuthEntries, AuthEntry{
-				ID: "claude-backup", Provider: ProviderClaude, Purpose: testPurpose("anthropic-backup"),
-			})
+			cfg.AuthEntries = append(cfg.AuthEntries, testAuthEntry(
+				"claude-backup", ProviderClaude, "anthropic-backup",
+			))
+		}},
+		{name: "missing allowed HTTPS origin", mutate: func(cfg *Config) {
+			cfg.AuthEntries[0].AllowedHTTPSOrigin = ""
+		}},
+		{name: "non-HTTPS allowed origin", mutate: func(cfg *Config) {
+			cfg.AuthEntries[0].AllowedHTTPSOrigin = "http://upstream.invalid"
 		}},
 		{name: "duplicate protocol", mutate: func(cfg *Config) {
 			cfg.Protocols = append(cfg.Protocols, ProtocolOpenAIResponses)
@@ -198,7 +204,7 @@ func TestLeaseTransportAcquiresPerAttemptAndOwnsCredentialHeadersAfterExecutorSh
 	}}
 	capture := &captureRoundTripper{}
 	provider, err := newLeaseRoundTripperProvider(
-		[]AuthEntry{{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")}},
+		[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
 		broker,
 		capture,
 	)
@@ -259,6 +265,91 @@ func TestLeaseTransportAcquiresPerAttemptAndOwnsCredentialHeadersAfterExecutorSh
 	}
 }
 
+func TestLeaseTransportRejectsCrossOriginRedirectBeforeSecondBrokerLookupOrUpstreamEffect(t *testing.T) {
+	t.Parallel()
+
+	broker := &sequenceBroker{leases: []OAuthBearerLease{
+		validLease("first-lease", nil),
+		validLease("must-not-be-read", nil),
+	}}
+	upstream := &redirectRoundTripper{location: "https://untrusted.invalid/next"}
+	provider, err := newLeaseRoundTripperProvider(
+		[]AuthEntry{{
+			ID:                 "codex",
+			Provider:           ProviderCodex,
+			Purpose:            testPurpose("openai-upstream"),
+			AllowedHTTPSOrigin: "https://upstream.invalid",
+		}},
+		broker,
+		upstream,
+	)
+	if err != nil {
+		t.Fatalf("newLeaseRoundTripperProvider() error = %v", err)
+	}
+
+	client := &http.Client{Transport: provider.RoundTripperFor(&coreauth.Auth{
+		ID: "codex", Provider: string(ProviderCodex),
+	})}
+	response, err := client.Get("https://upstream.invalid/v1/responses")
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("cross-origin redirect completed, want rejection before a second request-auth lookup")
+	}
+	if got := len(broker.purposes()); got != 1 {
+		t.Fatalf("request-auth lookups = %d, want 1", got)
+	}
+	if got := len(upstream.requests()); got != 1 {
+		t.Fatalf("upstream effects = %d, want 1", got)
+	}
+}
+
+func TestLeaseTransportReauthorizesSameOriginRedirectAtTheFinalTransport(t *testing.T) {
+	t.Parallel()
+
+	broker := &sequenceBroker{leases: []OAuthBearerLease{
+		validLease("first-lease", nil),
+		validLease("second-lease", nil),
+	}}
+	upstream := &redirectRoundTripper{location: "https://upstream.invalid/v1/redirected"}
+	provider, err := newLeaseRoundTripperProvider(
+		[]AuthEntry{{
+			ID:                 "codex",
+			Provider:           ProviderCodex,
+			Purpose:            testPurpose("openai-upstream"),
+			AllowedHTTPSOrigin: "https://upstream.invalid",
+		}},
+		broker,
+		upstream,
+	)
+	if err != nil {
+		t.Fatalf("newLeaseRoundTripperProvider() error = %v", err)
+	}
+
+	client := &http.Client{Transport: provider.RoundTripperFor(&coreauth.Auth{
+		ID: "codex", Provider: string(ProviderCodex),
+	})}
+	response, err := client.Get("https://upstream.invalid/v1/responses")
+	if err != nil {
+		t.Fatalf("same-origin redirect failed: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("same-origin redirected status = %d, want 200", response.StatusCode)
+	}
+	if got := len(broker.purposes()); got != 2 {
+		t.Fatalf("request-auth lookups = %d, want 2", got)
+	}
+	requests := upstream.requests()
+	if len(requests) != 2 {
+		t.Fatalf("upstream effects = %d, want 2", len(requests))
+	}
+	if got := requests[1].Header.Get("Authorization"); got != "Bearer second-lease" {
+		t.Fatalf("same-origin redirect authorization = %q, want current second lease", got)
+	}
+}
+
 func TestLeaseTransportRejectsInvalidAuthoritativeHeaderProjectionWithoutUpstreamEffect(t *testing.T) {
 	t.Parallel()
 
@@ -286,7 +377,7 @@ func TestLeaseTransportRejectsInvalidAuthoritativeHeaderProjectionWithoutUpstrea
 			capture := &captureRoundTripper{}
 			broker := &sequenceBroker{leases: []OAuthBearerLease{tc.lease}}
 			provider, err := newLeaseRoundTripperProvider(
-				[]AuthEntry{{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")}},
+				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
 				broker,
 				capture,
 			)
@@ -331,7 +422,7 @@ func TestLeaseTransportOwnsExactlyOneBodySafeRetryAfterCurrentnessChanged(t *tes
 			}
 			upstream := &statusRoundTripper{statuses: []int{http.StatusUnauthorized, http.StatusOK}}
 			provider, err := newLeaseRoundTripperProvider(
-				[]AuthEntry{{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")}},
+				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
 				broker,
 				upstream,
 			)
@@ -363,6 +454,74 @@ func TestLeaseTransportOwnsExactlyOneBodySafeRetryAfterCurrentnessChanged(t *tes
 	}
 }
 
+func TestLeaseTransportDoesNotReplayDeniedOrTimedOutAuthFailureReports(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name          string
+		outcome       RequestAuthFailureOutcome
+		reportFailure error
+	}{
+		{
+			name:    "denied",
+			outcome: RequestAuthFailureOutcome{Status: FailureStatusDenied},
+		},
+		{
+			name:          "request-auth deadline",
+			reportFailure: context.DeadlineExceeded,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			broker := &sequenceBroker{
+				leases: []OAuthBearerLease{
+					validLease("member-a", nil),
+					validLease("must-not-be-read", nil),
+				},
+				authOutcomes: []RequestAuthFailureOutcome{testCase.outcome},
+				authErrors:   []error{testCase.reportFailure},
+			}
+			upstream := &statusRoundTripper{statuses: []int{http.StatusUnauthorized, http.StatusOK}}
+			provider, err := newLeaseRoundTripperProvider(
+				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
+				broker,
+				upstream,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := http.NewRequest(http.MethodPost, "https://upstream.invalid/v1/responses", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := provider.RoundTripperFor(&coreauth.Auth{ID: "codex", Provider: "codex"}).RoundTrip(request)
+			if err != nil {
+				t.Fatalf("RoundTrip() error = %v", err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want original 401", response.StatusCode)
+			}
+			if got := len(upstream.requests()); got != 1 {
+				t.Fatalf("upstream effects = %d, want exactly 1", got)
+			}
+			if got := len(broker.purposes()); got != 1 {
+				t.Fatalf("request-auth lookups = %d, want exactly 1", got)
+			}
+			if got := len(broker.authFailures); got != 1 {
+				t.Fatalf("auth-failure reports = %d, want exactly 1", got)
+			}
+		})
+	}
+}
+
+func TestParseRetryAfterMSRejectsOverflowingIntegerSeconds(t *testing.T) {
+	t.Parallel()
+
+	if got := parseRetryAfterMS("9223372036854775807", time.Unix(0, 0)); got != nil {
+		t.Fatalf("parseRetryAfterMS() = %d, want nil for overflowing seconds", *got)
+	}
+}
+
 func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 	t.Parallel()
 
@@ -386,7 +545,7 @@ func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 			broker := &sequenceBroker{leases: []OAuthBearerLease{validLease("member-a", nil)}}
 			upstream := &statusRoundTripper{statuses: []int{testCase.status}}
 			provider, err := newLeaseRoundTripperProvider(
-				[]AuthEntry{{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")}},
+				[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
 				broker,
 				upstream,
 			)
@@ -425,7 +584,7 @@ func TestLeaseTransportNeverRetriesQuotaOrUnsafeAuthBody(t *testing.T) {
 		}
 		upstream := &statusRoundTripper{statuses: []int{http.StatusUnauthorized}}
 		provider, err := newLeaseRoundTripperProvider(
-			[]AuthEntry{{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")}},
+			[]AuthEntry{testLeaseAuthEntry("codex", ProviderCodex, "openai-upstream")},
 			broker,
 			upstream,
 		)
@@ -508,6 +667,7 @@ type sequenceBroker struct {
 	next          int
 	err           error
 	authOutcomes  []RequestAuthFailureOutcome
+	authErrors    []error
 	authFailures  []ConnectedAccountAuthFailureRequest
 	quotaFailures []ConnectedAccountQuotaFailureRequest
 }
@@ -517,6 +677,9 @@ func (b *sequenceBroker) ReportAuthFailure(_ context.Context, request ConnectedA
 	defer b.mu.Unlock()
 	b.authFailures = append(b.authFailures, request)
 	index := len(b.authFailures) - 1
+	if index < len(b.authErrors) && b.authErrors[index] != nil {
+		return RequestAuthFailureOutcome{}, b.authErrors[index]
+	}
 	if index < len(b.authOutcomes) {
 		return b.authOutcomes[index], nil
 	}
@@ -561,6 +724,23 @@ type statusRoundTripper struct {
 	statuses []int
 }
 
+type redirectRoundTripper struct {
+	captureRoundTripper
+	location string
+}
+
+func (s *redirectRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := s.captureRoundTripper.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	if len(s.requests()) == 1 {
+		response.StatusCode = http.StatusFound
+		response.Header.Set("Location", s.location)
+	}
+	return response, nil
+}
+
 func (s *statusRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := s.captureRoundTripper.RoundTrip(request)
 	if err != nil {
@@ -600,4 +780,26 @@ func testPurpose(localPurpose string) QualifiedPurpose {
 		},
 		Purpose: localPurpose,
 	}
+}
+
+func testAuthEntry(id string, provider Provider, purpose string) AuthEntry {
+	allowedHTTPSOrigin := "https://upstream.invalid"
+	switch provider {
+	case ProviderCodex:
+		allowedHTTPSOrigin = "https://chatgpt.com"
+	case ProviderClaude:
+		allowedHTTPSOrigin = "https://api.anthropic.com"
+	}
+	return AuthEntry{
+		ID:                 id,
+		Provider:           provider,
+		Purpose:            testPurpose(purpose),
+		AllowedHTTPSOrigin: allowedHTTPSOrigin,
+	}
+}
+
+func testLeaseAuthEntry(id string, provider Provider, purpose string) AuthEntry {
+	entry := testAuthEntry(id, provider, purpose)
+	entry.AllowedHTTPSOrigin = "https://upstream.invalid"
+	return entry
 }

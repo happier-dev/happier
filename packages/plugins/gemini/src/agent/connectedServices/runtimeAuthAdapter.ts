@@ -1,5 +1,3 @@
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -13,12 +11,14 @@ function text(value: unknown): string | null {
 function exactTarget(selectionValue: unknown) {
   const selection = record(selectionValue);
   if (!selection || selection.serviceId !== 'gemini') return null;
-  const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(selection.credentialRevision);
-  if (!revision.success) return null;
+  const revision = typeof selection.credentialRevision === 'string' && selection.credentialRevision.length > 0
+    ? selection.credentialRevision
+    : null;
+  if (revision === null) return null;
   if (selection.kind === 'profile') {
     const profileId = text(selection.profileId);
     return profileId ? {
-      serviceId: 'gemini', profileId, groupId: null, groupGeneration: null, credentialRevision: revision.data,
+      serviceId: 'gemini', profileId, groupId: null, groupGeneration: null, credentialRevision: revision,
     } : null;
   }
   if (selection.kind !== 'group') return null;
@@ -28,7 +28,7 @@ function exactTarget(selectionValue: unknown) {
     ? selection.generation
     : null;
   return profileId && groupId && groupGeneration !== null ? {
-    serviceId: 'gemini', profileId, groupId, groupGeneration, credentialRevision: revision.data,
+    serviceId: 'gemini', profileId, groupId, groupGeneration, credentialRevision: revision,
   } : null;
 }
 

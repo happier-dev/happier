@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 
 import {
-  defineConnectedServiceAuthMaterialization,
-  readConnectedServiceCredentialRecord,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  defineAuthMaterialization as defineConnectedServiceAuthMaterialization,
+  parseCredentialRecord as readConnectedServiceCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { importGeminiChatSessionForResume } from '../../connectedServices/chatSessionFiles.js';
 
@@ -97,7 +97,10 @@ function resolveGoogleGenAiConnectedServiceTokenEnv(options: Readonly<{
 
 export const readGeminiConnectedServiceId:
   (selection: unknown) => GeminiConnectedServiceId | null = geminiAuthMaterialization.readConnectedServiceId;
-export const createGeminiAuthMaterializationInput = geminiAuthMaterialization.createAuthMaterializationInput;
+export const createGeminiAuthMaterializationInput: <TRecord>(
+  serviceId: GeminiConnectedServiceId,
+  record: TRecord,
+) => Readonly<Record<string, TRecord>> = geminiAuthMaterialization.createAuthMaterializationInput;
 
 export async function materializeGeminiAuthEnvironment(
   input: Readonly<Record<string, unknown>>,

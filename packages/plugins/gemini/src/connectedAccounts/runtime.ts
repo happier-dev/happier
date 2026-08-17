@@ -1,13 +1,15 @@
 import type {
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 const API_KEY_CREDENTIAL_KEY = 'apiKey';
 const SERVICE_ACCOUNT_CREDENTIAL_KEY = 'serviceAccountJson';
 const SERVICE_ACCOUNT_FILE_ID = 'google-service-account.json';
 const GEMINI_API_ORIGIN = 'https://generativelanguage.googleapis.com';
+
+type ConnectedAccountCredentialReader =
+  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 type GeminiServiceAccount = Readonly<{
   type: 'service_account';
@@ -49,7 +51,7 @@ function parseServiceAccount(value: string): GeminiServiceAccount | null {
 }
 
 async function readCredential(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   key: string,
 ): Promise<string> {
   return (await credentials.get(key))?.trim() ?? '';
@@ -57,7 +59,7 @@ async function readCredential(
 
 async function readHealth(
   modeId: string,
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
 ): Promise<PluginConnectedAccountHealthResult> {
   if (modeId === 'api-key') {
     return await readCredential(credentials, API_KEY_CREDENTIAL_KEY)

@@ -10,32 +10,28 @@ describe('OpenAiRealtimeSettingsV1Schema', () => {
     const settings = OpenAiRealtimeSettingsV1Schema.parse({});
     expect(settings).toEqual(OPENAI_REALTIME_DEFAULT_SETTINGS);
     expect(settings.model.kind).toBe('pinned');
-    expect(settings.authentication).toEqual({ source: 'voice_saved_secret' });
+    expect(settings).not.toHaveProperty('authentication');
     expect(JSON.stringify(settings)).not.toMatch(/sk-[A-Za-z0-9]|accessToken|refreshToken|credentialValue/iu);
   });
 
-  it('stores only the canonical OpenAI purpose source and strips the released V2 binding shape', () => {
+  it('accepts released authentication shapes only at ingress and removes them from runtime settings', () => {
     expect(OpenAiRealtimeSettingsV1Schema.parse({
       authentication: {
         source: 'connected_service_api_key',
         binding: { source: 'connected', selection: 'profile', profileId: 'work' },
       },
-    }).authentication).toEqual({
-      source: 'connected_service_api_key',
-    });
+    })).not.toHaveProperty('authentication');
     expect(OpenAiRealtimeSettingsV1Schema.parse({
       authentication: {
         source: 'connected_service_oauth',
       },
-    }).authentication).toEqual({
-      source: 'connected_service_oauth',
-    });
-    expect(OpenAiRealtimeSettingsV1Schema.safeParse({
+    })).not.toHaveProperty('authentication');
+    expect(OpenAiRealtimeSettingsV1Schema.parse({
       authentication: {
         source: 'connected_service_oauth',
         binding: { source: 'connected', selection: 'group', groupId: 'codex-pool' },
       },
-    }).success).toBe(false);
+    })).not.toHaveProperty('authentication');
     expect(OpenAiRealtimeSettingsV1Schema.safeParse({
       authentication: {
         source: 'connected_service_oauth',

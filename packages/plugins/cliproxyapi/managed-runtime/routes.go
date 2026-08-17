@@ -1,6 +1,7 @@
 package managedruntime
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 
@@ -135,4 +136,46 @@ func StrictServingMiddleware(routes map[Route]struct{}) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// StrictDownstreamBearerMiddleware owns the wrapper's model-serving loopback
+// credential contract. The embedded SDK has a broader compatibility parser,
+// but the managed gateway deliberately accepts only its exact bearer form.
+func StrictDownstreamBearerMiddleware(downstreamBearer string) gin.HandlerFunc {
+	expectedAuthorization := "Bearer " + downstreamBearer
+	return func(c *gin.Context) {
+		request := c.Request
+		if request == nil || hasAlternateDownstreamCredentialSource(request) {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+
+		authorizations := request.Header.Values("Authorization")
+		if len(authorizations) == 0 && request.URL != nil && request.URL.Path == "/healthz" &&
+			(request.Method == http.MethodGet || request.Method == http.MethodHead) {
+			c.Next()
+			return
+		}
+		if len(authorizations) != 1 || subtle.ConstantTimeCompare(
+			[]byte(authorizations[0]),
+			[]byte(expectedAuthorization),
+		) != 1 {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Next()
+	}
+}
+
+func hasAlternateDownstreamCredentialSource(request *http.Request) bool {
+	if len(request.Header.Values("X-Goog-Api-Key")) != 0 || len(request.Header.Values("X-Api-Key")) != 0 {
+		return true
+	}
+	if request.URL == nil {
+		return false
+	}
+	query := request.URL.Query()
+	_, hasKey := query["key"]
+	_, hasAuthToken := query["auth_token"]
+	return hasKey || hasAuthToken
 }

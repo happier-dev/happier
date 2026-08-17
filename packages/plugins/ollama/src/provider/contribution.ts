@@ -1,4 +1,4 @@
-import type { ProviderContributionV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
 
 const OLLAMA_LOCAL_ORIGINS = [
   'http://127.0.0.1:11434',
@@ -53,6 +53,14 @@ export const OLLAMA_PROVIDER_CONTRIBUTION = {
     manualModelPolicy: 'allowed',
     probes: [{ endpointTemplateId: 'ollama-native', path: '/api/tags', parser: 'ollama-tags' }],
   },
+  managedRuntime: {
+    kind: 'managed',
+    endpointTemplateIds: [
+      'ollama-native',
+      'ollama-openai-chat',
+      'ollama-openai-responses',
+    ],
+  },
   discovery: {
     v: 1,
     listener: {
@@ -69,6 +77,5 @@ export const OLLAMA_PROVIDER_CONTRIBUTION = {
       parser: 'ollama-list-table',
       endpointEnvName: 'OLLAMA_HOST',
     },
-    managedStart: { lookupNames: ['ollama'], fixedArgs: ['serve'] },
   },
 } satisfies ProviderContributionV1;

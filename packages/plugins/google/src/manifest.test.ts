@@ -1,16 +1,62 @@
-import { ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Google voice plugin manifest', () => {
   it('declares the public daemon speech facet consumed by the Voice host', () => {
-    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(PLUGIN_MANIFEST.contributes.voiceProviders).toEqual([expect.objectContaining({
-      id: 'speech',
-      kind: 'speech',
-      roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
-    })]);
+    expect(parsePluginManifest(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders).toEqual([
+      expect.objectContaining({
+        id: 'gemini-stt',
+        kind: 'speech',
+        roles: ['dictation_stt', 'conversation_stt'],
+        catalogs: [{ kind: 'models', settingFieldId: 'model', allowCustom: true }],
+        limits: { transcribe: { maxInputBytes: 8 * 1024 * 1024 } },
+      }),
+      expect.objectContaining({
+        id: 'google-cloud-tts',
+        kind: 'speech',
+        roles: ['conversation_tts'],
+        settings: expect.objectContaining({
+          readiness: [{ kind: 'setting_nonempty', settingId: 'voiceName' }],
+        }),
+        catalogs: [{ kind: 'voices', settingFieldId: 'voiceName', allowCustom: true }],
+        limits: { synthesize: { maxInputCharacters: 1_666, maxOutputBytes: 3_000_000 } },
+      }),
+    ]);
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders.map((contribution) => ({
+      id: contribution.id,
+      purpose: contribution.credentials?.slot.purpose,
+      rawGrants: contribution.credentials?.sources[0]?.rawGrants,
+    }))).toEqual([
+      {
+        id: 'gemini-stt',
+        purpose: 'voice.speech.transcribe',
+        rawGrants: [{
+          realm: 'daemon',
+          phase: 'speech',
+          request: {
+            kind: 'httpHeaders',
+            origin: 'https://generativelanguage.googleapis.com',
+            headerNames: ['x-goog-api-key'],
+          },
+        }],
+      },
+      {
+        id: 'google-cloud-tts',
+        purpose: 'voice.speech.synthesize',
+        rawGrants: [{
+          realm: 'daemon',
+          phase: 'speech',
+          request: {
+            kind: 'httpHeaders',
+            origin: 'https://texttospeech.googleapis.com',
+            headerNames: ['x-goog-api-key'],
+          },
+        }],
+      },
+    ]);
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('voiceSpeechEngines');
   });
 
@@ -21,7 +67,7 @@ describe('Google voice plugin manifest', () => {
 
   it('does not advertise generic settings that the executable voice path cannot consume safely', () => {
     expect(PLUGIN_MANIFEST.contributes.settings).toBeUndefined();
-    expect(PLUGIN_MANIFEST.contributes.voiceProviders).toHaveLength(1);
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders).toHaveLength(2);
   });
 
   it('does not retain the private voice-agent declaration', () => {
@@ -29,6 +75,10 @@ describe('Google voice plugin manifest', () => {
     expect(serialized).not.toContain('voice.agent.v1');
     expect(serialized).not.toContain('google_gemini');
     expect(serialized).not.toContain('google_cloud');
+    expect(serialized).not.toContain('speechProviderIds');
+    expect(serialized).not.toContain('catalogProviders');
+    expect(serialized).not.toContain('speechTarget');
+    expect(serialized).not.toContain('schemas');
   });
 
   it('owns the Google speech processing disclosure in its UI locale contribution', () => {

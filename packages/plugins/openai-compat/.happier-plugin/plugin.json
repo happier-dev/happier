@@ -1,0 +1,359 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [
+      {
+        "credentials": {
+          "requirement": {
+            "kind": "optional"
+          },
+          "slot": {
+            "id": "api_key",
+            "purpose": "voice.speech.transcribe",
+            "title": "OpenAI-compatible STT API key"
+          },
+          "sources": [
+            {
+              "kind": "savedSecret",
+              "rawGrants": [
+                {
+                  "phase": "speech",
+                  "realm": "daemon",
+                  "request": {
+                    "keys": [
+                      "HAPPIER_VOICE_OPENAI_COMPAT_STT_API_KEY"
+                    ],
+                    "kind": "environment"
+                  }
+                }
+              ],
+              "secretKinds": [
+                "apiKey"
+              ]
+            }
+          ]
+        },
+        "id": "stt",
+        "kind": "speech",
+        "limits": {
+          "transcribe": {
+            "maxInputBytes": 8388608
+          }
+        },
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "roles": [
+          "dictation_stt",
+          "conversation_stt"
+        ],
+        "settings": {
+          "fields": [
+            {
+              "default": "",
+              "id": "baseUrl",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 2048,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Transcription endpoint"
+            },
+            {
+              "default": "",
+              "id": "insecureLocalOriginConsent",
+              "presentation": {
+                "control": "text",
+                "hidden": true
+              },
+              "schema": {
+                "maxLength": 512,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Confirmed insecure local origin"
+            },
+            {
+              "default": "",
+              "id": "insecureLocalConsentMachineId",
+              "presentation": {
+                "control": "text",
+                "hidden": true
+              },
+              "schema": {
+                "maxLength": 512,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Confirmed insecure local machine"
+            },
+            {
+              "default": "whisper-1",
+              "id": "model",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": "Model"
+            },
+            {
+              "default": "",
+              "id": "language",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 64,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Language"
+            }
+          ],
+          "privacyDisclosure": {
+            "fallback": "Audio and text are sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
+            "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompat"
+          },
+          "readiness": [
+            {
+              "kind": "setting_nonempty",
+              "settingId": "baseUrl"
+            }
+          ],
+          "schemaVersion": 2
+        },
+        "title": "OpenAI-compatible Speech-to-Text"
+      },
+      {
+        "credentials": {
+          "requirement": {
+            "kind": "optional"
+          },
+          "slot": {
+            "id": "api_key",
+            "purpose": "voice.speech.synthesize",
+            "title": "OpenAI-compatible TTS API key"
+          },
+          "sources": [
+            {
+              "kind": "savedSecret",
+              "rawGrants": [
+                {
+                  "phase": "speech",
+                  "realm": "daemon",
+                  "request": {
+                    "keys": [
+                      "HAPPIER_VOICE_OPENAI_COMPAT_TTS_API_KEY"
+                    ],
+                    "kind": "environment"
+                  }
+                }
+              ],
+              "secretKinds": [
+                "apiKey"
+              ]
+            }
+          ]
+        },
+        "id": "tts",
+        "kind": "speech",
+        "limits": {
+          "synthesize": {
+            "maxInputCharacters": 200000,
+            "maxOutputBytes": 33554432
+          }
+        },
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "roles": [
+          "conversation_tts"
+        ],
+        "settings": {
+          "fields": [
+            {
+              "default": "",
+              "id": "baseUrl",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 2048,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Speech endpoint"
+            },
+            {
+              "default": "",
+              "id": "insecureLocalOriginConsent",
+              "presentation": {
+                "control": "text",
+                "hidden": true
+              },
+              "schema": {
+                "maxLength": 512,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Confirmed insecure local origin"
+            },
+            {
+              "default": "",
+              "id": "insecureLocalConsentMachineId",
+              "presentation": {
+                "control": "text",
+                "hidden": true
+              },
+              "schema": {
+                "maxLength": 512,
+                "minLength": 0,
+                "type": "string"
+              },
+              "title": "Confirmed insecure local machine"
+            },
+            {
+              "default": "tts-1",
+              "id": "model",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": "Model"
+            },
+            {
+              "default": "alloy",
+              "id": "voiceName",
+              "presentation": {
+                "control": "text"
+              },
+              "schema": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": "Voice"
+            },
+            {
+              "default": "mp3",
+              "id": "format",
+              "presentation": {
+                "control": "select",
+                "options": [
+                  {
+                    "title": "MP3",
+                    "value": "mp3"
+                  },
+                  {
+                    "title": "WAV",
+                    "value": "wav"
+                  }
+                ]
+              },
+              "schema": {
+                "enum": [
+                  "mp3",
+                  "wav"
+                ],
+                "type": "string"
+              },
+              "title": "Audio format"
+            }
+          ],
+          "privacyDisclosure": {
+            "fallback": "Audio and text are sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
+            "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompat"
+          },
+          "readiness": [
+            {
+              "kind": "setting_nonempty",
+              "settingId": "baseUrl"
+            }
+          ],
+          "schemaVersion": 2
+        },
+        "title": "OpenAI-compatible Text-to-Speech"
+      }
+    ],
+    "webhooks": []
+  },
+  "description": "Batch speech-to-text and text-to-speech through a selected-machine OpenAI-compatible endpoint.",
+  "displayName": "OpenAI-compatible Speech",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js",
+    "development": "./src/index.ts"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.voice.openai-compat",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

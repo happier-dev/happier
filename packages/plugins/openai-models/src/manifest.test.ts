@@ -28,7 +28,7 @@ describe('OpenAI provider plugin manifest', () => {
 
   it('keeps providers delegated to the first-class provider domain without runtime registration', () => {
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
-    expect(family).toMatchObject({ identityKind: 'delegatedDomain', stability: 'delegated', disposition: 'delegated', activationDemand: 'none', allowedRuntimeRegistration: null });
+    expect(family).toMatchObject({ identityKind: 'delegatedDomain', stability: 'delegated', disposition: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' });
     expect(family?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({ localId: null, stability: 'delegated', registration: 'notRequired' });
   });
 });

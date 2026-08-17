@@ -12,7 +12,6 @@ const ManagedHealthIdentityVersion = 1
 
 type RuntimeIdentity struct {
 	WrapperBuildVersion string
-	MaterializationID   string
 }
 
 type ManagedHealthIdentity struct {
@@ -23,7 +22,6 @@ type ManagedHealthIdentity struct {
 	Protocols           []ProviderProtocol `json:"protocols"`
 	Purposes            []QualifiedPurpose `json:"purposes"`
 	ModelListEnabled    bool               `json:"modelListEnabled"`
-	MaterializationID   string             `json:"materializationId"`
 }
 
 func (identity RuntimeIdentity) validate() error {
@@ -31,13 +29,6 @@ func (identity RuntimeIdentity) validate() error {
 		identity.WrapperBuildVersion,
 		128,
 		"wrapper build version",
-	); err != nil {
-		return err
-	}
-	if err := validateBoundedIdentity(
-		identity.MaterializationID,
-		256,
-		"materialization id",
 	); err != nil {
 		return err
 	}
@@ -67,17 +58,23 @@ func managedHealthIdentity(
 		Protocols:           append([]ProviderProtocol(nil), config.Protocols...),
 		Purposes:            purposes,
 		ModelListEnabled:    config.ModelListEnabled,
-		MaterializationID:   runtimeIdentity.MaterializationID,
 	}
 }
 
 // ManagedHealthIdentityMiddleware replaces the pinned SDK's status-only
 // /healthz body at the wrapper boundary. The SDK still owns route registration;
 // this middleware is the single wrapper-owned response for the allowed route.
-func ManagedHealthIdentityMiddleware(identity ManagedHealthIdentity) gin.HandlerFunc {
+func ManagedHealthIdentityMiddleware(
+	identity ManagedHealthIdentity,
+	modelsRegistered func() bool,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.URL.Path != "/healthz" {
 			c.Next()
+			return
+		}
+		if modelsRegistered == nil || !modelsRegistered() {
+			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}
 		switch c.Request.Method {

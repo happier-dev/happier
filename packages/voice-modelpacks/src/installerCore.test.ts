@@ -45,7 +45,7 @@ function runInstall(
 }
 
 describe('installModelPackWithHost (shared core)', () => {
-  it('binds resumable staging to plugin identity, version, and source digest', () => {
+  it('binds resumable staging to plugin identity, version, and exact artifact binding', () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const manifest = manifestFor([
       { path: 'model.onnx', url: 'https://example.com/model.onnx', sha256: sha256Hex(bytes), sizeBytes: bytes.length },
@@ -55,18 +55,24 @@ describe('installModelPackWithHost (shared core)', () => {
       pluginId: 'plugin.example',
       packId: manifest.packId,
       pluginVersion: '1.0.0',
-      sourceDigest: 'a'.repeat(64),
+      artifactBinding: {
+        kind: 'sourceIntegrity',
+        integrity: `sha512-${'a'.repeat(86)}==`,
+      },
     } as const;
 
     const original = deriveModelPackStagingPlan(manifest, source);
 
-    expect(deriveModelPackStagingPlan(manifest, { ...source, sourceDigest: 'b'.repeat(64) }).key).not.toBe(original.key);
+    expect(deriveModelPackStagingPlan(manifest, {
+      ...source,
+      artifactBinding: { kind: 'sourceIntegrity', integrity: `sha512-${'b'.repeat(86)}==` },
+    }).key).not.toBe(original.key);
     expect(deriveModelPackStagingPlan(manifest, { ...source, pluginVersion: '1.0.1' }).key).not.toBe(original.key);
     expect(deriveModelPackStagingPlan(manifest, { ...source, pluginId: 'plugin.other' }).key).not.toBe(original.key);
     expect(deriveModelPackStagingPlan(manifest, {
       ...source,
-      sourceDigest: `SHA256:${source.sourceDigest.toUpperCase()}`,
-    }).key).toBe(original.key);
+      artifactBinding: { kind: 'materialization', immutableGenerationId: 'generation-local-1' },
+    }).key).not.toBe(original.key);
   });
 
   it('rejects declared resource excess before staging or network I/O', async () => {

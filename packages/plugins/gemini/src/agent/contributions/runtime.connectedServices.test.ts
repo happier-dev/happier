@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
 

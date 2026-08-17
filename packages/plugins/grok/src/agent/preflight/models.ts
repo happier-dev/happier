@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 type GrokPreflightModel = Readonly<{
   id: string;
@@ -45,7 +45,7 @@ export function parseGrokModelsOutput(outputRaw: string): readonly GrokPreflight
 }
 
 export async function probeGrokPreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: Readonly<Record<string, string | undefined>>;

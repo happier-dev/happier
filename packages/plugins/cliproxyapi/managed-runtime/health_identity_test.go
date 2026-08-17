@@ -20,15 +20,14 @@ func TestManagedHealthIdentityMiddlewareReplacesSDKStatusWithExactTokenFreeLaunc
 		DownstreamBearer: "downstream-secret-must-not-leak",
 		RuntimeDir:       "/private/runtime-path-must-not-leak",
 		AuthEntries: []AuthEntry{
-			{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")},
-			{ID: "claude", Provider: ProviderClaude, Purpose: testPurpose("anthropic-upstream")},
+			testAuthEntry("codex", ProviderCodex, "openai-upstream"),
+			testAuthEntry("claude", ProviderClaude, "anthropic-upstream"),
 		},
 		Protocols:        []ProviderProtocol{ProtocolOpenAIResponses, ProtocolAnthropic},
 		ModelListEnabled: true,
 	}
 	identity := RuntimeIdentity{
 		WrapperBuildVersion: "1.2.3",
-		MaterializationID:   "materialization-current",
 	}
 	body := requestManagedHealthIdentity(t, config, identity, http.MethodGet)
 
@@ -44,7 +43,6 @@ func TestManagedHealthIdentityMiddlewareReplacesSDKStatusWithExactTokenFreeLaunc
 		"protocols",
 		"purposes",
 		"modelListEnabled",
-		"materializationId",
 	}
 	gotKeys := make([]string, 0, len(fields))
 	for key := range fields {
@@ -68,8 +66,7 @@ func TestManagedHealthIdentityMiddlewareReplacesSDKStatusWithExactTokenFreeLaunc
 			testPurpose("openai-upstream"),
 			testPurpose("anthropic-upstream"),
 		},
-		ModelListEnabled:  true,
-		MaterializationID: "materialization-current",
+		ModelListEnabled: true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("health identity = %#v, want %#v", got, want)
@@ -88,7 +85,46 @@ func TestManagedHealthIdentityMiddlewareReplacesSDKStatusWithExactTokenFreeLaunc
 	}
 }
 
-func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testing.T) {
+func TestManagedHealthIdentityWithholdsReadinessUntilTheConfiguredModelsRegister(t *testing.T) {
+	t.Parallel()
+
+	registered := false
+	identity := managedHealthIdentity(Config{
+		Host:             "127.0.0.1",
+		Port:             32123,
+		DownstreamBearer: "secret",
+		RuntimeDir:       "/private/runtime",
+		AuthEntries: []AuthEntry{
+			testAuthEntry("codex", ProviderCodex, "openai-upstream"),
+		},
+		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
+	}, testRuntimeIdentity())
+	router := gin.New()
+	router.Use(ManagedHealthIdentityMiddleware(identity, func() bool {
+		return registered
+	}))
+	router.GET("/healthz", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	notReady := httptest.NewRecorder()
+	router.ServeHTTP(notReady, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if notReady.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unregistered model health status = %d, want 503", notReady.Code)
+	}
+	if strings.Contains(notReady.Body.String(), identity.WrapperBuildVersion) {
+		t.Fatalf("unready health response disclosed launch identity: %s", notReady.Body.String())
+	}
+
+	registered = true
+	ready := httptest.NewRecorder()
+	router.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("registered model health status = %d, want 200", ready.Code)
+	}
+}
+
+func TestManagedHealthIdentityCarriesDiagnosticBuildLabelAndBindsServingFacts(t *testing.T) {
 	t.Parallel()
 
 	baseConfig := Config{
@@ -97,13 +133,12 @@ func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testi
 		DownstreamBearer: "secret",
 		RuntimeDir:       "/private/runtime",
 		AuthEntries: []AuthEntry{
-			{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")},
+			testAuthEntry("codex", ProviderCodex, "openai-upstream"),
 		},
 		Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 	}
 	baseIdentity := RuntimeIdentity{
 		WrapperBuildVersion: "1.2.3",
-		MaterializationID:   "materialization-current",
 	}
 	baseline := string(requestManagedHealthIdentity(
 		t,
@@ -117,11 +152,10 @@ func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testi
 		identity RuntimeIdentity
 	}{
 		{
-			name:   "wrong wrapper build",
+			name:   "different diagnostic wrapper build",
 			config: baseConfig,
 			identity: RuntimeIdentity{
 				WrapperBuildVersion: "1.2.2",
-				MaterializationID:   baseIdentity.MaterializationID,
 			},
 		},
 		{
@@ -138,7 +172,7 @@ func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testi
 			config: func() Config {
 				value := baseConfig
 				value.AuthEntries = []AuthEntry{
-					{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-other")},
+					testAuthEntry("codex", ProviderCodex, "openai-other"),
 				}
 				return value
 			}(),
@@ -153,14 +187,6 @@ func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testi
 			}(),
 			identity: baseIdentity,
 		},
-		{
-			name:   "wrong materialization",
-			config: baseConfig,
-			identity: RuntimeIdentity{
-				WrapperBuildVersion: baseIdentity.WrapperBuildVersion,
-				MaterializationID:   "materialization-old",
-			},
-		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -171,7 +197,7 @@ func TestManagedHealthIdentityBindsBuildConfigPurposeAndMaterialization(t *testi
 				http.MethodGet,
 			))
 			if got == baseline {
-				t.Fatalf("changed live launch fact did not change health identity: %s", got)
+				t.Fatalf("changed diagnostic or serving fact did not change health identity: %s", got)
 			}
 		})
 	}
@@ -188,13 +214,12 @@ func TestManagedHealthIdentityHeadHasNoBody(t *testing.T) {
 			DownstreamBearer: "secret",
 			RuntimeDir:       "/private/runtime",
 			AuthEntries: []AuthEntry{
-				{ID: "codex", Provider: ProviderCodex, Purpose: testPurpose("openai-upstream")},
+				testAuthEntry("codex", ProviderCodex, "openai-upstream"),
 			},
 			Protocols: []ProviderProtocol{ProtocolOpenAIResponses},
 		},
 		RuntimeIdentity{
 			WrapperBuildVersion: "1.2.3",
-			MaterializationID:   "materialization-current",
 		},
 		http.MethodHead,
 	)
@@ -203,7 +228,7 @@ func TestManagedHealthIdentityHeadHasNoBody(t *testing.T) {
 	}
 }
 
-func TestRuntimeIdentityRejectsMissingOrMalformedBuildAndMaterializationFacts(t *testing.T) {
+func TestRuntimeIdentityRejectsMissingOrMalformedBuildFact(t *testing.T) {
 	t.Parallel()
 
 	valid := testRuntimeIdentity()
@@ -211,23 +236,12 @@ func TestRuntimeIdentityRejectsMissingOrMalformedBuildAndMaterializationFacts(t 
 		t.Fatalf("valid runtime identity rejected: %v", err)
 	}
 	for _, invalid := range []RuntimeIdentity{
-		{MaterializationID: valid.MaterializationID},
+		{},
 		{
 			WrapperBuildVersion: " 1.2.3 ",
-			MaterializationID:   valid.MaterializationID,
 		},
 		{
 			WrapperBuildVersion: strings.Repeat("v", 129),
-			MaterializationID:   valid.MaterializationID,
-		},
-		{WrapperBuildVersion: valid.WrapperBuildVersion},
-		{
-			WrapperBuildVersion: valid.WrapperBuildVersion,
-			MaterializationID:   " materialization ",
-		},
-		{
-			WrapperBuildVersion: valid.WrapperBuildVersion,
-			MaterializationID:   strings.Repeat("m", 257),
 		},
 	} {
 		if err := invalid.validate(); err == nil {
@@ -239,7 +253,6 @@ func TestRuntimeIdentityRejectsMissingOrMalformedBuildAndMaterializationFacts(t 
 func testRuntimeIdentity() RuntimeIdentity {
 	return RuntimeIdentity{
 		WrapperBuildVersion: "1.2.3-test",
-		MaterializationID:   "materialization-test",
 	}
 }
 
@@ -253,6 +266,7 @@ func requestManagedHealthIdentity(
 	router := gin.New()
 	router.Use(ManagedHealthIdentityMiddleware(
 		managedHealthIdentity(config, identity),
+		func() bool { return true },
 	))
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

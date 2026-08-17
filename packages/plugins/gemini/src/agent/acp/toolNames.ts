@@ -1,7 +1,7 @@
 import {
   CHANGE_TITLE_TOOL_NAME_ALIASES,
-} from '@happier-dev/protocol/tools/v2';
-import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/sessions';
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const GEMINI_TOOL_NAME_INFERENCE = Object.freeze({
   preferLongestPattern: true,

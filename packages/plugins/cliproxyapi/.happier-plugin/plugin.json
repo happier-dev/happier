@@ -1,0 +1,233 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "cliproxyapi-openai-responses",
+              "parser": "openai-models",
+              "path": "/v1/models"
+            }
+          ],
+          "source": "probe"
+        },
+        "credential": {
+          "kind": "apiKey",
+          "required": false,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "cliproxyapi-http-bearer",
+              "protocols": [
+                "openai-chat",
+                "openai-responses",
+                "anthropic"
+              ],
+              "uses": [
+                "probe",
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "discovery": {
+          "availabilityProbe": {
+            "endpointTemplateId": "cliproxyapi-openai-responses",
+            "parser": "openai-models",
+            "path": "/v1/models"
+          },
+          "listener": {
+            "defaultPorts": [
+              8317
+            ],
+            "executableBasenames": [
+              "CLIProxyAPI",
+              "CLIProxyAPI.exe",
+              "cli-proxy-api",
+              "cli-proxy-api.exe"
+            ]
+          },
+          "v": 1
+        },
+        "endpointTemplates": [
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "cliproxyapi-openai-responses",
+            "localUrlCandidates": [
+              "http://127.0.0.1:8317/v1",
+              "http://localhost:8317/v1"
+            ],
+            "protocol": "openai-responses"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "cliproxyapi-openai-chat",
+            "localUrlCandidates": [
+              "http://127.0.0.1:8317/v1",
+              "http://localhost:8317/v1"
+            ],
+            "protocol": "openai-chat"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "cliproxyapi-anthropic",
+            "localUrlCandidates": [
+              "http://127.0.0.1:8317/",
+              "http://localhost:8317/"
+            ],
+            "protocol": "anthropic"
+          }
+        ],
+        "id": "cliproxyapi",
+        "kind": "aggregator",
+        "managedRuntime": {
+          "connectedAccounts": [
+            {
+              "materializationKinds": [
+                "httpHeaders"
+              ],
+              "purpose": "openai-upstream",
+              "required": false,
+              "service": {
+                "localId": "openai-codex",
+                "pluginId": "happier.agent.codex"
+              },
+              "title": "Use OpenAI upstream account"
+            },
+            {
+              "materializationKinds": [
+                "httpHeaders"
+              ],
+              "purpose": "anthropic-upstream",
+              "required": false,
+              "service": {
+                "localId": "claude-subscription",
+                "pluginId": "happier.agent.claude"
+              },
+              "title": "Use Anthropic upstream account"
+            }
+          ],
+          "endpointTemplateIds": [
+            "cliproxyapi-openai-responses",
+            "cliproxyapi-openai-chat",
+            "cliproxyapi-anthropic"
+          ],
+          "kind": "managed",
+          "requestAuthUses": [
+            {
+              "materialization": {
+                "headerNames": [
+                  "authorization",
+                  "chatgpt-account-id"
+                ],
+                "kind": "httpHeaders",
+                "origin": "https://chatgpt.com"
+              },
+              "purpose": "openai-upstream"
+            },
+            {
+              "materialization": {
+                "headerNames": [
+                  "authorization"
+                ],
+                "kind": "httpHeaders",
+                "origin": "https://api.anthropic.com"
+              },
+              "purpose": "anthropic-upstream"
+            }
+          ]
+        },
+        "name": "CLIProxyAPI",
+        "v": 1,
+        "websiteUrl": "https://github.com/router-for-me/CLIProxyAPI"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use models served by an external or locally detected CLIProxyAPI gateway.",
+  "displayName": "CLIProxyAPI",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.cliproxyapi",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

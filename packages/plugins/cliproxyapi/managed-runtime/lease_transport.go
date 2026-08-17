@@ -143,6 +143,9 @@ func (t *leaseRoundTripper) roundTrip(request *http.Request, allowAuthRetry bool
 	if request == nil {
 		return nil, fmt.Errorf("upstream request is missing")
 	}
+	if err := requireAllowedHTTPSOrigin(request.URL, t.entry.AllowedHTTPSOrigin); err != nil {
+		return nil, err
+	}
 	lease, err := t.broker.LookupRequestAuth(request.Context(), t.entry.Purpose)
 	if err != nil {
 		return nil, fmt.Errorf("request-auth lookup failed for managed purpose: %w", err)
@@ -236,12 +239,12 @@ func parseRetryAfterMS(value string, now time.Time) *int64 {
 		return nil
 	}
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		ms := seconds * 1000
 		const max = int64(7 * 24 * time.Hour / time.Millisecond)
-		if ms <= max {
-			return &ms
+		if seconds > max/1000 {
+			return nil
 		}
-		return nil
+		ms := seconds * 1000
+		return &ms
 	}
 	if date, err := http.ParseTime(value); err == nil {
 		ms := date.Sub(now).Milliseconds()

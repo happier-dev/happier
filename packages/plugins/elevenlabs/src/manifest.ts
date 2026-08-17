@@ -11,9 +11,8 @@ export const PLUGIN_MANIFEST = Object.freeze({
       title: 'ElevenLabs Voice',
       kind: 'conversation',
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
-      platforms: ['web'],
+      platforms: ['web', 'ios', 'android'],
       capabilities: {
-        readiness: { requirements: ['credential'] },
         turn: {
           cancelResponse: false,
           bargeIn: false,
@@ -69,18 +68,6 @@ export const PLUGIN_MANIFEST = Object.freeze({
                         { type: 'null' },
                       ],
                     },
-                    style: {
-                      anyOf: [
-                        { type: 'number', minimum: 0, maximum: 1 },
-                        { type: 'null' },
-                      ],
-                    },
-                    useSpeakerBoost: {
-                      anyOf: [
-                        { type: 'boolean' },
-                        { type: 'null' },
-                      ],
-                    },
                     speed: {
                       anyOf: [
                         { type: 'number', minimum: 0.7, maximum: 1.2 },
@@ -91,8 +78,6 @@ export const PLUGIN_MANIFEST = Object.freeze({
                   required: [
                     'stability',
                     'similarityBoost',
-                    'style',
-                    'useSpeakerBoost',
                     'speed',
                   ],
                   additionalProperties: false,
@@ -102,47 +87,90 @@ export const PLUGIN_MANIFEST = Object.freeze({
               additionalProperties: false,
             },
             default: {
-              voiceId: 'EST9Ui6982FZPSi7gCHi',
+              voiceId: 'hpp4J3VqNfWAUOO0d1Us',
               modelId: null,
               voiceSettings: {
                 stability: null,
                 similarityBoost: null,
-                style: null,
-                useSpeakerBoost: null,
                 speed: null,
               },
             },
             presentation: { control: 'json' },
           },
           {
-            id: 'byo',
-            title: 'Bring your own account configuration',
+            id: 'agentId',
+            title: 'ElevenLabs Agent ID',
             schema: {
-              type: 'object',
-              properties: {
-                agentId: {
-                  anyOf: [
-                    {
-                      type: 'string',
-                      minLength: 1,
-                      maxLength: 256,
-                      pattern: '^[A-Za-z0-9_-]+$',
-                    },
-                    { type: 'null' },
-                  ],
-                },
-              },
-              required: ['agentId'],
-              additionalProperties: false,
+              type: 'string',
+              minLength: 0,
+              maxLength: 256,
+              pattern: '^[A-Za-z0-9_-]*$',
             },
-            default: { agentId: null },
-            presentation: { control: 'json' },
+            default: '',
+            presentation: { control: 'text' },
+          },
+        ],
+        readiness: [{
+          kind: 'setting_nonempty',
+          settingId: 'agentId',
+          when: { settingId: 'billingMode', equals: 'byo' },
+        }],
+        actions: [
+          {
+            id: 'create-agent',
+            title: 'Create Happier Voice agent',
+            placement: { kind: 'afterField', fieldId: 'agentId' },
+            confirmation: {
+              kind: 'required',
+              title: 'Create ElevenLabs agent?',
+              description: 'Creates a Happier Voice agent and its client tools in the selected ElevenLabs account.',
+              confirmLabel: 'Create agent',
+            },
+            patchFieldIds: ['agentId'],
+          },
+          {
+            id: 'update-agent',
+            title: 'Update Happier Voice agent',
+            placement: { kind: 'afterField', fieldId: 'agentId' },
+            enabledWhen: { kind: 'setting_nonempty', settingId: 'agentId' },
+            confirmation: {
+              kind: 'required',
+              title: 'Update ElevenLabs agent?',
+              description: 'Reconciles the configured Happier Voice agent and its client tools in the selected ElevenLabs account.',
+              confirmLabel: 'Update agent',
+            },
+            patchFieldIds: ['agentId'],
           },
         ],
       },
-      accountMediation: {
-        credentialSlots: [{ id: 'api_key', scope: 'account' }],
-        operations: [
+      credentials: {
+        slot: {
+          id: 'api_key',
+          purpose: 'voice.client-auth.elevenlabs',
+          title: 'ElevenLabs API key',
+          description: 'Used only for BYO conversation authentication, voice catalogs, and explicit agent settings actions.',
+        },
+        requirement: {
+          kind: 'when_setting_equals',
+          settingId: 'billingMode',
+          value: 'byo',
+        },
+        sources: [{
+          kind: 'savedSecret',
+          secretKinds: ['apiKey'],
+          operationProjections: [
+            { kind: 'recipientCredential', operation: 'signed-url', phase: 'prepare', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'conversation-token', phase: 'prepare', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'voices', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'agents', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'tools', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'create-tool', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'update-tool', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'create-agent', phase: 'settings', format: 'raw' },
+            { kind: 'recipientCredential', operation: 'update-agent', phase: 'settings', format: 'raw' },
+          ],
+        }],
+        hostMediated: { operations: [
           {
             id: 'signed-url',
             purpose: 'voice.client-auth.signed-url',
@@ -243,8 +271,14 @@ export const PLUGIN_MANIFEST = Object.freeze({
               contentTypes: [],
             },
             parameters: {
-              schema: { type: 'object', properties: {}, additionalProperties: false },
-              mapping: [],
+              schema: {
+                type: 'object',
+                properties: {
+                  cursor: { type: 'string', minLength: 1, maxLength: 512 },
+                },
+                additionalProperties: false,
+              },
+              mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
             },
             response: { maxBytes: 2097152, contentTypes: ['application/json'] },
           },
@@ -413,13 +447,13 @@ export const PLUGIN_MANIFEST = Object.freeze({
             },
             response: { maxBytes: 2097152, contentTypes: ['application/json'] },
           },
-        ],
+        ] },
       },
       client: {
         artifactId: 'voice-runtime',
         modulePath: './voiceRuntime',
         exportName: 'activate',
       },
-    } satisfies import('@happier-dev/protocol').PluginVoiceProviderContributionV1],
+    }],
   },
-});
+} satisfies import('@happier-dev/plugin-sdk/manifest').PluginManifest);

@@ -18,12 +18,16 @@ import {
   assertVoiceModelPackDeclaredResourcesV1,
   type VoiceModelPackResourcePolicyV1,
 } from './resourcePolicy.js';
+import {
+  parseVoiceModelPackArtifactBindingV1,
+  voiceModelPackArtifactBindingsEqualV1,
+  type VoiceModelPackArtifactBindingV1,
+} from './artifactBinding.js';
 import type { ModelPackUrlPolicy } from './urlPolicy.js';
 import { voiceModelPackSha256DigestsEqualV1 } from './sha256Digest.js';
 
 const IDENTITY_DOMAIN_V1 = utf8ToBytes('happier.voice.model-pack.v1\0');
 const MANIFEST_DIGEST_DOMAIN_V1 = utf8ToBytes('happier.voice.model-pack.manifest.v1\0');
-const SHA256_DIGEST = /^(?:sha256:)?[0-9a-f]{64}$/i;
 const INVALID_OWN_DATA_SNAPSHOT = Symbol('invalid_own_data_snapshot');
 
 function snapshotOwnJsonData(
@@ -132,7 +136,7 @@ export type { VoiceModelPackIdentityV1 } from '@happier-dev/protocol';
 export type InstalledPluginVoiceModelPackSourceV1 = Readonly<{
   pluginId: string;
   pluginVersion: string;
-  pluginSourceDigest: string;
+  artifactBinding: VoiceModelPackArtifactBindingV1;
   enabled: boolean;
   authorization: PluginFinalPolicyDecision;
   grantedNetworkOrigins: readonly string[];
@@ -159,8 +163,8 @@ export type VoiceModelPackLicenseAcceptanceV1 = VoiceModelPackLicenseScopeV1 & R
   licenseId: string;
   licenseSourceUrl: string;
   licenseTextDigest: string;
-  /** Binds acceptance to the immutable installed-plugin artifact that declared the pack. */
-  artifactDigest: string;
+  /** Exact source-integrity or local-materialization custody of the declared pack. */
+  artifactBinding: VoiceModelPackArtifactBindingV1;
 }>;
 
 const LICENSE_TEXT_DIGEST_DOMAIN_V1 = utf8ToBytes('happier.voice.model-pack.license-text.v1\0');
@@ -175,18 +179,18 @@ type ParsedVoiceModelPackDescriptorV1 = Readonly<{
   identity: VoiceModelPackIdentityV1;
   directoryKey: string;
   pluginVersion: string;
-  sourceDigest: string;
+  artifactBinding: VoiceModelPackArtifactBindingV1;
   grantedNetworkOrigins: readonly string[];
   contribution: VoiceModelPackContributionV1;
 }>;
 
 type RejectedRawVoiceModelPackDescriptorV1 = Readonly<{
   status: 'blocked';
-  reason: 'artifact_mapping_invalid' | 'plugin_source_digest_invalid';
+  reason: 'artifact_mapping_invalid' | 'artifact_binding_invalid';
   identity: null;
   directoryKey: null;
   pluginVersion: string;
-  sourceDigest: null;
+  artifactBinding: null;
   contribution: null;
 }>;
 
@@ -322,7 +326,7 @@ function allDeclaredOriginsGranted(
 function licenseAccepted(
   identity: VoiceModelPackIdentityV1,
   contribution: VoiceModelPackContributionV1,
-  pluginSourceDigest: string,
+  artifactBinding: VoiceModelPackArtifactBindingV1,
   scope: VoiceModelPackLicenseScopeV1 | undefined,
   acceptance: VoiceModelPackLicenseAcceptanceV1 | undefined,
 ): boolean {
@@ -340,8 +344,14 @@ function licenseAccepted(
   const acceptedLicenseId = readOwnDataProperty(acceptance, 'licenseId')?.value;
   const acceptedLicenseSourceUrl = readOwnDataProperty(acceptance, 'licenseSourceUrl')?.value;
   const acceptedLicenseTextDigest = readOwnDataProperty(acceptance, 'licenseTextDigest')?.value;
-  const acceptedArtifactDigest = readOwnDataProperty(acceptance, 'artifactDigest')?.value;
+  const acceptedArtifactBinding = readOwnDataProperty(acceptance, 'artifactBinding')?.value;
   const licenseText = contribution.manifest.license.text;
+  let parsedAcceptedArtifactBinding: VoiceModelPackArtifactBindingV1;
+  try {
+    parsedAcceptedArtifactBinding = parseVoiceModelPackArtifactBindingV1(acceptedArtifactBinding);
+  } catch {
+    return false;
+  }
   return typeof scopeAccountId === 'string'
     && (scopeExecutionHost === 'daemon' || scopeExecutionHost === 'native_device')
     && typeof scopeHostId === 'string'
@@ -359,8 +369,7 @@ function licenseAccepted(
       acceptedLicenseTextDigest,
       deriveVoiceModelPackLicenseTextDigestV1(licenseText),
     )
-    && typeof acceptedArtifactDigest === 'string'
-    && voiceModelPackSha256DigestsEqualV1(acceptedArtifactDigest, pluginSourceDigest);
+    && voiceModelPackArtifactBindingsEqualV1(parsedAcceptedArtifactBinding, artifactBinding);
 }
 
 export function admitVoiceModelPackContributionV1(params: Readonly<{
@@ -383,7 +392,7 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     identity: null,
     directoryKey: null,
     pluginVersion: pluginVersion.slice(0, 128),
-    sourceDigest: null,
+    artifactBinding: null,
     contribution: null,
   });
   if (typeof pluginVersionProperty?.value !== 'string'
@@ -400,10 +409,12 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     return rejectedRaw('artifact_mapping_invalid');
   }
   if (!parsedContribution.success) return rejectedRaw('artifact_mapping_invalid');
-  const sourceDigestProperty = readOwnDataProperty(params.source, 'pluginSourceDigest');
-  if (typeof sourceDigestProperty?.value !== 'string'
-    || !SHA256_DIGEST.test(sourceDigestProperty.value)) {
-    return rejectedRaw('plugin_source_digest_invalid');
+  const artifactBindingProperty = readOwnDataProperty(params.source, 'artifactBinding');
+  let artifactBinding: VoiceModelPackArtifactBindingV1;
+  try {
+    artifactBinding = parseVoiceModelPackArtifactBindingV1(artifactBindingProperty?.value);
+  } catch {
+    return rejectedRaw('artifact_binding_invalid');
   }
 
   const enabledProperty = readOwnDataProperty(params.source, 'enabled');
@@ -436,7 +447,7 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     identity,
     directoryKey: deriveVoiceModelPackDirectoryKeyV1(identity),
     pluginVersion,
-    sourceDigest: sourceDigestProperty.value.toLowerCase(),
+    artifactBinding,
     grantedNetworkOrigins: Object.freeze([...new Set(grantedNetworkOrigins)].sort()),
     contribution,
   } as const;
@@ -475,7 +486,7 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
   if (!licenseAccepted(
     identity,
     contribution,
-    common.sourceDigest,
+    common.artifactBinding,
     params.licenseScope,
     params.acceptedLicense,
   )) {

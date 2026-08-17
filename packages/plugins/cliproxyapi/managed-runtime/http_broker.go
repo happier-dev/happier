@@ -22,6 +22,7 @@ const (
 	ConnectedAccountRequestAuthFailurePath      = "/connected-accounts/request-auth/auth-failure"
 	ConnectedAccountRequestAuthQuotaFailurePath = "/connected-accounts/request-auth/quota-failure"
 	ConnectedAccountCapabilityHeader            = "x-happier-connected-account-capability"
+	requestAuthBrokerTransportTimeout           = 30 * time.Second
 )
 
 type HTTPBrokerConfig struct {
@@ -56,6 +57,7 @@ func NewHTTPBroker(config HTTPBrokerConfig) (*HTTPBroker, error) {
 	return &HTTPBroker{
 		config: config,
 		client: &http.Client{
+			Timeout: requestAuthBrokerTransportTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errors.New("request-auth broker redirects are not allowed")
 			},
@@ -222,7 +224,10 @@ func decodeStrictJSON(data []byte, output any) error {
 func readScopedCapability(path string) (requestAuthTransportTuple, error) {
 	data, err := readBoundedPrivateFile(path, 64*1024)
 	if err != nil {
-		return requestAuthTransportTuple{}, fmt.Errorf("read request-auth capability: %w", err)
+		return requestAuthTransportTuple{}, &BrokerHTTPError{
+			StatusCode: http.StatusServiceUnavailable,
+			Code:       "request_auth_unavailable",
+		}
 	}
 	var document struct {
 		V                  int    `json:"v"`

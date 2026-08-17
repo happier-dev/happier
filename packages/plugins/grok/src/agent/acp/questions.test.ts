@@ -13,17 +13,19 @@ describe('Grok xAI question codec', () => {
 
   it('offers provider choices plus typed freeform Other and returns provider keys', () => {
     expect(buildGrokHostQuestions(request)).toEqual([{
-      id: 'q1', prompt: 'Choose?', type: 'single', required: true, allowCustom: true,
+      id: 'q1', prompt: 'Choose?', type: 'singleChoice', required: true, allowCustom: true,
       choices: [
         { id: 'Fast', label: 'Fast', description: 'Lower latency' },
         { id: 'Other', label: 'Other', description: 'A literal provider option' },
       ],
     }]);
     expect(buildGrokQuestionResponse(request, {
-      status: 'answered', answers: { q1: { type: 'single', answer: { type: 'choice', choiceId: 'Fast' } } },
+      requestId: 'questions-1', kind: 'questions', status: 'answered',
+      answers: { q1: { kind: 'singleChoice', answer: { kind: 'choice', choiceId: 'Fast' } } },
     })).toEqual({ outcome: 'accepted', answers: { 'Choose?': ['Fast'] }, annotations: { 'Choose?': { preview: 'fast preview' } } });
     expect(buildGrokQuestionResponse(request, {
-      status: 'answered', answers: { q1: { type: 'single', answer: { type: 'custom', value: 'My answer' } } },
+      requestId: 'questions-2', kind: 'questions', status: 'answered',
+      answers: { q1: { kind: 'singleChoice', answer: { kind: 'custom', value: 'My answer' } } },
     })).toEqual({ outcome: 'accepted', answers: { 'Choose?': ['Other'] }, annotations: { 'Choose?': { notes: 'My answer' } } });
   });
 
@@ -35,8 +37,9 @@ describe('Grok xAI question codec', () => {
       sessionId: 'provider-session', toolCallId: 'tool-1', mode: 'default', questions: [{ question: 'Q', options: [{ label: 'A' }, { label: 'A' }] }],
     }, 'provider-session')).toThrow('unique');
     expect(() => buildGrokQuestionResponse(request, {
-      status: 'answered', answers: { q1: { type: 'multiple', answers: [
-        { type: 'choice', choiceId: 'Other' }, { type: 'custom', value: 'freeform' },
+      requestId: 'questions-3', kind: 'questions', status: 'answered',
+      answers: { q1: { kind: 'multipleChoice', answers: [
+        { kind: 'choice', choiceId: 'Other' }, { kind: 'custom', value: 'freeform' },
       ] } },
     })).toThrow('ambiguous');
   });

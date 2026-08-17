@@ -1,7 +1,7 @@
 import type {
   AgentAcpAuthenticationContext,
   AgentAcpAuthenticationSelection,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 const CACHED_METHOD_IDS = new Set(['grok.com', 'cached_token']);
 const HEADLESS_METADATA = Object.freeze({ headless: true });

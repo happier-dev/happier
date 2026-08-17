@@ -57,7 +57,10 @@ function source(overrides: Partial<InstalledPluginVoiceModelPackSourceV1> = {}):
   return {
     pluginId: 'acme.speech',
     pluginVersion: '2.0.0',
-    pluginSourceDigest: 'b'.repeat(64),
+    artifactBinding: {
+      kind: 'sourceIntegrity',
+      integrity: `sha512-${'b'.repeat(86)}==`,
+    },
     enabled: true,
     authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
     grantedNetworkOrigins: ['https://models.example.test', 'https://licenses.example.test'],
@@ -149,8 +152,63 @@ describe('public voice model-pack host admission', () => {
       status: 'available',
       identity: { pluginId: 'acme.speech', packId: 'english-small' },
       pluginVersion: '2.0.0',
-      sourceDigest: 'b'.repeat(64),
+      artifactBinding: source().artifactBinding,
     });
+  });
+
+  it('binds consent to the exact source-integrity value rather than a digest-shaped plugin alias', () => {
+    const licensed = contribution({
+      manifest: {
+        ...contribution().manifest,
+        license: {
+          ...contribution().manifest.license,
+          requiresAcceptance: true,
+          text: 'Exact source-bound model terms.',
+        },
+      },
+    });
+    const artifactBinding = Object.freeze({
+      kind: 'sourceIntegrity' as const,
+      integrity: `sha512-${'a'.repeat(86)}==`,
+    });
+    const acceptedLicense = {
+      accountId: 'account-a',
+      executionHost: 'daemon' as const,
+      hostId: 'machine-a',
+      pluginId: 'acme.speech',
+      packId: licensed.id,
+      packVersion: licensed.manifest.version,
+      licenseId: licensed.manifest.license.id,
+      licenseSourceUrl: licensed.manifest.license.url,
+      licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(licensed.manifest.license.text!),
+      artifactBinding,
+    };
+    const sourceWithBinding = {
+      ...source(),
+      artifactBinding,
+    };
+
+    expect(admitVoiceModelPackContributionV1({
+      source: sourceWithBinding,
+      contribution: licensed,
+      host: daemonHost,
+      licenseScope: { accountId: 'account-a', executionHost: 'daemon', hostId: 'machine-a' },
+      acceptedLicense,
+    })).toMatchObject({ status: 'available' });
+
+    expect(admitVoiceModelPackContributionV1({
+      source: {
+        ...sourceWithBinding,
+        artifactBinding: Object.freeze({
+          kind: 'sourceIntegrity' as const,
+          integrity: `sha512-${'c'.repeat(86)}==`,
+        }),
+      },
+      contribution: licensed,
+      host: daemonHost,
+      licenseScope: { accountId: 'account-a', executionHost: 'daemon', hostId: 'machine-a' },
+      acceptedLicense,
+    })).toMatchObject({ status: 'blocked', reason: 'license_acceptance_required' });
   });
 
   it('rejects a declaration that advertises the unimplemented native-device host', () => {
@@ -202,7 +260,7 @@ describe('public voice model-pack host admission', () => {
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
   });
@@ -230,18 +288,18 @@ describe('public voice model-pack host admission', () => {
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
   });
 
   it.each([
-    ['non-string digest', 42],
-    ['malformed digest', 'not-a-digest'],
-  ])('returns a bounded blocked descriptor without canonicalizing %s', (_label, pluginSourceDigest) => {
+    ['non-object binding', 42],
+    ['unknown binding variant', { kind: 'unknown', integrity: 'not-a-binding' }],
+  ])('returns a bounded blocked descriptor without accepting %s', (_label, artifactBinding) => {
     const malformedSource = {
       ...source(),
-      pluginSourceDigest,
+      artifactBinding,
     } as unknown as InstalledPluginVoiceModelPackSourceV1;
 
     const result = admitVoiceModelPackContributionV1({
@@ -251,21 +309,21 @@ describe('public voice model-pack host admission', () => {
     });
     expect(result).toEqual({
       status: 'blocked',
-      reason: 'plugin_source_digest_invalid',
+      reason: 'artifact_binding_invalid',
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
     expect(() => buildVoiceModelPackInstallUrlPolicyV1(result)).toThrow('voice_model_pack_not_installable');
   });
 
-  it('rejects an accessor-backed source digest without throwing or exposing source data', () => {
+  it('rejects an accessor-backed source artifact binding without throwing or exposing source data', () => {
     const malformedSource = Object.defineProperty(
       { ...source() },
-      'pluginSourceDigest',
-      { enumerable: true, get: () => { throw new Error('malicious_digest_getter'); } },
+      'artifactBinding',
+      { enumerable: true, get: () => { throw new Error('malicious_binding_getter'); } },
     ) as InstalledPluginVoiceModelPackSourceV1;
 
     expect(admitVoiceModelPackContributionV1({
@@ -274,11 +332,11 @@ describe('public voice model-pack host admission', () => {
       host: daemonHost,
     })).toEqual({
       status: 'blocked',
-      reason: 'plugin_source_digest_invalid',
+      reason: 'artifact_binding_invalid',
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
   });
@@ -301,7 +359,7 @@ describe('public voice model-pack host admission', () => {
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
   });
@@ -334,7 +392,7 @@ describe('public voice model-pack host admission', () => {
         identity: null,
         directoryKey: null,
         pluginVersion: key === 'pluginVersion' ? '' : '2.0.0',
-        sourceDigest: null,
+        artifactBinding: null,
         contribution: null,
       });
     }
@@ -369,7 +427,7 @@ describe('public voice model-pack host admission', () => {
       identity: null,
       directoryKey: null,
       pluginVersion: '2.0.0',
-      sourceDigest: null,
+      artifactBinding: null,
       contribution: null,
     });
   });
@@ -397,7 +455,7 @@ describe('public voice model-pack host admission', () => {
         identity: null,
         directoryKey: null,
         pluginVersion: '2.0.0',
-        sourceDigest: null,
+        artifactBinding: null,
         contribution: null,
       });
     };
@@ -754,7 +812,7 @@ describe('public voice model-pack host admission', () => {
 
   it.each([
     ['plugin_policy_denied', source({ authorization: { outcome: 'denied', code: 'plugin_final_package_untrusted', requiresCurrentIntent: false } })],
-    ['plugin_source_digest_invalid', source({ pluginSourceDigest: 'mutable' })],
+    ['artifact_binding_invalid', source({ artifactBinding: { kind: 'unknown' } as never })],
     ['network_origin_not_granted', source({ grantedNetworkOrigins: ['https://licenses.example.test'] })],
   ])('blocks %s', (reason, sourceInput) => {
     expect(admitVoiceModelPackContributionV1({ source: sourceInput, contribution: contribution(), host: daemonHost }))
@@ -802,7 +860,7 @@ describe('public voice model-pack host admission', () => {
         licenseId: 'Apache-2.0',
         licenseSourceUrl: gated.manifest.license.url,
         licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(gated.manifest.license.text!),
-        artifactDigest: 'b'.repeat(64),
+        artifactBinding: source().artifactBinding,
       },
     })).toMatchObject({ status: 'available' });
 
@@ -821,7 +879,7 @@ describe('public voice model-pack host admission', () => {
         licenseId: 'Apache-2.0',
         licenseSourceUrl: gated.manifest.license.url,
         licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(gated.manifest.license.text!),
-        artifactDigest: 'c'.repeat(64),
+        artifactBinding: { kind: 'sourceIntegrity', integrity: `sha512-${'c'.repeat(86)}==` },
       },
     })).toMatchObject({ status: 'blocked', reason: 'license_acceptance_required' });
   });
@@ -842,7 +900,7 @@ describe('public voice model-pack host admission', () => {
       licenseId: 'Apache-2.0',
       licenseSourceUrl: gated.manifest.license.url,
       licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(gated.manifest.license.text!),
-      artifactDigest: 'b'.repeat(64),
+      artifactBinding: source().artifactBinding,
     };
     let getterCalls = 0;
     const accessorAcceptance = Object.defineProperty(
@@ -894,7 +952,7 @@ describe('public voice model-pack host admission', () => {
       licenseId: 'Apache-2.0',
       licenseSourceUrl: gated.manifest.license.url,
       licenseTextDigest: deriveVoiceModelPackLicenseTextDigestV1(gated.manifest.license.text!),
-      artifactDigest: 'b'.repeat(64),
+      artifactBinding: source().artifactBinding,
     };
     const admit = (acceptedLicense: typeof exact | Record<string, string>) => admitVoiceModelPackContributionV1({
       source: source(),
@@ -910,7 +968,7 @@ describe('public voice model-pack host admission', () => {
       packId: exact.packId,
       packVersion: exact.packVersion,
       licenseId: exact.licenseId,
-      artifactDigest: exact.artifactDigest,
+      artifactBinding: exact.artifactBinding,
     })).toMatchObject({ status: 'blocked', reason: 'license_acceptance_required' });
     expect(admit({ ...exact, accountId: 'account-b' })).toMatchObject({
       status: 'blocked', reason: 'license_acceptance_required',
@@ -927,7 +985,10 @@ describe('public voice model-pack host admission', () => {
     expect(admit({ ...exact, licenseTextDigest: `sha256:${'c'.repeat(64)}` })).toMatchObject({
       status: 'blocked', reason: 'license_acceptance_required',
     });
-    expect(admit({ ...exact, artifactDigest: 'd'.repeat(64) })).toMatchObject({
+    expect(admit({
+      ...exact,
+      artifactBinding: { kind: 'sourceIntegrity', integrity: `sha512-${'d'.repeat(86)}==` },
+    })).toMatchObject({
       status: 'blocked', reason: 'license_acceptance_required',
     });
   });

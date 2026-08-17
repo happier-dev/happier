@@ -1,0 +1,189 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "source": "static",
+          "staticModels": [
+            {
+              "id": "glm-5.2",
+              "name": "GLM-5.2"
+            },
+            {
+              "id": "glm-5-turbo",
+              "name": "GLM-5 Turbo"
+            },
+            {
+              "id": "glm-4.7",
+              "name": "GLM-4.7"
+            }
+          ]
+        },
+        "credential": {
+          "keyUrl": "https://z.ai/manage-apikey/apikey-list",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "zai-http-bearer",
+              "protocols": [
+                "anthropic",
+                "openai-chat"
+              ],
+              "uses": [
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.z.ai/api/anthropic",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "zai-anthropic",
+            "protocol": "anthropic"
+          },
+          {
+            "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "zai-openai-chat",
+            "protocol": "openai-chat"
+          }
+        ],
+        "id": "zai",
+        "kind": "frontier",
+        "legacyProfileMigrations": [
+          {
+            "credentialBinding": {
+              "credentialSlotId": "apiKey",
+              "legacyEnvVarName": "Z_AI_AUTH_TOKEN"
+            },
+            "descriptorRevision": 1,
+            "implicitModelAliasReplacements": [],
+            "migratedEnvironmentVariables": [
+              {
+                "name": "ANTHROPIC_BASE_URL",
+                "value": "${Z_AI_BASE_URL:-https://api.z.ai/api/anthropic}"
+              },
+              {
+                "name": "ANTHROPIC_AUTH_TOKEN",
+                "value": "${Z_AI_AUTH_TOKEN}"
+              },
+              {
+                "name": "ANTHROPIC_MODEL",
+                "value": "${Z_AI_MODEL:-GLM-4.6}"
+              }
+            ],
+            "primaryModel": {
+              "agentTargetKey": "agent:claude",
+              "defaultModelId": "GLM-4.6",
+              "legacyEnvVarName": "ANTHROPIC_MODEL",
+              "legacyProcessEnvAlias": "Z_AI_MODEL"
+            },
+            "retainedEnvironmentVariables": [
+              {
+                "name": "API_TIMEOUT_MS",
+                "value": "${Z_AI_API_TIMEOUT_MS:-3000000}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "value": "${Z_AI_OPUS_MODEL:-GLM-4.6}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "value": "${Z_AI_SONNET_MODEL:-GLM-4.6}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "value": "${Z_AI_HAIKU_MODEL:-GLM-4.5-Air}"
+              }
+            ],
+            "sourceProfileId": "zai"
+          }
+        ],
+        "name": "Z.AI",
+        "v": 1,
+        "websiteUrl": "https://z.ai"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use Z.AI Coding Plan models through compatible agents.",
+  "displayName": "Z.AI",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.zai",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

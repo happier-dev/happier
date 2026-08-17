@@ -1,8 +1,8 @@
 import type {
-  PluginUiQuestion,
-  PluginUiQuestionAnswer,
-  PluginUiQuestionsResult,
-} from '@happier-dev/plugin-sdk/runtime';
+  InteractionTransientAuthorQuestionV1,
+  InteractionTransientQuestionAnswerV1,
+  InteractionTransientQuestionsResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 export const GROK_ASK_USER_QUESTION_METHODS = Object.freeze([
   'x.ai/ask_user_question',
@@ -183,12 +183,12 @@ export function parseGrokQuestionRequest(
 
 export function buildGrokHostQuestions(
   request: ParsedGrokQuestionRequest,
-): readonly [PluginUiQuestion, ...PluginUiQuestion[]] {
-  const questions = request.questions.map(({ answerKey, question }): PluginUiQuestion => {
+): [InteractionTransientAuthorQuestionV1, ...InteractionTransientAuthorQuestionV1[]] {
+  const questions = request.questions.map(({ answerKey, question }): InteractionTransientAuthorQuestionV1 => {
     if (question.options.length === 0) {
       return Object.freeze({ id: answerKey, prompt: question.question, type: 'text', required: true });
     }
-    const choices = question.options.map((option) => Object.freeze({
+    const choices = question.options.map((option) => ({
       id: option.label,
       label: option.label,
       description: option.description ?? option.label,
@@ -199,35 +199,35 @@ export function buildGrokHostQuestions(
     return Object.freeze({
       id: answerKey,
       prompt: question.question,
-      type: question.multiSelect === true ? 'multiple' : 'single',
+      type: question.multiSelect === true ? 'multipleChoice' : 'singleChoice',
       required: true,
-      choices: Object.freeze(choices),
+      choices,
       allowCustom: true,
     });
   });
-  return Object.freeze(questions) as [PluginUiQuestion, ...PluginUiQuestion[]];
+  return questions as [InteractionTransientAuthorQuestionV1, ...InteractionTransientAuthorQuestionV1[]];
 }
 
-function readAnswerItems(answer: PluginUiQuestionAnswer): readonly Readonly<{
+function readAnswerItems(answer: InteractionTransientQuestionAnswerV1): readonly Readonly<{
   kind: 'choice' | 'custom';
   value: string;
 }>[] {
-  if (answer.type === 'text') return [{ kind: 'custom', value: answer.value }];
-  if (answer.type === 'single') {
+  if (answer.kind === 'text') return [{ kind: 'custom', value: answer.value }];
+  if (answer.kind === 'singleChoice') {
     return [{
-      kind: answer.answer.type,
-      value: answer.answer.type === 'choice' ? answer.answer.choiceId : answer.answer.value,
+      kind: answer.answer.kind,
+      value: answer.answer.kind === 'choice' ? answer.answer.choiceId : answer.answer.value,
     }];
   }
   return answer.answers.map((item) => ({
-    kind: item.type,
-    value: item.type === 'choice' ? item.choiceId : item.value,
+    kind: item.kind,
+    value: item.kind === 'choice' ? item.choiceId : item.value,
   }));
 }
 
 export function buildGrokQuestionResponse(
   request: ParsedGrokQuestionRequest,
-  result: PluginUiQuestionsResult,
+  result: InteractionTransientQuestionsResultV1,
 ): GrokQuestionResponse {
   if (result.status !== 'answered') return { outcome: 'cancelled' };
   const answers: Record<string, readonly string[]> = Object.create(null);

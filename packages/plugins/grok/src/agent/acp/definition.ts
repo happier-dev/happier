@@ -2,8 +2,8 @@ import type {
   AgentAcpRuntimeDefinition,
   AgentAcpRuntimeExtensions,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { createAcpToolNameInferencePreset } from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { createAcpToolNameInferencePreset } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { selectGrokAuthentication } from './auth.js';
 import { GROK_PROMPT_COMPLETE_METHODS, handleGrokPromptComplete } from './completion.js';
@@ -64,7 +64,9 @@ export const GROK_ACP_RUNTIME_DEFINITION: AgentAcpRuntimeDefinition =
   buildGrokAcpRuntimeDefinition({});
 
 export function createGrokAcpRuntimeExtensions(
-  context: Pick<AgentSessionRuntimeContext, 'ui'>,
+  context: Readonly<{
+    services: Pick<AgentSessionRuntimeContext['services'], 'interactions'>;
+  }>,
 ): AgentAcpRuntimeExtensions {
   const askQuestion = async (
     params: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[0],
@@ -82,9 +84,11 @@ export function createGrokAcpRuntimeExtensions(
       extensionContext.providerSessionId,
       extensionContext.method,
     );
-    const result = await context.ui.askQuestions(buildGrokHostQuestions(request), {
+    const result = await context.services.interactions.askQuestions({
+      kind: 'questions',
       title: request.mode === 'plan' ? 'Grok plan question' : 'Grok question',
-    });
+      questions: buildGrokHostQuestions(request),
+    }, { signal: extensionContext.signal });
     if (extensionContext.signal.aborted) return { outcome: 'cancelled' };
     return buildGrokQuestionResponse(request, result);
   };

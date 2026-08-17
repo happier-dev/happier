@@ -24,7 +24,7 @@ const VoiceSelectionSchema = z.discriminatedUnion('kind', [
 export const XAI_REALTIME_DEFAULT_SETTINGS = Object.freeze({
   model: Object.freeze({ kind: 'pinned' as const, id: 'grok-voice-think-fast-1.0' }),
   voice: Object.freeze({ kind: 'catalog' as const, id: 'eve' }),
-  instructions: null,
+  instructions: '',
   reasoningEffort: 'high' as const,
   outputSpeed: 1,
   transcription: Object.freeze({ languageHint: null, keyterms: Object.freeze([] as string[]) }),
@@ -52,7 +52,7 @@ function createDefaultTranscriptionSettings() {
 export const XaiRealtimeSettingsV1Schema = z.object({
   model: ModelSelectionSchema.default(XAI_REALTIME_DEFAULT_SETTINGS.model),
   voice: VoiceSelectionSchema.default(XAI_REALTIME_DEFAULT_SETTINGS.voice),
-  instructions: z.string().trim().max(16_384).nullable().default(null),
+  instructions: z.string().trim().max(10_000).nullable().default(''),
   reasoningEffort: z.enum(['high', 'none']).default('high'),
   outputSpeed: z.number().min(0.7).max(1.5).default(1),
   transcription: z.object({
@@ -70,5 +70,4 @@ export const XaiRealtimeSettingsV1Schema = z.object({
 }).strict();
 
 export type XaiRealtimeSettingsV1 = z.infer<typeof XaiRealtimeSettingsV1Schema>;
-export const XAI_REALTIME_PROVIDER_ID = 'realtime_grok' as const;
 export const XAI_SUPPORTED_LANGUAGE_HINTS = SUPPORTED_LANGUAGE_HINTS;

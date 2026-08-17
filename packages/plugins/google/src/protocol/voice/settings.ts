@@ -7,9 +7,13 @@ export const GoogleGeminiSttSettingsLegacySchema = z.object({
   language: z.string().trim().min(1).max(64).nullable().default(null),
 });
 
-export const GoogleGeminiSttSettingsSchema = GoogleGeminiSttSettingsLegacySchema
-  .omit({ apiKey: true })
-  .strict();
+export const GoogleGeminiSttSettingsSchema = z.object({
+  model: z.string().trim().min(1).max(256).default('gemini-2.5-flash'),
+  language: z.preprocess(
+    (value) => value === null ? '' : value,
+    z.string().trim().max(64).default(''),
+  ),
+}).strict();
 
 export type GoogleGeminiSttSettings = z.infer<typeof GoogleGeminiSttSettingsSchema>;
 
@@ -24,9 +28,25 @@ export const GoogleCloudTtsSettingsLegacySchema = z.object({
   pitch: z.number().min(-20).max(20).nullable().default(null),
 });
 
-export const GoogleCloudTtsSettingsSchema = GoogleCloudTtsSettingsLegacySchema
-  .omit({ apiKey: true, androidCertSha1: true })
-  .strict();
+export const GoogleCloudTtsSettingsSchema = z.object({
+  voiceName: z.preprocess(
+    (value) => value === null ? '' : value,
+    z.string().trim().max(256).default(''),
+  ),
+  languageCode: z.preprocess(
+    (value) => value === null ? '' : value,
+    z.string().trim().max(64).default(''),
+  ),
+  format: z.enum(['mp3', 'wav']).default('mp3'),
+  speakingRate: z.preprocess(
+    (value) => value === null ? 1 : value,
+    z.number().min(0.25).max(4).default(1),
+  ),
+  pitch: z.preprocess(
+    (value) => value === null ? 0 : value,
+    z.number().min(-20).max(20).default(0),
+  ),
+}).strict();
 
 export type GoogleCloudTtsSettings = z.infer<typeof GoogleCloudTtsSettingsSchema>;
 export type GoogleGeminiSttSettingsLegacy = z.infer<typeof GoogleGeminiSttSettingsLegacySchema>;

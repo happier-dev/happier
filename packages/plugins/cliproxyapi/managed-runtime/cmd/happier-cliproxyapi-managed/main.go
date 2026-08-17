@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,32 +17,31 @@ import (
 var buildVersion = "dev"
 
 func main() {
-	if err := run(os.Args[1:], os.LookupEnv, os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.LookupEnv); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "managed CLIProxyAPI wrapper %s: %v\n", buildVersion, err)
 		os.Exit(2)
 	}
 }
 
-func run(args []string, lookupEnvironment func(string) (string, bool), stdout io.Writer) error {
-	configPath, err := parseConfigPath(args)
+func run(args []string, lookupEnvironment func(string) (string, bool)) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runWithContext(ctx, args, lookupEnvironment)
+}
+
+func runWithContext(
+	ctx context.Context,
+	args []string,
+	lookupEnvironment func(string) (string, bool),
+) error {
+	if err := parseArguments(args); err != nil {
+		return err
+	}
+	gatewayConfig, brokerConfig, err := materializeGatewayConfig(lookupEnvironment)
 	if err != nil {
 		return err
 	}
-	processConfig, err := managedruntime.LoadProcessConfig(configPath)
-	if err != nil {
-		return err
-	}
-	if err := validateWrapperBuildVersion(
-		processConfig.WrapperBuildVersion,
-		buildVersion,
-	); err != nil {
-		return err
-	}
-	gatewayConfig, err := materializeGatewayConfig(processConfig.Gateway, lookupEnvironment)
-	if err != nil {
-		return err
-	}
-	broker, err := managedruntime.NewHTTPBroker(processConfig.RequestAuth)
+	broker, err := managedruntime.NewHTTPBroker(brokerConfig)
 	if err != nil {
 		return err
 	}
@@ -52,7 +49,6 @@ func run(args []string, lookupEnvironment func(string) (string, bool), stdout io
 		gatewayConfig,
 		managedruntime.RuntimeIdentity{
 			WrapperBuildVersion: buildVersion,
-			MaterializationID:   processConfig.MaterializationID,
 		},
 		broker,
 		nil,
@@ -61,74 +57,89 @@ func run(args []string, lookupEnvironment func(string) (string, bool), stdout io
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	runResult := make(chan error, 1)
-	go func() {
-		runResult <- gateway.Run(ctx)
-	}()
-
-	select {
-	case readiness := <-gateway.Ready():
-		if err := json.NewEncoder(stdout).Encode(readiness); err != nil {
-			stop()
-			<-runResult
-			return fmt.Errorf("write managed runtime readiness: %w", err)
-		}
-		err := <-runResult
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			return nil
-		}
-		return err
-	case err := <-runResult:
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			return nil
-		}
-		if err == nil {
-			return fmt.Errorf("managed gateway exited before readiness")
-		}
-		return err
+	err = gateway.Run(ctx)
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil
 	}
+	return err
 }
 
-func validateWrapperBuildVersion(configured, compiled string) error {
-	if configured == "" || compiled == "" || configured != compiled {
-		return fmt.Errorf(
-			"managed runtime wrapper build identity mismatch: config=%q binary=%q",
-			configured,
-			compiled,
-		)
+func parseArguments(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: happier-cliproxyapi-managed")
 	}
 	return nil
 }
 
-func parseConfigPath(args []string) (string, error) {
-	if len(args) != 2 || args[0] != "--config" || strings.TrimSpace(args[1]) != args[1] ||
-		!filepath.IsAbs(args[1]) {
-		return "", fmt.Errorf("usage: happier-cliproxyapi-managed --config <absolute-private-config-path>")
-	}
-	return filepath.Clean(args[1]), nil
-}
-
 func materializeGatewayConfig(
-	input managedruntime.ProcessGatewayConfig,
 	lookupEnvironment func(string) (string, bool),
-) (managedruntime.Config, error) {
+) (managedruntime.Config, managedruntime.HTTPBrokerConfig, error) {
 	host, hasHost := lookupEnvironment("HOST")
 	if !hasHost || host == "" || host != strings.TrimSpace(host) {
-		return managedruntime.Config{}, fmt.Errorf("SVC09 HOST is missing or invalid")
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("SVC09 HOST is missing or invalid")
 	}
 	rawPort, hasPort := lookupEnvironment("PORT")
 	if !hasPort || rawPort == "" || rawPort != strings.TrimSpace(rawPort) {
-		return managedruntime.Config{}, fmt.Errorf("SVC09 PORT is missing or invalid")
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("SVC09 PORT is missing or invalid")
 	}
 	port, err := strconv.Atoi(rawPort)
 	if err != nil {
-		return managedruntime.Config{}, fmt.Errorf("SVC09 PORT is invalid")
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("SVC09 PORT is invalid")
 	}
-	config, err := input.ConfigForEndpoint(host, port)
+	downstreamBearer, err := requiredEnvironment(
+		lookupEnvironment,
+		managedruntime.DownstreamBearerEnvironmentVariable,
+	)
 	if err != nil {
-		return managedruntime.Config{}, fmt.Errorf("SVC09 endpoint is invalid: %w", err)
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, err
 	}
-	return config, nil
+	capabilityPath, err := requiredEnvironment(
+		lookupEnvironment,
+		managedruntime.RequestAuthCapabilityPathEnvironmentVariable,
+	)
+	if err != nil || !filepath.IsAbs(capabilityPath) || strings.ContainsRune(capabilityPath, '\x00') {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed request-auth capability environment is missing or invalid")
+	}
+	purposeConfigurationValue, err := requiredEnvironment(
+		lookupEnvironment,
+		managedruntime.ManagedPurposeConfigurationEnvironmentVariable,
+	)
+	if err != nil {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed purpose configuration environment is missing or invalid")
+	}
+	purposeConfiguration, err := managedruntime.ParseManagedPurposeConfiguration(
+		purposeConfigurationValue,
+	)
+	if err != nil {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed purpose configuration environment is invalid")
+	}
+	capabilityPath = filepath.Clean(capabilityPath)
+	runtimeDir := filepath.Dir(filepath.Dir(capabilityPath))
+	if runtimeDir == filepath.Dir(runtimeDir) {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed request-auth capability environment is missing or invalid")
+	}
+	config, err := managedruntime.ImmutableGatewayConfig(
+		host,
+		port,
+		downstreamBearer,
+		runtimeDir,
+		purposeConfiguration,
+	)
+	if err != nil {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed gateway environment is invalid: %w", err)
+	}
+	return config, managedruntime.HTTPBrokerConfig{
+		CapabilityPath: capabilityPath,
+	}, nil
+}
+
+func requiredEnvironment(
+	lookupEnvironment func(string) (string, bool),
+	name string,
+) (string, error) {
+	value, ok := lookupEnvironment(name)
+	if !ok || value == "" || value != strings.TrimSpace(value) {
+		return "", fmt.Errorf("managed process environment is missing or invalid")
+	}
+	return value, nil
 }

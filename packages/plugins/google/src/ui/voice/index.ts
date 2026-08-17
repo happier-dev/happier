@@ -1,48 +1,17 @@
-import type { GoogleVoiceUiEntry } from '../../protocol/voice/index.js';
-import type {
-  BundledVoiceSpeechEngineUiEntry,
-  BundledVoiceUiEntry,
-} from '@happier-dev/bundled-voice-runtime-contract';
 import {
-  GoogleCloudSynthesizeResponseSchema,
-  GoogleGeminiTranscribeResponseSchema,
-} from '../../protocol/voice/index.js';
-import { createGoogleVoiceSettingsSpec } from './settings.js';
+  GOOGLE_CLOUD_SETTINGS,
+  GOOGLE_GEMINI_SETTINGS,
+} from './settings.js';
 
-const GOOGLE_UI_INTERNAL: BundledVoiceSpeechEngineUiEntry['internal'] = Object.freeze({
-  createSettingsSpec: createGoogleVoiceSettingsSpec,
-  speechTarget: Object.freeze({ localId: 'speech' }),
-  schemas: Object.freeze({
-    synthesizeResponse: GoogleCloudSynthesizeResponseSchema,
-    transcribeResponse: GoogleGeminiTranscribeResponseSchema,
-  }),
-});
-
-type GoogleVoiceUiRuntimeEntry = GoogleVoiceUiEntry
-  & Omit<BundledVoiceSpeechEngineUiEntry, 'internal'>
-  & Readonly<{
-  internal: BundledVoiceSpeechEngineUiEntry['internal'];
-  }>;
-
-export const BUNDLED_VOICE_UI_ENTRIES: readonly GoogleVoiceUiRuntimeEntry[] = Object.freeze([
+export const VOICE_PROVIDER_PRESENTATIONS = Object.freeze([
   Object.freeze({
-    kind: 'voice.speech-engine.v1',
-    pluginId: 'happier.voice.google',
-    providerId: 'google_gemini',
-    role: 'stt',
+    providerId: 'happier.voice.google/gemini-stt',
     settingsSectionId: 'voice.stt.google_gemini',
-    roles: ['dictation_stt', 'conversation_stt'],
-    requirements: ['execution_machine', 'credential', 'runtime'],
-    internal: GOOGLE_UI_INTERNAL,
-  } satisfies GoogleVoiceUiRuntimeEntry),
+    createSettingsSpec: () => GOOGLE_GEMINI_SETTINGS,
+  }),
   Object.freeze({
-    kind: 'voice.speech-engine.v1',
-    pluginId: 'happier.voice.google',
-    providerId: 'google_cloud',
-    role: 'tts',
+    providerId: 'happier.voice.google/google-cloud-tts',
     settingsSectionId: 'voice.tts.google_cloud',
-    roles: ['conversation_tts'],
-    requirements: ['execution_machine', 'credential', 'runtime'],
-    internal: GOOGLE_UI_INTERNAL,
-  } satisfies GoogleVoiceUiRuntimeEntry),
-]) satisfies readonly BundledVoiceUiEntry[];
+    createSettingsSpec: () => GOOGLE_CLOUD_SETTINGS,
+  }),
+]);

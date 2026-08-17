@@ -9,6 +9,7 @@ export const PLUGIN_MANIFEST = {
   displayName: 'CLIProxyAPI',
   description: 'Use models served by an external or locally detected CLIProxyAPI gateway.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
   hostAccess: { required: [], optional: [] },
   contributes: { providers: [CLIPROXYAPI_PROVIDER_CONTRIBUTION] },
 } satisfies PluginManifest;

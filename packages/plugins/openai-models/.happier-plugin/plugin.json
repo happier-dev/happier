@@ -1,0 +1,178 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "openai-responses",
+              "parser": "openai-models",
+              "path": "/v1/models"
+            }
+          ],
+          "source": "probe"
+        },
+        "credential": {
+          "keyUrl": "https://platform.openai.com/api-keys",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "openai-http-bearer",
+              "protocols": [
+                "openai-chat",
+                "openai-responses"
+              ],
+              "uses": [
+                "probe",
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.openai.com/v1",
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "openai-chat",
+            "protocol": "openai-chat"
+          },
+          {
+            "baseUrl": "https://api.openai.com/v1",
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "supported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "openai-responses",
+            "protocol": "openai-responses"
+          }
+        ],
+        "id": "openai",
+        "kind": "frontier",
+        "legacyProfileMigrations": [
+          {
+            "credentialBinding": {
+              "credentialSlotId": "apiKey",
+              "legacyEnvVarName": "OPENAI_API_KEY"
+            },
+            "descriptorRevision": 1,
+            "implicitModelAliasReplacements": [],
+            "migratedEnvironmentVariables": [
+              {
+                "name": "OPENAI_BASE_URL",
+                "value": "https://api.openai.com/v1"
+              },
+              {
+                "name": "OPENAI_MODEL",
+                "value": "gpt-5-codex-high"
+              }
+            ],
+            "primaryModel": {
+              "agentTargetKey": "agent:codex",
+              "defaultModelId": "gpt-5-codex-high",
+              "legacyEnvVarName": "OPENAI_MODEL"
+            },
+            "retainedEnvironmentVariables": [
+              {
+                "name": "OPENAI_API_TIMEOUT_MS",
+                "value": "600000"
+              },
+              {
+                "name": "OPENAI_SMALL_FAST_MODEL",
+                "value": "gpt-5-codex-low"
+              },
+              {
+                "name": "API_TIMEOUT_MS",
+                "value": "600000"
+              },
+              {
+                "name": "CODEX_SMALL_FAST_MODEL",
+                "value": "gpt-5-codex-low"
+              }
+            ],
+            "sourceProfileId": "openai"
+          }
+        ],
+        "name": "OpenAI",
+        "v": 1,
+        "websiteUrl": "https://openai.com"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use OpenAI API models through a SavedSecret-backed provider connection.",
+  "displayName": "OpenAI",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.openai",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

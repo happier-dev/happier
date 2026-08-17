@@ -17,6 +17,14 @@ describe('OLLAMA_PROVIDER_CONTRIBUTION', () => {
         source: 'probe',
         probes: [{ endpointTemplateId: 'ollama-native', path: '/api/tags', parser: 'ollama-tags' }],
       },
+      managedRuntime: {
+        kind: 'managed',
+        endpointTemplateIds: [
+          'ollama-native',
+          'ollama-openai-chat',
+          'ollama-openai-responses',
+        ],
+      },
       discovery: {
         v: 1,
         listener: {
@@ -29,9 +37,10 @@ describe('OLLAMA_PROVIDER_CONTRIBUTION', () => {
           endpointTemplateId: 'ollama-native', lookupNames: ['ollama'], fixedArgs: ['list'],
           parser: 'ollama-list-table', endpointEnvName: 'OLLAMA_HOST',
         },
-        managedStart: { lookupNames: ['ollama'], fixedArgs: ['serve'] },
       },
     });
+    expect(PLUGIN_MANIFEST.contributes.providers[0].discovery)
+      .not.toHaveProperty('managedStart');
   });
 
   it('does not invent authentication or an unverified Anthropic binding', () => {

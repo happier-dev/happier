@@ -16,7 +16,45 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestHTTPBrokerBoundsTransportLifetimeAndPreservesCallerCancellation(t *testing.T) {
+	t.Parallel()
+
+	capabilityPath := filepath.Join(t.TempDir(), "capability.json")
+	writeCapabilityV2(t, capabilityPath, testCapability(24), 32123)
+	broker, err := NewHTTPBroker(HTTPBrokerConfig{CapabilityPath: capabilityPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := broker.client.Timeout; got != 30*time.Second {
+		t.Fatalf("broker transport timeout = %s, want 30s bounded request-auth lifetime", got)
+	}
+
+	started := make(chan struct{})
+	broker.client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		close(started)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})
+	lookupContext, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, lookupErr := broker.LookupRequestAuth(lookupContext, testPurpose("openai-upstream"))
+		result <- lookupErr
+	}()
+	<-started
+	cancel()
+	select {
+	case lookupErr := <-result:
+		if !errors.Is(lookupErr, context.Canceled) {
+			t.Fatalf("cancelled lookup error = %v, want context cancellation", lookupErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not terminate broker request")
+	}
+}
 
 func TestNormalizedHTTPFailureEmitsCanonicalRequestAuthEvidence(t *testing.T) {
 	t.Parallel()
@@ -529,6 +567,24 @@ func TestHTTPBrokerReclassifiesUnreadablePostUnauthorizedTupleWithoutResending(t
 	}
 }
 
+func TestReadScopedCapabilityFailureIsTypedUnavailableWithoutExposingPrivatePath(t *testing.T) {
+	privateDirectory := filepath.Join(t.TempDir(), "sentinel-private-request-auth")
+	privatePath := filepath.Join(privateDirectory, "capability.json")
+
+	_, err := readScopedCapability(privatePath)
+	var brokerError *BrokerHTTPError
+	if !errors.As(err, &brokerError) {
+		t.Fatalf("readScopedCapability() error = %T %v, want BrokerHTTPError", err, err)
+	}
+	if brokerError.StatusCode != http.StatusServiceUnavailable ||
+		brokerError.Code != "request_auth_unavailable" {
+		t.Fatalf("readScopedCapability() error = %#v, want typed unavailable", brokerError)
+	}
+	if strings.Contains(err.Error(), privateDirectory) {
+		t.Fatalf("capability read error exposed private path: %v", err)
+	}
+}
+
 func TestHTTPBrokerReclassifiesStableUnauthorizedTupleWithoutResending(t *testing.T) {
 	var daemonCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -845,9 +901,10 @@ func TestLeaseTransportUsesCompletedBrokerLeaseAsTheOnlyUpstreamLinearizationBou
 	var upstreamAuthorization string
 	transport := &leaseRoundTripper{
 		entry: AuthEntry{
-			ID:       "codex",
-			Provider: ProviderCodex,
-			Purpose:  testPurpose("openai-upstream"),
+			ID:                 "codex",
+			Provider:           ProviderCodex,
+			Purpose:            testPurpose("openai-upstream"),
+			AllowedHTTPSOrigin: "https://upstream.invalid",
 		},
 		broker: broker,
 		base: roundTripperFunc(func(request *http.Request) (*http.Response, error) {

@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GEMINI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';

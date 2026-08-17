@@ -40,7 +40,10 @@ import {
   assertVoiceModelPackDeclaredResourcesV1,
   type VoiceModelPackResourcePolicyV1,
 } from './resourcePolicy.js';
-import { normalizeVoiceModelPackSha256DigestV1 } from './sha256Digest.js';
+import {
+  parseVoiceModelPackArtifactBindingV1,
+  type VoiceModelPackArtifactBindingV1,
+} from './artifactBinding.js';
 import type {
   ModelPackDurableRecoveryRecord,
   ModelPackPromotionPriorInstallV1,
@@ -108,7 +111,7 @@ export type ModelPackInstallSourceBinding =
       pluginId: string;
       packId: string;
       pluginVersion: string;
-      sourceDigest: string;
+      artifactBinding: VoiceModelPackArtifactBindingV1;
     }>;
 
 /** Opaque plan key plus the exact files that may exist in staging. */
@@ -130,7 +133,7 @@ export function deriveModelPackStagingPlan(
   const canonicalSource = source.kind === 'plugin'
     ? Object.freeze({
         ...source,
-        sourceDigest: normalizeVoiceModelPackSha256DigestV1(source.sourceDigest),
+        artifactBinding: parseVoiceModelPackArtifactBindingV1(source.artifactBinding),
       })
     : source;
   const files = [...manifest.files]

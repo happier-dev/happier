@@ -1,4 +1,5 @@
 const MAX_PROVIDER_SDP_RESPONSE_BYTES = 64 * 1024;
+export const OPENAI_CLIENT_AUTH_EXPIRY_SAFETY_WINDOW_MS = 1_000;
 
 function providerError(): Error {
   return Object.assign(new Error('provider_response_invalid'), {
@@ -6,9 +7,32 @@ function providerError(): Error {
   });
 }
 
+function authExpiredError(): Error {
+  return Object.assign(new Error('voice_auth_expired'), {
+    code: 'voice_auth_expired',
+  });
+}
+
 async function readBoundedSdp(response: Response): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) throw providerError();
+  if (!reader) {
+    const declaredLength = response.headers.get('content-length');
+    if (
+      declaredLength !== null
+      && (!/^\d+$/u.test(declaredLength)
+        || Number(declaredLength) > MAX_PROVIDER_SDP_RESPONSE_BYTES)
+    ) {
+      throw providerError();
+    }
+    const sdp = await response.text();
+    if (
+      !sdp
+      || new TextEncoder().encode(sdp).byteLength > MAX_PROVIDER_SDP_RESPONSE_BYTES
+    ) {
+      throw providerError();
+    }
+    return sdp;
+  }
   const decoder = new TextDecoder();
   const parts: string[] = [];
   let byteLength = 0;
@@ -30,6 +54,7 @@ async function readBoundedSdp(response: Response): Promise<string> {
 
 export function createOpenAiWebRtcSignaling(input: Readonly<{
   ephemeralToken: string;
+  expiresAtMs: number;
   fetch?: typeof globalThis.fetch;
   callsUrl?: string;
 }>) {
@@ -41,6 +66,12 @@ export function createOpenAiWebRtcSignaling(input: Readonly<{
       offerSdp: string;
       signal: AbortSignal;
     }>): Promise<Readonly<{ answerSdp: string }>> {
+      if (
+        input.expiresAtMs
+        <= Date.now() + OPENAI_CLIENT_AUTH_EXPIRY_SAFETY_WINDOW_MS
+      ) {
+        throw authExpiredError();
+      }
       const response = await fetchImpl(callsUrl, {
         method: 'POST',
         body: request.offerSdp,

@@ -15,13 +15,6 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
-type Readiness struct {
-	ContractVersion string             `json:"contractVersion"`
-	SDKVersion      string             `json:"sdkVersion"`
-	Protocols       []ProviderProtocol `json:"protocols"`
-	Purposes        []QualifiedPurpose `json:"purposes"`
-}
-
 type CatalogModel struct {
 	ID                         string   `json:"id"`
 	Provider                   Provider `json:"provider"`
@@ -34,7 +27,6 @@ type Gateway struct {
 	config      Config
 	service     *cliproxy.Service
 	coreManager *coreauth.Manager
-	ready       chan Readiness
 	runMu       sync.Mutex
 	running     bool
 }
@@ -97,7 +89,6 @@ func newGateway(
 	}
 
 	upstreamConfig := managedSDKConfig(config)
-	ready := make(chan Readiness, 1)
 	service, err := cliproxy.NewBuilder().
 		WithConfig(upstreamConfig).
 		WithConfigPath(filepath.Join(config.RuntimeDir, "managed-config-not-persisted.yaml")).
@@ -109,15 +100,12 @@ func newGateway(
 		}).
 		WithServerOptions(sdkapi.WithMiddleware(
 			StrictServingMiddleware(routes),
+			StrictDownstreamBearerMiddleware(config.DownstreamBearer),
 			ManagedHealthIdentityMiddleware(
 				managedHealthIdentity(config, runtimeIdentity),
+				func() bool { return managedModelsRegistered(config) },
 			),
 		)).
-		WithHooks(cliproxy.Hooks{
-			OnAfterStart: func(*cliproxy.Service) {
-				go publishReadinessAfterModelRegistration(config, ready)
-			},
-		}).
 		Build()
 	if err != nil {
 		return nil, fmt.Errorf("build pinned CLIProxyAPI service: %w", err)
@@ -134,39 +122,16 @@ func newGateway(
 		config:      config,
 		service:     service,
 		coreManager: manager,
-		ready:       ready,
 	}, nil
 }
 
-func publishReadinessAfterModelRegistration(config Config, ready chan<- Readiness) {
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		allRegistered := true
-		for _, entry := range config.AuthEntries {
-			if len(cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider))) == 0 {
-				allRegistered = false
-				break
-			}
+func managedModelsRegistered(config Config) bool {
+	for _, entry := range config.AuthEntries {
+		if len(cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider))) == 0 {
+			return false
 		}
-		if allRegistered {
-			select {
-			case ready <- readinessForConfig(config):
-			default:
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-func (g *Gateway) Ready() <-chan Readiness {
-	if g == nil {
-		return nil
-	}
-	return g.ready
+	return true
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
@@ -287,19 +252,6 @@ type neverRefreshRuntime struct{}
 
 func (neverRefreshRuntime) ShouldRefresh(time.Time, *coreauth.Auth) bool {
 	return false
-}
-
-func readinessForConfig(config Config) Readiness {
-	purposes := make([]QualifiedPurpose, 0, len(config.AuthEntries))
-	for _, entry := range config.AuthEntries {
-		purposes = append(purposes, entry.Purpose)
-	}
-	return Readiness{
-		ContractVersion: WrapperContractVersion,
-		SDKVersion:      PinnedSDKVersion,
-		Protocols:       append([]ProviderProtocol(nil), config.Protocols...),
-		Purposes:        purposes,
-	}
 }
 
 type emptyTokenClientProvider struct{}

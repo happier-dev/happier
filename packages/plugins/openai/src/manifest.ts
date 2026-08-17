@@ -5,101 +5,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
   displayName: 'OpenAI Realtime Voice',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './dist/index.js' },
-  hostAccess: {
-    required: [{
-      id: 'realtime-openai-account',
-      capability: 'connectedAccounts',
-      reason: 'Select and use the OpenAI account that mints Realtime client authentication.',
-      scope: {
-        serviceRefs: ['openai'],
-        operations: ['select', 'use'],
-        materializationKinds: ['httpHeaders'],
-      },
-    }, {
-      id: 'realtime-openai-codex-account',
-      capability: 'connectedAccounts',
-      reason: 'Select and use the experimental OpenAI Codex OAuth account that mints Realtime client authentication.',
-      scope: {
-        serviceRefs: [{
-          pluginId: 'happier.agent.codex',
-          localId: 'openai-codex',
-        }],
-        operations: ['select', 'use'],
-        materializationKinds: ['httpHeaders'],
-      },
-    }, {
-      id: 'realtime-openai-api',
-      capability: 'network',
-      reason: 'Mint bounded OpenAI Realtime client authentication for the selected account.',
-      scope: {
-        targets: [{ kind: 'fixedOrigin', origin: 'https://api.openai.com' }],
-        methods: ['POST'],
-      },
-    }],
-    optional: [],
-  },
   contributes: {
-    actions: [{
-      id: 'mint-realtime-client-auth',
-      title: 'OpenAI Realtime client authentication',
-      description: 'Mints short-lived OpenAI Realtime client authentication for the Voice runtime.',
-      scopes: ['session'],
-      surfaces: ['ui'],
-      placement: 'secondary',
-      dangerLevel: 'safe',
-      hostAccess: ['realtime-openai-account', 'realtime-openai-api'],
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          operationId: { type: 'string', enum: ['client-auth'] },
-          parameters: { type: 'object' },
-        },
-        required: ['operationId', 'parameters'],
-      },
-      resultSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          status: { type: 'number' },
-          finalUrl: { type: 'string' },
-          headers: { type: 'object' },
-          body: {},
-        },
-        required: ['status', 'finalUrl', 'headers', 'body'],
-      },
-      metadata: { internalVoiceOperation: true },
-    }, {
-      id: 'mint-realtime-client-auth-with-codex-oauth',
-      title: 'Experimental OpenAI Codex OAuth Realtime client authentication',
-      description: 'Mints short-lived OpenAI Realtime client authentication from the explicitly selected Codex OAuth account.',
-      scopes: ['session'],
-      surfaces: ['ui'],
-      placement: 'secondary',
-      dangerLevel: 'safe',
-      hostAccess: ['realtime-openai-codex-account', 'realtime-openai-api'],
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          operationId: { type: 'string', enum: ['client-auth'] },
-          parameters: { type: 'object' },
-        },
-        required: ['operationId', 'parameters'],
-      },
-      resultSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          status: { type: 'number' },
-          finalUrl: { type: 'string' },
-          headers: { type: 'object' },
-          body: {},
-        },
-        required: ['status', 'finalUrl', 'headers', 'body'],
-      },
-      metadata: { internalVoiceOperation: true },
-    }],
     connectedAccountDescriptors: [{
       id: 'openai',
       title: 'OpenAI API key',
@@ -123,54 +29,155 @@ export const PLUGIN_MANIFEST = Object.freeze({
       title: 'OpenAI Realtime Voice',
       kind: 'conversation',
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
-      platforms: ['web'],
+      platforms: ['web', 'ios', 'android'],
       capabilities: {
-        readiness: { requirements: ['credential'] },
         turn: { cancelResponse: true, bargeIn: true },
+      },
+      credentials: {
+        slot: {
+          id: 'api_key',
+          purpose: 'voice.client-auth',
+          title: 'OpenAI credential',
+          description: 'Credential used to mint short-lived OpenAI Realtime client authentication.',
+        },
+        requirement: { kind: 'always' },
+        sources: [{
+          kind: 'savedSecret',
+          secretKinds: ['apiKey'],
+          operationProjections: [{
+            kind: 'recipientCredential',
+            operation: 'client-auth',
+            phase: 'prepare',
+            format: 'bearer',
+          }],
+        }, {
+          kind: 'connectedAccount',
+          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          operationProjections: [{
+            kind: 'materializedHttpHeaders',
+            operation: 'client-auth',
+            phase: 'prepare',
+            request: {
+              kind: 'httpHeaders',
+              origin: 'https://api.openai.com',
+              headerNames: ['authorization'],
+            },
+            allowedHeaderNames: ['authorization'],
+          }],
+        }, {
+          kind: 'connectedAccount',
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          operationProjections: [{
+            kind: 'materializedHttpHeaders',
+            operation: 'client-auth',
+            phase: 'prepare',
+            request: {
+              kind: 'httpHeaders',
+              origin: 'https://api.openai.com',
+              headerNames: ['authorization', 'chatgpt-account-id'],
+            },
+            allowedHeaderNames: ['authorization', 'chatgpt-account-id'],
+          }],
+        }],
+        hostMediated: {
+          operations: [{
+            id: 'client-auth',
+            purpose: 'voice.client-auth',
+            credentialSlotId: 'api_key',
+            effect: 'read',
+            request: {
+              origin: 'https://api.openai.com',
+              pathTemplate: '/v1/realtime/client_secrets',
+              queryTemplate: [],
+              headerTemplate: [
+                { name: 'accept', value: 'application/json' },
+                { name: 'content-type', value: 'application/json' },
+              ],
+              bodyTemplate: { kind: 'json', value: {} },
+              method: 'POST',
+              credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+              redirect: 'error',
+              maxBodyBytes: 65536,
+              contentTypes: ['application/json'],
+            },
+            parameters: {
+              schema: {
+                type: 'object',
+                properties: {
+                  body: { type: 'object', additionalProperties: true },
+                },
+                required: ['body'],
+                additionalProperties: false,
+              },
+              mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
+            },
+            response: { maxBytes: 65536, contentTypes: ['application/json'] },
+          }],
+        },
       },
       settings: {
         schemaVersion: 1,
-        fields: [],
-        privacyDisclosure: {
-          key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
-          fallback: 'Audio and conversation content are sent from this device to OpenAI using WebRTC. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
-        },
-      },
-      accountMediation: {
-        credentialSlots: [{ id: 'api_key', scope: 'account' }],
-        operations: [{
-          id: 'client-auth',
-          purpose: 'voice.client-auth',
-          credentialSlotId: 'api_key',
-          effect: 'read',
-          request: {
-            origin: 'https://api.openai.com',
-            pathTemplate: '/v1/realtime/client_secrets',
-            queryTemplate: [],
-            headerTemplate: [
-              { name: 'accept', value: 'application/json' },
-              { name: 'content-type', value: 'application/json' },
-            ],
-            bodyTemplate: { kind: 'json', value: {} },
-            method: 'POST',
-            credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
-            redirect: 'error',
-            maxBodyBytes: 65536,
-            contentTypes: ['application/json'],
-          },
-          parameters: {
-            schema: {
+        fields: [{
+          id: 'model',
+          title: 'Model',
+          schema: {
+            type: 'object',
+            oneOf: [{
               type: 'object',
               properties: {
-                body: { type: 'object', additionalProperties: true },
+                kind: { const: 'pinned' },
+                id: { type: 'string', minLength: 1, maxLength: 128 },
               },
-              required: ['body'],
+              required: ['kind', 'id'],
               additionalProperties: false,
-            },
-            mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
+            }, {
+              type: 'object',
+              properties: {
+                kind: { const: 'moving_alias' },
+                id: { const: 'gpt-realtime' },
+              },
+              required: ['kind', 'id'],
+              additionalProperties: false,
+            }],
           },
-          response: { maxBytes: 65536, contentTypes: ['application/json'] },
+          default: { kind: 'pinned', id: 'gpt-realtime-2.1' },
+          presentation: { control: 'json' },
+        }, {
+          id: 'voice',
+          title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 128 },
+          default: 'marin',
+          presentation: { control: 'text' },
+        }, {
+          id: 'instructions',
+          title: 'Instructions',
+          schema: { type: 'string', maxLength: 10_000 },
+          default: '',
+          presentation: { control: 'textarea' },
+        }, {
+          id: 'turnDetection',
+          title: 'Turn detection',
+          schema: { type: 'string', enum: ['server_vad', 'semantic_vad', 'manual'] },
+          default: 'server_vad',
+          presentation: {
+            control: 'select',
+            options: [
+              { value: 'server_vad', title: 'Server voice activity detection' },
+              { value: 'semantic_vad', title: 'Semantic voice activity detection' },
+              { value: 'manual', title: 'Manual' },
+            ],
+          },
+        }, {
+          id: 'inputTranscriptionModel',
+          title: 'Input transcription model',
+          schema: { type: 'string', maxLength: 128 },
+          default: '',
+          presentation: { control: 'text' },
         }],
+        privacyDisclosure: {
+          key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
+          fallback: 'Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
+        },
       },
       client: {
         artifactId: 'voice-runtime-web',

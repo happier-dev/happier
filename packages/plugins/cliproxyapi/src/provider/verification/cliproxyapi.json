@@ -1,14 +1,14 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.cliproxyapi/cliproxyapi",
-  "reviewedAt": "2026-07-27",
+  "reviewedAt": "2026-08-10",
   "sources": [
     { "id": "upstream-overview", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/README.md", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
     { "id": "upstream-config", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/config.example.yaml", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
     { "id": "upstream-routes", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/internal/api/server.go", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
     { "id": "upstream-access", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/internal/access/config_access/provider.go", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
     { "id": "upstream-release", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/.github/workflows/release.yaml", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
-    { "id": "product-contract", "kind": "product-decision", "locator": ".project/plans/cliproxyapi-provider-gateway/PLAN.md", "accessedAt": "2026-07-27", "revision": "r4.4.9" }
+    { "id": "product-contract", "kind": "product-decision", "locator": ".project/plans/cliproxyapi-provider-gateway/PLAN.md", "accessedAt": "2026-08-10", "revision": "2026-08-09-approved-r4.4.20" }
   ],
   "facts": [
     { "path": "catalog.probes.cliproxyapi-openai-responses.openai-models", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
@@ -33,6 +33,23 @@
     { "path": "endpointTemplates.cliproxyapi-openai-responses.localUrlCandidates", "sourceIds": ["upstream-config", "upstream-routes"], "status": "verified" },
     { "path": "endpointTemplates.cliproxyapi-openai-responses.protocol", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
     { "path": "kind", "sourceIds": ["upstream-overview", "product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.anthropic-upstream.materializationKinds.httpHeaders", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.anthropic-upstream.required", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.anthropic-upstream.service.happier.agent.claude/claude-subscription", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.openai-upstream.materializationKinds.httpHeaders", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.openai-upstream.required", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.connectedAccounts.openai-upstream.service.happier.agent.codex/openai-codex", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.cliproxyapi-anthropic", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.cliproxyapi-openai-chat", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.cliproxyapi-openai-responses", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
+    { "path": "managedRuntime.kind", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.headerNames.authorization", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.kind.httpHeaders", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.anthropic-upstream.materialization.origin.https%3A%2F%2Fapi.anthropic.com", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.openai-upstream.materialization.headerNames.authorization", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.openai-upstream.materialization.headerNames.chatgpt-account-id", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.openai-upstream.materialization.kind.httpHeaders", "sourceIds": ["product-contract"], "status": "verified" },
+    { "path": "managedRuntime.requestAuthUses.openai-upstream.materialization.origin.https%3A%2F%2Fchatgpt.com", "sourceIds": ["product-contract"], "status": "verified" },
     { "path": "websiteUrl", "sourceIds": ["upstream-overview"], "status": "verified" }
   ]
 }

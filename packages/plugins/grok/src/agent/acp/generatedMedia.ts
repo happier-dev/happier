@@ -1,6 +1,6 @@
 import { basename, dirname, extname, isAbsolute } from 'node:path';
 
-import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const OFFICIAL_MEDIA_TYPES = new Set(['ImageGen', 'ImageEdit']);
 const REQUIRED_KEYS = ['filename', 'path', 'session_folder', 'type'] as const;

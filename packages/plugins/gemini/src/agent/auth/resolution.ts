@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 export const GEMINI_ACP_AUTH_METHOD_ENV = 'HAPPIER_GEMINI_ACP_AUTH_METHOD';
 export const GEMINI_ACP_AUTH_META_ENV = 'HAPPIER_GEMINI_ACP_AUTH_META';
@@ -111,7 +111,7 @@ function createAbortError(): Error {
   return error;
 }
 
-export async function resolveGeminiAcpFlag(exec: Pick<PluginExecService, 'run'>, params: {
+export async function resolveGeminiAcpFlag(exec: Pick<ExecService, 'run'>, params: {
   env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
 }): Promise<GeminiAcpFlag> {

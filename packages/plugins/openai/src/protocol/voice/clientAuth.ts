@@ -1,10 +1,5 @@
 import { z } from 'zod';
 
-export const OpenAiRealtimeClientAuthResponseSchema = z.object({
-  value: z.string().trim().min(1).max(16_384),
-  expires_at: z.number().int().positive(),
-}).strict();
-
 const OpenAiRealtimeSessionResponseSchema = z.object({
   type: z.literal('realtime'),
   object: z.literal('realtime.session'),
@@ -20,7 +15,3 @@ export const OpenAiRealtimeClientAuthProviderResponseSchema = z.object({
   // stable discriminants are consumed before the session is projected away.
   session: OpenAiRealtimeSessionResponseSchema,
 }).strict();
-
-export type OpenAiRealtimeClientAuthResponse = z.infer<
-  typeof OpenAiRealtimeClientAuthResponseSchema
->;

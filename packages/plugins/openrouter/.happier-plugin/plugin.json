@@ -1,0 +1,134 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "openrouter-openai-responses",
+              "parser": "openai-models",
+              "path": "/api/v1/models"
+            }
+          ],
+          "source": "probe"
+        },
+        "credential": {
+          "keyUrl": "https://openrouter.ai/keys",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "openrouter-http-bearer",
+              "protocols": [
+                "openai-chat",
+                "openai-responses"
+              ],
+              "uses": [
+                "probe",
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "openrouter-openai-chat",
+            "protocol": "openai-chat"
+          },
+          {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "openrouter-openai-responses",
+            "protocol": "openai-responses"
+          }
+        ],
+        "id": "openrouter",
+        "kind": "aggregator",
+        "name": "OpenRouter",
+        "v": 1,
+        "websiteUrl": "https://openrouter.ai"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use OpenRouter models through one provider connection.",
+  "displayName": "OpenRouter",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.openrouter",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,26 +1,39 @@
 import {
   classifyVoiceProviderHttpFailure,
-  containsProviderRegisteredSensitiveValue,
-} from '@happier-dev/protocol';
+  type VoiceCredentialAccess,
+} from '@happier-dev/plugin-sdk/voice';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/plugin-sdk/providers';
 import type {
-  PluginVoiceSpeechCatalogItem,
-  PluginVoiceSpeechCredentialAccess,
-  PluginVoiceSpeechRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/runtime';
+  SpeechProviderRuntime,
+  VoiceProviderCatalogItem,
+  VoiceSpeechOperationContext,
+  VoiceSpeechSynthesizeRequest,
+  VoiceSpeechTranscribeRequest,
+} from '@happier-dev/plugin-sdk/voice/speech';
 
-import {
-  GoogleCloudSynthesizeRequestSchema,
-  GoogleCloudSynthesizeResponseSchema,
-  GoogleGeminiTranscribeRequestSchema,
-  GoogleGeminiTranscribeResponseSchema,
-  GOOGLE_CLOUD_TTS_PROVIDER_ID,
-  GOOGLE_GEMINI_STT_PROVIDER_ID,
-} from '../protocol/voice/index.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
-const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
-
-type Fetch = typeof globalThis.fetch;
+const GOOGLE_GEMINI_INLINE_REQUEST_MAX_BYTES = 20_000_000;
+const GOOGLE_CLOUD_TTS_MAX_INPUT_UTF8_BYTES = 5_000;
+const [GOOGLE_GEMINI_STT_MANIFEST, GOOGLE_CLOUD_TTS_MANIFEST] =
+  PLUGIN_MANIFEST.contributes.voiceProviders;
+const GOOGLE_GEMINI_STT_LIMITS = GOOGLE_GEMINI_STT_MANIFEST.limits.transcribe;
+const GOOGLE_CLOUD_TTS_LIMITS = GOOGLE_CLOUD_TTS_MANIFEST.limits.synthesize;
+if (!GOOGLE_GEMINI_STT_LIMITS || !GOOGLE_CLOUD_TTS_LIMITS) {
+  throw new Error('Google Voice manifest is missing executable speech limits');
+}
+// The daemon upload protocol is the end-to-end admission ceiling.
+export const GOOGLE_GEMINI_STT_MAX_INPUT_BYTES =
+  GOOGLE_GEMINI_STT_LIMITS.maxInputBytes;
+// Manifest character limits use JavaScript string units; 1,666 units encode to at most 4,998 UTF-8 bytes.
+export const GOOGLE_CLOUD_TTS_MAX_INPUT_CHARACTERS =
+  GOOGLE_CLOUD_TTS_LIMITS.maxInputCharacters;
+export const GOOGLE_CLOUD_TTS_MAX_OUTPUT_BYTES =
+  GOOGLE_CLOUD_TTS_LIMITS.maxOutputBytes;
+const GOOGLE_API_KEY_HEADER = 'x-goog-api-key';
+const GEMINI_ORIGIN = 'https://generativelanguage.googleapis.com';
+const GOOGLE_CLOUD_TTS_ORIGIN = 'https://texttospeech.googleapis.com';
 
 function providerError(
   code: 'invalid_parameters' | 'credential_unavailable' | 'provider_response_invalid',
@@ -28,45 +41,65 @@ function providerError(
   return Object.assign(new Error(code), { code });
 }
 
-async function readJson(response: Response, registeredSensitiveValues: readonly string[]): Promise<unknown> {
+async function materializeApiKey(
+  credentials: VoiceCredentialAccess<'speech'>,
+  origin: string,
+  signal: AbortSignal,
+): Promise<string> {
+  if (!credentials.raw) throw providerError('credential_unavailable');
+  const materialized = await credentials.raw.materialize({
+    kind: 'httpHeaders',
+    origin,
+    headerNames: [GOOGLE_API_KEY_HEADER],
+  }, { signal });
+  if (materialized.kind !== 'httpHeaders') throw providerError('credential_unavailable');
+  const entry = Object.entries(materialized.headers).find(
+    ([name]) => name.toLowerCase() === GOOGLE_API_KEY_HEADER,
+  );
+  const apiKey = entry?.[1].trim();
+  if (!apiKey || apiKey.length > 16_384) throw providerError('credential_unavailable');
+  return apiKey;
+}
+
+type HttpResponse = Awaited<ReturnType<VoiceSpeechOperationContext['http']['request']>>;
+
+function readResponseHeader(
+  headers: Readonly<Record<string, string>>,
+  expectedName: string,
+): string | null {
+  const expected = expectedName.toLowerCase();
+  return Object.entries(headers).find(([name]) => name.toLowerCase() === expected)?.[1] ?? null;
+}
+
+function encodeJson(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function base64EncodedLength(value: number): number {
+  return 4 * Math.ceil(value / 3);
+}
+
+function readJson(response: HttpResponse, registeredSensitiveValues: readonly string[]): unknown {
   const httpFailure = classifyVoiceProviderHttpFailure(response.status);
-  if (httpFailure) {
-    await response.body?.cancel().catch(() => undefined);
-    throw providerError(httpFailure);
-  }
-  const declaredHeader = response.headers.get('content-length');
+  if (httpFailure) throw providerError(httpFailure);
+  const declaredHeader = readResponseHeader(response.headers, 'content-length');
   if (declaredHeader !== null) {
     const declared = Number(declaredHeader);
     if (!Number.isSafeInteger(declared) || declared < 0 || declared > MAX_JSON_BYTES) {
-      await response.body?.cancel().catch(() => undefined);
       throw providerError('provider_response_invalid');
     }
   }
-  if (!response.body) throw providerError('provider_response_invalid');
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
+  if (response.body.byteLength > MAX_JSON_BYTES) throw providerError('provider_response_invalid');
+  let text: string;
   try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      total += next.value.byteLength;
-      if (total > MAX_JSON_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        throw providerError('provider_response_invalid');
-      }
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
+    text = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
+  } catch {
+    throw providerError('provider_response_invalid');
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const text = new TextDecoder().decode(bytes);
   if (containsProviderRegisteredSensitiveValue(text, registeredSensitiveValues)) {
     throw providerError('provider_response_invalid');
   }
@@ -91,7 +124,7 @@ function joinBounded(values: readonly string[], maximum: number): string {
   return accepted.join(',');
 }
 
-function parseGeminiModels(value: unknown): readonly PluginVoiceSpeechCatalogItem[] {
+function parseGeminiModels(value: unknown): readonly VoiceProviderCatalogItem[] {
   const models = value && typeof value === 'object' && Array.isArray((value as { models?: unknown }).models)
     ? (value as { models: unknown[] }).models
     : [];
@@ -105,12 +138,12 @@ function parseGeminiModels(value: unknown): readonly PluginVoiceSpeechCatalogIte
     if (!id) return [];
     return [{ id, name: clean(record.displayName, 256) ?? id, metadata: { description: clean(record.description) ?? '' } }];
   });
-  const unique = new Map<string, PluginVoiceSpeechCatalogItem>();
+  const unique = new Map<string, VoiceProviderCatalogItem>();
   for (const row of rows) if (!unique.has(row.id)) unique.set(row.id, row);
   return [...unique.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function parseGoogleVoices(value: unknown): readonly PluginVoiceSpeechCatalogItem[] {
+function parseGoogleVoices(value: unknown): readonly VoiceProviderCatalogItem[] {
   const voices = value && typeof value === 'object' && Array.isArray((value as { voices?: unknown }).voices)
     ? (value as { voices: unknown[] }).voices
     : [];
@@ -138,112 +171,125 @@ function parseGoogleVoices(value: unknown): readonly PluginVoiceSpeechCatalogIte
       },
     }];
   });
-  const unique = new Map<string, PluginVoiceSpeechCatalogItem>();
+  const unique = new Map<string, VoiceProviderCatalogItem>();
   for (const row of rows) if (!unique.has(row.id)) unique.set(row.id, row);
   return [...unique.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function createGoogleVoiceSpeechOperations(
-  params?: Readonly<{ fetch?: Fetch }>,
-): PluginVoiceSpeechRuntimeRegistration['operations'] {
-  const fetchImpl = params?.fetch ?? globalThis.fetch;
-  return Object.freeze({
-    async transcribe({ credential, request, signal }) {
-      return await credential(async (secret) => {
-        if (!request.bytes.byteLength || request.bytes.byteLength > MAX_AUDIO_BYTES) throw providerError('invalid_parameters');
-        const instruction = request.language
-          ? `Transcribe this audio. Language: ${request.language}. Return only the transcript text.`
-          : 'Transcribe this audio. Return only the transcript text.';
-        const response = await fetchImpl(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model.replace(/^models\//u, ''))}:generateContent`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', 'x-goog-api-key': secret },
-            redirect: 'error',
-            signal,
-            body: JSON.stringify({ contents: [{ role: 'user', parts: [
-              { text: instruction },
-              { inline_data: { mime_type: request.mimeType, data: Buffer.from(request.bytes).toString('base64') } },
-            ] }] }),
-          },
-        );
-        const json = await readJson(response, [secret]) as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> };
-        const text = clean(json.candidates?.[0]?.content?.parts?.find((part) => clean(part.text, 20_000))?.text, 20_000);
-        if (!text) throw providerError('provider_response_invalid');
-        return { requestId: request.requestId, text };
-      });
+async function transcribe(
+  request: VoiceSpeechTranscribeRequest,
+  context: VoiceSpeechOperationContext,
+) {
+  if (!request.bytes.byteLength || request.bytes.byteLength > GOOGLE_GEMINI_STT_MAX_INPUT_BYTES) {
+    throw providerError('invalid_parameters');
+  }
+  const instruction = request.language
+    ? `Transcribe this audio. Language: ${request.language}. Return only the transcript text.`
+    : 'Transcribe this audio. Return only the transcript text.';
+  const body = encodeJson({ contents: [{ role: 'user', parts: [
+    { text: instruction },
+    { inline_data: { mime_type: request.mimeType, data: Buffer.from(request.bytes).toString('base64') } },
+  ] }] });
+  if (body.byteLength > GOOGLE_GEMINI_INLINE_REQUEST_MAX_BYTES) {
+    throw providerError('invalid_parameters');
+  }
+  const secret = await materializeApiKey(context.credentials, GEMINI_ORIGIN, context.signal);
+  const response = await context.http.request(
+    {
+      url: `${GEMINI_ORIGIN}/v1beta/models/${encodeURIComponent(request.model.replace(/^models\//u, ''))}:generateContent`,
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [GOOGLE_API_KEY_HEADER]: secret },
+      redirect: 'error',
+      body,
     },
-    async synthesize({ credential, request, signal }) {
-      return await credential(async (secret) => {
-        const response = await fetchImpl('https://texttospeech.googleapis.com/v1/text:synthesize', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-goog-api-key': secret },
+    { signal: context.signal },
+  );
+  const json = readJson(response, [secret]) as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> };
+  const text = clean(json.candidates?.[0]?.content?.parts?.find((part) => clean(part.text, 20_000))?.text, 20_000);
+  if (!text) throw providerError('provider_response_invalid');
+  return { requestId: request.requestId, text };
+}
+
+async function synthesize(
+  request: VoiceSpeechSynthesizeRequest,
+  context: VoiceSpeechOperationContext,
+) {
+  if (!request.input.length || utf8ByteLength(request.input) > GOOGLE_CLOUD_TTS_MAX_INPUT_UTF8_BYTES) {
+    throw providerError('invalid_parameters');
+  }
+  const secret = await materializeApiKey(context.credentials, GOOGLE_CLOUD_TTS_ORIGIN, context.signal);
+  const response = await context.http.request({
+    url: `${GOOGLE_CLOUD_TTS_ORIGIN}/v1/text:synthesize`,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [GOOGLE_API_KEY_HEADER]: secret },
+    redirect: 'error',
+    body: encodeJson({
+      input: { text: request.input },
+      voice: { name: request.voiceName, ...(request.languageCode ? { languageCode: request.languageCode } : {}) },
+      audioConfig: {
+        audioEncoding: request.format === 'wav' ? 'LINEAR16' : 'MP3',
+        ...(request.speakingRate == null ? {} : { speakingRate: request.speakingRate }),
+        ...(request.pitch == null ? {} : { pitch: request.pitch }),
+      },
+    }),
+  }, { signal: context.signal });
+  const json = readJson(response, [secret]) as { audioContent?: unknown };
+  const encoded = clean(json.audioContent, base64EncodedLength(GOOGLE_CLOUD_TTS_MAX_OUTPUT_BYTES));
+  if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+    throw providerError('provider_response_invalid');
+  }
+  const bytes = new Uint8Array(Buffer.from(encoded, 'base64'));
+  if (!bytes.byteLength || bytes.byteLength > GOOGLE_CLOUD_TTS_MAX_OUTPUT_BYTES) throw providerError('provider_response_invalid');
+  return { requestId: request.requestId, bytes, mimeType: request.format === 'wav' ? 'audio/wav' as const : 'audio/mpeg' as const };
+}
+
+export function createGoogleGeminiSttRuntime(): SpeechProviderRuntime {
+  return Object.freeze({
+    kind: 'speech' as const,
+    catalog: Object.freeze({
+      async list(
+        request: Readonly<{ catalog: 'voices' | 'models' }>,
+        context: VoiceSpeechOperationContext,
+      ) {
+        if (request.catalog !== 'models') throw providerError('invalid_parameters');
+        const secret = await materializeApiKey(context.credentials, GEMINI_ORIGIN, context.signal);
+        return parseGeminiModels(readJson(await context.http.request({
+          url: `${GEMINI_ORIGIN}/v1beta/models`,
+          method: 'GET',
+          headers: { [GOOGLE_API_KEY_HEADER]: secret },
           redirect: 'error',
-          signal,
-          body: JSON.stringify({
-            input: { text: request.input },
-            voice: { name: request.voiceName, ...(request.languageCode ? { languageCode: request.languageCode } : {}) },
-            audioConfig: {
-              audioEncoding: request.format === 'wav' ? 'LINEAR16' : 'MP3',
-              ...(request.speakingRate == null ? {} : { speakingRate: request.speakingRate }),
-              ...(request.pitch == null ? {} : { pitch: request.pitch }),
-            },
-          }),
-        });
-        const json = await readJson(response, [secret]) as { audioContent?: unknown };
-        const encoded = clean(json.audioContent, Math.ceil(MAX_AUDIO_BYTES * 4 / 3) + 8);
-        if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
-          throw providerError('provider_response_invalid');
-        }
-        const bytes = new Uint8Array(Buffer.from(encoded, 'base64'));
-        if (!bytes.byteLength || bytes.byteLength > MAX_AUDIO_BYTES) throw providerError('provider_response_invalid');
-        return { requestId: request.requestId, bytes, mimeType: request.format === 'wav' ? 'audio/wav' : 'audio/mpeg' };
-      });
+        }, { signal: context.signal }), [secret]));
+      },
+    }),
+    async transcribe(request: VoiceSpeechTranscribeRequest, context: VoiceSpeechOperationContext) {
+      return await transcribe(request, context);
     },
   });
 }
 
-function createCatalogOperations(providerId: 'google_gemini' | 'google_cloud', fetchImpl: Fetch) {
+export function createGoogleCloudTtsRuntime(): SpeechProviderRuntime {
   return Object.freeze({
-    async fetchCatalog(params: Readonly<{ credential: PluginVoiceSpeechCredentialAccess; catalog: 'voices' | 'models'; signal: AbortSignal }>) {
-      return await params.credential(async (secret) => {
-        if (providerId === GOOGLE_GEMINI_STT_PROVIDER_ID && params.catalog === 'models') {
-          return parseGeminiModels(await readJson(await fetchImpl('https://generativelanguage.googleapis.com/v1beta/models', {
-            method: 'GET', headers: { 'x-goog-api-key': secret }, redirect: 'error', signal: params.signal,
-          }), [secret]));
-        }
-        if (providerId === GOOGLE_CLOUD_TTS_PROVIDER_ID && params.catalog === 'voices') {
-          return parseGoogleVoices(await readJson(await fetchImpl('https://texttospeech.googleapis.com/v1/voices', {
-            method: 'GET', headers: { 'x-goog-api-key': secret }, redirect: 'error', signal: params.signal,
-          }), [secret]));
-        }
-        throw providerError('invalid_parameters');
-      });
+    kind: 'speech' as const,
+    catalog: Object.freeze({
+      async list(
+        request: Readonly<{ catalog: 'voices' | 'models' }>,
+        context: VoiceSpeechOperationContext,
+      ) {
+        if (request.catalog !== 'voices') throw providerError('invalid_parameters');
+        const secret = await materializeApiKey(context.credentials, GOOGLE_CLOUD_TTS_ORIGIN, context.signal);
+        return parseGoogleVoices(readJson(await context.http.request({
+          url: `${GOOGLE_CLOUD_TTS_ORIGIN}/v1/voices`,
+          method: 'GET',
+          headers: { [GOOGLE_API_KEY_HEADER]: secret },
+          redirect: 'error',
+        }, { signal: context.signal }), [secret]));
+      },
+    }),
+    async synthesize(request: VoiceSpeechSynthesizeRequest, context: VoiceSpeechOperationContext) {
+      return await synthesize(request, context);
     },
   });
 }
 
-export function createGoogleVoiceSpeechRuntime(
-  params?: Readonly<{ fetch?: Fetch }>,
-): PluginVoiceSpeechRuntimeRegistration {
-  const fetchImpl = params?.fetch ?? globalThis.fetch;
-  return Object.freeze({
-    catalogProviders: Object.freeze([
-      Object.freeze({ providerId: GOOGLE_GEMINI_STT_PROVIDER_ID, catalogOperations: createCatalogOperations(GOOGLE_GEMINI_STT_PROVIDER_ID, fetchImpl) }),
-      Object.freeze({ providerId: GOOGLE_CLOUD_TTS_PROVIDER_ID, catalogOperations: createCatalogOperations(GOOGLE_CLOUD_TTS_PROVIDER_ID, fetchImpl) }),
-    ]),
-    operations: createGoogleVoiceSpeechOperations({ fetch: fetchImpl }),
-    speechProviderIds: Object.freeze({
-      transcribe: GOOGLE_GEMINI_STT_PROVIDER_ID,
-      synthesize: GOOGLE_CLOUD_TTS_PROVIDER_ID,
-    }),
-    schemas: Object.freeze({
-      transcribeRequest: GoogleGeminiTranscribeRequestSchema,
-      transcribeResponse: GoogleGeminiTranscribeResponseSchema,
-      synthesizeRequest: GoogleCloudSynthesizeRequestSchema,
-      synthesizeResponse: GoogleCloudSynthesizeResponseSchema,
-    }),
-  });
-}
-
-export const GOOGLE_VOICE_SPEECH_RUNTIME = createGoogleVoiceSpeechRuntime();
+export const GOOGLE_GEMINI_STT_RUNTIME: SpeechProviderRuntime = createGoogleGeminiSttRuntime();
+export const GOOGLE_CLOUD_TTS_RUNTIME: SpeechProviderRuntime = createGoogleCloudTtsRuntime();

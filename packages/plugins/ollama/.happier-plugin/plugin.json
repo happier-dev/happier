@@ -1,0 +1,202 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "probes": [
+            {
+              "endpointTemplateId": "ollama-native",
+              "parser": "ollama-tags",
+              "path": "/api/tags"
+            }
+          ],
+          "source": "probe"
+        },
+        "discovery": {
+          "availabilityProbe": {
+            "endpointTemplateId": "ollama-native",
+            "parser": "ollama-tags",
+            "path": "/api/tags"
+          },
+          "catalogFallback": {
+            "endpointEnvName": "OLLAMA_HOST",
+            "endpointTemplateId": "ollama-native",
+            "fixedArgs": [
+              "list"
+            ],
+            "lookupNames": [
+              "ollama"
+            ],
+            "parser": "ollama-list-table"
+          },
+          "installedCheck": {
+            "lookupNames": [
+              "ollama"
+            ]
+          },
+          "listener": {
+            "argvMatch": {
+              "mode": "containsAll",
+              "tokens": [
+                "serve"
+              ]
+            },
+            "defaultPorts": [
+              11434
+            ],
+            "executableBasenames": [
+              "ollama",
+              "ollama.exe"
+            ]
+          },
+          "v": 1
+        },
+        "endpointTemplates": [
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "ollama-native",
+            "localUrlCandidates": [
+              "http://127.0.0.1:11434/",
+              "http://localhost:11434/"
+            ],
+            "protocol": "ollama-native"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "ollama-openai-chat",
+            "localUrlCandidates": [
+              "http://127.0.0.1:11434/v1",
+              "http://localhost:11434/v1"
+            ],
+            "protocol": "openai-chat"
+          },
+          {
+            "capabilities": {
+              "reasoningControls": "supported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "ollama-openai-responses",
+            "localUrlCandidates": [
+              "http://127.0.0.1:11434/v1",
+              "http://localhost:11434/v1"
+            ],
+            "protocol": "openai-responses"
+          }
+        ],
+        "id": "ollama",
+        "kind": "local",
+        "managedRuntime": {
+          "endpointTemplateIds": [
+            "ollama-native",
+            "ollama-openai-chat",
+            "ollama-openai-responses"
+          ],
+          "kind": "managed"
+        },
+        "name": "Ollama",
+        "v": 1,
+        "websiteUrl": "https://ollama.com"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "ollama"
+        ],
+        "id": "ollama-cli",
+        "title": "Ollama CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use models served locally by Ollama.",
+  "displayName": "Ollama",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "ollama-process",
+        "reason": "Run the declared Ollama executable.",
+        "scope": {
+          "executables": [
+            {
+              "id": "ollama-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.provider.ollama",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

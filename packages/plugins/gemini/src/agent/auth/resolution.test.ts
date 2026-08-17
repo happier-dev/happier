@@ -1,9 +1,9 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveGeminiAcpFlag, resolveGeminiApiKeyFromEnv, resolveGeminiAuthConfig } from './resolution.js';
 
-function createExec(stdout: string): Pick<PluginExecService, 'run'> {
+function createExec(stdout: string): Pick<ExecService, 'run'> {
   return {
     run: vi.fn(async () => ({
       termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },

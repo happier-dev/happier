@@ -1,4 +1,4 @@
 export {
   activate,
-  createElevenLabsVoiceProviderRuntimeRegistration,
-} from './runtime/createRuntimeContribution.js';
+  createElevenLabsVoiceProviderRuntime,
+} from './runtime.js';

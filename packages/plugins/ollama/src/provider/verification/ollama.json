@@ -1,7 +1,7 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.ollama/ollama",
-  "reviewedAt": "2026-07-12",
+  "reviewedAt": "2026-07-31",
   "sources": [
     { "id": "openai-compat", "kind": "official-doc", "url": "https://docs.ollama.com/api/openai-compatibility", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
     { "id": "tags", "kind": "official-doc", "url": "https://docs.ollama.com/api/tags", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
@@ -15,7 +15,6 @@
     { "path": "discovery.catalogFallback", "sourceIds": ["cli"], "status": "verified" },
     { "path": "discovery.installedCheck", "sourceIds": ["cli"], "status": "verified" },
     { "path": "discovery.listener", "sourceIds": ["cli", "faq"], "status": "verified" },
-    { "path": "discovery.managedStart", "sourceIds": ["cli"], "status": "verified" },
     { "path": "endpointTemplates.ollama-native.capabilities.reasoningControls", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "endpointTemplates.ollama-native.capabilities.statefulResponses", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "endpointTemplates.ollama-native.capabilities.streaming", "sourceIds": ["openai-compat"], "status": "verified" },
@@ -35,6 +34,10 @@
     { "path": "endpointTemplates.ollama-openai-responses.localUrlCandidates", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "endpointTemplates.ollama-openai-responses.protocol", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "kind", "sourceIds": ["faq"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.ollama-native", "sourceIds": ["tags"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.ollama-openai-chat", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "managedRuntime.endpointTemplateIds.ollama-openai-responses", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "managedRuntime.kind", "sourceIds": ["cli"], "status": "verified" },
     { "path": "websiteUrl", "sourceIds": ["faq"], "status": "verified" }
   ]
 }

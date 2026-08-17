@@ -1,0 +1,346 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "source": "static",
+          "staticModels": [
+            {
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 1000000,
+              "extendedContextModelId": "MiniMax-M3[1m]",
+              "id": "MiniMax-M3",
+              "name": "MiniMax M3"
+            },
+            {
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 204800,
+              "id": "MiniMax-M2.7",
+              "name": "MiniMax M2.7"
+            }
+          ]
+        },
+        "credential": {
+          "keyUrl": "https://platform.minimax.io/user-center/payment/token-plan",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "minimax-http-bearer",
+              "protocols": [
+                "anthropic",
+                "openai-responses"
+              ],
+              "uses": [
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.minimax.io/anthropic",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "minimax-anthropic",
+            "protocol": "anthropic"
+          },
+          {
+            "baseUrl": "https://api.minimax.io/v1",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "minimax-openai-responses",
+            "protocol": "openai-responses"
+          }
+        ],
+        "id": "minimax",
+        "kind": "frontier",
+        "legacyProfileMigrations": [
+          {
+            "credentialBinding": {
+              "credentialSlotId": "apiKey",
+              "legacyEnvVarName": "MINIMAX_AUTH_TOKEN"
+            },
+            "descriptorRevision": 1,
+            "implicitModelAliasReplacements": [
+              {
+                "legacyModelId": "MiniMax-M3[1m]",
+                "replacementModelId": "MiniMax-M3"
+              }
+            ],
+            "migratedEnvironmentVariables": [
+              {
+                "name": "ANTHROPIC_BASE_URL",
+                "value": "${MINIMAX_BASE_URL:-https://api.minimax.io/anthropic}"
+              },
+              {
+                "name": "ANTHROPIC_AUTH_TOKEN",
+                "value": "${MINIMAX_AUTH_TOKEN}"
+              },
+              {
+                "name": "ANTHROPIC_MODEL",
+                "value": "${MINIMAX_MODEL:-MiniMax-M3[1m]}"
+              }
+            ],
+            "primaryModel": {
+              "agentTargetKey": "agent:claude",
+              "defaultModelId": "MiniMax-M3",
+              "legacyEnvVarName": "ANTHROPIC_MODEL",
+              "legacyProcessEnvAlias": "MINIMAX_MODEL"
+            },
+            "retainedEnvironmentVariables": [
+              {
+                "name": "API_TIMEOUT_MS",
+                "value": "${MINIMAX_API_TIMEOUT_MS:-600000}"
+              },
+              {
+                "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+                "value": "${MINIMAX_AUTO_COMPACT_WINDOW:-1000000}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "value": "${MINIMAX_OPUS_MODEL:-MiniMax-M3[1m]}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "value": "${MINIMAX_SONNET_MODEL:-MiniMax-M3[1m]}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "value": "${MINIMAX_HAIKU_MODEL:-MiniMax-M2.7}"
+              },
+              {
+                "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                "value": "${MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
+              }
+            ],
+            "sourceProfileId": "minimax"
+          }
+        ],
+        "name": "MiniMax",
+        "v": 1,
+        "websiteUrl": "https://platform.minimax.io"
+      },
+      {
+        "catalog": {
+          "manualModelPolicy": "allowed",
+          "source": "static",
+          "staticModels": [
+            {
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 1000000,
+              "extendedContextModelId": "MiniMax-M3[1m]",
+              "id": "MiniMax-M3",
+              "name": "MiniMax M3"
+            },
+            {
+              "capabilities": {
+                "toolRoundTrips": "supported"
+              },
+              "contextWindowTokens": 204800,
+              "id": "MiniMax-M2.7",
+              "name": "MiniMax M2.7"
+            }
+          ]
+        },
+        "credential": {
+          "keyUrl": "https://platform.minimaxi.com/user-center/payment/token-plan",
+          "kind": "apiKey",
+          "required": true,
+          "slotId": "apiKey",
+          "transports": [
+            {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "id": "minimax-cn-http-bearer",
+              "protocols": [
+                "anthropic",
+                "openai-responses"
+              ],
+              "uses": [
+                "runtime"
+              ]
+            }
+          ]
+        },
+        "endpointTemplates": [
+          {
+            "baseUrl": "https://api.minimaxi.com/anthropic",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "minimax-cn-anthropic",
+            "protocol": "anthropic"
+          },
+          {
+            "baseUrl": "https://api.minimaxi.com/v1",
+            "capabilities": {
+              "reasoningControls": "unknown",
+              "statefulResponses": "unknown",
+              "streaming": "supported",
+              "toolRoundTrips": "supported"
+            },
+            "id": "minimax-cn-openai-responses",
+            "protocol": "openai-responses"
+          }
+        ],
+        "id": "minimax-cn",
+        "kind": "frontier",
+        "legacyProfileMigrations": [
+          {
+            "credentialBinding": {
+              "credentialSlotId": "apiKey",
+              "legacyEnvVarName": "MINIMAX_CN_AUTH_TOKEN"
+            },
+            "descriptorRevision": 1,
+            "implicitModelAliasReplacements": [
+              {
+                "legacyModelId": "MiniMax-M3[1m]",
+                "replacementModelId": "MiniMax-M3"
+              }
+            ],
+            "migratedEnvironmentVariables": [
+              {
+                "name": "ANTHROPIC_BASE_URL",
+                "value": "${MINIMAX_CN_BASE_URL:-https://api.minimaxi.com/anthropic}"
+              },
+              {
+                "name": "ANTHROPIC_AUTH_TOKEN",
+                "value": "${MINIMAX_CN_AUTH_TOKEN}"
+              },
+              {
+                "name": "ANTHROPIC_MODEL",
+                "value": "${MINIMAX_CN_MODEL:-MiniMax-M3[1m]}"
+              }
+            ],
+            "primaryModel": {
+              "agentTargetKey": "agent:claude",
+              "defaultModelId": "MiniMax-M3",
+              "legacyEnvVarName": "ANTHROPIC_MODEL",
+              "legacyProcessEnvAlias": "MINIMAX_CN_MODEL"
+            },
+            "retainedEnvironmentVariables": [
+              {
+                "name": "API_TIMEOUT_MS",
+                "value": "${MINIMAX_CN_API_TIMEOUT_MS:-600000}"
+              },
+              {
+                "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+                "value": "${MINIMAX_CN_AUTO_COMPACT_WINDOW:-1000000}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "value": "${MINIMAX_CN_OPUS_MODEL:-MiniMax-M3[1m]}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "value": "${MINIMAX_CN_SONNET_MODEL:-MiniMax-M3[1m]}"
+              },
+              {
+                "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "value": "${MINIMAX_CN_HAIKU_MODEL:-MiniMax-M2.7}"
+              },
+              {
+                "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                "value": "${MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
+              }
+            ],
+            "sourceProfileId": "minimax-cn"
+          }
+        ],
+        "name": "MiniMax (China)",
+        "v": 1,
+        "websiteUrl": "https://platform.minimaxi.com"
+      }
+    ],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Use MiniMax models through compatible agents on the global or China endpoint.",
+  "displayName": "MiniMax",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.provider.minimax",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

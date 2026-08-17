@@ -3,6 +3,7 @@ package managedruntime
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -31,9 +32,10 @@ type QualifiedPurpose struct {
 }
 
 type AuthEntry struct {
-	ID       string           `json:"id"`
-	Provider Provider         `json:"provider"`
-	Purpose  QualifiedPurpose `json:"purpose"`
+	ID                 string           `json:"id"`
+	Provider           Provider         `json:"provider"`
+	Purpose            QualifiedPurpose `json:"purpose"`
+	AllowedHTTPSOrigin string           `json:"allowedHttpsOrigin"`
 }
 
 type Config struct {
@@ -77,25 +79,17 @@ func (c Config) Validate() error {
 	providers := make(map[Provider]struct{}, len(c.AuthEntries))
 	for i := range c.AuthEntries {
 		entry := c.AuthEntries[i]
-		if !entryIDPattern.MatchString(entry.ID) {
-			return fmt.Errorf("auth entry %d has an invalid id", i)
+		if err := entry.validate(); err != nil {
+			return fmt.Errorf("auth entry %d: %w", i, err)
 		}
 		if _, exists := ids[entry.ID]; exists {
 			return fmt.Errorf("auth entry id %q is duplicated", entry.ID)
 		}
 		ids[entry.ID] = struct{}{}
-		switch entry.Provider {
-		case ProviderCodex, ProviderClaude:
-		default:
-			return fmt.Errorf("auth entry %q has unsupported provider %q", entry.ID, entry.Provider)
-		}
 		if _, exists := providers[entry.Provider]; exists {
 			return fmt.Errorf("provider %q has more than one eligible managed auth entry", entry.Provider)
 		}
 		providers[entry.Provider] = struct{}{}
-		if err := entry.Purpose.validate(); err != nil {
-			return fmt.Errorf("auth entry %q purpose: %w", entry.ID, err)
-		}
 	}
 
 	if len(c.Protocols) == 0 {
@@ -103,6 +97,50 @@ func (c Config) Validate() error {
 	}
 	if _, err := servingRoutesForProtocols(c.Protocols, c.ModelListEnabled); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (entry AuthEntry) validate() error {
+	if !entryIDPattern.MatchString(entry.ID) {
+		return fmt.Errorf("has an invalid id")
+	}
+	switch entry.Provider {
+	case ProviderCodex, ProviderClaude:
+	default:
+		return fmt.Errorf("has unsupported provider %q", entry.Provider)
+	}
+	if err := entry.Purpose.validate(); err != nil {
+		return fmt.Errorf("purpose: %w", err)
+	}
+	if _, err := parseAllowedHTTPSOrigin(entry.AllowedHTTPSOrigin); err != nil {
+		return fmt.Errorf("allowed HTTPS origin: %w", err)
+	}
+	return nil
+}
+
+func parseAllowedHTTPSOrigin(value string) (*url.URL, error) {
+	if value == "" || value != strings.TrimSpace(value) {
+		return nil, fmt.Errorf("is invalid")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+		parsed.Host != strings.ToLower(parsed.Host) || parsed.String() != value {
+		return nil, fmt.Errorf("is invalid")
+	}
+	if parsed.Hostname() == "" {
+		return nil, fmt.Errorf("is invalid")
+	}
+	return parsed, nil
+}
+
+func requireAllowedHTTPSOrigin(request *url.URL, configuredOrigin string) error {
+	allowed, err := parseAllowedHTTPSOrigin(configuredOrigin)
+	if err != nil || request == nil || request.Scheme != "https" || request.Host != allowed.Host ||
+		request.User != nil || request.Opaque != "" {
+		return fmt.Errorf("managed upstream origin is not authorized")
 	}
 	return nil
 }

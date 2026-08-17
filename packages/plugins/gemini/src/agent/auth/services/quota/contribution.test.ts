@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import {
   createGeminiQuotaFetcher,
@@ -48,7 +48,7 @@ describe('geminiConnectedServiceQuotaFetcherContribution', () => {
     expect(fetcher.serviceId).toBe('gemini');
   });
 
-  it('returns a quota_unknown placeholder snapshot for API-key or Vertex token credentials', async () => {
+  it('returns a public semantic quota_unknown snapshot for API-key or Vertex token credentials', async () => {
     const now = 1_000_000;
     const fetcher = createGeminiQuotaFetcher();
 
@@ -60,10 +60,26 @@ describe('geminiConnectedServiceQuotaFetcherContribution', () => {
 
     expect(snapshot).toMatchObject({
       v: 1,
-      serviceId: 'gemini',
-      profileId: 'work',
-      fetchedAt: now,
+      recordKey: {
+        providerId: 'gemini',
+        accountSubjectId: 'provisional:gemini:work',
+        subjectKind: 'unknown',
+        quotaScope: 'account',
+      },
+      providerId: 'gemini',
+      accountSubject: {
+        kind: 'provisionalLocalSubject',
+        id: 'provisional:gemini:work',
+        mergeKey: 'gemini:work',
+      },
+      observedAtMs: now,
+      fetchedAtMs: now,
+      source: 'connectedServiceProbe',
+      confidence: 'unknown',
+      state: 'loaded_data',
     });
+    expect(snapshot).not.toHaveProperty('serviceId');
+    expect(snapshot).not.toHaveProperty('profileId');
     expect(snapshot.meters).toHaveLength(1);
     expect(snapshot.meters[0]).toMatchObject({
       meterId: 'quota_unknown',

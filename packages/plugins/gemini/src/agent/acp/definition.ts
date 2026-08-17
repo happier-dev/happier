@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { getSuggestedGeminiModelsForUi } from '../models/suggestedModels.js';
 import { GEMINI_TOOL_NAME_INFERENCE } from './toolNames.js';
