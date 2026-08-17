@@ -1989,6 +1989,7 @@ export class ApiClient {
     ownerId?: string;
     leaseMs: number;
     expectedCredentialRevision?: string;
+    signal?: AbortSignal;
   }): Promise<{ acquired: boolean; leaseUntil: number; ownerId: string; credentialRevision: string }> {
     const serverUrl = resolveServerHttpBaseUrl();
     const serviceId = encodeURIComponent(params.serviceId);
@@ -2007,6 +2008,7 @@ export class ApiClient {
           'Content-Type': 'application/json',
         },
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        ...(params.signal ? { signal: params.signal } : {}),
       },
     );
     if (response.status !== 200) {
