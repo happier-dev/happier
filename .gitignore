@@ -151,6 +151,10 @@ _.env.pipeline.production.local
 /packages/plugin-ui/fixtures/external-authoring/dist-node/
 /packages/plugin-sdk/.facade-current-declarations/
 /packages/plugin-sdk/.facade-inference-current/
+/packages/plugin-sdk/protocolFacade.inference-current.ts
+/packages/plugin-sdk/protocolFacade.protocol-current.d.ts
+/packages/plugin-sdk/tsconfig.facade-current*.json
+/packages/plugin-sdk/tsconfig.facade-inference-current.json
 /packages/plugin-sdk/src/**/*.d.ts.map
 /packages/protocol/src/**/*.d.ts.map
 /packages/protocol/.released-account-scoped-reader-*/
@@ -179,6 +183,7 @@ _.env.pipeline.production.local
 /onboarding-remote-*.png
 /opencode-auth-picker-*.png
 /runtime-status-session-before-reload.png
+/s[0-9]*.png
 /ui-postfix-review-snapshot.md
 /z[0-9]*.png
 /.codex-tmp
