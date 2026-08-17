@@ -1222,9 +1222,9 @@ function withProviderSharedFields<T extends {
     readonly models: Readonly<Record<string, unknown>>;
     readonly status: Readonly<Record<string, string>>;
     readonly errors: Readonly<Record<string, string>>;
-}>(
+}, Locale extends keyof typeof localTranslations>(
     translation: T,
-    locale: keyof typeof localTranslations,
+    locale: Locale,
 ) {
     return {
         ...translation,

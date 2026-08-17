@@ -4778,7 +4778,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。已選擇用於你的下一則訊息。`,
                 detailTitle: ({ agent }: { agent: string }) => `繼續使用 ${agent}`,
                 sendLabel: ({ agent }: { agent: string }) => `繼續使用 ${agent}`,
-                detailDescription: '對話會保留。在你傳送下一則訊息前不會傳送任何內容。',
+                detailDescription: '最近的對話會以文字形式保留；圖片和檔案不會。在你傳送下一則訊息前不會傳送任何內容。',
                 announcement: ({ agent }: { agent: string }) => `已選擇 ${agent} 用於下一則訊息，尚未送出任何內容。`,
                 dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `這個工作階段已從 ${from_} 轉由 ${to} 繼續`,
                 checking: '正在檢查可用性…',

@@ -6056,7 +6056,7 @@ localTailscale: {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。次のメッセージ用に選択済みです。`,
       detailTitle: ({ agent }: { agent: string }) => `${agent} で続ける`,
       sendLabel: ({ agent }: { agent: string }) => `${agent} で続ける`,
-      detailDescription: '会話はそのまま引き継がれます。次のメッセージを送るまで何も送信されません。',
+      detailDescription: '最近の会話はテキストとして引き継がれます。画像やファイルは引き継がれません。次のメッセージを送るまで何も送信されません。',
       announcement: ({ agent }: { agent: string }) => `次のメッセージ用に ${agent} を選択しました。まだ何も送信されていません。`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `このセッションは ${from_} から ${to} に引き継がれました`,
       checking: "利用可否を確認しています…",

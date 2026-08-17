@@ -6136,7 +6136,7 @@ export const it = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selezionato per il tuo prossimo messaggio.`,
       detailTitle: ({ agent }: { agent: string }) => `Continua con ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continua con ${agent}`,
-      detailDescription: 'La conversazione resta. Non viene inviato nulla fino al prossimo messaggio.',
+      detailDescription: 'La conversazione recente resta come testo; immagini e file no. Non viene inviato nulla fino al prossimo messaggio.',
       announcement: ({ agent }: { agent: string }) => `${agent} selezionato per il prossimo messaggio. Non è stato inviato nulla.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Questa sessione è continuata da ${from_} a ${to}`,
       checking: "Verifica della disponibilità…",

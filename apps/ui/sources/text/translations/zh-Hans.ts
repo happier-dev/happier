@@ -5613,7 +5613,7 @@ export const zhHans = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。已选择用于你的下一条消息。`,
       detailTitle: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
-      detailDescription: '对话会保留。在你发送下一条消息前不会发送任何内容。',
+      detailDescription: '最近的对话会以文本形式保留；图片和文件不会。在你发送下一条消息前不会发送任何内容。',
       announcement: ({ agent }: { agent: string }) => `已选择 ${agent} 用于下一条消息，尚未发送任何内容。`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `此会话已从 ${from_} 转由 ${to} 继续`,
       checking: "正在检查可用性…",

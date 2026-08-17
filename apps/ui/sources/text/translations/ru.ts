@@ -6290,7 +6290,7 @@ export const ru = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Выбран для следующего сообщения.`,
       detailTitle: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
-      detailDescription: 'Разговор сохраняется. Ничего не отправится до вашего следующего сообщения.',
+      detailDescription: 'Недавний разговор сохраняется как текст; изображения и файлы — нет. Ничего не отправится до вашего следующего сообщения.',
       announcement: ({ agent }: { agent: string }) => `${agent} выбран для следующего сообщения. Ничего не отправлено.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Эта сессия продолжена с ${from_} на ${to}`,
       checking: "Проверка доступности…",

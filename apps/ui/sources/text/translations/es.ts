@@ -5792,7 +5792,7 @@ export const es = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Seleccionado para tu próximo mensaje.`,
       detailTitle: ({ agent }: { agent: string }) => `Continuar con ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continuar con ${agent}`,
-      detailDescription: 'Tu conversación se mantiene. No se envía nada hasta tu próximo mensaje.',
+      detailDescription: 'Tu conversación reciente se mantiene como texto; las imágenes y los archivos no. No se envía nada hasta tu próximo mensaje.',
       announcement: ({ agent }: { agent: string }) => `${agent} seleccionado para el próximo mensaje. No se ha enviado nada.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Esta sesión continuó de ${from_} a ${to}`,
       checking: "Comprobando disponibilidad…",

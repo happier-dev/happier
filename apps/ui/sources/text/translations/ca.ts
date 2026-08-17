@@ -5062,7 +5062,7 @@ deps: {
             armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Seleccionat per al teu missatge següent.`,
             detailTitle: ({ agent }: { agent: string }) => `Continua amb ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continua amb ${agent}`,
-            detailDescription: 'La conversa es manté. No s’envia res fins al pròxim missatge.',
+            detailDescription: 'La conversa recent es manté com a text; les imatges i els fitxers no. No s’envia res fins al pròxim missatge.',
             announcement: ({ agent }: { agent: string }) => `${agent} seleccionat per al missatge següent. No s’ha enviat res.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Aquesta sessió ha continuat de ${from_} a ${to}`,
             checking: 'S’està comprovant la disponibilitat…',

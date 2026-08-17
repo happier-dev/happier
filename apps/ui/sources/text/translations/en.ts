@@ -6049,7 +6049,7 @@ export const en = {
             armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selected for your next message.`,
             detailTitle: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continue with ${agent}`,
-            detailDescription: 'Your conversation carries over. Nothing is sent until your next message.',
+            detailDescription: 'Your recent conversation carries over as text; images and files don’t. Nothing is sent until your next message.',
             announcement: ({ agent }: { agent: string }) => `${agent} selected for the next message. Nothing has been sent.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Continued this Session from ${from_} to ${to}`,
             checking: 'Checking availability…',

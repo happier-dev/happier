@@ -5812,7 +5812,7 @@ export const pl = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Wybrany do następnej wiadomości.`,
       detailTitle: ({ agent }: { agent: string }) => `Kontynuuj z ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Kontynuuj z ${agent}`,
-      detailDescription: 'Rozmowa zostaje zachowana. Nic nie zostanie wysłane do następnej wiadomości.',
+      detailDescription: 'Ostatnia część rozmowy zostaje zachowana jako tekst; obrazy i pliki nie. Nic nie zostanie wysłane do następnej wiadomości.',
       announcement: ({ agent }: { agent: string }) => `Wybrano ${agent} do następnej wiadomości. Nic nie zostało wysłane.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Ta sesja została przejęta z ${from_} na ${to}`,
       checking: "Sprawdzanie dostępności…",

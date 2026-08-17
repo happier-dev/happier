@@ -5793,7 +5793,7 @@ export const fr = {
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Sélectionné pour votre prochain message.`,
       detailTitle: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
-      detailDescription: 'Votre conversation est conservée. Rien n’est envoyé avant votre prochain message.',
+      detailDescription: 'Votre conversation récente est conservée sous forme de texte ; les images et les fichiers ne le sont pas. Rien n’est envoyé avant votre prochain message.',
       announcement: ({ agent }: { agent: string }) => `${agent} sélectionné pour le prochain message. Rien n’a été envoyé.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Cette session a continué de ${from_} à ${to}`,
       checking: "Vérification de la disponibilité…",

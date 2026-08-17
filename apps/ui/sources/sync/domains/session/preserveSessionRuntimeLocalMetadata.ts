@@ -1,3 +1,4 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
@@ -107,21 +108,48 @@ export function preserveSessionRuntimeLocalMetadata<T extends RuntimeLocalMetada
         };
     }
 
-    if (preservedMetadata.claudeSessionId == null && previousMetadata.claudeSessionId != null) {
+    // Flat vendor resume keys are the one field group here that identifies WHICH
+    // Agent the Session is running, so they cannot be restored unconditionally.
+    // A cross-Agent transition clears the source Agent's key on purpose and the
+    // next snapshot already names the target, so restoring the previous key would
+    // resurrect exactly the id that was cleared and leave two live resume keys —
+    // the state `REQ-STATE-01` forbids and the resume path breaks on. Preservation
+    // therefore applies only while the Session still names the same Agent; an
+    // update that names no Agent at all (or a previous snapshot that never did)
+    // keeps the existing behaviour, because nothing there contradicts the key.
+    const previousAgentId = resolveAgentIdFromSessionMetadata(previousMetadata);
+    const preservedAgentId = resolveAgentIdFromSessionMetadata(preservedMetadata);
+    const preservesVendorResumeKeys = previousAgentId === null
+        || preservedAgentId === null
+        || previousAgentId === preservedAgentId;
+
+    if (
+        preservesVendorResumeKeys
+        && preservedMetadata.claudeSessionId == null
+        && previousMetadata.claudeSessionId != null
+    ) {
         preservedMetadata = {
             ...preservedMetadata,
             claudeSessionId: previousMetadata.claudeSessionId,
         };
     }
 
-    if (preservedMetadata.codexSessionId == null && previousMetadata.codexSessionId != null) {
+    if (
+        preservesVendorResumeKeys
+        && preservedMetadata.codexSessionId == null
+        && previousMetadata.codexSessionId != null
+    ) {
         preservedMetadata = {
             ...preservedMetadata,
             codexSessionId: previousMetadata.codexSessionId,
         };
     }
 
-    if (preservedMetadata.opencodeSessionId == null && previousMetadata.opencodeSessionId != null) {
+    if (
+        preservesVendorResumeKeys
+        && preservedMetadata.opencodeSessionId == null
+        && previousMetadata.opencodeSessionId != null
+    ) {
         preservedMetadata = {
             ...preservedMetadata,
             opencodeSessionId: previousMetadata.opencodeSessionId,
