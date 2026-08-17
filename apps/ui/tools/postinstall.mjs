@@ -20,6 +20,7 @@ import {
     formatReactNativeEnrichedMarkdownWebStreamingPatchFailure,
     verifyReactNativeEnrichedMarkdownWebStreamingPatch,
 } from './postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
+import { repairReactNativeEnrichedMarkdownWebStreamingPatch } from './postinstall/repairReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 
 // Yarn workspaces can execute this script via a symlinked path (e.g. repoRoot/node_modules/happy/...).
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
@@ -261,8 +262,16 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
     }
 
     const failureReports = [];
-    for (const packageDir of packageDirs) {
-        const result = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir });
+    for (const [index, packageDir] of packageDirs.entries()) {
+        const initialResult = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir });
+        const result = initialResult.status === 'ok'
+            ? initialResult
+            : repairReactNativeEnrichedMarkdownWebStreamingPatch({
+                packageDir,
+                patchDir,
+                patchPackageCliPath,
+                label: index === 0 ? 'root' : 'ui',
+            });
         if (result.status !== 'ok') {
             failureReports.push(`${packageDir}\n${formatReactNativeEnrichedMarkdownWebStreamingPatchFailure(result)}`);
         }
