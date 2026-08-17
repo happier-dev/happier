@@ -10,18 +10,19 @@ description: How hstack starts server/daemon/UI, browser auto-open, watch mode, 
 
 If you’re unsure, use `hstack tui stack dev <stack>` (or `hstack stack dev <stack>` in non-interactive environments).
 
-For **named stacks only**, `start` can also run from an activated runtime snapshot stored under the stack folder instead of the live repo checkout:
+For **named stacks only**, `start` can also run from a shared runtime snapshot selected for the stack instead of the live repo checkout:
 
 ```bash
 hstack stack build exp1 --activate-runtime
 hstack stack start exp1 --runtime
 ```
 
-Use this when you want:
+The repository's stable stack is the build authority. Multiple named stacks can select the same snapshot without rebuilding or copying it. Use this when you want:
 
-- stack-local production artifacts for `web + server + daemon`
+- shared production artifacts for `web + server + daemon`
 - service installs that are insulated from source rebuild churn in the same checkout
 - a production-like stack against the same worktree you are editing in another stack
+- an agent-controlled QA stack whose server and daemon reload only at an explicit restart boundary
 
 Keep using `dev` when you want watchers, Metro, or rapid source iteration.
 
@@ -91,13 +92,23 @@ Build targets:
 hstack stack build exp1 --web
 hstack stack build exp1 --server
 hstack stack build exp1 --daemon
-hstack stack build exp1 --all
 ```
+
+Managed server and web artifacts are independent. A server-only request does not build or publish
+the web bundle; the runtime launch supplies the selected web artifact separately. Borrowed Expo
+provides the browser UI for controlled-live QA, while `--web` is an explicit request for strict
+snapshot UI bytes.
 
 Full runtime activation:
 
 ```bash
 hstack stack build exp1 --activate-runtime
+```
+
+Select an already-active producer snapshot without building, publishing, or activating it again:
+
+```bash
+hstack stack runtime exp1 select
 ```
 
 Partial runtime activation:
@@ -161,12 +172,22 @@ Important:
 
 - `hstack stack build <name>` with no flags still builds the web bundle only for backward compatibility.
 - `hstack stack build <name> --web|--server|--daemon` only updates artifacts. It does not switch the running stack to those artifacts until you activate a new runtime snapshot.
+- `hstack stack build <name> --activate-runtime` is the full producer publication path. Use component flags for a narrow refresh; `hstack stack runtime <name> activate --all` composes a complete snapshot from the latest component artifacts.
+- Artifact and full-snapshot builds use the repository build authority. Concurrent consumers wait for and reuse the newest compatible published result; explicit snapshot ids remain exact pins.
+- `hstack stack runtime <name> select` validates the build authority's active snapshot and writes only `<name>`'s selection. It never builds, publishes, activates, changes the producer's current pointer, or changes the consumer's launch mode.
 - `--tauri` still belongs to the legacy local `hstack build` flow and is not part of named-stack artifact/runtime builds in v1.
 - Runtime snapshots are currently a **named stack** feature. Repo-local `yarn tui`, `hstack dev`, and repo-local `hstack start` are still source-backed flows.
-- `hstack stack dev <name>` remains source-only; runtime snapshots are for `start` and stack services.
-- Web-only activation updates the stable `runtime/current/ui` path, so a browser reload is enough.
+- `hstack stack dev <name>` remains source-only. It is rejected when the stack persists `HAPPIER_STACK_RUNTIME_MODE=require` so a controlled stack cannot silently acquire watchers.
+- Selecting a snapshot never restarts a running stack. `hstack stack info <name> --json` distinguishes `selectedSnapshotId` from `loadedSnapshotId` and sets `pendingManualRestart` while they differ.
+- Web-only activation becomes visible after the running stack loads the selection; then a browser reload is enough.
 - Server-only or daemon-only activation requires a restart so the process re-resolves the active runtime.
 - A running named-stack service does not switch server/daemon processes in place. Rebuild or activate first, then restart the service or stack process so it re-resolves the active snapshot.
+
+For a controlled stack, persist `HAPPIER_STACK_RUNTIME_MODE=require`. From the checkout under test, start it with `node ./apps/stack/scripts/repo_local.mjs tui stack start <name> --runtime --mobile`, rather than a bare `hstack` that might resolve another checkout. By default, also set `HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>`; the consumer borrows the existing Expo process while its server loads snapshot bytes. If the fresh stack has not yet received approved credentials, its daemon remains stopped and no extra `--no-daemon` flag is needed; after auth is seeded, the next explicit start launches that daemon from the selected runtime. Reuse the producer's current snapshot with `node ./apps/stack/scripts/repo_local.mjs stack runtime <name> select`. When current server or daemon bytes are required, run the narrow `stack build <name> --server|--daemon` command through the consumer and then `stack runtime <name> activate --all`; the checkout authority coalesces publication and no producer service is restarted. Inspect runtime-backed health with `node ./apps/stack/scripts/repo_local.mjs stack doctor <name> --runtime`; without `--runtime`, the stack wrapper intentionally diagnoses the source path. Use the TUI `r` key only when you deliberately want to load a newly selected snapshot, then verify with `node ./apps/stack/scripts/repo_local.mjs stack info <name> --json` that `selectedSnapshotId` equals `loadedSnapshotId`. Choose the snapshot's static UI—and build `--web`—only for explicitly strict/reproducible UI QA. See [Stacks: controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa).
+
+These are four policies over the same owners: source validation reads source and does not publish runtime artifacts; source development starts from last-green outputs and refreshes in the background; managed publication writes changed component artifacts and a reference-only snapshot; release/self-host packaging uses the existing per-target self-contained builders directly from settled component inputs and does not consume or flatten a managed snapshot. A controlled consumer normally selects the newest valid snapshot and starts immediately, then crosses the selected-versus-loaded boundary only on an explicit restart.
+
+For the checkout-derived repository producer, `dev.mjs` automatically schedules successful server/daemon refreshes through the background runtime publisher. It keeps one publication in flight, coalesces later refreshes into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
 
 ---
 

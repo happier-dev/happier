@@ -271,11 +271,12 @@ hstack stack build dev-built --activate-runtime
 hstack stack service dev-built restart
 ```
 
-If you only activated a new web bundle, the service keeps serving the updated runtime UI and the menu bar should not need a restart:
+If you selected a new web bundle, restart the service when you want it to load the new runtime UI, then reload the browser:
 
 ```bash
 hstack stack build dev-built --web
 hstack stack runtime dev-built activate --web
+hstack stack service dev-built restart
 ```
 
 ### “Daemon stale” even though it’s running

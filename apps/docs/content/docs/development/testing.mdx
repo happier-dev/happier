@@ -102,6 +102,12 @@ Notes:
 - If you suspect stale Metro transforms, you can opt into clearing the Expo/Metro cache with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - Manual QA tip: if concurrent code changes cause the UI to keep reloading, you can disable Expo web Fast Refresh/HMR **per browser tab** by opening the UI with `?happier_hmr=0` (re-enable with `?happier_hmr=1`). This is web-only + dev-only.
 
+### Stable agent/manual QA stacks
+
+Do not run longer QA against a source/watch stack when unrelated edits can restart its server or daemon mid-flow. Create an ordinary named stack with `HAPPIER_STACK_RUNTIME_MODE=require`, select a shared runtime snapshot, and start it from the checkout under test with `node ./apps/stack/scripts/repo_local.mjs tui stack start <name> --runtime`. Publishing/selecting a newer snapshot does not restart the running stack; the operator presses `r` only at the intended reload boundary. The stack keeps isolated ports, database, CLI/daemon state, and logs while reusing repository-wide built artifacts. See [Controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa).
+
+By default, the controlled stack borrows the repository stack's existing Expo server with `HAPPIER_STACK_EXPO_SOURCE_STACK=<producer>` and uses `happier_hmr=0`. Reloading the browser opts into the latest Expo bundle, so UI-only controlled-live QA does not build a web artifact. Use the runtime snapshot's static UI only when immutable/reproducible UI bytes are explicitly required. Managed server and web artifacts are independent: a server-only refresh does not publish a web bundle. Managed snapshots/support references are dev/QA-only; release/self-host packaging uses existing per-target self-contained builders directly and never creates a consumer copy, consumes a host-target snapshot, or starts Expo.
+
 ### 4c) Native desktop E2E (Tauri MCP)
 
 Native desktop end-to-end validation for Tauri-specific surfaces using the package-owned MCP harness in `apps/ui/scripts/qa/**`.

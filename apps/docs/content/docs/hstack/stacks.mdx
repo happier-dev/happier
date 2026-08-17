@@ -22,32 +22,32 @@ Stacks are configured via a plain env file stored under:
 
 ## Create a stack
 
-Non-interactive:
+Non-interactive (explicitly disable the TTY wizard):
 
 ```bash
-hstack stack new exp1 --port=3010 --server=happier-server-light
+hstack stack new exp1 --port=3010 --server=happier-server-light --non-interactive
 ```
 
-Auto-pick a port:
+Use an ephemeral port (selected when the stack starts):
 
 ```bash
-hstack stack new exp2
+hstack stack new exp2 --non-interactive
 ```
 
 Power users: choose a DB provider without extra prompts:
 
 ```bash
 # Light flavor (default): SQLite (no Docker)
-hstack stack new exp-light --server=happier-server-light --db-provider=sqlite
+hstack stack new exp-light --server=happier-server-light --db-provider=sqlite --non-interactive
 
 # Light flavor (optional): embedded Postgres via PGlite (PG_Light)
-hstack stack new exp-pglite --server=happier-server-light --db-provider=pglite
+hstack stack new exp-pglite --server=happier-server-light --db-provider=pglite --non-interactive
 
 # Full server (default): Postgres (Docker-managed per stack)
-hstack stack new exp-full --server=happier-server --db-provider=postgres
+hstack stack new exp-full --server=happier-server --db-provider=postgres --non-interactive
 
 # Full server (optional): MySQL (requires an explicit DATABASE_URL; hstack does not provision MySQL)
-hstack stack new exp-mysql --server=happier-server --db-provider=mysql --database-url=mysql://user:pass@127.0.0.1:3306/happier
+hstack stack new exp-mysql --server=happier-server --db-provider=mysql --database-url=mysql://user:pass@127.0.0.1:3306/happier --non-interactive
 ```
 
 ## Create a PR test stack (copy/paste friendly)
@@ -153,7 +153,6 @@ hstack stack build exp1
 hstack stack build exp1 --web
 hstack stack build exp1 --server
 hstack stack build exp1 --daemon
-hstack stack build exp1 --all
 ```
 
 Build and activate a fresh full runtime snapshot:
@@ -175,10 +174,13 @@ hstack stack runtime exp1 activate --all
 Notes:
 
 - `hstack stack build <name>` with no component flags keeps the legacy behavior and builds the web bundle only.
-- `--all` means `--web --server --daemon`.
-- `hstack stack build <name> --activate-runtime` still assembles a complete runtime snapshot (`web + server + daemon`) under the stack folder.
+- Managed server and web artifacts are independent. A server-only request does not build or publish a web bundle; runtime launch supplies the selected web artifact separately.
+- `hstack stack build <name> --activate-runtime` assembles a complete runtime snapshot (`web + server + daemon`) in the repository build-authority stack and selects it for `<name>`.
+- Every named stack pinned to the same repository uses the same build authority by default. Artifact and snapshot requests share the repository-wide lock; a waiter re-inspects and reuses the newest compatible publication before running workspace preparation again. A requested component is compatible when it was newly published while waiting or already matches the request's current recipe, so a newer full snapshot is reused while a web-only publication cannot hide stale requested server or daemon bytes.
+- Snapshot identity comes from the exact immutable component artifacts, target, server flavor, database provider, and build recipe it contains. Unrelated edits elsewhere in a busy checkout do not invalidate a completed artifact set or prevent it from becoming the latest usable snapshot; a later request can publish newer component artifacts when needed.
 - `hstack stack runtime <name> activate ...` creates a new active runtime snapshot by combining the selected latest artifact(s) with the currently active runtime for unselected components.
-- Building an artifact alone does **not** change the active runtime. The running stack keeps serving the currently active snapshot until you activate a new runtime.
+- `hstack stack runtime <name> select` adopts the build authority's already-active snapshot without building, publishing, changing that producer's selection, or changing the consumer's launch mode.
+- Building an artifact alone does **not** change the selected runtime. Selecting or activating a snapshot also does **not** restart a running stack: server and daemon bytes change only after an explicit restart.
 - `--tauri` remains the legacy local `hstack build` flag. It is not part of named-stack artifact/runtime builds in v1.
 - Runtime snapshots are currently for **named stacks**. Repo-local `yarn tui` / `hstack start` remain source-backed flows.
 - `hstack stack auth <name> login` follows the same mode: if a valid runtime snapshot is active, guided login uses the stack-served runtime UI instead of waiting for Expo.
@@ -196,7 +198,7 @@ hstack stack start exp1 --runtime
 hstack stack env exp1 set HAPPIER_STACK_RUNTIME_MODE=prefer
 ```
 
-## Named stack runtime flow (recommended for production-like local stacks)
+## Shared runtime flow (for producer-owned named stacks)
 
 Create a named stack pinned to a checkout/worktree:
 
@@ -204,7 +206,7 @@ Create a named stack pinned to a checkout/worktree:
 hstack stack new dev-built --repo=/absolute/path/to/your/dev-checkout
 ```
 
-Build and activate a stack-local runtime snapshot:
+Build or reuse the repository's shared runtime snapshot and select it for this stack:
 
 ```bash
 hstack stack build dev-built --activate-runtime
@@ -258,18 +260,113 @@ Important:
 
 - You do **not** need to reinstall the named-stack service after rebuilding a runtime snapshot.
 - The service keeps pointing at the stack env file; it picks the active snapshot on the next start/restart.
+- `hstack stack info dev-built --json` reports `runtime.selectedSnapshotId`, `runtime.selectedProducerStackName`, `runtime.loadedSnapshotId`, `runtime.pendingManualRestart`, and (for the checkout-derived producer) `runtime.runtimePublication`. A pending restart is expected after selecting a newer snapshot while the stack is running.
 - If the stack is in `prefer` mode, it will use the active runtime snapshot when valid, otherwise fall back to source.
-- For web-only activation, the runtime-backed server serves from `runtime/current/ui`, so a browser reload is enough after `hstack stack runtime <name> activate --web`.
+- In `require` mode, source/watch fallback is disabled. `hstack stack dev <name>` is rejected so an automation or QA stack cannot accidentally re-enter the hot-reloading path.
+- For web-only activation, reload the browser after the running stack has crossed the explicit restart boundary and loaded that selection.
 - For server-only or daemon-only activation, restart the stack process or stack service so it re-resolves the updated runtime.
 - Runtime snapshots and component artifacts are pruned automatically after successful activation/builds.
   - Default retention is the active build plus the previous one (`2` total).
+  - A producer keeps snapshots selected by other managed stacks, even when they are older than the normal retention window.
   - Override with `HAPPIER_STACK_RUNTIME_SNAPSHOT_KEEP_COUNT=<n>` and `HAPPIER_STACK_RUNTIME_ARTIFACT_KEEP_COUNT=<n>`.
   - Set either value to `1` if you want to keep only the current runtime/artifact generation.
+- Runtime-backed daemon/session runner copies are mutable process state, not part of a shared snapshot. They live under the consuming stack's CLI home and have their own bounded retention, so running a stack cannot grow or modify the producer's shared runtime snapshot.
+
+These are four policies over the same owners: source validation reads source and does not publish runtime artifacts; source development starts from a valid last-green output and refreshes changed outputs in the background; managed publication builds only requested component code/support and commits a reference-only snapshot; release/self-host packaging uses the existing per-target self-contained builders directly from settled component inputs and does not consume or flatten a managed snapshot. A controlled consumer selects the newest valid snapshot and starts immediately, then reloads newly selected server/daemon bytes only after an explicit restart.
+
+For the checkout-derived repository producer, `dev.mjs` automatically schedules successful server/daemon refreshes through the background runtime publisher. It keeps one publication in flight, coalesces later refreshes into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
+
+## Controlled stacks for agent QA
+
+A controlled stack is an ordinary named stack that requires shared runtime snapshots and changes only when its operator explicitly restarts it. It has no separate QA runtime architecture.
+
+Run these commands from the checkout under test with its existing checkout-local launcher, not a bare `hstack` found on `PATH`. The launcher is part of the stack toolchain: it binds the command to this checkout and prevents re-exec into another installed checkout.
+
+Keep controlled stacks in that launcher's canonical managed stack storage. Do not redirect `HAPPIER_STACK_STORAGE_DIR` to `.project/tmp` or another workspace-local directory just because an agent sandbox cannot write the managed root. A different storage root is a separate stack universe: repository build-authority discovery, shared artifact reuse, and approved auth-source discovery no longer refer to the same owners. Grant the agent narrowly scoped access to the canonical stack root, or treat stack creation as blocked instead of manufacturing a parallel root or copying credentials by hand.
+
+```bash
+# Create an isolated stack. Choose the server/database options needed by the test.
+node ./apps/stack/scripts/repo_local.mjs stack new agent-qa-17 --repo=/absolute/path/to/your/dev-checkout --server=happier-server-light --db-provider=sqlite --no-copy-auth --non-interactive
+
+# Never fall back to source watchers for this stack.
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-17 set HAPPIER_STACK_RUNTIME_MODE=require
+
+# Default to the repository stack's existing Expo/Metro process.
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-17 set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>
+
+# Verify that a human-approved source actually has reusable auth before copying.
+node ./apps/stack/scripts/repo_local.mjs stack auth <approved-auth-source> -- status --json
+
+# Only then seed this fresh stack's auth.
+node ./apps/stack/scripts/repo_local.mjs stack auth agent-qa-17 -- copy-from <approved-auth-source>
+
+# Verify the repository producer has an active snapshot, then select it for this consumer.
+node ./apps/stack/scripts/repo_local.mjs stack info <repository-stack> --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 select --json
+
+# Start the runtime server from built bytes and borrow the producer's Expo endpoint.
+node ./apps/stack/scripts/repo_local.mjs tui stack start agent-qa-17 --runtime --mobile
+```
+
+`stack new` normally inherits auth from `main` for convenience. `--no-copy-auth` is mandatory for a controlled stack: it keeps credential provenance under the later human approval rather than silently copying a machine identity. `--non-interactive` is part of that controlled command contract, so a terminal does not reopen the ordinary stack-creation wizard. Continue only when the source status reports `auth.ok: true`; otherwise stop and obtain human direction to reauthenticate that source or select another one. Auth seeding never copies or shares a source database; a SQLite source is read without reconciling its migration ledger.
+
+Before approved auth is seeded, a non-interactive runtime start still brings up the stack's server, but leaves its credential-dependent daemon stopped. It does not require an extra `--no-daemon` flag; after the approved copy, the next explicit start launches the daemon from the selected runtime too.
+
+If a controlled stack was created without `--no-copy-auth`, do not delete auth files or recreate the stack. After the human approves the replacement source, replace its target auth:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack auth agent-qa-17 -- copy-from <approved-auth-source> --force
+```
+
+`--force` is not a broad recovery mechanism: it replaces target auth only after Account seeding proves the target data compatible, and it rejects conflicting target Account rows before replacing the target secret, credentials, or settings. It does not copy or reconcile the source stack's database or SQLite migration ledger.
+
+A complete runtime snapshot selects independent web, server, and daemon artifacts. A borrowed-Expo consumer does not build a web artifact by default: server-only requests publish server code/support only, while strict snapshot UI requires an explicit `--web` request. Managed snapshots and support references are dev/QA-only; release and self-host packaging use their existing per-target self-contained builders directly from target-owned component/support inputs and do not consume or flatten a host-target snapshot.
+
+`stack runtime agent-qa-17 select` is the zero-build path: it adopts the authority's active snapshot without changing running processes. If that snapshot already contains the bytes under test, reuse it.
+
+When current server or daemon bytes are required, request the narrow build through the remembered consumer. The command resolves the repository authority and joins/reuses a publication already in flight; it does not create a consumer build store or take over the producer's running services:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack build agent-qa-17 --server --daemon --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 activate --all --json
+node ./apps/stack/scripts/repo_local.mjs stack info agent-qa-17
+# The TUI shows "pending manual restart" until you press r.
+```
+
+Use only `--server` or `--daemon` when one component changed. Run one build request and wait for it instead of launching retries or another publisher. `runtime activate --all` composes the latest authority web, server, and daemon artifacts and selects that exact snapshot; selection still cannot restart the consumer.
+
+For a UI-only controlled-live check, manually reload the browser to receive the producer's current Expo bundle; do not build a web artifact. For explicitly strict snapshot UI, use the same checkout-local launcher:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack build agent-qa-17 --web --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 activate --all --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 select --json
+```
+
+Selection remains non-disruptive. Restart the remembered consumer deliberately, then inspect
+`stack info --json` and require `selectedSnapshotId == loadedSnapshotId` before claiming the
+strict UI bytes are loaded.
+
+Each controlled stack still owns its mutable state: ports, server database, CLI home, daemon state, logs, and process lifecycle. Only immutable runtime artifacts are shared. In particular, creating a controlled stack does not copy or share the repository stack's SQLite database.
+
+### Default browser QA with the repository Expo server
+
+By default, a controlled stack borrows Expo/Metro from the repository stack while keeping its own snapshot-backed server and daemon:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack list
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-17 set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>
+node ./apps/stack/scripts/repo_local.mjs tui stack start agent-qa-17 --runtime --mobile
+```
+
+The TUI reports Expo as borrowed, displays the producer's Expo logs in the Expo pane, and routes the browser or development client to the consumer stack's server. Even with `--mobile`, the consumer does not start, own, restart, or stop Expo; the producer is its sole lifecycle owner. Browser URLs use the consumer's named `.localhost` origin, include its `server` URL, and set `happier_hmr=0`; the tab stays on its currently loaded UI until you reload it manually. On reload it receives the producer's latest development bundle, so this is intentionally controlled-live rather than immutable.
+
+Only when strict or reproducible UI bytes are requested, unset `HAPPIER_STACK_EXPO_SOURCE_STACK` and use the static web UI served by the selected runtime snapshot instead of borrowed Expo. `happier_hmr=0` is web-only; an installed native development client can use the producer's advertised/tunnelled Metro URL, but its native Fast Refresh behavior is unchanged.
 
 Doctor:
 
 ```bash
-hstack stack doctor exp1
+node ./apps/stack/scripts/repo_local.mjs stack doctor agent-qa-17 --runtime
 ```
 
 ## Edit a stack (interactive)
@@ -312,6 +409,18 @@ hstack stack happier exp1 -- status
 hstack stack happier exp1 -- daemon status
 ```
 
+When the named stack has a selected runtime snapshot and you want that admitted
+CLI instead of the live source checkout, pass `--runtime` before the separator:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack happier exp1 --runtime -- status
+```
+
+This path does not publish or wait for source workspace packages. It is the
+preferred form for controlled stacks because the CLI command and the running
+server/daemon use the same selected snapshot. Omit `--runtime` only when you
+intentionally want the source CLI and its freshness preflight.
+
 Stack shorthand also works:
 
 ```bash
@@ -326,6 +435,7 @@ These commands run with the stack env file applied:
 - `hstack stack start <name>`
 - `hstack stack build <name>`
 - `hstack stack runtime <name> activate ...`
+- `hstack stack runtime <name> select`
 - `hstack stack doctor <name>`
 - `hstack stack mobile <name>`
 - `hstack stack eas <name> [subcommand...]`
@@ -379,8 +489,7 @@ Implementation notes:
 - macOS: implemented via **launchd LaunchAgents**
 - Linux: implemented via **systemd user services** (if available)
 - The service persists `HAPPIER_STACK_ENV_FILE`, so you can edit the stack env file without reinstalling.
-- Activating server or daemon runtime changes does **not** hot-swap a running service process. After `hstack stack build <name> --activate-runtime` or `hstack stack runtime <name> activate --server|--daemon|--all`, run `hstack stack service <name> restart` so the service restarts against the new active snapshot.
-- Web-only activation is the exception: after `hstack stack runtime <name> activate --web`, the service keeps serving the updated `runtime/current/ui` bundle and a browser reload is enough.
+- Activating runtime changes does **not** hot-swap a running service process. After `hstack stack build <name> --activate-runtime` or `hstack stack runtime <name> activate ...`, run `hstack stack service <name> restart` when you are ready for the service to load the new selection. A browser reload is enough only after that running process serves the selected web snapshot.
 
 ## Tailscale Serve for a named stack
 

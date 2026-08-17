@@ -55,8 +55,8 @@ Lifecycle:
 - List/info: `hstack stack list`, `hstack stack info <name>`
 - Run: `hstack stack dev <name>`, `hstack stack start <name>`
 - Stop: `hstack stack stop <name>`
-- Build: `hstack stack build <name>`, `hstack stack build <name> --web|--server|--daemon|--all`, `hstack stack build <name> --activate-runtime`
-  - Named stacks pinned to the same repository publish/reuse artifacts through one repository build authority; selecting a snapshot does not restart a running consumer.
+- Build: `hstack stack build <name>`, `hstack stack build <name> --web|--server|--daemon`, `hstack stack build <name> --activate-runtime`
+  - Named stacks pinned to the same repository publish/reuse artifacts through one repository build authority. Queue waiters adopt the newest compatible publication, while an explicit snapshot id remains an exact pin; selecting either does not restart a running consumer.
   - `--tauri` is still the legacy local `hstack build` flag, not a named-stack artifact/runtime target in v1.
 - Activate runtime from existing artifacts: `hstack stack runtime <name> activate --web|--server|--daemon|--all`
 - Diagnose: `hstack stack doctor <name>`
@@ -107,17 +107,23 @@ node ./apps/stack/scripts/repo_local.mjs stack env agent-qa set HAPPIER_STACK_EX
 node ./apps/stack/scripts/repo_local.mjs stack auth <approved-auth-source> -- status --json
 # Continue only when the approved source reports auth.ok: true.
 node ./apps/stack/scripts/repo_local.mjs stack auth agent-qa -- copy-from <approved-auth-source>
-# Select the active complete snapshot already published by the repository producer.
-# Do not build or activate a runtime from the controlled consumer.
+# Reuse the producer's active complete snapshot when it already contains the bytes under test.
 node ./apps/stack/scripts/repo_local.mjs stack info <repository-stack> --json
 node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa select --json
+# If current server/daemon bytes are required, request them through the consumer name.
+# The repository authority coalesces the build; neither running stack is restarted.
+node ./apps/stack/scripts/repo_local.mjs stack build agent-qa --server --daemon --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa activate --all --json
 node ./apps/stack/scripts/repo_local.mjs tui stack start agent-qa --runtime --mobile
 ```
 
 - Inspect selected versus loaded bytes: `node ./apps/stack/scripts/repo_local.mjs stack info agent-qa --json`
 - Load a newly selected snapshot: press `r` in that stack's TUI, or explicitly restart its stack/service.
+- Treat the new bytes as loaded only when `selectedSnapshotId` and `loadedSnapshotId` match in that same `stack info --json` result.
 - Borrowing the repository stack's existing Expo process is the controlled-stack default. Unset `HAPPIER_STACK_EXPO_SOURCE_STACK` only for explicitly strict snapshot-UI QA.
-- The first full candidate may still build one shared static web artifact because the server snapshot consumes it; consumers reuse it and do not start or copy their own Expo process.
+- Managed server and web artifacts are independent. A server-only refresh does not publish a web bundle; borrowed Expo supplies the browser UI for controlled-live QA, and strict snapshot UI requires an explicit `--web` refresh.
+- A runtime snapshot contains references to canonical producer component payloads, not consumer copies. Managed snapshots/support references are dev/QA-only; release/self-host packaging uses existing per-target self-contained builders directly and does not consume or flatten a host-target snapshot.
+- Only the checkout-derived repository producer automatically publishes successful server/daemon refreshes. It keeps one publication in flight plus one trailing identity recomputation, reconciles all component identities on restart, and reports phase/current snapshot under `runtime.runtimePublication`; publication never restarts consumers.
 - `HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=<stack>` overrides the repository-derived build authority for an advanced managed-stack setup.
 - `--force` is not a general recovery switch: it replaces target auth files only after Account seed compatibility succeeds and rejects conflicting target Account data. Do not use it to repair a controlled stack; re-authenticate an approved source or obtain human direction instead.
 

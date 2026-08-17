@@ -26,6 +26,27 @@ hstack auth seed --force
 hstack stack auth <stack> copy-from dev-auth
 ```
 
+### Controlled-stack auth recovery
+
+For a controlled stack pinned to an uncommitted checkout, run from that checkout with the existing local launcher so a `PATH` installation cannot select another source tree. Create new controlled stacks with `--no-copy-auth`; once a human approves a source, seed it explicitly:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack auth <approved-auth-source> -- status --json
+node ./apps/stack/scripts/repo_local.mjs stack auth <stack> -- copy-from <approved-auth-source>
+```
+
+Proceed only if the source reports `auth.ok: true`. If it does not, stop: reauthenticating that source or choosing another credential source needs human direction.
+
+If the target already inherited an unintended seed, do not delete auth files or recreate the stack. After approval, replace its target auth with:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack auth <stack> -- copy-from <approved-auth-source> --force
+```
+
+`--force` is not a broad recovery mechanism: it replaces target auth only after Account seeding proves the target data compatible, and it rejects conflicting target Account rows before replacing the target secret, credentials, or settings. It does not copy or reconcile the source stack's database or SQLite migration ledger.
+
+If a sandboxed agent cannot write the canonical managed stack root, do not redirect `HAPPIER_STACK_STORAGE_DIR` to `.project/tmp` or another ad hoc location. That creates an independent stack universe, so the checkout's repository build authority and approved auth sources appear missing and expensive artifacts can be republished. Grant narrowly scoped write access to the canonical stack root or report the controlled-stack operation as blocked; do not manually copy credentials between roots.
+
 If the stack already has seeded auth but still fails with an auth error or a daemon `401`, repair the stack-scoped login state directly:
 
 ```bash
@@ -91,15 +112,30 @@ Look for:
 
 - `runtime.mode`
 - `runtime.activeSnapshotId`
+- `runtime.selectedProducerStackName`
+- `runtime.selectedSnapshotId`
+- `runtime.loadedSnapshotId`
+- `runtime.pendingManualRestart`
+- `runtime.runtimePublication`
 - `runtime.snapshotPath`
 - `runtime.valid`
 - `runtime.errors`
 
+For the checkout-derived repository producer, `runtime.runtimePublication` is the existing runtime-state
+projection of automatic source publication. Its `phase`, `currentSnapshotId`, and per-component phases/errors
+show whether a server/daemon refresh is stale, publishing, current, or failed. A failed publication keeps the
+current snapshot and source services in place; it does not restart consumers. The TUI renders the same summary.
+
 Common fixes:
 
+For a controlled stack, run these commands from the checkout under test through
+`node ./apps/stack/scripts/repo_local.mjs` and keep the same remembered consumer
+name throughout the session. The bare `hstack` forms below are shorthand for
+ordinary named-stack troubleshooting.
+
 ```bash
-# rebuild and activate a fresh runtime snapshot
-hstack stack build <stack> --activate-runtime
+# adopt an already-published producer snapshot on a consumer
+hstack stack runtime <stack> select
 
 # force the next launch to use the runtime snapshot
 hstack stack start <stack> --runtime
@@ -107,6 +143,37 @@ hstack stack start <stack> --runtime
 # temporarily bypass the runtime snapshot and run from source
 hstack stack start <stack> --source
 ```
+
+If `select` reports that no producer snapshot is active, request the required artifacts through the
+remembered consumer; the checkout authority owns and coalesces the publication:
+
+```bash
+hstack stack build <stack> --server --daemon
+hstack stack runtime <stack> activate --all
+```
+
+If `selectedSnapshotId` and `loadedSnapshotId` differ, the stack is behaving as designed: snapshot
+selection is non-disruptive. Have that stack's owner restart it explicitly when they are ready to cross
+the reload boundary. A stack with `HAPPIER_STACK_RUNTIME_MODE=require` intentionally refuses the source/watch
+`dev` command.
+
+For borrowed Expo, inspect `runtime.borrowedExpo` and `runtime.components.ui.ownership`. A degraded
+borrowed provider means the producer endpoint is unavailable; the consumer will not start or kill a
+second Expo process. Inspect the producer state; only its owner should decide whether to restart it.
+
+For a controlled consumer with borrowed Expo, adopt an already-active producer snapshot without
+starting a build from the consumer:
+
+```bash
+hstack stack runtime <stack> select
+```
+
+Diagnose that runtime-backed path with `hstack stack doctor <stack> --runtime`; without the flag,
+the stack wrapper intentionally diagnoses source mode instead.
+
+If selection reports that the producer has no active snapshot, use the narrow consumer build plus
+`runtime activate --all` shown above. This resolves to the same repository authority; it does not
+create per-consumer artifacts or restart the producer. Run one request and let lock waiters reuse it.
 
 If you only rebuilt one component, remember that builds update artifacts, not the active runtime:
 

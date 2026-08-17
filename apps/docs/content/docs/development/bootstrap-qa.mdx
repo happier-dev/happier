@@ -16,16 +16,29 @@ Rules:
 
 ## Quick start (web QA stack)
 
-1. Create a fresh stack:
-   - `hstack stack new codex-bootstrap-qa-<port> --repo=/Users/leeroy/Documents/Development/happier/dev --port=<uniquePort>`
-2. Build + activate runtime:
-   - `hstack stack build codex-bootstrap-qa-<port> --activate-runtime`
-3. Prefer runtime snapshots:
-   - `hstack stack env codex-bootstrap-qa-<port> set HAPPIER_STACK_RUNTIME_MODE=prefer`
-4. Start stack (runtime):
-   - `hstack stack start codex-bootstrap-qa-<port> --runtime`
-5. Auth:
-   - `hstack stack auth codex-bootstrap-qa-<port> login --force`
+Use the canonical [controlled-stack workflow](/hstack/stacks#controlled-stacks-for-agent-qa).
+The setup flow intentionally starts without copied auth, but it still reuses the repository build
+authority and Expo owner:
+
+1. Create one fresh isolated consumer from the checkout under test:
+   - `node ./apps/stack/scripts/repo_local.mjs stack new codex-bootstrap-qa-<port> --repo=/Users/leeroy/Documents/Development/happier/dev --port=<uniquePort> --server=happier-server-light --db-provider=sqlite --no-copy-auth --non-interactive`
+2. Require snapshots and borrow the repository stack's Expo endpoint:
+   - `node ./apps/stack/scripts/repo_local.mjs stack env codex-bootstrap-qa-<port> set HAPPIER_STACK_RUNTIME_MODE=require`
+   - `node ./apps/stack/scripts/repo_local.mjs stack env codex-bootstrap-qa-<port> set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>`
+3. Select the producer's existing snapshot without building when it already contains the bytes under test:
+   - `node ./apps/stack/scripts/repo_local.mjs stack runtime codex-bootstrap-qa-<port> select --json`
+4. Start the controlled stack:
+   - `node ./apps/stack/scripts/repo_local.mjs tui stack start codex-bootstrap-qa-<port> --runtime --mobile`
+5. Exercise the intended bootstrap/auth flow against that isolated stack.
+
+If current server or daemon bytes are required, request them through this same consumer. The
+repository authority reuses an in-flight/completed publication and stores only one artifact set:
+
+- `node ./apps/stack/scripts/repo_local.mjs stack build codex-bootstrap-qa-<port> --server --daemon --json`
+- `node ./apps/stack/scripts/repo_local.mjs stack runtime codex-bootstrap-qa-<port> activate --all --json`
+
+Do not launch a second publisher or a consumer-owned Expo process. For UI-only controlled-live QA,
+reload the borrowed Expo page rather than building a web artifact.
 
 ## Quick start (native desktop QA via Tauri)
 
@@ -252,6 +265,7 @@ Latest evidence:
 
 Add new entries as you discover issues:
 
+- 2026-08-14: A custom native dev client could fail in Metro when a bundled Plugin UI rebuild changed a content-hashed native chunk but the app's generated bundled-plugin registry still referenced the prior filename. The canonical UI workspace preflight now publishes the bundled-plugin projection after the complete UI workspace closure, and Metro watches every bundled-plugin package through a stable package-root topology even when an artifact tree is absent at startup. Stack adopts a structurally complete last-green closure immediately and refreshes it in the background; without one, a failed preparation leaves Expo running in an explicitly degraded state so the rest of the Stack and its repair loop remain available. Validated via `apps/ui/scripts/ensureWorkspacePackagesBuilt.test.mjs`, `apps/ui/sources/__tests__/config/metro.reactNativeWebShim.test.ts`, `apps/stack/scripts/utils/dev/expo_dev.ensure_workspace_built.test.mjs`, and `apps/stack/scripts/utils/dev_targets/supervisor.test.mjs`.
 - 2026-04-19: Compose-backed native desktop QA completed successfully on `com.happier.stack.compose-desktop-qa`; the earlier Lane B1 blocker notes are retired in favor of the proof artifacts under `.project/logs/bootstrap-qa/tauri-onboarding-wizard-20260419-2026-04-19_00-44-18/`.
 - 2026-03-30: `yarn tui:with-tauri` failures with `failed to run 'cargo metadata' ... (os error 2)` were traced to Tauri invoking `cargo metadata` via PATH (it does not consistently honor `--runner` for metadata) + some stacks having stale `tauri.dev.stack.json` referencing `binaries/hboots`. Fixes: `apps/stack/scripts/tauri_dev.mjs` now passes the resolved Tauri runtime env into the invocation (so PATH includes cargo) and refreshes the stack-scoped `tauri.dev.stack.json` (so `externalBin` matches `apps/ui/src-tauri` and points at `binaries/hsetup`).
 - 2026-03-29: `hstack stack new <name> --copy-auth-from=<source>` copied credentials into the new stack, but the new stack env did not persist `HAPPIER_STACK_AUTH_SEED_FROM` / `HAPPIER_STACK_AUTO_AUTH_SEED=1` → the first `stack start --runtime` hit daemon auth `401`, auto-reseed was disabled, and the runtime start failed → `apps/stack/scripts/stack.mjs` now persists the explicit copy-auth source as the stack’s auth seed when `--copy-auth-from` is used → validated by RED/GREEN in `node --test apps/stack/scripts/stack_copy_auth_server_scoped.test.mjs` and a broader reseed lane in `node --test --test-name-pattern='invalid-auth auto-reseed uses resolved stack name instead of null placeholder' apps/stack/scripts/daemon_invalid_auth_reseed_stack_name.integration.test.mjs`.

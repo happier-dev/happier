@@ -209,6 +209,20 @@ particular, Expo/Metro is restarted on its configured target while the independe
 the local port stable. This prevents a normal Expo crash from creating a competing local Metro
 process.
 
+Expo startup first looks for a structurally complete shared source-development output closure. When
+one exists, Stack starts or adopts that last-green closure immediately and refreshes it in the
+background. This applies to local Expo and to remote Expo placement: the local server and remote
+worker are not held behind a full workspace/plugin UI refresh on every TUI start. If no usable
+closure exists and preparation fails, Stack still starts Expo in a degraded state so the server,
+TUI, and recovery loop remain available; routes that import a missing generated artifact can fail
+until a refresh succeeds. The failure is reported in the Stack logs. The next successful refresh
+publishes the canonical workspace outputs and bundled-plugin projection together through one
+prevalidated mounted-tree transaction. Known-invalid inputs fail before replacement; a caught commit
+failure rolls the live tree back to last green, and the next canonical preflight repairs any
+interrupted partial replacement. This is not a generation-pointer, journal, or power-loss atomicity
+contract across package-owned source trees. Each target continues to use its target-local synchronized
+build cache rather than copying build output between machines.
+
 Reachability of the SSH worker is not service readiness. Stack verifies Expo through the local
 tunnel and verifies a remote daemon from that server identity's daemon state plus its live process.
 Runtime status records those results per service, so a healthy Expo endpoint remains available when
@@ -286,7 +300,8 @@ by CPU count, adds a low-memory penalty, and randomly distributes commands among
 Healthy samples are cached briefly (15 seconds by default); unavailable samples are cached longer
 (2 minutes by default). Refreshes are coalesced with a lightweight filesystem lock, so concurrent
 agents do not each probe the same host. The selector excludes a target that cannot launch the
-requested top-level executable and adjusts each cached score for commands already dispatched there
+requested top-level executable or whose repository filesystem reports no free space, and adjusts
+each cached score for commands already dispatched there
 but not yet visible in its next load sample. Pass the executable directly when practical: wrapping
 it in `sh -lc` hides inner tool requirements from this preflight. If the selected host cannot
 establish its command connection, the launcher temporarily excludes it and tries another configured
@@ -321,6 +336,12 @@ transition, saving, or watching state only after that session has completed at l
 cycle and has no error, pause, or conflict. It then runs against the bytes already present in the
 same moving mirror used by remote services. Continuous synchronization remains active while the
 command runs, exactly as it would if the command had been started locally during edits.
+
+That availability-first behavior means an ordinary command can briefly observe the previous remote
+tree while a large rename or deletion is still being reconciled. Use the explicit barrier below when
+the result depends on the target having received every local change observed so far. A missing local
+file that still appears in a remote compiler error is a strong signal to run that barrier before
+diagnosing the compiler output as current source.
 
 When a command must start after all changes observed locally so far have reached the target, choose
 one of the explicit barriers:

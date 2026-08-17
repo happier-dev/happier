@@ -12,7 +12,7 @@ This mode is **repo-local** (stackless): it creates an isolated per-checkout sta
 Important: repo-local mode is still a **source-backed** flow.
 
 - `yarn tui`, `yarn dev`, and repo-local `yarn start` run from this checkout directly.
-- If you want stack-local production artifacts (`web + server + daemon`) and an activated runtime snapshot, use a **named stack** with `hstack stack build <name> --activate-runtime`.
+- If you want built production artifacts (`web + server + daemon`) and an activated runtime snapshot, use a **named stack** with `hstack stack build <name> --activate-runtime`. Named stacks pinned to this checkout reuse the repository build authority's artifacts and snapshots.
 - This is the right choice when you want a second stack pointed at the same checkout but insulated from source rebuild churn.
 
 ## Prerequisites
@@ -113,7 +113,7 @@ By default, `yarn build` writes the web UI export into your stack base dir:
 ~/.happier/stacks/<repo-stack>/ui
 ```
 
-This is only the web bundle. Repo-local mode does **not** currently assemble a stack-local runtime snapshot for the server and daemon.
+This is only the web bundle. Repo-local mode does **not** currently select a complete runtime snapshot for the server and daemon.
 
 If you need that level of isolation, use a named stack instead:
 
@@ -123,6 +123,8 @@ hstack stack build prod-dev --activate-runtime
 hstack stack env prod-dev set HAPPIER_STACK_RUNTIME_MODE=prefer
 hstack stack start prod-dev --runtime
 ```
+
+The build publishes or reuses the checkout's shared runtime snapshot and selects it for `prod-dev`; it does not copy a separate artifact set into every consuming stack.
 
 ## OS Service (Autostart)
 
