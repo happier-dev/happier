@@ -1,12 +1,17 @@
+import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
+import { AgentNativeContinuityProofV1Schema } from '@happier-dev/protocol';
 import {
   buildBackendTargetKey,
-  readLinkedExternalSessionV1FromMetadata,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/agents';
+import type {
+  PluginContributionIdentity,
+} from '@happier-dev/protocol/plugins/manifest';
+import {
+  resolveLinkedExternalSessionMetadataV1,
+} from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { AgentId } from '../../types.js';
 import { getAgentResumeConfig, isRuntimeCheckedExperimentalVendorResume } from '../../manifest.js';
 import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
-import { hasClaudeVendorResumeContinuityProof } from './claudeVendorResumePolicy.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -21,7 +26,7 @@ export type VendorResumeEligibility =
   | Readonly<{ eligible: false; reasonCode: VendorResumeEligibilityReasonCode }>;
 
 export type VendorResumeLinkedSessionCurrentAgent = Readonly<{
-  identity: PluginContributionIdentityV1;
+  identity: PluginContributionIdentity;
   sourceKinds: readonly string[];
 }>;
 
@@ -30,18 +35,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-type ObservedVendorResumeContinuityPolicy = (metadata: unknown) => boolean;
-
-const OBSERVED_VENDOR_RESUME_CONTINUITY_POLICIES: Partial<
-  Record<AgentId, ObservedVendorResumeContinuityPolicy>
-> = Object.freeze({
-  claude: hasClaudeVendorResumeContinuityProof,
-});
-
-function readObservedVendorResumeContinuityPolicy(
+function hasObservedVendorResumeContinuityProof(
   agentId: AgentId,
-): ObservedVendorResumeContinuityPolicy | null {
-  return OBSERVED_VENDOR_RESUME_CONTINUITY_POLICIES[agentId] ?? null;
+  metadata: unknown,
+): boolean {
+  const proofField = getAgentResumeConfig(agentId).vendorResumeContinuityProofField;
+  if (!proofField) return true;
+  const proof = asRecord(metadata)?.[proofField];
+  return typeof proof === 'string' && proof.trim().length > 0;
 }
 
 function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: Record<string, unknown> | null): boolean {
@@ -58,12 +59,14 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
   linkedSessionCurrentAgent?: VendorResumeLinkedSessionCurrentAgent | null;
 }>): boolean {
   const metadata = asRecord(input.metadata);
-  if (!metadata || !Object.hasOwn(metadata, 'externalSessionV1')) return true;
+  const resolution = resolveLinkedExternalSessionMetadataV1(metadata);
+  if (!resolution.ok) {
+    return resolution.error === 'linked_session_not_found';
+  }
+  if (!metadata) return false;
 
-  const link = readLinkedExternalSessionV1FromMetadata(metadata);
-  const qualifiedIdentity = link?.qualifiedIdentity;
-  const currentAgent = input.linkedSessionCurrentAgent;
-  if (!link || !qualifiedIdentity || !currentAgent || link.agentId !== input.agentId) return false;
+  const link = resolution.linkedSession;
+  if (link.agentId !== input.agentId) return false;
 
   const persistedVendorResumeId = input.vendorResumeIdField
     ? metadata[input.vendorResumeIdField]
@@ -75,6 +78,12 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
   ) {
     return false;
   }
+
+  if (resolution.source === 'released') return true;
+
+  const qualifiedIdentity = link.qualifiedIdentity;
+  const currentAgent = input.linkedSessionCurrentAgent;
+  if (!qualifiedIdentity || !currentAgent) return false;
 
   return (
     qualifiedIdentity.agent.pluginId === currentAgent.identity.pluginId
@@ -111,12 +120,51 @@ export function resolveObservedVendorResumeIdForResume(input: Readonly<{
     : '';
   if (!vendorResumeId) return null;
 
-  const continuityPolicy = readObservedVendorResumeContinuityPolicy(input.agentId);
-  if (!continuityPolicy) return vendorResumeId;
+  const proofField = getAgentResumeConfig(input.agentId).vendorResumeContinuityProofField;
+  if (!proofField) return vendorResumeId;
 
   const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(input.agentId, input.metadata);
   if (metadataVendorResumeId !== vendorResumeId) return null;
-  return continuityPolicy(input.metadata) ? vendorResumeId : null;
+  return hasObservedVendorResumeContinuityProof(input.agentId, input.metadata)
+    ? vendorResumeId
+    : null;
+}
+
+/**
+ * The read side of `writeProviderSessionIdSessionState`'s matched pair.
+ *
+ * `REQ-STATE-01` makes the id and its proof atomic on WRITE; without a matching
+ * reader, a caller that needs the pair has to read two metadata slots and
+ * re-match them itself — which is exactly how a proof belonging to a previous id
+ * gets resurrected. Both halves are therefore read here, from the one Agent's
+ * catalog-declared slots, and returned as the same pair type the writer accepts.
+ *
+ * The proof KIND is not persisted: the catalog declares one proof FIELD per
+ * Agent and `AgentNativeContinuityProofV1Schema` declares exactly one kind
+ * (`transcriptPath`). A second kind must arrive as a catalog declaration, at
+ * which point this constant becomes a lookup. A proof that fails that schema is
+ * read as NO proof, so it degrades to a fresh target rather than authorizing a
+ * resume it cannot justify.
+ */
+export function resolveAgentNativeResumeIdentityFromSessionMetadata(
+  agentId: AgentId,
+  metadata: unknown,
+): AgentNativeResumeIdentityV1 | null {
+  const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+  if (!vendorResumeId) return null;
+
+  const proofField = getAgentResumeConfig(agentId).vendorResumeContinuityProofField?.trim();
+  if (!proofField) return { v: 1, vendorResumeId, continuityProof: null };
+
+  const parsedProof = AgentNativeContinuityProofV1Schema.safeParse({
+    kind: 'transcriptPath',
+    value: asRecord(metadata)?.[proofField],
+  });
+  return {
+    v: 1,
+    vendorResumeId,
+    continuityProof: parsedProof.success ? parsedProof.data : null,
+  };
 }
 
 function evaluateMetadataVendorResumeId(input: Readonly<{

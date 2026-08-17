@@ -1,17 +1,15 @@
 import { PERMISSION_INTENTS, PERMISSION_MODES, type PermissionIntent, type PermissionMode } from '../types.js';
 import type { AgentId } from '../types.js';
 import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '../sessionModes.js';
+import {
+  parseAgentPermissionIntentV1Alias,
+} from '@happier-dev/protocol/runtime';
+import {
+  parseSessionPermissionModeAlias,
+} from '@happier-dev/protocol/sessions/metadata/permission-modes';
 
 export { PERMISSION_MODES };
 export type { PermissionIntent, PermissionMode };
-
-function normalizeToken(raw: string): string {
-    return raw
-        .trim()
-        .toLowerCase()
-        .replace(/[\s_]+/g, '-')
-        .replace(/-+/g, '-');
-}
 
 export function isPermissionMode(value: unknown): value is PermissionMode {
     return typeof value === 'string' && (PERMISSION_MODES as readonly string[]).includes(value);
@@ -76,60 +74,7 @@ export function resolveProviderNativePermissionModeForAgent(params: {
  * The returned value is always a canonical PermissionMode, suitable for persistence.
  */
 export function parsePermissionModeAlias(raw: string): PermissionMode | null {
-    const normalized = normalizeToken(raw);
-    if (!normalized) return null;
-    if (isPermissionMode(normalized)) return normalized;
-
-    switch (normalized) {
-        // default intent
-        case 'ask':
-        case 'prompt':
-        case 'normal':
-            return 'default';
-
-        // claude canonical tokens in case-insensitive form
-        case 'acceptedits':
-        case 'accept-edits':
-            return 'acceptEdits';
-
-        // read-only intent
-        case 'readonly':
-        case 'read-only':
-        case 'read':
-        case 'no-tools':
-        case 'notools':
-        case 'ro':
-            return 'read-only';
-
-        // safe-yolo intent (workspace-write with approval; Claude SDK's "auto" mode is the same shape)
-        case 'safe':
-        case 'safe-yolo':
-        case 'safeyolo':
-        case 'workspace-write':
-        case 'workspace':
-        case 'auto-edit':
-        case 'auto':
-            return 'safe-yolo';
-
-        // yolo intent (full access / bypass prompts)
-        case 'yolo':
-        case 'full':
-        case 'full-access':
-        case 'bypass':
-        case 'dontask':
-        case 'dont-ask':
-        case 'danger':
-        case 'danger-full-access':
-            return 'yolo';
-
-        // claude-specific legacy token that users commonly reuse
-        case 'bypasspermissions':
-        case 'bypass-permissions':
-            return 'bypassPermissions';
-
-        default:
-            return null;
-    }
+    return parseSessionPermissionModeAlias(raw);
 }
 
 /**
@@ -143,17 +88,7 @@ export function parsePermissionModeAlias(raw: string): PermissionMode | null {
  * The return value is always an intent suitable for persistence.
  */
 export function parsePermissionIntentAlias(raw: string): PermissionIntent | null {
-    const parsed = parsePermissionModeAlias(raw);
-    if (!parsed) return null;
-
-    switch (parsed) {
-        case 'acceptEdits':
-            return 'safe-yolo';
-        case 'bypassPermissions':
-            return 'yolo';
-        default:
-            return isPermissionIntent(parsed) ? parsed : null;
-    }
+    return parseAgentPermissionIntentV1Alias(raw);
 }
 
 export type PermissionIntentCandidate = Readonly<{

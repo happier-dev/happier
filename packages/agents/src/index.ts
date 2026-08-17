@@ -439,6 +439,7 @@ export {
 } from './session/controls/metadataKeys.js';
 export {
   resolveVendorResumeIdFromSessionMetadata,
+  resolveAgentNativeResumeIdentityFromSessionMetadata,
   resolveObservedVendorResumeIdForResume,
   evaluateVendorResumeEligibility,
   isLinkedVendorResumeIdentityCurrent,
@@ -462,6 +463,7 @@ export {
 export {
   buildHappierReplayPromptFromDialog,
   fitHappierReplaySeedWithinTotalBudget,
+  type HappierReplayContinuity,
   type HappierReplayDialogItem,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';
@@ -582,17 +584,11 @@ export type {
   ExternalSessionTranscriptReadAfterParamsV1,
   ExternalSessionTranscriptReadAfterResultV1,
   ExternalSessionTranscriptUpdateV1,
-  PluginSubagentsServiceV1,
-  SessionAgentStateWriteRequestV1,
   SessionAuthServiceV1,
   SessionMcpElicitDecisionV1,
   SessionMcpElicitRequestV1,
   SessionMcpElicitResultV1,
   SessionMcpServiceV1,
-  SessionMetadataWriteRequestV1,
-  SessionMediaPublishGeneratedRequestV1,
-  SessionMediaServiceV1,
-  SessionMediaSourceRootV1,
   SessionPermissionDecisionRequestV1,
   SessionPermissionDecisionResultV1,
   SessionPermissionDecisionV1,
@@ -606,20 +602,10 @@ export type {
   SessionRuntimeAuthRefreshRequestV1,
   SessionRuntimeAuthRefreshResultV1,
   SessionRuntimeAuthServicesV1,
-  SessionScopedAgentMessageOptionsV1,
-  SessionScopedSendAgentMessageRequestV1,
-  SessionScopedSendRequestV1,
-  SessionScopedSendResultV1,
-  SessionScopedSendSessionEventRequestV1,
-  SessionScopedSendUserTextRequestV1,
-  SessionScopedServicesV1,
-  SessionScopedSubscribeRequestV1,
-  SessionScopedSubscriptionEventV1,
   SessionStateFieldWriteRequestV1,
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
-  SubscriptionV1,
   SubagentCompleteParamsV1,
   SubagentGetParamsV1,
   SubagentLifecycleDetailV1,
@@ -667,19 +653,4 @@ export {
   getProviderConnectedServicesAdapter,
   getProviderRuntimePreferencesAdapter,
 } from './runtime/adjunctAdapters/index.js';
-export {
-  CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
-  CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
-  DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
-  DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
-  normalizeClaudeUnifiedTerminalResumeChoice,
-  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
-  type ClaudeUnifiedTerminalResumeChoice,
-  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
-} from './runtime/preferences/claude.js';
-export {
-  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
-  isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
-} from './providers/claude/permissionRequestSource.js';
-
 export * from './voice/index.js';

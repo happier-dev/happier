@@ -1,6 +1,8 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
 import {
     SESSION_PERMISSION_MODES,
+} from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import {
     type ConnectedServiceId,
     type ConnectedServicesProviderConfigSharingModeV1,
     type ConnectedServicesProviderStateSharingModeV1,
@@ -115,6 +117,7 @@ export type ExperimentalVendorResumePolicy = 'disabled_by_default' | 'runtime_ch
 export type AgentResumeConfig = Readonly<{
     vendorResume: VendorResumeSupportLevel;
     vendorResumeIdField?: VendorResumeIdField | null;
+    vendorResumeContinuityProofField?: string | null;
     experimentalResumePolicy?: ExperimentalVendorResumePolicy;
 }>;
 

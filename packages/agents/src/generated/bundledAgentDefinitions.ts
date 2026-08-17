@@ -352,7 +352,8 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "kind": "providerSessionControlAdapter",
       "providerId": "antigravity"
     }
-  },  "sessionModeDescriptor": {
+  },
+  "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
     "source": "none"
@@ -599,6 +600,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "resume": {
       "vendorResume": "supported",
+      "vendorResumeContinuityProofField": "claudeTranscriptPath",
       "vendorResumeIdField": "claudeSessionId"
     },
     "runtimeInput": {
@@ -631,7 +633,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "modelConfig": {
     "allowedModes": [
       "claude-opus-5",
+      "claude-sonnet-5",
       "claude-fable-5",
+      "claude-mythos-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
       "claude-opus-4-6",
@@ -684,13 +688,68 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           },
           {
             "currentValue": "false",
-            "description": "Maximum coding effort. Overrides the Thinking level while enabled.",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
             "id": "ultracode",
             "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
             "type": "boolean"
           }
         ],
         "name": "Opus 5"
+      },
+      {
+        "contextWindowTokens": 1000000,
+        "description": "Latest balanced Claude model for coding, agentic work, editing, and analysis.",
+        "id": "claude-sonnet-5",
+        "modelOptions": [
+          {
+            "currentValue": "high",
+            "id": "reasoning_effort",
+            "name": "Thinking",
+            "options": [
+              {
+                "name": "Low",
+                "value": "low"
+              },
+              {
+                "name": "Medium",
+                "value": "medium"
+              },
+              {
+                "name": "High",
+                "value": "high"
+              },
+              {
+                "name": "XHigh",
+                "value": "xhigh"
+              },
+              {
+                "name": "Max",
+                "value": "max"
+              }
+            ],
+            "type": "select"
+          },
+          {
+            "currentValue": "false",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+            "id": "ultracode",
+            "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
+            "type": "boolean"
+          }
+        ],
+        "name": "Sonnet 5"
       },
       {
         "contextWindowTokens": 1000000,
@@ -727,13 +786,68 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           },
           {
             "currentValue": "false",
-            "description": "Maximum coding effort. Overrides the Thinking level while enabled.",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
             "id": "ultracode",
             "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
             "type": "boolean"
           }
         ],
         "name": "Fable 5"
+      },
+      {
+        "contextWindowTokens": 1000000,
+        "description": "Limited-availability Claude model for approved Project Glasswing customers.",
+        "id": "claude-mythos-5",
+        "modelOptions": [
+          {
+            "currentValue": "high",
+            "id": "reasoning_effort",
+            "name": "Thinking",
+            "options": [
+              {
+                "name": "Low",
+                "value": "low"
+              },
+              {
+                "name": "Medium",
+                "value": "medium"
+              },
+              {
+                "name": "High",
+                "value": "high"
+              },
+              {
+                "name": "XHigh",
+                "value": "xhigh"
+              },
+              {
+                "name": "Max",
+                "value": "max"
+              }
+            ],
+            "type": "select"
+          },
+          {
+            "currentValue": "false",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
+            "id": "ultracode",
+            "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
+            "type": "boolean"
+          }
+        ],
+        "name": "Mythos 5"
       },
       {
         "contextWindowTokens": 1000000,
@@ -770,9 +884,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           },
           {
             "currentValue": "false",
-            "description": "Maximum coding effort. Overrides the Thinking level while enabled.",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
             "id": "ultracode",
             "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
             "type": "boolean"
           }
         ],
@@ -813,9 +933,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           },
           {
             "currentValue": "false",
-            "description": "Maximum coding effort. Overrides the Thinking level while enabled.",
+            "description": "Maximum coding effort. Forces XHigh Thinking effort while enabled.",
             "id": "ultracode",
             "name": "Ultracode",
+            "overridesWhenOn": {
+              "forcedValue": "xhigh",
+              "optionIds": [
+                "reasoning_effort"
+              ]
+            },
             "type": "boolean"
           }
         ],
@@ -874,6 +1000,10 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
               {
                 "name": "High",
                 "value": "high"
+              },
+              {
+                "name": "Max",
+                "value": "max"
               }
             ],
             "type": "select"
@@ -979,6 +1109,64 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "docsUrl": "https://github.com/openai/codex",
       "guideUrl": null,
       "managed": {
+        "archiveEntriesByPlatform": {
+          "darwin": [
+            {
+              "archivePath": "bin/codex",
+              "destinationPath": "bin/codex"
+            },
+            {
+              "archivePath": "bin/codex-code-mode-host",
+              "destinationPath": "bin/codex-code-mode-host"
+            }
+          ],
+          "linux": [
+            {
+              "archivePath": "bin/codex",
+              "destinationPath": "bin/codex"
+            },
+            {
+              "archivePath": "bin/codex-code-mode-host",
+              "destinationPath": "bin/codex-code-mode-host"
+            }
+          ],
+          "win32": [
+            {
+              "archivePath": "bin/codex.exe",
+              "destinationPath": "bin/codex.exe"
+            },
+            {
+              "archivePath": "bin/codex-code-mode-host.exe",
+              "destinationPath": "bin/codex-code-mode-host.exe"
+            },
+            {
+              "archivePath": "codex-resources/codex-command-runner.exe",
+              "destinationPath": "codex-resources/codex-command-runner.exe"
+            },
+            {
+              "archivePath": "codex-resources/codex-windows-sandbox-setup.exe",
+              "destinationPath": "codex-resources/codex-windows-sandbox-setup.exe"
+            }
+          ]
+        },
+        "archiveExtractionLimits": {
+          "maxExpandedBytes": 402653184,
+          "maxFileBytes": 402653184
+        },
+        "assetNameByPlatform": {
+          "darwin": {
+            "arm64": "codex-package-aarch64-apple-darwin.tar.gz",
+            "x64": "codex-package-x86_64-apple-darwin.tar.gz"
+          },
+          "linux": {
+            "arm64": "codex-package-aarch64-unknown-linux-musl.tar.gz",
+            "x64": "codex-package-x86_64-unknown-linux-musl.tar.gz"
+          },
+          "win32": {
+            "arm64": "codex-package-aarch64-pc-windows-msvc.tar.gz",
+            "x64": "codex-package-x86_64-pc-windows-msvc.tar.gz"
+          }
+        },
         "binaryName": "codex",
         "githubRepo": "openai/codex",
         "kind": "github_release_binary"
@@ -1166,7 +1354,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "source": "./protocol/runtimeDescriptorV1"
     },
     "runtimeDescriptorReader": {
-      "exportName": "readCodexSessionMetadataRuntimeDescriptor",
       "generatedReader": {
         "backendModeKey": "backendMode",
         "fields": [
@@ -1271,11 +1458,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       },
       "kind": "providerRuntimeDescriptorReader",
-      "providerId": "codex",
-      "source": "./agent/identity/runtimeDescriptor"
+      "providerId": "codex"
     },
     "sessionControlAdapter": {
-      "exportName": "CODEX_SESSION_CONTROL_ADAPTER",
       "generatedAdapter": {
         "configuredRuntimeKind": {
           "accountSettingsField": "codexBackendMode",
@@ -1575,8 +1760,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       },
       "kind": "providerSessionControlAdapter",
-      "providerId": "codex",
-      "source": "./agent/surfaces/sessions/controls/adapter"
+      "providerId": "codex"
     }
   },
   "sessionModeDescriptor": {

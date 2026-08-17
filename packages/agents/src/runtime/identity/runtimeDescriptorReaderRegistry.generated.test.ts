@@ -32,9 +32,7 @@ describe('runtimeDescriptorReaderRegistry', () => {
 
   it('keeps generated plugin reader leaves free of circular agents imports and declares protocol imports', () => {
     const pluginLeaves = [
-      { packageId: 'codex', sourcePath: '../../../../plugins/codex/src/agent/identity/runtimeDescriptor.ts' },
       { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/identity/runtimeDescriptor.ts' },
-      { packageId: 'codex', sourcePath: '../../../../plugins/codex/src/agent/surfaces/sessions/controls/adapter.ts' },
       { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/surfaces/sessions/controls/adapter.ts' },
     ] as const;
 
@@ -152,6 +150,66 @@ describe('runtimeDescriptorReaderRegistry', () => {
         selection: 'group',
         groupId: 'team',
         profileId: 'work',
+      },
+    });
+  });
+
+  it('preserves current and legacy Codex descriptors through the one generated host reader', () => {
+    const reader = getRuntimeDescriptorReader('codex');
+    const expected = {
+      agentId: 'codex',
+      runtimeKind: 'appServer',
+      backendMode: 'appServer',
+      providerSessionId: 'thread-legacy',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceProfileId: 'legacy-profile',
+    };
+    const current = reader?.({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread-legacy',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'legacy-profile',
+        },
+      },
+    });
+    const legacy = reader?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread-legacy',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'legacy-profile',
+        },
+      },
+    });
+
+    expect(current).toMatchObject(expected);
+    expect(legacy).toMatchObject(expected);
+    expect(readSessionMetadataConnectedServiceBindings({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'legacy-profile',
+        },
+      },
+    }, 'codex')).toEqual({
+      'openai-codex': {
+        source: 'connected',
+        selection: 'profile',
+        profileId: 'legacy-profile',
       },
     });
   });

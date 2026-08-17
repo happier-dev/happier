@@ -65,7 +65,7 @@ describe('sessionControlAdapterRegistry', () => {
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'pi',
-        provider: {
+        agent: {
           resumeStrategy: 'sessionFileAbsolutePreferred',
           providerSessionId: 'pi-session-1',
           sessionFile: '/tmp/pi-session-1.jsonl',
@@ -86,6 +86,7 @@ describe('sessionControlAdapterRegistry', () => {
     expect(getProviderSessionControlAdapter('claude')).toBeNull();
     expect(getProviderSessionControlAdapter('customAcp')).toBeNull();
   });
+
   it('resolves Pi debug artifacts only from its canonical host descriptor or legacy path field', () => {
     const adapter = getProviderSessionControlAdapter('pi');
 
@@ -131,5 +132,43 @@ describe('sessionControlAdapterRegistry', () => {
     ]) {
       expect(adapter?.resolveSessionArtifactPath?.(metadata)).toBeNull();
     }
+  });
+
+  it('preserves Codex current and legacy control identity in the generated host adapter', () => {
+    const adapter = getProviderSessionControlAdapter('codex');
+
+    expect(adapter?.resolvePersistedSessionRuntimeKind?.({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'mcp', providerSessionId: 'thread-mcp' },
+      },
+    })).toBe('mcp');
+    expect(adapter?.resolvePersistedSessionRuntimeKind?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'mcp', providerSessionId: 'thread-mcp' },
+      },
+    })).toBe('mcp');
+    expect(adapter?.resolveVendorResumeId?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'appServer', vendorSessionId: 'legacy-thread' },
+      },
+    })).toBe('legacy-thread');
+    expect(adapter?.resolvePersistedSessionRuntimeKind?.({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        providerId: 'opencode',
+        provider: { backendMode: 'mcp', providerSessionId: 'conflicted-thread' },
+      },
+    })).toBeNull();
+    expect(adapter?.isExperimentalVendorResumeEnabled?.({
+      metadata: { codexBackendMode: 'mcp', codexSessionId: 'thread-mcp' },
+      accountSettings: { codexBackendMode: 'appServer' },
+    })).toBe(false);
   });
 });

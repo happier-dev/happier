@@ -32,11 +32,30 @@ export type AgentCliManualInstallRecipes =
   | Partial<Record<AgentCliInstallPlatform, ReadonlyArray<AgentCliInstallCommand>>>
   | null;
 
+export type AgentCliArchiveExtractionLimits = Readonly<{
+  maxFileBytes: number;
+  maxExpandedBytes: number;
+}>;
+
+export type AgentCliManagedArchiveEntry = Readonly<{
+  archivePath: string;
+  destinationPath: string;
+}>;
+
+export type AgentCliManagedAssetNameByPlatform = Readonly<
+  Record<AgentCliInstallPlatform, Readonly<Record<'arm64' | 'x64', string>>>
+>;
+
 export type AgentCliManagedInstallSpec =
   | Readonly<{
       kind: 'github_release_binary';
       githubRepo: string;
       binaryName: string;
+      assetNameByPlatform?: AgentCliManagedAssetNameByPlatform;
+      archiveEntriesByPlatform?: Readonly<
+        Record<AgentCliInstallPlatform, ReadonlyArray<AgentCliManagedArchiveEntry>>
+      >;
+      archiveExtractionLimits?: AgentCliArchiveExtractionLimits;
     }>
   | Readonly<{
       kind: 'managed_package';

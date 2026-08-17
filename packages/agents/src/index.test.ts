@@ -50,8 +50,6 @@ import {
   type CanonicalAgentId,
   type AgentCliRuntimeSpec,
   legacyCustomAcpCompat,
-  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
-  isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
 } from './index.js';
 import type { EngineSpec, RuntimeDiscovery, RuntimeKindSpec } from './index.js';
 import type { AgentRuntimeKindOverrides } from './runtimeKinds.js';
@@ -100,15 +98,6 @@ function listProductionSourceFiles(root: string): string[] {
 }
 
 describe('agents package exports', () => {
-  it('re-exports the Claude unified terminal dialog-choice provenance helper', () => {
-    expect(CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE)
-      .toBe('claude_unified_terminal_dialog_choice');
-    expect(isClaudeUnifiedTerminalDialogChoiceAgentStateRequest({
-      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
-    })).toBe(true);
-    expect(isClaudeUnifiedTerminalDialogChoiceAgentStateRequest({ source: 'other' })).toBe(false);
-  });
-
   it('does not expose writable session-state binding internals from the package root', () => {
     expect('runtimeDescriptorBinding' in agents).toBe(false);
     expect('applySessionStateFieldMetadataPatch' in agents).toBe(false);
@@ -253,20 +242,43 @@ describe('agents package exports', () => {
   });
 
   it('does not expose Claude plugin-owned agent setting helpers from the package root', () => {
+    const rootSource = readFileSync(join(packageDir, 'src/index.ts'), 'utf8');
     const claudeAgentSettingExports = [
       'CLAUDE_REMOTE_AGENT_SETTINGS_DEFINITION',
       'CLAUDE_REMOTE_AGENT_FIELDS',
       'CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS',
+      'CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES',
+      'CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES',
       'CLAUDE_UNIFIED_TERMINAL_HOSTS',
+      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE',
+      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY',
       'MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS',
       'buildClaudeRemoteAgentSettingsShape',
       'isValidClaudeRemoteAdvancedOptionsJson',
       'normalizeClaudeUnifiedTerminalHost',
       'normalizeClaudeRemoteAdvancedOptionsJson',
+      'normalizeClaudeUnifiedTerminalResumeChoice',
+      'normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy',
+      'ClaudeUnifiedTerminalResumeChoice',
+      'ClaudeUnifiedTerminalWorkspaceTrustPolicy',
     ] as const;
 
     for (const exportName of claudeAgentSettingExports) {
       expect(exportName in agents).toBe(false);
+      expect(rootSource).not.toMatch(new RegExp(`\\b${exportName}\\b`, 'u'));
+    }
+  });
+
+  it('does not expose Protocol-owned Claude Agent policy from the package root', () => {
+    const rootSource = readFileSync(join(packageDir, 'src/index.ts'), 'utf8');
+    const protocolOwnedClaudePolicyExports = [
+      'CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE',
+      'isClaudeUnifiedTerminalDialogChoiceAgentStateRequest',
+    ] as const;
+
+    for (const exportName of protocolOwnedClaudePolicyExports) {
+      expect(exportName in agents).toBe(false);
+      expect(rootSource).not.toMatch(new RegExp(`\\b${exportName}\\b`, 'u'));
     }
   });
 
@@ -298,10 +310,6 @@ describe('agents package exports', () => {
   it('does not expose Claude plugin-owned permission bridge helpers from the package root', () => {
     expect('CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE' in agents).toBe(false);
     expect('isClaudeLocalPermissionBridgeAgentStateRequest' in agents).toBe(false);
-  });
-
-  it('keeps the shared Claude dialog provenance source under the agents package', () => {
-    expect(existsSync(join(packageDir, 'src/providers/claude/permissionRequestSource.ts'))).toBe(true);
   });
 
   it('does not keep a Codex provider source owner under the agents package', () => {
@@ -446,7 +454,7 @@ describe('agents package exports', () => {
   });
 
   it('re-exports the canonical runtime descriptor registry entrypoints from the package root', () => {
-    expect(agents.RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['codex', 'opencode', 'pi']);
+    expect(agents.RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
     expect(typeof agents.getRuntimeDescriptorReader).toBe('function');
     expect(agents.getRuntimeDescriptorReader('codex')).toBeDefined();
   });
@@ -528,6 +536,7 @@ describe('agents package exports', () => {
     );
     expect(getAgentResumeConfig('claude')).toEqual({
       vendorResume: 'supported',
+      vendorResumeContinuityProofField: 'claudeTranscriptPath',
       vendorResumeIdField: 'claudeSessionId',
     });
     expect(getProviderRuntimePreferencesAdapter('codex')).toEqual({

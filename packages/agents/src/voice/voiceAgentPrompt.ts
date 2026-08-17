@@ -8,10 +8,13 @@ import {
   VOICE_ACTIONS_TAG,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
   type PromptBlockV1,
-  type ActionSpec,
 } from '@happier-dev/protocol';
 
-import { buildVoiceDiscoveryChecklistLines, buildVoiceToolDocumentationLines } from './voiceToolDocumentation.js';
+import {
+  buildVoiceDiscoveryChecklistLines,
+  buildVoiceToolDocumentationLines,
+  type VoicePromptActionSpec,
+} from './voiceToolDocumentation.js';
 
 export type VoicePromptVerbosity = 'short' | 'balanced';
 
@@ -75,7 +78,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
   memoryRecallGuidanceEnabled?: boolean;
-  actionSpecs?: readonly ActionSpec[];
+  actionSpecs?: readonly VoicePromptActionSpec[];
   disabledActionIds?: readonly string[];
 }>): string {
   const assistantName = params?.assistantName?.trim() || DEFAULT_VOICE_ASSISTANT_NAME;
@@ -156,7 +159,7 @@ function buildVoiceBlocks(params: Readonly<{
     assistantName?: string;
     verbosity?: VoicePromptVerbosity;
     memoryRecallGuidanceEnabled?: boolean;
-    actionSpecs?: readonly ActionSpec[];
+    actionSpecs?: readonly VoicePromptActionSpec[];
     disabledActionIds?: readonly string[];
   }>;
   extraSystemAppendBlocks?: readonly string[];
@@ -202,7 +205,7 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
   sessionIdPlaceholder?: string;
   disabledActionIds?: readonly string[];
   extraSystemAppendBlocks?: readonly string[];
-  actionSpecs?: readonly ActionSpec[];
+  actionSpecs?: readonly VoicePromptActionSpec[];
 }>): string {
   const ctx = params?.initialConversationContextPlaceholder ?? '{{initialConversationContext}}';
   const sessionId = params?.sessionIdPlaceholder ?? '{{sessionId}}';

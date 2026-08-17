@@ -2,6 +2,7 @@ import type {
   SessionContextUsageSnapshotV1,
   SessionMessageRole,
   UsageObservationScope,
+  ProviderTranscriptDispatchRequestV1,
 } from '@happier-dev/protocol';
 
 export type RuntimeOutboundTranscriptToolProtocolV1 = 'acp' | 'claude' | 'codex';
@@ -27,8 +28,8 @@ export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
 }>;
 
 export type RuntimeOutboundTranscriptDispatchInputV1 = Readonly<{
-  body: unknown;
-  meta?: Record<string, unknown>;
+  body: ProviderTranscriptDispatchRequestV1['body'];
+  meta?: ProviderTranscriptDispatchRequestV1['meta'];
   metadata?: Record<string, unknown> | null;
   /**
    * Happier session id for the dispatch. Optional and provider-agnostic; a provider facet may use it

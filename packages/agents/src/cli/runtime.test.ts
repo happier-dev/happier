@@ -37,8 +37,39 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
         kind: 'github_release_binary',
         binaryName: 'codex',
         githubRepo: 'openai/codex',
+        assetNameByPlatform: {
+          win32: {
+            x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
+          },
+        },
+        archiveEntriesByPlatform: {
+          win32: [
+            { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+            { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+            {
+              archivePath: 'codex-resources/codex-command-runner.exe',
+              destinationPath: 'codex-resources/codex-command-runner.exe',
+            },
+            {
+              archivePath: 'codex-resources/codex-windows-sandbox-setup.exe',
+              destinationPath: 'codex-resources/codex-windows-sandbox-setup.exe',
+            },
+          ],
+        },
+        archiveExtractionLimits: {
+          maxFileBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 384 * 1024 * 1024,
+        },
       },
     });
+    const codexManagedInstall = getAgentCliRuntimeSpec('codex').managedInstall;
+    expect(codexManagedInstall?.kind).toBe('github_release_binary');
+    if (codexManagedInstall?.kind !== 'github_release_binary') return;
+    const archiveExtractionLimits = codexManagedInstall.archiveExtractionLimits;
+    expect(archiveExtractionLimits).toBeDefined();
+    if (!archiveExtractionLimits) return;
+    expect(archiveExtractionLimits.maxFileBytes).toBeGreaterThan(298_668_336);
+    expect(archiveExtractionLimits.maxExpandedBytes).toBeGreaterThan(370_442_135);
     expect(getAgentCliRuntimeSpec('ohMyPi')).toMatchObject({
       sourcePreferenceDefault: 'system-first',
       managedInstall: {

@@ -34,6 +34,18 @@ describe('bundledAgentDefinitions', () => {
           kind: 'github_release_binary',
           githubRepo: 'openai/codex',
           binaryName: 'codex',
+          assetNameByPlatform: expect.objectContaining({
+            win32: {
+              arm64: 'codex-package-aarch64-pc-windows-msvc.tar.gz',
+              x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
+            },
+          }),
+          archiveEntriesByPlatform: expect.objectContaining({
+            win32: expect.arrayContaining([
+              { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+              { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+            ]),
+          }),
         }),
         manual: { kind: 'command' },
       }),

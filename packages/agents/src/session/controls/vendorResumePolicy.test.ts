@@ -5,6 +5,7 @@ import { AGENTS_CORE } from '../../manifest.js';
 
 import {
   evaluateVendorResumeEligibility,
+  resolveAgentNativeResumeIdentityFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
 } from './vendorResumePolicy.js';
 
@@ -40,6 +41,7 @@ describe('vendorResumePolicy', () => {
 
   it('exposes claudeSessionId as the Claude vendor resume id field', () => {
     expect(AGENTS_CORE.claude.resume.vendorResumeIdField).toBe('claudeSessionId');
+    expect(AGENTS_CORE.claude.resume.vendorResumeContinuityProofField).toBe('claudeTranscriptPath');
   });
 
   it('resolves vendor resume ids from metadata (trimmed)', () => {
@@ -149,6 +151,57 @@ describe('vendorResumePolicy', () => {
         accountSettings: {},
       }),
     ).toEqual({ eligible: true, vendorResumeId: 'conversation-1' });
+  });
+
+  it('rejects released direct-session metadata when its Agent or remote session id does not match resume state', () => {
+    for (const directSessionV1 of [
+      {
+        v: 1 as const,
+        providerId: 'antigravity',
+        machineId: 'machine-1',
+        remoteSessionId: 'different-conversation',
+        source: {
+          kind: 'antigravityCliPrint',
+          brainDir: '/tmp/antigravity-brain',
+        },
+      },
+      {
+        v: 1 as const,
+        providerId: 'opencode',
+        machineId: 'machine-1',
+        remoteSessionId: 'conversation-1',
+        source: {
+          kind: 'opencodeServer',
+        },
+      },
+    ]) {
+      expect(
+        evaluateVendorResumeEligibility({
+          agentId: 'antigravity',
+          metadata: {
+            antigravitySessionId: 'conversation-1',
+            directSessionV1,
+          },
+          accountSettings: {},
+        }),
+      ).toEqual({ eligible: false, reasonCode: 'linked_session_identity_unverified' });
+    }
+  });
+
+  it('fails malformed released direct-session metadata closed', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'antigravity',
+        metadata: {
+          antigravitySessionId: 'conversation-1',
+          directSessionV1: {
+            v: 1,
+            providerId: 'antigravity',
+          },
+        },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: false, reasonCode: 'linked_session_identity_unverified' });
   });
 
   it('requires a linked vendor resume id to exactly match the current remote session id', () => {
@@ -399,5 +452,55 @@ describe('vendorResumePolicy', () => {
         },
       }),
     ).toEqual({ eligible: false, reasonCode: 'backend_disabled_by_account_settings' });
+  });
+});
+
+describe('resolveAgentNativeResumeIdentityFromSessionMetadata', () => {
+  /**
+   * The read side of the atomic id+proof write. It exists so no caller has to
+   * read two metadata slots and re-match them — the way a proof belonging to a
+   * previous id gets resurrected (`REQ-STATE-01`).
+   */
+  it('returns the matched pair from the Agent’s catalog-declared slots', () => {
+    expect(
+      resolveAgentNativeResumeIdentityFromSessionMetadata('claude', {
+        claudeSessionId: 'claude-1',
+        claudeTranscriptPath: '/home/u/.claude/p/claude-1.jsonl',
+      }),
+    ).toEqual({
+      v: 1,
+      vendorResumeId: 'claude-1',
+      continuityProof: { kind: 'transcriptPath', value: '/home/u/.claude/p/claude-1.jsonl' },
+    });
+  });
+
+  it('returns a proofless pair when the Agent declares a proof field and none is stored', () => {
+    // Distinguishable from "no id at all", because a bare id is still usable for
+    // an Agent that needs no proof and never usable to claim native return.
+    expect(
+      resolveAgentNativeResumeIdentityFromSessionMetadata('claude', { claudeSessionId: 'claude-1' }),
+    ).toEqual({ v: 1, vendorResumeId: 'claude-1', continuityProof: null });
+  });
+
+  it('reads an unusable proof as no proof rather than passing it through', () => {
+    expect(
+      resolveAgentNativeResumeIdentityFromSessionMetadata('claude', {
+        claudeSessionId: 'claude-1',
+        claudeTranscriptPath: 'x'.repeat(5_000),
+      })?.continuityProof,
+    ).toBeNull();
+  });
+
+  it('never pairs one Agent’s id with another Agent’s proof', () => {
+    expect(
+      resolveAgentNativeResumeIdentityFromSessionMetadata('codex', {
+        codexSessionId: 'codex-1',
+        claudeTranscriptPath: '/home/u/.claude/p/claude-1.jsonl',
+      }),
+    ).toEqual({ v: 1, vendorResumeId: 'codex-1', continuityProof: null });
+  });
+
+  it('returns null when the Agent has no recorded id', () => {
+    expect(resolveAgentNativeResumeIdentityFromSessionMetadata('claude', { codexSessionId: 'c' })).toBeNull();
   });
 });

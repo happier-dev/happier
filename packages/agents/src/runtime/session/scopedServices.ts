@@ -12,31 +12,32 @@ import type {
   SessionSystemRecordKind,
   SessionSystemRecordNamespace,
   ConnectedServiceCredentialRevisionV1,
+  AgentSessionAuthRefreshClassificationV1,
+  AgentSessionAuthRefreshErrorV1,
+  AgentSessionAuthRefreshPayloadV1,
+  AgentSessionAuthRefreshRecoveryV1,
+  AgentSessionAuthRefreshSelectionV1,
   SubagentId,
   SubagentLifecycleDetailV1 as ProtocolSubagentLifecycleDetailV1,
   SubagentRefInputV1 as ProtocolSubagentRefInputV1,
   SubagentRefV1 as ProtocolSubagentRefV1,
   SubagentStatusV1 as ProtocolSubagentStatusV1,
+  StructuredQuestionAnswersV1,
 } from '@happier-dev/protocol';
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
 
 import type { SessionStateFieldWriteValue } from '../../session/state/_types.js';
-
-export interface SubscriptionV1 {
-  unsubscribe(): void;
-}
 
 export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   agentId: string;
   serviceId: string;
   refreshAttemptId?: string;
   targetId?: string | null;
-  selection?: unknown;
+  selection?: AgentSessionAuthRefreshSelectionV1;
   planType?: string | null;
   env?: Readonly<Record<string, string>> | null;
   materializedEnv?: Readonly<Record<string, string>> | null;
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
-  classification?: unknown;
+  classification?: AgentSessionAuthRefreshClassificationV1;
   failingAccessTokenFingerprint?: string | null;
   expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
   reason?: string | null;
@@ -45,19 +46,19 @@ export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
 export type SessionRuntimeAuthRefreshResultV1 = Readonly<
   | {
       status: 'refreshed';
-      result?: unknown;
+      result?: AgentSessionAuthRefreshPayloadV1;
     }
   | {
       status: 'unavailable';
       reason: string;
-      recovery?: unknown;
+      recovery?: AgentSessionAuthRefreshRecoveryV1;
     }
   | {
       status: 'failed';
       reason: string;
-      error?: unknown;
-      runtimeAuthClassification?: unknown;
-      recovery?: unknown;
+      error?: AgentSessionAuthRefreshErrorV1;
+      runtimeAuthClassification?: AgentSessionAuthRefreshClassificationV1;
+      recovery?: AgentSessionAuthRefreshRecoveryV1;
     }
   | {
       status: 'pending';
@@ -232,93 +233,6 @@ export type SubagentCompleteParamsV1 = Readonly<{
   completedAt?: number;
 }>;
 
-export interface PluginSubagentsServiceV1 {
-  list(params?: SubagentListParamsV1): Promise<readonly ProtocolSubagentRefV1[]>;
-  get(params: SubagentGetParamsV1): Promise<ProtocolSubagentRefV1 | null>;
-  watch(params: SubagentWatchParamsV1, onEvent: (event: SubagentWatchEventV1) => void): SubscriptionV1;
-  upsert(input: ProtocolSubagentRefInputV1): Promise<ProtocolSubagentRefV1>;
-  updateStatus(params: SubagentStatusUpdateParamsV1): Promise<ProtocolSubagentRefV1>;
-  complete(params: SubagentCompleteParamsV1): Promise<ProtocolSubagentRefV1>;
-}
-
-export type SessionScopedSubscriptionEventV1 = Readonly<{
-  kind: string;
-  payload?: unknown;
-}>;
-
-export type SessionScopedSendUserTextRequestV1 = Readonly<{
-  kind: 'userText';
-  text: string;
-  opts: Readonly<{
-    localId: string;
-    meta?: Readonly<Record<string, unknown>>;
-  }>;
-}>;
-
-export type SessionScopedSendSessionEventRequestV1 = Readonly<{
-  kind: 'sessionEvent';
-  event: RuntimeEventV1 | Readonly<Record<string, unknown>>;
-  id?: string;
-}>;
-
-export type SessionScopedSendProviderDispatchRequestV1 = Readonly<{
-  kind: 'providerDispatch';
-  body: unknown;
-  meta?: Readonly<Record<string, unknown>>;
-}>;
-
-export type SessionScopedAgentMessageOptionsV1 = Readonly<{
-  localId: string;
-  createdAt?: number;
-  updatedAt?: number;
-  meta?: Readonly<Record<string, unknown>>;
-}>;
-
-export type SessionScopedSendAgentMessageRequestV1 = Readonly<{
-  kind: 'agentMessageEphemeral' | 'agentMessageCommitted';
-  agentId: string;
-  body: Readonly<Record<string, unknown>>;
-  opts: SessionScopedAgentMessageOptionsV1;
-}>;
-
-export type SessionScopedSendRequestV1 =
-  | SessionScopedSendUserTextRequestV1
-  | SessionScopedSendSessionEventRequestV1
-  | SessionScopedSendProviderDispatchRequestV1
-  | SessionScopedSendAgentMessageRequestV1;
-
-export type SessionScopedSendResultV1 = Readonly<
-  | { ok: true }
-  | { ok: false; error: 'invalid_request' | 'unsupported_kind' | string }
->;
-
-export type SessionScopedSubscribeRequestV1 = Readonly<{
-  eventName?: string;
-}>;
-
-export type SessionMetadataWriteRequestV1 = Readonly<
-  | {
-      kind: 'set';
-      metadata: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: 'update';
-      handler: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-      reason?: string;
-    }
->;
-
-export type SessionAgentStateWriteRequestV1 = Readonly<
-  | {
-      kind: 'set';
-      agentState: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: 'update';
-      handler: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-    }
->;
-
 export type PublicSessionStateFieldId = Exclude<
   SessionStateFieldId,
   'runtime.activity' | 'runtime.externalAgent'
@@ -421,7 +335,7 @@ export type SessionPermissionDecisionResultV1 = Readonly<{
    *
    * Claude AskUserQuestion uses this to answer the native tool call without a follow-up text turn.
    */
-  answers?: Readonly<Record<string, string>>;
+  answers?: StructuredQuestionAnswersV1;
   /**
    * Optional typed prompt the host/runtime should deliver as a later user turn after this
    * permission decision settles. This reserves follow-up/next-turn intent explicitly instead
@@ -453,49 +367,4 @@ export interface SessionPermissionsServiceV1 {
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<SessionPermissionDecisionResultV1>;
   getMode(): SessionPermissionModeV1;
-}
-
-export type SessionMediaPublishGeneratedRequestV1 = Readonly<{
-  localId: string;
-  path: string;
-  referencePaths?: readonly string[];
-  description?: string;
-  toolCallId?: string;
-  createdAtMs?: number;
-}>;
-
-export type SessionMediaSourceRootV1 = Readonly<{
-  publishGenerated(request: SessionMediaPublishGeneratedRequestV1): Promise<Readonly<{ status: 'published' }>>;
-  dispose(): void;
-}>;
-
-export type SessionMediaServiceV1 = Readonly<{
-  registerSourceRoot(request: Readonly<{ rootPath: string }>): Promise<SessionMediaSourceRootV1>;
-}>;
-
-export interface SessionScopedServicesV1 {
-  readonly sessionId?: string;
-  send(request: SessionScopedSendRequestV1): Promise<SessionScopedSendResultV1>;
-  subscribe(
-    request: SessionScopedSubscribeRequestV1,
-    onEvent: (event: SessionScopedSubscriptionEventV1) => void,
-  ): SubscriptionV1;
-  writeMetadata(request: SessionMetadataWriteRequestV1): Promise<void>;
-  writeAgentState(request: SessionAgentStateWriteRequestV1): Promise<void>;
-  writeStateField<F extends PublicSessionStateFieldId>(request: SessionStateFieldWriteRequestV1<F>): Promise<void>;
-  /**
-   * Write a durable session system record (host-sealed). Optional so a host that predates the
-   * capability degrades gracefully; runtimes must treat an absent method as "records unavailable".
-   */
-  writeSystemRecord?(request: SessionSystemRecordWriteRequestV1): Promise<void>;
-  /**
-   * Read a durable session system record (host-opened). Optional for older hosts; runtimes must
-   * treat an absent method as "readback unavailable" and avoid inventing alternate storage paths.
-   */
-  readSystemRecord?(request: SessionSystemRecordReadRequestV1): Promise<SessionSystemRecordReadResultV1 | null>;
-  readonly mcp: SessionMcpServiceV1;
-  readonly auth: SessionAuthServiceV1;
-  readonly permissions: SessionPermissionsServiceV1;
-  readonly media?: SessionMediaServiceV1;
-  readonly subagents: PluginSubagentsServiceV1;
 }

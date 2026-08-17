@@ -14,6 +14,10 @@
       "types": "./dist/permissions/index.d.ts",
       "default": "./dist/permissions/index.js"
     },
+    "./acpPresets": {
+      "types": "./dist/acpPresets.d.ts",
+      "default": "./dist/acpPresets.js"
+    },
     "./process/shellCommand": {
       "types": "./dist/process/shellCommand.d.ts",
       "default": "./dist/process/shellCommand.js"
@@ -34,13 +38,57 @@
       "types": "./dist/runtime/session/preAdmissionBuffer.d.ts",
       "default": "./dist/runtime/session/preAdmissionBuffer.js"
     },
-    "./session/state/metadataReaders": {
-      "types": "./dist/session/state/metadataReaders.d.ts",
-      "default": "./dist/session/state/metadataReaders.js"
+    "./runtime/session/runtimeConfigUpdateOutcome": {
+      "types": "./dist/runtime/session/runtimeConfigUpdateOutcome.d.ts",
+      "default": "./dist/runtime/session/runtimeConfigUpdateOutcome.js"
+    },
+    "./runtime/session/recoverableTurnFailurePolicy": {
+      "types": "./dist/runtime/session/recoverableTurnFailurePolicy.d.ts",
+      "default": "./dist/runtime/session/recoverableTurnFailurePolicy.js"
+    },
+    "./runtime/session/scopedServices": {
+      "types": "./dist/runtime/session/scopedServices.d.ts",
+      "default": "./dist/runtime/session/scopedServices.js"
     },
     "./runtime/surfaces": {
       "types": "./dist/runtime/surfaces/index.d.ts",
       "default": "./dist/runtime/surfaces/index.js"
+    },
+    "./runtime/facets/transcriptDispatch": {
+      "types": "./dist/runtime/facets/transcriptDispatch.d.ts",
+      "default": "./dist/runtime/facets/transcriptDispatch.js"
+    },
+    "./runtime/terminal/control": {
+      "types": "./dist/runtime/terminal/control.d.ts",
+      "default": "./dist/runtime/terminal/control.js"
+    },
+    "./runtime/terminal/inputReadiness": {
+      "types": "./dist/runtime/terminal/inputReadiness.d.ts",
+      "default": "./dist/runtime/terminal/inputReadiness.js"
+    },
+    "./runtime/terminal/promptWriteTimeout": {
+      "types": "./dist/runtime/terminal/promptWriteTimeout.d.ts",
+      "default": "./dist/runtime/terminal/promptWriteTimeout.js"
+    },
+    "./session/controls/metadataKeys": {
+      "types": "./dist/session/controls/metadataKeys.d.ts",
+      "default": "./dist/session/controls/metadataKeys.js"
+    },
+    "./session/controls/vendorResumePolicy": {
+      "types": "./dist/session/controls/vendorResumePolicy.d.ts",
+      "default": "./dist/session/controls/vendorResumePolicy.js"
+    },
+    "./session/state/bindings/metadataKeys": {
+      "types": "./dist/session/state/bindings/metadataKeys.d.ts",
+      "default": "./dist/session/state/bindings/metadataKeys.js"
+    },
+    "./session/state/metadataReaders": {
+      "types": "./dist/session/state/metadataReaders.d.ts",
+      "default": "./dist/session/state/metadataReaders.js"
+    },
+    "./session/state/types": {
+      "types": "./dist/session/state/_types.d.ts",
+      "default": "./dist/session/state/_types.js"
     },
     "./permissions/privilege": {
       "types": "./dist/permissions/privilege.d.ts",
@@ -53,6 +101,10 @@
     "./runtime/connected-services-adapter": {
       "types": "./dist/runtime/adjunctAdapters/connectedServices.d.ts",
       "default": "./dist/runtime/adjunctAdapters/connectedServices.js"
+    },
+    "./runtime/identity/session-metadata": {
+      "types": "./dist/runtime/identity/readSessionMetadataRuntimeDescriptor.d.ts",
+      "default": "./dist/runtime/identity/readSessionMetadataRuntimeDescriptor.js"
     }
   },
   "files": [
@@ -65,8 +117,10 @@
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'agents',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
-    "test": "vitest run --config ./vitest.config.ts",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --config ./vitest.config.ts",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",

@@ -66,6 +66,7 @@ export type TerminalInputInjectionResult =
             | 'pane_dead'
             | 'no_target'
             | 'host_unreachable'
+            | 'verification_failed'
             | 'timeout'
             | 'write_failed'
             | 'submit_failed'

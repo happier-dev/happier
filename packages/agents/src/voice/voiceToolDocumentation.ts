@@ -9,6 +9,11 @@ import {
   type VoiceGuidanceAvailability,
 } from '@happier-dev/protocol';
 
+export type VoicePromptActionSpec = Pick<
+  ActionSpec,
+  'id' | 'title' | 'description' | 'bindings' | 'examples' | 'inputHints' | 'prompting'
+>;
+
 const VOICE_TOOL_NAME_BY_ACTION_ID = new Map(
   listVoiceToolActionSpecs().flatMap((spec) => {
     const name = spec.bindings?.voiceClientToolName;
@@ -50,7 +55,7 @@ function describeRequirement(field: ActionInputFieldHint): string {
   return 'optional';
 }
 
-function formatFieldSummary(spec: ActionSpec, field: ActionInputFieldHint, availability: VoiceGuidanceAvailability): string | null {
+function formatFieldSummary(spec: VoicePromptActionSpec, field: ActionInputFieldHint, availability: VoiceGuidanceAvailability): string | null {
   const path = normalizeText((field as any).path);
   if (!path) return null;
   const summary = describeActionInputFieldForVoice(spec, field, availability);
@@ -62,7 +67,7 @@ function formatFieldSummary(spec: ActionSpec, field: ActionInputFieldHint, avail
 }
 
 function formatToolDocumentation(
-  spec: ActionSpec,
+  spec: VoicePromptActionSpec,
   toolName: string,
   invocationLabel: string,
   availability: VoiceGuidanceAvailability,
@@ -87,7 +92,7 @@ function formatToolDocumentation(
 }
 
 export function buildVoiceToolDocumentationLines(
-  specs: readonly ActionSpec[],
+  specs: readonly VoicePromptActionSpec[],
   params: Readonly<{ disabledActionIds?: readonly string[]; invocationLabel: string }>,
 ): readonly string[] {
   const disabled = new Set((params.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean));
@@ -109,7 +114,7 @@ export function buildVoiceToolDocumentationLines(
 }
 
 export function buildVoiceDiscoveryChecklistLines(
-  specs: readonly ActionSpec[],
+  specs: readonly VoicePromptActionSpec[],
   params?: Readonly<{ disabledActionIds?: readonly string[] }>,
 ): readonly string[] {
   const disabled = new Set((params?.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean));

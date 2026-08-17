@@ -91,6 +91,20 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).not.toContain('- memoryGetWindow:');
   });
 
+  it('accepts a validator-neutral action projection for provider prompt rendering', () => {
+    const prompt = buildElevenLabsVoiceAgentPrompt({
+      actionSpecs: [{
+        id: 'session.mode.set',
+        title: 'Set session mode',
+        bindings: { voiceClientToolName: 'setSessionMode' },
+        inputHints: { fields: [] },
+        prompting: { voiceHotPath: true },
+      }],
+    });
+
+    expect(prompt).toContain('- setSessionMode:');
+  });
+
   it('omits disabled voice tool action specs in the ElevenLabs prompt', () => {
     const prompt = buildElevenLabsVoiceAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
@@ -144,7 +158,7 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
-    expect(prompt).toContain('spawnSessionPicker');
+    expect(prompt).toContain('spawnSession');
     expect(prompt).toContain('listRecentPaths');
     expect(prompt).toContain('listAgentBackends');
     expect(prompt).toContain('listAgentModels');
@@ -162,6 +176,7 @@ describe('voiceAgentPrompt', () => {
 
     expect(prompt).toContain('listMachines');
     expect(prompt).not.toContain('listReviewEngines');
+    expect(prompt).not.toContain('spawnSession');
     expect(prompt).not.toContain('spawnSessionPicker');
     expect(prompt).toContain('listAgentModels');
     expect(prompt).toContain('Use listExecutionRuns to discover runs by title or status before choosing runId internally');
@@ -340,12 +355,14 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Discovery checklist:');
     expect(localPrompt).toMatch(/Use listAgentBackends before choosing .*backendTargetKeys internally/);
     expect(localPrompt).toContain('- Use listSessions before choosing sessionId internally');
-    expect(localPrompt).toContain('- If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker');
-    expect(localPrompt).toContain('- Prefer spawnSessionPicker if the user has not already chosen an exact path');
-    expect(localPrompt).toContain('- When the user asks to choose a machine or directory in the UI, call spawnSessionPicker instead of only saying you will open it');
+    expect(localPrompt).toContain('- If the exact session title is not in the first listSessions page, continue with its next cursor');
+    expect(localPrompt).toContain('- Use listRecentPaths instead of guessing raw paths');
+    expect(localPrompt).toContain('- Use listMachines and listServers before choosing the exact execution target');
+    expect(localPrompt).toContain('- Use listAgentBackends before setting agentTarget internally');
 
     expect(elevenLabsPrompt).toContain('Discovery checklist:');
     expect(elevenLabsPrompt).toContain('- Use listExecutionRuns before choosing runId internally');
+    expect(elevenLabsPrompt).not.toContain('spawnSession');
     expect(elevenLabsPrompt).not.toContain('spawnSessionPicker');
   });
 
@@ -370,12 +387,13 @@ describe('voiceAgentPrompt', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
       actionsTag: 'voice_actions',
       sessionId: 's1',
-      disabledActionIds: ['session.spawn_picker', 'workspaces.list_recent', 'paths.list_recent'],
+      disabledActionIds: ['session.spawn_new', 'workspaces.list_recent', 'paths.list_recent'],
     });
 
-    expect(prompt).not.toContain('Prefer spawnSessionPicker if the user has not already chosen an exact workspace or path');
+    expect(prompt).not.toContain('spawnSessionPicker');
+    expect(prompt).not.toContain('- spawnSession:');
     expect(prompt).not.toContain('Use listRecentWorkspaces instead of guessing workspace ids');
     expect(prompt).not.toContain('Use listRecentPaths instead of guessing raw paths');
-    expect(prompt).toContain('Use listAgentBackends before setting agentId');
+    expect(prompt).toContain('Call listAgentBackends first if you do not already know the backend name');
   });
 });
