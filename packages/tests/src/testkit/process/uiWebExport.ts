@@ -12,7 +12,7 @@ import type { StartedUiWeb } from './uiWebTypes';
 import { terminateProcessTreeByPid } from './processTree';
 import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
 import { redactHarnessLogText } from './harnessLogRedaction';
-import { type JsonOwnerFileLockLease, withJsonOwnerFileLock } from './jsonOwnerFileLock';
+import { type TestProcessLease, withTestProcessLease } from './testProcessLease';
 import {
   createUiWebExportStartupStallGuard,
   isUiWebExportMetroCacheCorruptionError,
@@ -220,7 +220,7 @@ async function hasRecentUiWebExportOwnerStagingProgress(params: {
   return stagingLatestMtimeMs > cutoffMs;
 }
 
-function writeUiWebExportLockOwnerMetadata(lease: JsonOwnerFileLockLease, stagingDir: string): void {
+function writeUiWebExportLockOwnerMetadata(lease: TestProcessLease, stagingDir: string): void {
   lease.updateOwnerMetadata({ stagingDir });
 }
 
@@ -307,12 +307,12 @@ export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterM
 
 async function withUiWebExportLock<T>(
   lockPath: string,
-  fn: (lease: JsonOwnerFileLockLease) => Promise<T>,
+  fn: (lease: TestProcessLease) => Promise<T>,
   options?: { timeoutMs?: number; staleAfterMs?: number },
 ): Promise<T> {
   const timeoutMs = options?.timeoutMs ?? 900_000;
   const staleAfterMs = options?.staleAfterMs ?? timeoutMs;
-  return await withJsonOwnerFileLock(fn, {
+  return await withTestProcessLease(fn, {
     lockPath,
     timeoutMs,
     pollIntervalMs: 250,

@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  readJsonOwnerFileLockSnapshot,
-  reclaimJsonOwnerFileLockSnapshot,
-} from './jsonOwnerFileLock';
+  readTestProcessLeaseSnapshot,
+  reclaimTestProcessLeaseSnapshot,
+} from './testProcessLease';
 
-describe('jsonOwnerFileLock', () => {
+describe('testProcessLease', () => {
   it('preserves a successor owner when stale reclaim observes a different raw owner', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-json-owner-lock-'));
     const lockPath = join(rootDir, 'shared.lock');
@@ -18,11 +18,11 @@ describe('jsonOwnerFileLock', () => {
 
     try {
       writeFileSync(lockPath, staleRaw, 'utf8');
-      const snapshot = readJsonOwnerFileLockSnapshot(lockPath);
+      const snapshot = readTestProcessLeaseSnapshot(lockPath);
       expect(snapshot.raw).toBe(staleRaw);
 
       writeFileSync(lockPath, successorRaw, 'utf8');
-      expect(reclaimJsonOwnerFileLockSnapshot(lockPath, snapshot.raw)).toBe(false);
+      expect(reclaimTestProcessLeaseSnapshot(lockPath, snapshot.raw)).toBe(false);
       expect(readFileSync(lockPath, 'utf8')).toBe(successorRaw);
     } finally {
       rmSync(rootDir, { recursive: true, force: true });

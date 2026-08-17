@@ -14,30 +14,30 @@ import {
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-export type JsonOwnerFileLockOwner = Record<string, unknown>;
+export type TestProcessLeaseOwner = Record<string, unknown>;
 
-export type JsonOwnerFileLockSnapshot = Readonly<{
+export type TestProcessLeaseSnapshot = Readonly<{
   exists: boolean;
   raw: string | null;
-  owner: JsonOwnerFileLockOwner | null;
+  owner: TestProcessLeaseOwner | null;
   mtimeMs: number | null;
 }>;
 
-export type JsonOwnerFileLockLease = Readonly<{
+export type TestProcessLease = Readonly<{
   lockPath: string;
   isCurrentOwner: () => boolean;
   readOwnRaw: () => string | null;
-  updateOwnerMetadata: (metadata: JsonOwnerFileLockOwner) => boolean;
+  updateOwnerMetadata: (metadata: TestProcessLeaseOwner) => boolean;
 }>;
 
-type ShouldReclaimJsonOwnerFileLockSnapshotParams = Readonly<{
+type ShouldReclaimTestProcessLeaseSnapshotParams = Readonly<{
   lockPath: string;
-  snapshot: JsonOwnerFileLockSnapshot;
+  snapshot: TestProcessLeaseSnapshot;
   staleAfterMs: number;
   nowMs: number;
 }>;
 
-export type JsonOwnerFileLockOptions = Readonly<{
+export type TestProcessLeaseOptions = Readonly<{
   lockPath: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
@@ -47,7 +47,7 @@ export type JsonOwnerFileLockOptions = Readonly<{
   errorLabel?: string;
   isOwnerAlive?: (pid: number) => boolean;
   shouldReclaimSnapshot?: (
-    params: ShouldReclaimJsonOwnerFileLockSnapshotParams
+    params: ShouldReclaimTestProcessLeaseSnapshotParams
   ) => boolean | Promise<boolean>;
 }>;
 
@@ -65,7 +65,7 @@ function isRunningPid(pid: number): boolean {
   }
 }
 
-export function parseJsonOwnerFileLockRaw(raw: string): JsonOwnerFileLockOwner | null {
+export function parseTestProcessLeaseRaw(raw: string): TestProcessLeaseOwner | null {
   const text = raw.trim();
   if (!text) return null;
 
@@ -74,13 +74,13 @@ export function parseJsonOwnerFileLockRaw(raw: string): JsonOwnerFileLockOwner |
     if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return null;
     }
-    return parsed as JsonOwnerFileLockOwner;
+    return parsed as TestProcessLeaseOwner;
   } catch {
     return null;
   }
 }
 
-export function readJsonOwnerFileLockRaw(lockPath: string): string | null {
+export function readTestProcessLeaseRaw(lockPath: string): string | null {
   try {
     return readFileSync(lockPath, 'utf8');
   } catch {
@@ -88,14 +88,14 @@ export function readJsonOwnerFileLockRaw(lockPath: string): string | null {
   }
 }
 
-export function readJsonOwnerFileLockSnapshot(lockPath: string): JsonOwnerFileLockSnapshot {
+export function readTestProcessLeaseSnapshot(lockPath: string): TestProcessLeaseSnapshot {
   try {
     const stats = statSync(lockPath);
     const raw = readFileSync(lockPath, 'utf8');
     return {
       exists: true,
       raw,
-      owner: parseJsonOwnerFileLockRaw(raw),
+      owner: parseTestProcessLeaseRaw(raw),
       mtimeMs: stats.mtimeMs,
     };
   } catch {
@@ -108,8 +108,8 @@ export function readJsonOwnerFileLockSnapshot(lockPath: string): JsonOwnerFileLo
   }
 }
 
-export function shouldReclaimJsonOwnerFileLockSnapshot(
-  snapshot: JsonOwnerFileLockSnapshot,
+export function shouldReclaimTestProcessLeaseSnapshot(
+  snapshot: TestProcessLeaseSnapshot,
   options: Readonly<{
     staleAfterMs: number;
     nowMs?: number;
@@ -129,7 +129,7 @@ export function shouldReclaimJsonOwnerFileLockSnapshot(
   return timestampMs != null && (options.nowMs ?? Date.now()) - timestampMs > options.staleAfterMs;
 }
 
-export function reclaimJsonOwnerFileLockSnapshot(lockPath: string, expectedRaw: string | null): boolean {
+export function reclaimTestProcessLeaseSnapshot(lockPath: string, expectedRaw: string | null): boolean {
   if (expectedRaw == null) return true;
 
   const reclaimPath = `${lockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -165,7 +165,7 @@ export function reclaimJsonOwnerFileLockSnapshot(lockPath: string, expectedRaw: 
   return false;
 }
 
-function createOwnerRaw(metadata: JsonOwnerFileLockOwner, nowMs: number): string {
+function createOwnerRaw(metadata: TestProcessLeaseOwner, nowMs: number): string {
   return JSON.stringify({
     ...metadata,
     pid: process.pid,
@@ -195,8 +195,8 @@ function writeOwnerRawToFd(fd: number, lockPath: string, raw: string): boolean {
   }
 }
 
-function describeJsonOwnerFileLock(lockPath: string, nowMs: number): string {
-  const snapshot = readJsonOwnerFileLockSnapshot(lockPath);
+function describeTestProcessLease(lockPath: string, nowMs: number): string {
+  const snapshot = readTestProcessLeaseSnapshot(lockPath);
   const owner = snapshot.owner;
   if (!owner) return 'ownerPid=unknown ownerAgeMs=unknown';
   const timestampMs = readPositiveNumber(owner.updatedAtMs) ?? readPositiveNumber(owner.createdAtMs);
@@ -204,9 +204,9 @@ function describeJsonOwnerFileLock(lockPath: string, nowMs: number): string {
   return `ownerPid=${String(owner.pid ?? 'unknown')} ownerAgeMs=${ownerAgeMs}`;
 }
 
-export async function withJsonOwnerFileLock<T>(
-  fn: (lease: JsonOwnerFileLockLease) => Promise<T>,
-  options: JsonOwnerFileLockOptions,
+export async function withTestProcessLease<T>(
+  fn: (lease: TestProcessLease) => Promise<T>,
+  options: TestProcessLeaseOptions,
 ): Promise<T> {
   const lockPath = options.lockPath;
   mkdirSync(dirname(lockPath), { recursive: true });
@@ -214,7 +214,7 @@ export async function withJsonOwnerFileLock<T>(
   const timeoutMs = options.timeoutMs ?? 240_000;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
-  const errorLabel = options.errorLabel ?? 'JSON owner file lock';
+  const errorLabel = options.errorLabel ?? 'test process lease';
   const startedAt = Date.now();
 
   let fd: number | null = null;
@@ -237,7 +237,7 @@ export async function withJsonOwnerFileLock<T>(
         throw error;
       }
 
-      const snapshot = readJsonOwnerFileLockSnapshot(lockPath);
+      const snapshot = readTestProcessLeaseSnapshot(lockPath);
       const reclaim = options.shouldReclaimSnapshot
         ? await options.shouldReclaimSnapshot({
           lockPath,
@@ -245,30 +245,30 @@ export async function withJsonOwnerFileLock<T>(
           staleAfterMs,
           nowMs: Date.now(),
         })
-        : shouldReclaimJsonOwnerFileLockSnapshot(snapshot, {
+        : shouldReclaimTestProcessLeaseSnapshot(snapshot, {
           staleAfterMs,
           isOwnerAlive: options.isOwnerAlive,
         });
 
       if (reclaim) {
-        reclaimJsonOwnerFileLockSnapshot(lockPath, snapshot.raw);
+        reclaimTestProcessLeaseSnapshot(lockPath, snapshot.raw);
         continue;
       }
 
       if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for ${errorLabel}: ${lockPath} (${describeJsonOwnerFileLock(lockPath, Date.now())})`);
+        throw new Error(`Timed out waiting for ${errorLabel}: ${lockPath} (${describeTestProcessLease(lockPath, Date.now())})`);
       }
       await sleep(pollIntervalMs);
     }
   }
 
-  const lease: JsonOwnerFileLockLease = {
+  const lease: TestProcessLease = {
     lockPath,
     isCurrentOwner: () => fd != null && isFileDescriptorAtLockPath(fd, lockPath),
     readOwnRaw: () => ownRaw,
     updateOwnerMetadata: (metadata) => {
       if (fd == null || ownRaw == null) return false;
-      const currentOwner = parseJsonOwnerFileLockRaw(ownRaw) ?? {};
+      const currentOwner = parseTestProcessLeaseRaw(ownRaw) ?? {};
       const createdAtMs = readPositiveNumber(currentOwner.createdAtMs) ?? Date.now();
       const nextRaw = JSON.stringify({
         ...currentOwner,
@@ -299,7 +299,7 @@ export async function withJsonOwnerFileLock<T>(
       clearInterval(heartbeatTimer);
     }
     try {
-      if (fd != null && ownRaw != null && readJsonOwnerFileLockRaw(lockPath) === ownRaw) {
+      if (fd != null && ownRaw != null && readTestProcessLeaseRaw(lockPath) === ownRaw) {
         unlinkSync(lockPath);
       }
     } catch {

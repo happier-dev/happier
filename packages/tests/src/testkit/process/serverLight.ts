@@ -18,7 +18,7 @@ import { yarnCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
 import { resolveTsxImportHookSpecifier } from './tsxImportHook';
-import { withJsonOwnerFileLock } from './jsonOwnerFileLock';
+import { withTestProcessLease } from './testProcessLease';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -337,7 +337,7 @@ export async function withServerSharedDepsBuildLock<T>(
 ): Promise<T> {
   const lockPath = options?.lockPath ?? resolve(repoRootDir(), '.project', 'tmp', 'server-shared-deps-build.lock');
   const timeoutMs = options?.timeoutMs ?? 240_000;
-  return await withJsonOwnerFileLock(async () => await fn(), {
+  return await withTestProcessLease(async () => await fn(), {
     lockPath,
     timeoutMs,
     pollIntervalMs: options?.pollIntervalMs,
