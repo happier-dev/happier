@@ -164,6 +164,66 @@ describe('sessions ops server-scoped routing', () => {
         }
     });
 
+    it('checks an active session runtime without presenting the session as resuming', async () => {
+        storage.setState({
+            sessions: {
+                'session-1': { id: 'session-1', active: true, archivedAt: null } as any,
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
+        const markSessionResumingSpy = vi.spyOn(storage.getState(), 'markSessionResuming');
+        const armSessionResumingFallbackSpy = vi.spyOn(storage.getState(), 'armSessionResumingFallback');
+        const clearSessionResumingSpy = vi.spyOn(storage.getState(), 'clearSessionResuming');
+        try {
+            const { ensureSessionRuntimeForPendingInput } = await sessionsModulePromise;
+
+            const result = await ensureSessionRuntimeForPendingInput({
+                sessionId: 'session-1',
+                machineId: 'machine-1',
+                directory: '/tmp',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            });
+
+            expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
+            expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+            expect(markSessionResumingSpy).not.toHaveBeenCalled();
+            expect(armSessionResumingFallbackSpy).not.toHaveBeenCalled();
+            expect(clearSessionResumingSpy).not.toHaveBeenCalled();
+        } finally {
+            markSessionResumingSpy.mockRestore();
+            armSessionResumingFallbackSpy.mockRestore();
+            clearSessionResumingSpy.mockRestore();
+        }
+    });
+
+    it('presents a runtime ensure as resuming when the session is known inactive', async () => {
+        storage.setState({
+            sessions: {
+                'session-1': { id: 'session-1', active: false, archivedAt: null } as any,
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
+        const markSessionResumingSpy = vi.spyOn(storage.getState(), 'markSessionResuming');
+        const armSessionResumingFallbackSpy = vi.spyOn(storage.getState(), 'armSessionResumingFallback');
+        try {
+            const { ensureSessionRuntimeForPendingInput } = await sessionsModulePromise;
+
+            const result = await ensureSessionRuntimeForPendingInput({
+                sessionId: 'session-1',
+                machineId: 'machine-1',
+                directory: '/tmp',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            });
+
+            expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
+            expect(markSessionResumingSpy).toHaveBeenCalledWith('session-1');
+            expect(armSessionResumingFallbackSpy).toHaveBeenCalledWith('session-1');
+        } finally {
+            markSessionResumingSpy.mockRestore();
+            armSessionResumingFallbackSpy.mockRestore();
+        }
+    });
+
     it('passes transcriptStorage through resumeSession when requested', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;

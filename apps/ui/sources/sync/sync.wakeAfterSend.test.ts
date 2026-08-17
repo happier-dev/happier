@@ -29,12 +29,12 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
-const resumeSessionSpy = vi.hoisted(() => vi.fn(async (_options: unknown) => ({ type: 'success' as const })));
+const ensureSessionRuntimeForPendingInputSpy = vi.hoisted(() => vi.fn(async (_options: unknown) => ({ type: 'success' as const })));
 vi.mock('@/sync/ops', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/ops')>();
     return {
         ...actual,
-        resumeSession: resumeSessionSpy,
+        ensureSessionRuntimeForPendingInput: ensureSessionRuntimeForPendingInputSpy,
     };
 });
 
@@ -125,7 +125,7 @@ describe('sync.sendMessage wake-after-send', () => {
             accountId: 'sync-wake-after-send-test-account',
         });
         appStateAddListener.mockClear();
-        resumeSessionSpy.mockClear();
+        ensureSessionRuntimeForPendingInputSpy.mockClear();
     });
 
     afterEach(() => {
@@ -249,8 +249,8 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSessionSpy).toHaveBeenCalledWith(
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionId,
                 machineId: 'm1',
@@ -307,8 +307,8 @@ describe('sync.sendMessage wake-after-send', () => {
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSessionSpy).toHaveBeenCalledWith(
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionId,
                 machineId: 'm-new',
@@ -386,8 +386,8 @@ describe('sync.sendMessage wake-after-send', () => {
             `/v2/sessions/${sessionId}/pending`,
             expect.objectContaining({ method: 'POST' }),
         );
-        await vi.waitFor(() => expect(resumeSessionSpy).toHaveBeenCalledTimes(1));
-        expect(resumeSessionSpy).toHaveBeenCalledWith({
+        await vi.waitFor(() => expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledTimes(1));
+        expect(ensureSessionRuntimeForPendingInputSpy).toHaveBeenCalledWith({
             sessionId,
             machineId: 'm1',
             directory: '/tmp/project',

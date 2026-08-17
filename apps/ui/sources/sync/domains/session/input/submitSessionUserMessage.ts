@@ -436,7 +436,7 @@ async function enqueuePending(
         };
 
         try {
-            const wakeResult = await port.resumeSession(resumeOptions);
+            const wakeResult = await port.ensureSessionRuntimeForPendingInput(resumeOptions);
             if (wakeResult.type === 'error') {
                 await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
                 return {
@@ -564,7 +564,7 @@ export async function submitSessionUserMessage(
         });
         if (wakeOpts) {
             try {
-                const wakeResult = await port.resumeSession({
+                const wakeResult = await port.ensureSessionRuntimeForPendingInput({
                     ...wakeOpts,
                     ...(effectiveOpts.serverId ? { serverId: effectiveOpts.serverId } : {}),
                 });

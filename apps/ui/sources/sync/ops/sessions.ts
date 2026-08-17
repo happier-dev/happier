@@ -209,24 +209,28 @@ export interface ResumeSessionOptions {
     preferScopedMachineRpc?: boolean;
 }
 
-/**
- * Resume an inactive session by spawning a new CLI process that reconnects
- * to the existing Happy session and resumes the agent.
- */
-export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
-    // Single owner of the "resuming" lifecycle marker: every resume initiation funnels through this
-    // op (direct resume + pending-queue wake resume), so marking here keeps header/composer/list in
-    // sync without per-surface transient flags. It stays set for the full RPC duration, then the
-    // store settles it on first post-attach activity (or a bounded post-acceptance fallback). We
-    // only clear it eagerly when the resume fails.
-    storage.getState().markSessionResuming(options.sessionId);
+async function runResumeSession(
+    options: ResumeSessionOptions,
+    presentation: 'explicit_resume' | 'ensure_pending_consumer',
+): Promise<ResumeSessionResult> {
+    // Pending delivery also uses the daemon's spawn/adopt RPC so the daemon can prove whether the
+    // recorded active runner is still serviceable. That serviceability check is not itself a user
+    // resume. Only publish the resuming lifecycle when the caller explicitly resumed the session,
+    // or when the current session snapshot already proves that a Pending consumer is inactive.
+    const shouldPresentAsResuming = presentation === 'explicit_resume'
+        || storage.getState().sessions[options.sessionId]?.active !== true;
+    if (shouldPresentAsResuming) {
+        storage.getState().markSessionResuming(options.sessionId);
+    }
     try {
         const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
         const session = storage.getState().sessions[options.sessionId];
         if (session?.archivedAt != null) {
             const unarchiveResult = await sessionUnarchiveWithServerScope(options.sessionId, { serverId });
             if (!unarchiveResult.success) {
-                storage.getState().clearSessionResuming(options.sessionId);
+                if (shouldPresentAsResuming) {
+                    storage.getState().clearSessionResuming(options.sessionId);
+                }
                 return {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -274,7 +278,9 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
         const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
         if (!machineId || !directory) {
-            storage.getState().clearSessionResuming(sessionId);
+            if (shouldPresentAsResuming) {
+                storage.getState().clearSessionResuming(sessionId);
+            }
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
@@ -323,14 +329,18 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(preferScopedMachineRpc ? { preferScoped: true } : {}),
         });
         const normalizedResult = normalizeSpawnSessionResult(result);
-        if (normalizedResult.type === 'error') {
-            storage.getState().clearSessionResuming(sessionId);
-        } else {
-            storage.getState().armSessionResumingFallback(sessionId);
+        if (shouldPresentAsResuming) {
+            if (normalizedResult.type === 'error') {
+                storage.getState().clearSessionResuming(sessionId);
+            } else {
+                storage.getState().armSessionResumingFallback(sessionId);
+            }
         }
         return normalizedResult;
     } catch (error) {
-        storage.getState().clearSessionResuming(options.sessionId);
+        if (shouldPresentAsResuming) {
+            storage.getState().clearSessionResuming(options.sessionId);
+        }
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
             return {
                 type: 'error',
@@ -360,6 +370,25 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             errorMessage: error instanceof Error ? error.message : 'Failed to resume session'
         };
     }
+}
+
+/**
+ * Resume an inactive session by spawning a new CLI process that reconnects
+ * to the existing Happy session and resumes the agent.
+ */
+export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
+    return await runResumeSession(options, 'explicit_resume');
+}
+
+/**
+ * Ask the daemon to prove that the durable Pending queue has a serviceable consumer.
+ * The daemon may adopt an existing runner or spawn a replacement when the UI's active
+ * snapshot is stale; an already-active snapshot must not be presented as a user resume.
+ */
+export async function ensureSessionRuntimeForPendingInput(
+    options: ResumeSessionOptions,
+): Promise<ResumeSessionResult> {
+    return await runResumeSession(options, 'ensure_pending_consumer');
 }
 
 export type ContinueSessionWithReplayOptions = Readonly<{

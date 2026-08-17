@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { resumeSession } from '@/sync/ops';
+import { ensureSessionRuntimeForPendingInput } from '@/sync/ops';
 import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     ClientVersionCheckRequestV1Schema,
@@ -728,16 +728,13 @@ function canUseSessionUserMessageRuntimeRpc(session: Readonly<{
     return isVersionSupported(cliVersion, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION);
 }
 
-function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
+function ensureSessionRuntimeAfterCommittedPrompt(params: Readonly<{
     sessionId: string;
     session: Session;
     seq: number;
     requestId: string;
     tag: string;
-    force?: boolean;
 }>): void {
-    if (params.session.active === true && params.force !== true) return;
-
     const controlTarget = readMachineControlTargetForSession(params.sessionId);
     const machineId = controlTarget?.machineId ?? (typeof params.session.metadata?.machineId === 'string'
         ? params.session.metadata.machineId.trim()
@@ -753,7 +750,7 @@ function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
     const authoringSnapshot = deriveSessionAuthoringSnapshot({ session: params.session });
 
     fireAndForget(
-        resumeSession({
+        ensureSessionRuntimeForPendingInput({
             sessionId: params.sessionId,
             machineId,
             directory,
@@ -788,7 +785,7 @@ function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
                 requestId: params.requestId,
             },
         }).then((result) => {
-            // resumeSession reports failures as resolved values, not rejections; without this
+            // Runtime ensure reports failures as resolved values, not rejections; without this
             // a failed wake is invisible and the queued prompt never gets a runner.
             if (result.type !== 'success') {
                 log.log(`[sync] Wake after committed prompt failed for ${params.sessionId} (${params.tag}): ${JSON.stringify(result)}`);
@@ -2532,14 +2529,15 @@ class Sync {
 	            // across devices.
 	            await publishNextPromptPermissionModeIfNeeded();
 
-            wakeInactiveSessionAfterCommittedPrompt({
-                sessionId,
-                session,
-                seq: ack.seq,
-                requestId: localId,
-                tag: 'Sync.sendMessage.wakeAfterSend',
-                force: runtimeRpcFallbackRequiresWake,
-            });
+            if (session.active !== true || runtimeRpcFallbackRequiresWake) {
+                ensureSessionRuntimeAfterCommittedPrompt({
+                    sessionId,
+                    session,
+                    seq: ack.seq,
+                    requestId: localId,
+                    tag: 'Sync.sendMessage.wakeAfterSend',
+                });
+            }
 
 	            // Server ACK means the user message is committed (or idempotently confirmed).
 	            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
@@ -2935,7 +2933,7 @@ class Sync {
             abortSession: (targetSessionId) => this.abortSession(targetSessionId),
             updatePendingRequestedAction: (targetSessionId, localId, requestedAction) =>
                 this.updatePendingRequestedAction(targetSessionId, localId, requestedAction),
-            resumeSession: (options) => resumeSession(options),
+            ensureSessionRuntimeForPendingInput: (options) => ensureSessionRuntimeForPendingInput(options),
             refreshSessionForSubmit: (targetSessionId, options) =>
                 this.refreshSessionForSubmit(targetSessionId, options),
             ...(canWakeMachineId ? { canWakeMachineId } : {}),

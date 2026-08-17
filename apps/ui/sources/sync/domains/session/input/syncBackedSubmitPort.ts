@@ -1,4 +1,4 @@
-import { resumeSession, sessionSwitch } from '@/sync/ops';
+import { ensureSessionRuntimeForPendingInput, sessionSwitch } from '@/sync/ops';
 import { sync as defaultSync } from '@/sync/sync';
 
 import type { SessionSubmitPort } from './types';
@@ -23,7 +23,7 @@ export function createSyncBackedSubmitPort(syncRuntime: SyncSubmitRuntime = defa
         abortSession: (sessionId) => syncRuntime.abortSession(sessionId),
         updatePendingRequestedAction: (sessionId, localId, requestedAction) =>
             syncRuntime.updatePendingRequestedAction(sessionId, localId, requestedAction),
-        resumeSession: (options) => resumeSession(options),
+        ensureSessionRuntimeForPendingInput: (options) => ensureSessionRuntimeForPendingInput(options),
         refreshSessionForSubmit: (sessionId, options) => syncRuntime.refreshSessionForSubmit(sessionId, options),
         switchSessionControlToRemote: async (sessionId) => {
             await sessionSwitch(sessionId, 'remote');

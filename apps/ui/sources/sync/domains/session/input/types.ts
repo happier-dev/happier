@@ -157,7 +157,7 @@ export interface SessionSubmitPort {
             onLocalPendingProjectionCreated?: (event: DirectMessageLocalPendingProjection) => void;
         }>,
     ): Promise<DirectMessageSubmitResult>;
-    resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult>;
+    ensureSessionRuntimeForPendingInput(options: ResumeSessionOptions): Promise<ResumeSessionResult>;
     refreshSessionForSubmit?(
         sessionId: string,
         options?: Readonly<{ serverId?: string | null }>,

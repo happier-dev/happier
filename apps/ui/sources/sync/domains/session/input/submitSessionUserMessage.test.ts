@@ -64,7 +64,7 @@ function createPort() {
         enqueuePendingMessage,
         sendMessage,
         updatePendingRequestedAction,
-        resumeSession: vi.fn(async () => ({ type: 'success' as const })),
+        ensureSessionRuntimeForPendingInput: vi.fn(async () => ({ type: 'success' as const })),
         refreshSessionForSubmit: vi.fn(async () => null),
     };
     return { port, enqueuePendingMessage, sendMessage, updatePendingRequestedAction };
@@ -168,7 +168,7 @@ describe('submitSessionUserMessage', () => {
     });
 
     it('keeps an existing durable action pending when the later wake fails', async () => {
-        const wakeFailures: SessionSubmitPort['resumeSession'][] = [
+        const wakeFailures: SessionSubmitPort['ensureSessionRuntimeForPendingInput'][] = [
             async () => ({
                 type: 'error' as const,
                 errorCode: 'DAEMON_RPC_UNAVAILABLE' as const,
@@ -177,9 +177,9 @@ describe('submitSessionUserMessage', () => {
             async () => { throw new Error('wake response lost'); },
         ];
 
-        for (const resumeSession of wakeFailures) {
+        for (const ensureSessionRuntimeForPendingInput of wakeFailures) {
             const harness = createPort();
-            harness.port.resumeSession = vi.fn(resumeSession);
+            harness.port.ensureSessionRuntimeForPendingInput = vi.fn(ensureSessionRuntimeForPendingInput);
 
             const result = await submitSessionUserMessage(harness.port, {
                 ...baseOptions,
@@ -195,7 +195,7 @@ describe('submitSessionUserMessage', () => {
                 'existing-local',
                 { v: 1, kind: 'send_now' },
             );
-            expect(harness.port.resumeSession).toHaveBeenCalledTimes(1);
+            expect(harness.port.ensureSessionRuntimeForPendingInput).toHaveBeenCalledTimes(1);
             expect(result).toMatchObject({
                 type: 'wake_pending',
                 persistence: 'pending',

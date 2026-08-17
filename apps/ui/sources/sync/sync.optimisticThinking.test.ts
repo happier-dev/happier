@@ -5,7 +5,7 @@ import { createSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout
 type EndpointSupervisorLookup = typeof import('@/sync/runtime/connectivity/endpointSupervisorPool').getEndpointSupervisorForServer;
 type EndpointSupervisorAcquire = typeof import('@/sync/runtime/connectivity/endpointSupervisorPool').acquireEndpointSupervisor;
 type AssertServerReachabilityAuthenticated = typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool').assertServerReachabilityAuthenticated;
-type ResumeSession = typeof import('@/sync/ops').resumeSession;
+type EnsureSessionRuntimeForPendingInput = typeof import('@/sync/ops').ensureSessionRuntimeForPendingInput;
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
@@ -52,9 +52,9 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: runtimeFetchWithServerReachabilityMock,
 }));
 
-const resumeSessionMock = vi.hoisted(() => vi.fn<ResumeSession>(async () => ({ type: 'success' as const })));
+const ensureSessionRuntimeForPendingInputMock = vi.hoisted(() => vi.fn<EnsureSessionRuntimeForPendingInput>(async () => ({ type: 'success' as const })));
 vi.mock('@/sync/ops', () => ({
-    resumeSession: resumeSessionMock,
+    ensureSessionRuntimeForPendingInput: ensureSessionRuntimeForPendingInputMock,
 }));
 
 vi.mock('@/log', () => ({
@@ -298,7 +298,7 @@ describe('sync.sendMessage optimistic thinking', () => {
                 ? buildServerFeaturesResponse()
                 : { requestedAction: { v: 1, kind: 'enqueue' } }),
         );
-        resumeSessionMock.mockClear();
+        ensureSessionRuntimeForPendingInputMock.mockClear();
     });
 
     afterEach(() => {
@@ -757,7 +757,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         const result = await sync.sendMessage(sessionId, 'retry after daemon replacement');
 
         expect(result).toMatchObject({ persistence: 'transcript_committed' });
-        expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(ensureSessionRuntimeForPendingInputMock).toHaveBeenCalledWith(expect.objectContaining({
             sessionId,
             initialTranscriptAfterSeq: 41,
             executionAuthorization: {
@@ -795,8 +795,8 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const sentLocalIds = (emitWithAck.mock.calls as Array<[string, { localId?: string }]>).map(([, payload]) => payload.localId);
         expect(sentLocalIds).toEqual(opaqueLocalIds);
-        expect(resumeSessionMock.mock.calls.map((call) => call[0]?.executionAuthorization?.requestId)).toEqual(opaqueLocalIds);
-        expect(new Set(resumeSessionMock.mock.calls.map((call) => call[0]?.executionAuthorization?.requestId))).toHaveLength(2);
+        expect(ensureSessionRuntimeForPendingInputMock.mock.calls.map((call) => call[0]?.executionAuthorization?.requestId)).toEqual(opaqueLocalIds);
+        expect(new Set(ensureSessionRuntimeForPendingInputMock.mock.calls.map((call) => call[0]?.executionAuthorization?.requestId))).toHaveLength(2);
     });
 
     it('keeps a runtime-accepted local pending message when server pending refresh is empty', async () => {
