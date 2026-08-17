@@ -20,12 +20,23 @@ test('release-actor-guard retries transient GitHub API failures at its shared HT
   const actionPath = resolve(repoRoot, '.github', 'actions', 'release-actor-guard', 'action.yml');
   const raw = fs.readFileSync(actionPath, 'utf8');
 
-  assert.match(raw, /github_api_get_status\(\)/, 'the action should own GitHub API retry policy in one helper');
+  assert.match(raw, /github_api_status\(\)/, 'the action should own GitHub API retry policy in one helper');
   assert.match(raw, /--retry 3/);
   assert.match(raw, /--retry-delay 1/);
   assert.match(raw, /--retry-max-time 90/);
   assert.match(raw, /--retry-all-errors/);
-  assert.equal((raw.match(/curl -sS/g) ?? []).length, 1, 'all guard API reads should use the shared retrying helper');
+  assert.equal((raw.match(/\bcurl /g) ?? []).length, 1, 'all guard API reads should use the shared retrying helper');
+});
+
+test('release-actor-guard fails over from exhausted collaborator REST failures to exact GraphQL admin evidence', () => {
+  const actionPath = resolve(repoRoot, '.github', 'actions', 'release-actor-guard', 'action.yml');
+  const raw = fs.readFileSync(actionPath, 'utf8');
+
+  assert.match(raw, /429\|5\?\?/);
+  assert.match(raw, /https:\/\/api\.github\.com\/graphql/);
+  assert.match(raw, /collaborators\(query:\$login,first:20\)/);
+  assert.match(raw, /\.node\.login\s*\|\s*ascii_downcase/);
+  assert.match(raw, /"ADMIN"/);
 });
 
 test('deploy workflows trust the release bot actor for push-triggered deployments', async () => {

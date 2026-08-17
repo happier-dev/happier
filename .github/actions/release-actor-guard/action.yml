@@ -104,11 +104,13 @@ runs:
           done
         fi
 
-        github_api_get_status() {
+        github_api_status() {
           local endpoint="$1"
           local token="$2"
           local response_file="$3"
-          curl -sS \
+          local request_body="${4:-}"
+          local curl_args=(
+            -sS
             --connect-timeout 10 \
             --max-time 30 \
             --retry 3 \
@@ -117,9 +119,59 @@ runs:
             --retry-all-errors \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${token}" \
+          )
+          if [ -n "$request_body" ]; then
+            curl_args+=(-H "Content-Type: application/json" --data "$request_body")
+          fi
+          curl "${curl_args[@]}" \
             "$endpoint" \
             -o "$response_file" \
             -w "%{http_code}"
+        }
+
+        fallback_repo_admin_graphql() {
+          case "$REPO" in
+            */*) ;;
+            *) echo "Invalid repository name for GraphQL permission fallback: '${REPO}'." >&2; exit 1 ;;
+          esac
+
+          local owner="${REPO%%/*}"
+          local name="${REPO#*/}"
+          local query='query($owner:String!,$name:String!,$login:String!){repository(owner:$owner,name:$name){collaborators(query:$login,first:20){edges{permission node{login}}}}}'
+          local payload
+          payload="$(jq -nc \
+            --arg query "$query" \
+            --arg owner "$owner" \
+            --arg name "$name" \
+            --arg login "$ACTOR" \
+            '{query:$query,variables:{owner:$owner,name:$name,login:$login}}')"
+          local resp_file
+          resp_file="$(mktemp)"
+          local status
+          if ! status="$(github_api_status "https://api.github.com/graphql" "$REPO_TOKEN" "$resp_file" "$payload")"; then
+            echo "Unable to reach GitHub GraphQL while determining repo permission for '${ACTOR}'." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+          fi
+          if [ "$status" != "200" ]; then
+            echo "Unable to determine repo permission for '${ACTOR}' via GraphQL (HTTP ${status})." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+          fi
+
+          local permission
+          permission="$(jq -r --arg actor "$ACTOR" \
+            '[.data.repository.collaborators.edges[]? | select((.node.login | ascii_downcase) == ($actor | ascii_downcase)) | .permission][0] // ""' \
+            "$resp_file" 2>/dev/null || true)"
+          rm -f "$resp_file"
+          if [ "$permission" != "ADMIN" ]; then
+            echo "Actor '${ACTOR}' is not authorized by exact GraphQL collaborator evidence (permission='${permission}')." >&2
+            exit 1
+          fi
+
+          echo "Actor '${ACTOR}' is a repo admin; allowing release workflow via GraphQL evidence."
         }
 
         fallback_repo_admin() {
@@ -135,19 +187,29 @@ runs:
           actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
           endpoint="https://api.github.com/repos/${REPO}/collaborators/${actor_enc}/permission"
           resp_file="$(mktemp)"
-          if ! status="$(github_api_get_status "$endpoint" "$REPO_TOKEN" "$resp_file")"; then
+          if ! status="$(github_api_status "$endpoint" "$REPO_TOKEN" "$resp_file")"; then
             echo "Unable to reach GitHub while determining repo permission for '${ACTOR}'." >&2
             cat "$resp_file" >&2 || true
             rm -f "$resp_file"
             exit 1
           fi
 
-          if [ "$status" != "200" ]; then
-            echo "Unable to determine repo permission for '${ACTOR}' (HTTP ${status})." >&2
-            cat "$resp_file" >&2 || true
-            rm -f "$resp_file"
-            exit 1
-          fi
+          case "$status" in
+            200) ;;
+            429|5??)
+              echo "Collaborator REST permission remained unavailable (HTTP ${status}); checking exact GraphQL admin evidence." >&2
+              cat "$resp_file" >&2 || true
+              rm -f "$resp_file"
+              fallback_repo_admin_graphql
+              return
+              ;;
+            *)
+              echo "Unable to determine repo permission for '${ACTOR}' (HTTP ${status})." >&2
+              cat "$resp_file" >&2 || true
+              rm -f "$resp_file"
+              exit 1
+              ;;
+          esac
 
           perm="$(jq -r '.permission // ""' "$resp_file" 2>/dev/null || true)"
           rm -f "$resp_file"
@@ -169,7 +231,7 @@ runs:
         actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
         endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${actor_enc}"
         resp_file="$(mktemp)"
-        if ! status="$(github_api_get_status "$endpoint" "$APP_TOKEN" "$resp_file")"; then
+        if ! status="$(github_api_status "$endpoint" "$APP_TOKEN" "$resp_file")"; then
           echo "Unable to reach GitHub while checking team membership for '${ACTOR}'." >&2
           cat "$resp_file" >&2 || true
           rm -f "$resp_file"
