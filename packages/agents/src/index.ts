@@ -175,7 +175,14 @@ export type {
   TerminalSpecialKey,
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata, resolveDeclaredAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+export {
+  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
+  resolveDeclaredAgentIdFromSessionMetadata,
+  resolveSessionMetadataAgentIdentity,
+  type SessionMetadataAgentIdentityBasis,
+  type SessionMetadataAgentIdentityV1,
+} from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,

@@ -51,24 +51,91 @@ export function resolveDeclaredAgentIdFromSessionMetadata(metadata: unknown): Ag
   return null;
 }
 
-export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
-  const record = asRecord(metadata);
-  if (!record) return null;
+/** Which evidence tier decided the Agent identity carried by Session metadata. */
+export type SessionMetadataAgentIdentityBasis = 'declared' | 'flavor' | 'vendorResumeKey' | 'none';
 
-  const declaredAgentId = resolveDeclaredAgentIdFromSessionMetadata(record);
-  if (declaredAgentId) return declaredAgentId;
+/**
+ * Canonical Agent-identity reading of Session metadata.
+ *
+ * Precedence is authority-ordered, not evidence-counting: a declared runtime or
+ * linked-external identity wins, then `flavor`, and only when neither exists may
+ * a flat vendor resume key infer identity. Several non-empty flat keys with no
+ * higher authority are ambiguous and fail closed rather than silently selecting
+ * the first Agent in catalog order.
+ *
+ * `REQ-STATE-01` keeps active metadata at zero or one non-empty flat key, so a
+ * multi-key Session is legacy or corrupt state. Consumers must not treat extra
+ * stale keys as a conflict when a higher-authority identity is present — doing
+ * so makes such a Session permanently unresumable.
+ */
+export type SessionMetadataAgentIdentityV1 = Readonly<{
+  /** Authoritative Agent, or `null` when identity is unknown or ambiguous. */
+  agentId: AgentId | null;
+  basis: SessionMetadataAgentIdentityBasis;
+  /** Every Agent whose flat vendor resume key is non-empty, in catalog order. */
+  vendorResumeKeyAgentIds: readonly AgentId[];
+  /** True when no higher-authority identity exists and several flat keys do. */
+  ambiguousVendorResumeKeys: boolean;
+}>;
 
-  const byFlavor = resolveCanonicalAgentIdFromFlavor(record.flavor);
-  if (byFlavor) return byFlavor;
-
+function readVendorResumeKeyAgentIds(record: Record<string, unknown>): readonly AgentId[] {
+  const agentIds: AgentId[] = [];
   for (const id of AGENT_IDS) {
     const resume = getAgentResumeConfig(id);
     const field = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
     if (!field) continue;
-    if (hasNonEmptyStringField(record, field)) return id;
+    if (hasNonEmptyStringField(record, field)) agentIds.push(id);
+  }
+  return agentIds;
+}
+
+export function resolveSessionMetadataAgentIdentity(metadata: unknown): SessionMetadataAgentIdentityV1 {
+  const record = asRecord(metadata);
+  if (!record) {
+    return { agentId: null, basis: 'none', vendorResumeKeyAgentIds: [], ambiguousVendorResumeKeys: false };
   }
 
-  return null;
+  const vendorResumeKeyAgentIds = readVendorResumeKeyAgentIds(record);
+
+  const declaredAgentId = resolveDeclaredAgentIdFromSessionMetadata(record);
+  if (declaredAgentId) {
+    return {
+      agentId: declaredAgentId,
+      basis: 'declared',
+      vendorResumeKeyAgentIds,
+      ambiguousVendorResumeKeys: false,
+    };
+  }
+
+  const flavorAgentId = resolveCanonicalAgentIdFromFlavor(record.flavor);
+  if (flavorAgentId) {
+    return {
+      agentId: flavorAgentId,
+      basis: 'flavor',
+      vendorResumeKeyAgentIds,
+      ambiguousVendorResumeKeys: false,
+    };
+  }
+
+  if (vendorResumeKeyAgentIds.length === 1) {
+    return {
+      agentId: vendorResumeKeyAgentIds[0] ?? null,
+      basis: 'vendorResumeKey',
+      vendorResumeKeyAgentIds,
+      ambiguousVendorResumeKeys: false,
+    };
+  }
+
+  return {
+    agentId: null,
+    basis: 'none',
+    vendorResumeKeyAgentIds,
+    ambiguousVendorResumeKeys: vendorResumeKeyAgentIds.length > 1,
+  };
+}
+
+export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
+  return resolveSessionMetadataAgentIdentity(metadata).agentId;
 }
 
 export function inferAgentIdFromSessionMetadata(metadata: unknown, fallback: AgentId = DEFAULT_AGENT_ID): AgentId {
