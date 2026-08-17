@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+    CredentialAccessDeclarationDigestSchema,
+    CredentialAccessSelectedAuthorityDigestSchema,
+    CredentialAccessSelectedRawAccessDigestSchema,
+    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
+    PluginCredentialAccessSlotIdSchema,
+    PluginInstallReviewPrincipalDigestSchema,
+    PluginPermissionInstalledGenerationIdSchema,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     type PluginPermissionGrantAuditEventV1,
     type PluginPermissionGrantV1,
@@ -35,6 +42,7 @@ function identity(machineId: string, installationId: string) {
         pluginId: "happier.review.coderabbit",
         capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
         targetScope: { kind: "project" as const, projectId: "project-1" },
+        subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
         authoritySource: {
             kind: "machine_installation" as const,
             machineId,
@@ -55,6 +63,26 @@ describe("plugin permission grant active identity", () => {
         expect(long).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     });
 
+    it("does not alias distinct strict permission subjects", () => {
+        const general = pluginPermissionGrantActiveIdentityKey(identity("machine", "installation"));
+        const credential = pluginPermissionGrantActiveIdentityKey({
+            ...identity("machine", "installation"),
+            subject: {
+                kind: "credential_access_disclosure",
+                contribution: { pluginId: "happier.voice.openai", localId: "openai-realtime" },
+                credentialSlotId: PluginCredentialAccessSlotIdSchema.parse("api-key"),
+                purpose: "voice-session",
+                accessDeclarationDigest: CredentialAccessDeclarationDigestSchema.parse("a".repeat(64)),
+                selectedAuthorityDigest: CredentialAccessSelectedAuthorityDigestSchema.parse("c".repeat(64)),
+                selectedRawAccessDigest: CredentialAccessSelectedRawAccessDigestSchema.parse("d".repeat(64)),
+                installedGenerationId: PluginPermissionInstalledGenerationIdSchema.parse("generation-1"),
+                installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema.parse("b".repeat(64)),
+            },
+        });
+
+        expect(general).not.toBe(credential);
+    });
+
     it("targets the exact grant id when revoking an active identity", async () => {
         databaseBoundary.executeRaw.mockClear();
         databaseBoundary.transaction.mockClear();
@@ -70,6 +98,7 @@ describe("plugin permission grant active identity", () => {
             pluginId: "happier.review.coderabbit",
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             authoritySource,
             status: "revoked",
             requestId: "request-1",
@@ -87,6 +116,7 @@ describe("plugin permission grant active identity", () => {
             pluginId: grant.pluginId,
             capability: grant.capability,
             targetScope: grant.targetScope,
+            subject: grant.subject,
             authoritySource,
             eventKind: "revoked",
             actor: { kind: "user", userId: "user-2" },

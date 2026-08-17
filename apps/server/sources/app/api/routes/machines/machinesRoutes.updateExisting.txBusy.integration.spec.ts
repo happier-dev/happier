@@ -31,8 +31,17 @@ const existingMachine = {
 };
 
 const dbMocks = createDbMocks({
+    account: ["findUnique"],
     machine: ["findFirst", "findUnique"],
 } as const);
+
+function arrangeE2eeAccount() {
+    dbMocks.db.account.findUnique.mockResolvedValue({
+        contentPublicKey: null,
+        publicKey: "account-signing-key",
+        encryptionMode: "e2ee",
+    });
+}
 
 function hasStringCode(error: unknown): error is { code: string } {
     if (!error || typeof error !== "object") {
@@ -62,6 +71,7 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
     it("returns the existing machine row when the update transaction cannot start (best-effort)", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
         dbMocks.reset();
+        arrangeE2eeAccount();
         dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
         const route = createRouteTestBuilder({
@@ -104,6 +114,7 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
     it("does not silently succeed when a dataEncryptionKey update is skipped by transaction contention", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
         dbMocks.reset();
+        arrangeE2eeAccount();
         dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
         const route = createRouteTestBuilder({

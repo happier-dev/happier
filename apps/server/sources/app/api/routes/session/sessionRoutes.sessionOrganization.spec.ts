@@ -1,14 +1,22 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import tweetnacl from "tweetnacl";
 
 import {
+    ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     SESSION_ORGANIZATION_MAX_FOLDERS,
     SESSION_ORGANIZATION_MAX_LABELS,
     SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
     SESSION_ORGANIZATION_MAX_TAGS,
     SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+    parseAccountStoredContentCompatibilityHttpHeadersV1,
 } from "@happier-dev/protocol";
 import {
+    evaluateAccountStoredContentCompatibility,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import {
     createSessionRouteTestBuilder,
+    accountFindUnique,
     markAccountChanged,
     resetSessionRouteMocks,
     sessionFindFirst,
@@ -50,6 +58,7 @@ import {
     txSessionTagAssignmentCreateMany,
     txSessionTagAssignmentDeleteMany,
     txSessionTagAssignmentFindMany,
+    txAccountFindUnique,
 } from "./sessionRoutes.testkit";
 import { hashSessionOrganizationKey } from "@/app/session/organization/hashKeys";
 
@@ -58,6 +67,44 @@ const plainDisplay = { t: "plain" as const, v: { label: "Plain text" } };
 
 function organizationDate(ms: number): Date {
     return new Date(ms);
+}
+
+function createCurrentE2eeAccountFixture() {
+    const signing = tweetnacl.sign.keyPair();
+    const content = tweetnacl.box.keyPair();
+    return {
+        encryptionMode: "e2ee" as const,
+        publicKey: Buffer.from(signing.publicKey).toString("hex"),
+        contentPublicKey: new Uint8Array(content.publicKey),
+        contentPublicKeySig: new Uint8Array(tweetnacl.sign.detached(
+            Buffer.concat([
+                Buffer.from("Happy content key v1\u0000", "utf8"),
+                Buffer.from(content.publicKey),
+            ]),
+            signing.secretKey,
+        )),
+    };
+}
+
+function organizationCompatibilityForHeaders(
+    headers: Readonly<Record<string, unknown>>,
+) {
+    return evaluateAccountStoredContentCompatibility(
+        parseAccountStoredContentCompatibilityHttpHeadersV1(headers),
+    );
+}
+
+function arrangeLockedOrganizationFolder() {
+    sessionOrganizationFolderFindMany.mockResolvedValue([{
+        id: "locked-folder",
+        folderKey: "private/folder/key",
+        parentKey: null,
+        sortKey: "0001",
+        displayDbValue: "{not-json",
+        archivedAt: null,
+        createdAt: organizationDate(1_000),
+        updatedAt: organizationDate(2_000),
+    }]);
 }
 
 function expectedV2SessionVisibilityBranches() {
@@ -133,6 +180,9 @@ function pagedSessionRow(id: string) {
 describe("session organization routes", () => {
     beforeEach(() => {
         resetSessionRouteMocks();
+        const account = createCurrentE2eeAccountFixture();
+        accountFindUnique.mockResolvedValue(account);
+        txAccountFindUnique.mockResolvedValue(account);
     });
 
     it("returns an account-scoped organization snapshot", async () => {
@@ -221,6 +271,15 @@ describe("session organization routes", () => {
             }),
             orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
         }));
+        expect(accountFindUnique).toHaveBeenCalledWith({
+            where: { id: "u1" },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        });
         expect(sessionFolderAssignmentFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 accountId: "u1",
@@ -239,6 +298,73 @@ describe("session organization routes", () => {
                 }],
             }),
         }));
+    });
+
+    it("keeps a predecessor caller on 200 when the snapshot remains predecessor-compatible", async () => {
+        const route = await createSessionRouteTestBuilder("GET", "/v2/session-organization");
+        const { reply, response } = await route.invoke({
+            accountStoredContentCompatibility: organizationCompatibilityForHeaders({
+                [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]: "1",
+            }),
+        });
+
+        expect(reply.statusCode).toBe(200);
+        expect(response).toEqual({
+            snapshot: expect.objectContaining({
+                folders: [],
+                tags: [],
+                labels: [],
+            }),
+        });
+    });
+
+    it.each([
+        ["missing", {}],
+        ["v1", { [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]: "1" }],
+        ["malformed", { [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]: "1,2" }],
+    ])("returns the canonical typed 426 for a locked snapshot and a %s declaration", async (_label, headers) => {
+        arrangeLockedOrganizationFolder();
+        const route = await createSessionRouteTestBuilder("GET", "/v2/session-organization");
+        const { reply, response } = await route.invoke({
+            accountStoredContentCompatibility: organizationCompatibilityForHeaders(headers),
+        });
+
+        expect(response).toBeUndefined();
+        expect(reply.statusCode).toBe(426);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "client-upgrade-required",
+            requirement: {
+                v: 1,
+                kind: "account-stored-content",
+                minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+            },
+        });
+    });
+
+    it("returns the strict locked projection to a current V2 caller", async () => {
+        arrangeLockedOrganizationFolder();
+        const route = await createSessionRouteTestBuilder("GET", "/v2/session-organization");
+        const { reply, response } = await route.invoke({
+            accountStoredContentCompatibility: organizationCompatibilityForHeaders({
+                [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]: String(
+                    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                ),
+            }),
+        });
+
+        expect(reply.statusCode).toBe(200);
+        expect(response).toEqual({
+            snapshot: expect.objectContaining({
+                folders: [expect.objectContaining({
+                    folderId: "locked-folder",
+                    display: null,
+                    displayState: {
+                        status: "unavailable",
+                        reason: "invalid_stored_display",
+                    },
+                })],
+            }),
+        });
     });
 
     it("omits stale server-owned order entries from snapshots", async () => {
@@ -1252,6 +1378,32 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "invalid-session-organization-tag" });
         expect(txSessionOrganizationTagUpsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects an omitted plaintext tag display value before mutation", async () => {
+        const plainAccount = {
+            encryptionMode: "plain" as const,
+            publicKey: null,
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        };
+        accountFindUnique.mockResolvedValue(plainAccount);
+        txAccountFindUnique.mockResolvedValue(plainAccount);
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/session-organization/tags");
+        const { response, reply } = await route.invoke({
+            body: {
+                tagId: "tag-1",
+                tagKey: "tag:key",
+                sortKey: "tag-sort",
+                display: { t: "plain" },
+            },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(400);
+        expect(response).toEqual({ error: "invalid-session-organization-tag" });
+        expect(txSessionOrganizationTagUpsert).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
     it("enforces the product maximum when creating a new tag", async () => {

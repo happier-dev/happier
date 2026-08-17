@@ -108,4 +108,32 @@ describe("createExternalAuthorizeUrl", () => {
             })
         ).rejects.toThrow(/boom/);
     });
+
+    it("binds a first-key step-up to the current Account and canonical migration digest", async () => {
+        createOauthStateToken.mockResolvedValue("signed-state");
+        const { createExternalAuthorizeUrl } = await import("./createExternalAuthorizeUrl");
+
+        await createExternalAuthorizeUrl({
+            flow: "auth",
+            providerId: "github",
+            provider: createProviderStub(),
+            env: {},
+            publicKeyHex: null,
+            proofHash: "b".repeat(64),
+            purpose: "account_encryption_first_key",
+            userId: "account-1",
+            requestDigest: `aemrb1_${"A".repeat(43)}`,
+        });
+
+        expect(createOauthStateToken).toHaveBeenCalledWith({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_123",
+            publicKey: null,
+            proofHash: "b".repeat(64),
+            purpose: "account_encryption_first_key",
+            userId: "account-1",
+            requestDigest: `aemrb1_${"A".repeat(43)}`,
+        });
+    });
 });

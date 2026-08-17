@@ -151,6 +151,17 @@ describe("startServer DB provider selection", () => {
         );
     });
 
+    it("refuses startup when Session System Records remains on the expanded-only database shape", async () => {
+        startServerDbMocks.dbQueryRawUnsafe.mockResolvedValue([]);
+
+        await expect(startServerHarness.start("full", {
+            SERVER_ROLE: "api",
+            HAPPIER_DB_PROVIDER: "postgres",
+        })).rejects.toThrow("20260810120000_contract_session_system_record_addresses");
+
+        expect(initializeServerIdentityCache).not.toHaveBeenCalled();
+    });
+
     it("encodes sqlite DATABASE_URL as a safe file URI when data dir contains special characters", async () => {
         await startServerHarness.start("light", {
             SERVER_ROLE: "api",

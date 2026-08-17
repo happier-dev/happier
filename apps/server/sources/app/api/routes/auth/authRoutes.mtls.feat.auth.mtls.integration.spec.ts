@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { createHash } from "node:crypto";
 
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
@@ -8,6 +9,11 @@ import { authRoutes } from "./authRoutes";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { readAuthMtlsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { enableAuthentication } from "../../utils/enableAuthentication";
+import { inTx } from "@/storage/inTx";
+import {
+    consumeAccountEncryptionFirstKeyExternalAuthProofInTx,
+} from "@/app/auth/accountEncryptionFirstKeyExternalAuthProof";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -33,6 +39,7 @@ describe("authRoutes (mTLS) (integration)", () => {
         await closeTrackedApps();
         harness.resetEnv();
         vi.unstubAllGlobals();
+        await db.repeatKey.deleteMany().catch(() => {});
         await db.accountIdentity.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
@@ -91,6 +98,147 @@ describe("authRoutes (mTLS) (integration)", () => {
         expect(accounts[0]?.publicKey).toBeNull();
         expect(accounts[0]?.AccountIdentity?.[0]?.provider).toBe("mtls");
         expect(accounts[0]?.AccountIdentity?.[0]?.providerUserId).toBe("alice@example.com");
+
+        await app.close();
+    });
+
+    it("uses the existing mTLS claim lifecycle for a request-bound first-key step-up", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
+            AUTH_SIGNUP_PROVIDERS: "",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
+            HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: "0",
+            HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
+            HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "san_email",
+            HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: "example.com",
+            HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS: "cn=example root ca",
+            HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: "x-happier-client-cert-email",
+            HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: "x-happier-client-cert-issuer",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.accountIdentity.create({
+            data: {
+                accountId: account.id,
+                provider: "mtls",
+                providerUserId: "alice@example.com",
+                profile: {},
+            },
+        });
+        const token = await auth.createToken(account.id);
+        const proof = "fresh-mtls-browser-proof";
+        const proofHash = createHash("sha256")
+            .update(proof, "utf8")
+            .digest("hex");
+        const requestDigest = `aemrb1_${"A".repeat(43)}`;
+        const app = createTestApp();
+        enableAuthentication(app);
+        authRoutes(app);
+        await app.ready();
+
+        const missingBearer = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                "x-happier-client-cert-email": "alice@example.com",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+            },
+            payload: {
+                purpose: "account_encryption_first_key",
+                proofHash,
+                requestDigest,
+            },
+        });
+        expect(missingBearer.statusCode).toBe(401);
+
+        const malformedStepUp = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                authorization: `Bearer ${token}`,
+                "x-happier-client-cert-email": "alice@example.com",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+            },
+            payload: {
+                purpose: "account_encryption_first_key",
+                proofHash,
+            },
+        });
+        expect(malformedStepUp.statusCode, malformedStepUp.body).toBe(400);
+        expect(malformedStepUp.json()).toEqual({
+            error: "invalid-step-up-request",
+        });
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                authorization: `Bearer ${token}`,
+                "x-happier-client-cert-email": "alice@example.com",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+            },
+            payload: {
+                purpose: "account_encryption_first_key",
+                proofHash,
+                requestDigest,
+            },
+        });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json()).toEqual({
+            success: true,
+            pending: expect.any(String),
+        });
+        const pending = response.json().pending as string;
+        const row = await db.repeatKey.findUnique({
+            where: { key: `mtls_claim_${pending}` },
+        });
+        expect(JSON.parse(row!.value)).toEqual({
+            userId: account.id,
+            purpose: "account_encryption_first_key",
+            providerUserId: "alice@example.com",
+            proofHash,
+            requestDigest,
+        });
+        await expect(inTx(async (tx) =>
+            await consumeAccountEncryptionFirstKeyExternalAuthProofInTx(
+                tx,
+                {
+                    accountId: account.id,
+                    requestDigest,
+                    externalAuthProof: {
+                        provider: "mtls",
+                        pending,
+                        proof,
+                    },
+                },
+            ))).resolves.toEqual({
+            ok: true,
+            provider: "mtls",
+            providerUserId: "alice@example.com",
+        });
+        await expect(inTx(async (tx) =>
+            await consumeAccountEncryptionFirstKeyExternalAuthProofInTx(
+                tx,
+                {
+                    accountId: account.id,
+                    requestDigest,
+                    externalAuthProof: {
+                        provider: "mtls",
+                        pending,
+                        proof,
+                    },
+                },
+            ))).resolves.toEqual({
+            ok: false,
+            reason: "invalid_or_consumed",
+        });
 
         await app.close();
     });

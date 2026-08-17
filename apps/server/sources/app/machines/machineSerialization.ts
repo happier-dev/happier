@@ -1,3 +1,5 @@
+import { MachineOperationProtocolCapabilitiesV1Schema } from "@happier-dev/protocol";
+
 export type MachineSerializationRow = Readonly<{
     id: string;
     metadata: string;
@@ -8,6 +10,8 @@ export type MachineSerializationRow = Readonly<{
     installationId?: string | null;
     installationPublicKey?: Uint8Array | null;
     contentPublicKeyFingerprint?: string | null;
+    operationProtocolCapabilities?: unknown | null;
+    operationProtocolCapabilitiesRevision?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: Date | null;
     replacementReason?: string | null;
@@ -22,6 +26,28 @@ export type MachineSerializationRow = Readonly<{
 }>;
 
 export function serializeMachineRow(row: MachineSerializationRow) {
+    const capabilityProjection =
+        MachineOperationProtocolCapabilitiesV1Schema.safeParse(
+            row.operationProtocolCapabilities,
+        );
+    const capabilityRevision =
+        typeof row.operationProtocolCapabilitiesRevision === "number"
+        && Number.isInteger(row.operationProtocolCapabilitiesRevision)
+        && row.operationProtocolCapabilitiesRevision > 0
+            ? row.operationProtocolCapabilitiesRevision
+            : null;
+    // A capability leaf is recipient-safe only together with the revision that
+    // proves it was an accepted complete projection. Malformed or partial
+    // persistence, or a revoked/replaced Machine, is deliberately
+    // indistinguishable from unsupported.
+    const operationProtocolCapabilities =
+        capabilityProjection.success
+        && capabilityRevision !== null
+        && row.revokedAt === null
+        && row.replacedByMachineId === null
+            ? capabilityProjection.data
+            : null;
+
     return {
         id: row.id,
         metadata: row.metadata,
@@ -32,6 +58,9 @@ export function serializeMachineRow(row: MachineSerializationRow) {
         installationId: row.installationId ?? null,
         installationPublicKey: row.installationPublicKey ? Buffer.from(row.installationPublicKey).toString("base64") : null,
         contentPublicKeyFingerprint: row.contentPublicKeyFingerprint ?? null,
+        operationProtocolCapabilities,
+        operationProtocolCapabilitiesRevision:
+            operationProtocolCapabilities === null ? null : capabilityRevision,
         replacedByMachineId: row.replacedByMachineId ?? null,
         replacedAt: row.replacedAt ? row.replacedAt.getTime() : null,
         replacementReason: row.replacementReason ?? null,

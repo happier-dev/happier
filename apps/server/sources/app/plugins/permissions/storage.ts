@@ -4,6 +4,7 @@ import type {
     PluginPermissionGrantAuditEventV1,
     PluginPermissionGrantAuthoritySourceV1,
     PluginPermissionGrantRequestV1,
+    PluginPermissionSubjectV1,
     PluginPermissionGrantTargetScopeV1,
     PluginPermissionGrantV1,
 } from "@happier-dev/protocol";
@@ -11,6 +12,7 @@ import {
     computeCanonicalDomainSeparatedDigest,
     PluginPermissionGrantRequestV1Schema,
     PluginPermissionGrantV1Schema,
+    PluginPermissionSubjectV1Schema,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
@@ -24,6 +26,7 @@ export type PluginPermissionGrantListParams = Readonly<{
     pluginId?: string;
     capability?: PluginPermissionCapabilityV1;
     targetScope?: PluginPermissionGrantTargetScopeV1;
+    subject?: PluginPermissionSubjectV1;
     authoritySource?: PluginPermissionGrantAuthoritySourceV1;
     includeRevoked?: boolean;
     includeResolvedRequests?: boolean;
@@ -80,6 +83,7 @@ type GrantRow = {
     scope_kind: string;
     scope_project_id: string | null;
     scope_workspace_id: string | null;
+    subject_json: string;
     authority_kind: string;
     authority_machine_id: string | null;
     authority_installation_id: string | null;
@@ -101,6 +105,7 @@ type RequestRow = {
     scope_kind: string;
     scope_project_id: string | null;
     scope_workspace_id: string | null;
+    subject_json: string;
     authority_kind: string;
     authority_machine_id: string | null;
     authority_installation_id: string | null;
@@ -123,6 +128,7 @@ const GRANT_COLUMNS = Prisma.raw([
     "scope_kind",
     "scope_project_id",
     "scope_workspace_id",
+    "subject_json",
     "authority_kind",
     "authority_machine_id",
     "authority_installation_id",
@@ -144,6 +150,7 @@ const REQUEST_COLUMNS = Prisma.raw([
     "scope_kind",
     "scope_project_id",
     "scope_workspace_id",
+    "subject_json",
     "authority_kind",
     "authority_machine_id",
     "authority_installation_id",
@@ -226,10 +233,26 @@ export function pluginPermissionGrantActiveIdentityKey(params: Readonly<{
     pluginId: string;
     capability: PluginPermissionCapabilityV1;
     targetScope: PluginPermissionGrantTargetScopeV1;
+    subject: PluginPermissionSubjectV1;
     authoritySource: PluginPermissionGrantAuthoritySourceV1;
 }>): string {
     const scope = scopeColumns(params.targetScope);
     const authority = authoritySourceColumns(params.authoritySource);
+    const subject = PluginPermissionSubjectV1Schema.parse(params.subject);
+    const subjectIdentity = subject.kind === "general"
+        ? [subject.kind]
+        : [
+            subject.kind,
+            subject.contribution.pluginId,
+            subject.contribution.localId,
+            subject.credentialSlotId,
+            subject.purpose,
+            subject.accessDeclarationDigest,
+            subject.selectedAuthorityDigest,
+            subject.selectedRawAccessDigest,
+            subject.installedGenerationId,
+            subject.installReviewPrincipalDigest,
+        ];
     return computeCanonicalDomainSeparatedDigest(
         "happier.pluginPermissionGrant.activeIdentity.v1",
         [
@@ -238,6 +261,7 @@ export function pluginPermissionGrantActiveIdentityKey(params: Readonly<{
             scope.scopeKind,
             scope.projectId ?? "",
             scope.workspaceId ?? "",
+            ...subjectIdentity,
             authority.authorityKind,
             authority.machineId ?? "",
             authority.installationId ?? "",
@@ -276,6 +300,7 @@ function rowToGrant(row: GrantRow): PluginPermissionGrantV1 {
         pluginId: row.plugin_id,
         capability: row.capability,
         targetScope: rowTargetScope(row),
+        subject: parseJson(row.subject_json),
         authoritySource: rowAuthoritySource(row),
         status: row.status,
         requestId: row.request_id ?? undefined,
@@ -296,6 +321,7 @@ function rowToRequest(row: RequestRow): PluginPermissionGrantRequestV1 {
         pluginId: row.plugin_id,
         capability: row.capability,
         targetScope: rowTargetScope(row),
+        subject: parseJson(row.subject_json),
         authoritySource: rowAuthoritySource(row),
         requester: parseJson(row.requester_json),
         reason: row.reason,
@@ -343,12 +369,17 @@ function appendExactAuthoritySourceWhere(where: PrismaTypes.Sql[], authoritySour
     }
 }
 
+function appendExactSubjectWhere(where: PrismaTypes.Sql[], subject: PluginPermissionSubjectV1): void {
+    where.push(Prisma.sql`subject_json = ${stringifyJson(PluginPermissionSubjectV1Schema.parse(subject))}`);
+}
+
 function buildGrantWhere(params: PluginPermissionGrantListParams): PrismaTypes.Sql[] {
     const where = [Prisma.sql`account_id = ${params.accountId}`];
     if (params.pluginId) where.push(Prisma.sql`plugin_id = ${params.pluginId}`);
     if (params.capability) where.push(Prisma.sql`capability = ${params.capability}`);
     if (!params.includeRevoked) where.push(Prisma.sql`status = 'active'`);
     if (params.targetScope) appendTargetScopeWhere(where, params.targetScope);
+    if (params.subject) appendExactSubjectWhere(where, params.subject);
     if (params.authoritySource) appendExactAuthoritySourceWhere(where, params.authoritySource);
     return where;
 }
@@ -359,6 +390,7 @@ function buildRequestWhere(params: PluginPermissionGrantListParams): PrismaTypes
     if (params.capability) where.push(Prisma.sql`capability = ${params.capability}`);
     if (!params.includeResolvedRequests) where.push(Prisma.sql`status = 'pending'`);
     if (params.targetScope) appendTargetScopeWhere(where, params.targetScope);
+    if (params.subject) appendExactSubjectWhere(where, params.subject);
     if (params.authoritySource) appendExactAuthoritySourceWhere(where, params.authoritySource);
     return where;
 }
@@ -414,19 +446,21 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             await inTx(async (tx) => {
                 await tx.$executeRaw(Prisma.sql`
                     INSERT INTO plugin_permission_grant_requests (
-                        id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id,
+                        id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id, subject_json,
                         authority_kind, authority_machine_id, authority_installation_id,
                         requester_json, reason, status, active_identity_key, grant_id, created_by_user_id, decided_by_user_id,
                         decided_at, created_at, updated_at
                     ) VALUES (
                         ${pendingRequest.id}, ${pendingRequest.accountId}, ${pendingRequest.pluginId},
                         ${pendingRequest.capability}, ${scope.scopeKind}, ${scope.projectId}, ${scope.workspaceId},
+                        ${stringifyJson(pendingRequest.subject)},
                         ${authority.authorityKind}, ${authority.machineId}, ${authority.installationId},
                         ${stringifyJson(pendingRequest.requester)}, ${pendingRequest.reason}, ${pendingRequest.status},
                         ${pendingRequest.status === "pending" ? pluginPermissionGrantActiveIdentityKey({
                             pluginId: pendingRequest.pluginId,
                             capability: pendingRequest.capability,
                             targetScope: pendingRequest.targetScope,
+                            subject: pendingRequest.subject,
                             authoritySource: pendingRequest.authoritySource,
                         }) : null},
                         ${pendingRequest.grantId ?? null}, ${pendingRequest.createdByUserId ?? null},
@@ -447,18 +481,20 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             await inTx(async (tx) => {
                 await tx.$executeRaw(Prisma.sql`
                     INSERT INTO plugin_permission_grants (
-                        id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id,
+                        id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id, subject_json,
                         authority_kind, authority_machine_id, authority_installation_id,
                         status, active_identity_key, request_id, granted_by_user_id, granted_at, revoked_by_user_id, revoked_at,
                         created_at, updated_at
                     ) VALUES (
                         ${grant.id}, ${grant.accountId}, ${grant.pluginId}, ${grant.capability},
                         ${grantScope.scopeKind}, ${grantScope.projectId}, ${grantScope.workspaceId},
+                        ${stringifyJson(grant.subject)},
                         ${grantAuthority.authorityKind}, ${grantAuthority.machineId}, ${grantAuthority.installationId}, ${grant.status},
                         ${grant.status === "active" ? pluginPermissionGrantActiveIdentityKey({
                             pluginId: grant.pluginId,
                             capability: grant.capability,
                             targetScope: grant.targetScope,
+                            subject: grant.subject,
                             authoritySource: grant.authoritySource,
                         }) : null},
                         ${grant.requestId ?? null}, ${grant.grantedByUserId}, ${grant.grantedAt},
@@ -532,6 +568,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                 Prisma.sql`status = 'active'`,
             ];
             appendExactTargetScopeWhere(identityWhere, grant.targetScope);
+            appendExactSubjectWhere(identityWhere, grant.subject);
             appendExactAuthoritySourceWhere(identityWhere, grant.authoritySource);
             await inTx(async (tx) => {
                 const affectedGrants = await tx.$executeRaw(Prisma.sql`

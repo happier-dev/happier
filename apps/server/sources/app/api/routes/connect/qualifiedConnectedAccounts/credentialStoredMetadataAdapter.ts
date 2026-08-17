@@ -33,14 +33,33 @@ type CredentialStatus = ReturnType<
     typeof deriveConnectedServiceCredentialStatus
 >;
 
-export type QualifiedConnectedAccountStoredMetadataProjection = Readonly<{
+type QualifiedConnectedAccountStoredRevisionSemantics =
+    | Readonly<{
+        revisionSemantics: "revisioned";
+        credentialRevision: string;
+    }>
+    | Readonly<{
+        revisionSemantics: "legacy_unfenced";
+        credentialRevision: null;
+    }>;
+
+export type QualifiedConnectedAccountStoredMetadataProjection =
+    QualifiedConnectedAccountStoredRevisionSemantics & Readonly<{
     format: "v4" | "legacy_v2" | "legacy_v3" | "legacy_unknown";
-    credentialRevision: string;
     presentation: QualifiedConnectedAccountCredentialMetadataV4;
     kind: "oauth" | "token" | null;
     health: ConnectedServiceCredentialHealthV1 | null;
     status: CredentialStatus;
 }>;
+
+function resolveStoredCredentialRevisionSemantics(
+    metadata: unknown,
+): QualifiedConnectedAccountStoredRevisionSemantics {
+    const credentialRevision = resolveConnectedServiceCredentialRevision({ metadata });
+    return credentialRevision === null
+        ? { revisionSemantics: "legacy_unfenced", credentialRevision: null }
+        : { revisionSemantics: "revisioned", credentialRevision };
+}
 
 function legacyPresentation(metadata: Readonly<{
     providerEmail?: string | null;
@@ -81,6 +100,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             );
         return {
             format: "v4",
+            revisionSemantics: "revisioned",
             credentialRevision: stored.credentialRevision,
             presentation: stored.values,
             kind: null,
@@ -93,11 +113,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             normalizeConnectedServiceCredentialMetadataV2(params.metadata);
         return {
             format: "legacy_v2",
-            credentialRevision:
-                resolveConnectedServiceCredentialRevision({
-                    rowId: params.rowId,
-                    metadata,
-                }),
+            ...resolveStoredCredentialRevisionSemantics(metadata),
             presentation: legacyPresentation(metadata),
             kind: metadata.kind,
             health: metadata.health ?? null,
@@ -109,11 +125,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             normalizeConnectedServiceCredentialMetadataV3(params.metadata);
         return {
             format: "legacy_v3",
-            credentialRevision:
-                resolveConnectedServiceCredentialRevision({
-                    rowId: params.rowId,
-                    metadata,
-                }),
+            ...resolveStoredCredentialRevisionSemantics(metadata),
             presentation: legacyPresentation(metadata),
             kind: metadata.kind,
             health: metadata.health ?? null,
@@ -122,7 +134,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
     }
     return {
         format: "legacy_unknown",
-        credentialRevision: resolveConnectedServiceCredentialRevision(params),
+        ...resolveStoredCredentialRevisionSemantics(params.metadata),
         presentation: { scopes: [] },
         kind: null,
         health: null,

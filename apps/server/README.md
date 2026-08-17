@@ -1,27 +1,43 @@
 # Happier Server
 
-Minimal backend for open-source end-to-end encrypted Claude Code clients.
+Synchronization backend for Happier clients with explicit E2EE and plaintext storage
+modes.
 
 ## What is Happier?
 
-Happier Server is the synchronization backbone for secure Claude Code clients. It enables multiple devices to share encrypted conversations while maintaining complete privacy - the server never sees your messages, only encrypted blobs it cannot read.
+Happier Server synchronizes Sessions and account data across devices. E2EE content is
+client-encrypted and opaque to the server. Plain-account and plain-Session content is
+server-readable by design and remains protected by authentication, authorization,
+recipient projection, and TLS.
 
 ## Features
 
-- 🔐 **Zero Knowledge** - The server stores encrypted data but has no ability to decrypt it
+- 🔐 **Explicit privacy modes** - E2EE content stays opaque; plaintext content is
+  intentionally server-readable
 - 🎯 **Minimal Surface** - Only essential features for secure sync, nothing more
 - 🕵️ **Privacy First** - No analytics, no tracking, no data mining
 - 📖 **Open Source** - Transparent implementation you can audit and self-host
-- 🔑 **Cryptographic Auth** - No passwords stored, only public key signatures
+- 🔑 **Multiple auth methods** - Device-key challenge plus configured OAuth/OIDC,
+  GitHub, or mTLS methods
 - ⚡ **Real-time Sync** - WebSocket-based synchronization across all your devices
 - 📱 **Multi-device** - Seamless session management across phones, tablets, and computers
 - 🤝 **Session Sharing** - Collaborate on conversations with granular access control
-- 🔔 **Push Notifications** - Notify when Claude Code finishes tasks or needs permissions (encrypted, we can't see the content)
+- 🔔 **Push Notifications** - Notify when coding Agents finish tasks or need
+  permissions, subject to the selected content mode and projection policy
 - 🌐 **Distributed Ready** - Built to scale horizontally when needed
 
 ## How It Works
 
-Your Claude Code clients generate encryption keys locally and use Happier Server as a secure relay. Messages are end-to-end encrypted before leaving your device. The server's job is simple: store encrypted blobs and sync them between your devices in real-time.
+For an E2EE Session, clients generate keys locally and send opaque ciphertext. For a
+plain Session, clients send an explicit plain content envelope and the server can
+process it. Account, Session, server-at-rest, device-local, and transport keys have
+separate owners; a bearer token is never converted into an encryption key.
+
+Genuine plaintext accounts are token-only and hold zero Account E2EE material.
+Mode-aware readers and storage are being expanded before activation; the complete
+token-only external-auth/UI/daemon onboarding flow is not production-active until the
+remaining account-data migrations and composed checks land. Do not infer activation
+from environment variables or schemas alone.
 
 ### Session Sharing
 
@@ -37,13 +53,17 @@ Happier Server supports secure collaboration through two sharing methods:
 - Optional expiration dates and usage limits
 - Consent-based access logging (IP/UA only logged with explicit consent)
 
-All sharing maintains end-to-end encryption - encrypted data keys are distributed to authorized users, and the server never sees unencrypted content.
+E2EE sharing distributes encrypted Session data keys to authorized recipients. Plain
+Session sharing uses server authorization and recipient projection without a Session
+data key.
 
 ## Hosting
 
-**You don't need to self-host!** Our hosted Happier Server at `api.happier.dev` is just as secure as running your own. Since all data is end-to-end encrypted before it reaches our servers, we literally cannot read your messages even if we wanted to. The encryption happens on your device, and only you have the keys.
-
-That said, Happier Server is open source and self-hostable if you prefer running your own infrastructure. The security model is identical whether you use our servers or your own.
+**You don't need to self-host.** The hosted Happier Server at `api.happier.dev` and
+self-hosted deployments use the same mode-aware contracts. The privacy guarantee
+depends on the selected mode: E2EE content is opaque to the server; plain content is
+readable by the live server. Self-hosting changes who operates that server, not the
+meaning of either mode.
 
 ## Server flavors
 
@@ -65,7 +85,9 @@ The full flavor expects these env vars to be set:
 - `DATABASE_URL`, for example:
   - Postgres: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
   - MySQL 8.0.16+: `mysql://user:pass@db.example.com:3306/happy`
-- `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets)
+- `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets). Keep it stable and
+  back it up with the database; the current server has no multi-key read or automatic
+  re-seal rotation path.
 - Public file storage:
   - Choose a backend via `HAPPIER_FILES_BACKEND=local|s3` (default: `s3` in full flavor, `local` in light flavor)
   - If `HAPPIER_FILES_BACKEND=local` (filesystem-backed public files), the server stores files under `~/.happier/server-light/files` by default.
@@ -393,6 +415,14 @@ Migrations are provider-specific:
 - MySQL 8.0.16+:
   - migrations: `prisma/mysql/migrations/*`
   - deploy: `yarn migrate:mysql:deploy`
+  - Before first applying
+    `20260729102000_add_voice_conversation_grant_provenance`, stop every old
+    API and worker writer and complete the
+    [MySQL Voice grant-provenance rollout runbook](../../docs/release-process.md#mysql-voice-conversation-grant-provenance-rollout).
+    A normal rolling deployment or direct migration without that preflight is
+    unsafe. The canonical command checks the live trigger prerequisites before
+    Prisma and requires the runbook's exact migration admission while the
+    migration is pending.
 
 DB portability contract suite:
 

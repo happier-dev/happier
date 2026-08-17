@@ -31,12 +31,12 @@ export async function appendPluginPermissionGrantAuditEvent(
     const event = PluginPermissionGrantAuditEventV1Schema.parse(eventInput);
     await tx.$executeRaw(prismaRuntime.sql`
         INSERT INTO plugin_permission_grant_events (
-            event_id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id,
+            event_id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id, subject_json,
             authority_kind, authority_machine_id, authority_installation_id,
             event_kind, actor_json, request_id, grant_id, previous_state_json, next_state_json, reason, created_at
         ) VALUES (
             ${event.eventId}, ${event.accountId}, ${event.pluginId}, ${event.capability}, ${event.targetScope.kind},
-            ${scopeProjectId(event)}, ${scopeWorkspaceId(event)}, ${event.authoritySource.kind},
+            ${scopeProjectId(event)}, ${scopeWorkspaceId(event)}, ${stringifyJson(event.subject)}, ${event.authoritySource.kind},
             ${authorityMachineId(event)}, ${authorityInstallationId(event)}, ${event.eventKind}, ${stringifyJson(event.actor)},
             ${event.requestId ?? null}, ${event.grantId ?? null}, ${stringifyJson(event.previousState ?? null)},
             ${stringifyJson(event.nextState ?? null)}, ${event.reason ?? null}, ${event.createdAt}

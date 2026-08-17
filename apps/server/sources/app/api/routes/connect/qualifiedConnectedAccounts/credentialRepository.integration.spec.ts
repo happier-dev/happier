@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
     acquireQualifiedConnectedServiceRefreshLease,
@@ -13,7 +14,9 @@ import {
     mutateQualifiedConnectedServiceCredential,
     prepareQualifiedConnectedServiceCredentialCreate,
     readQualifiedConnectedAccountConfiguration,
+    resolveQualifiedConnectedAccountHostReferenceInTx,
     readQualifiedConnectedServiceCredential,
+    readQualifiedConnectedServiceCredentialForLegacyProjection,
     settlePreparedQualifiedConnectedServiceCredentialCreate,
 } from "./credentialRepository";
 import { resolveLegacyServiceAccountTokenIdentityFields } from "./identity";
@@ -67,6 +70,35 @@ describe("qualified Connected Account credential repository", () => {
     afterEach(async () => {
         await db.serviceAccountToken.deleteMany();
         await db.account.deleteMany();
+    });
+
+    it("resolves only the opaque Connected Account record within its owning Account", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const credential = await db.serviceAccountToken.create({
+            data: {
+                accountId: account.id,
+                servicePluginId: "example.connected-accounts",
+                serviceLocalId: "service",
+                qualifiedServiceDigest: "service-digest",
+                connectedAccountId: "provider-account",
+                qualifiedIdentityDigest: "identity-digest",
+                authenticationModeId: "api-key",
+                token: Buffer.from("opaque-token", "utf8"),
+            },
+            select: { id: true },
+        });
+
+        await expect(inTx((tx) => resolveQualifiedConnectedAccountHostReferenceInTx(
+            tx,
+            { accountId: account.id, targetId: credential.id },
+        ))).resolves.toEqual({ status: "available" });
+        await expect(inTx((tx) => resolveQualifiedConnectedAccountHostReferenceInTx(
+            tx,
+            { accountId: "another-account", targetId: credential.id },
+        ))).resolves.toEqual({ status: "unavailable" });
     });
 
     it("bounds an encryption-migration inventory read one row beyond the admitted request", async () => {
@@ -210,8 +242,11 @@ describe("qualified Connected Account credential repository", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            authenticationModeId: null,
-            content: { t: "plain", v: { oauth: "historical" } },
+            status: "resolved",
+            credential: {
+                authenticationModeId: null,
+                content: { t: "plain", v: { oauth: "historical" } },
+            },
         });
         await expect(readQualifiedConnectedAccountConfiguration({
             accountId: account.id,
@@ -486,6 +521,47 @@ describe("qualified Connected Account credential repository", () => {
         expect(await db.serviceAccountToken.count({ where: { accountId: account.id } })).toBe(0);
     });
 
+    it("derives the stored credential mode before an unqualified V4 delete and preserves a mismatched row", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ref = { service, accountId: "delete-derived-mode" };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "preserve-me" } },
+            metadata,
+        });
+        if (created.status !== "written") {
+            throw new Error("Expected credential create");
+        }
+        const row = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: { id: true },
+        });
+        await db.account.update({
+            where: { id: account.id },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+        });
+
+        await expect(deleteQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: created.credentialRevision,
+            cleanupGroupReferences: true,
+        })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUnique({
+            where: { id: row.id },
+            select: { id: true },
+        })).resolves.toEqual({ id: row.id });
+    });
+
     it("rejects a reconnect that changes the stable provider identity", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
@@ -598,16 +674,40 @@ describe("qualified Connected Account credential repository", () => {
         await expect(readQualifiedConnectedAccountConfiguration({
             accountId: account.id,
             target: { kind: "account", ref },
-        })).rejects.toThrow(/storage mode/i);
+        })).resolves.toEqual({
+            status: "storage_mode_mismatch",
+        });
         await expect(readQualifiedConnectedServiceCredential({
             accountId: account.id,
             ref,
-        })).rejects.toThrow(/storage mode/i);
+        })).resolves.toEqual({
+            status: "storage_mode_mismatch",
+        });
+        await expect(
+            readQualifiedConnectedServiceCredentialForLegacyProjection({
+                accountId: account.id,
+                ref,
+            }),
+        ).resolves.toEqual({ status: "storage_mode_mismatch" });
+
+        await expect(deleteQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: created.credentialRevision,
+            cleanupGroupReferences: true,
+        })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUnique({
+            where: { id: row.id },
+            select: { id: true },
+        })).resolves.toEqual({ id: row.id });
     });
 
     it("round-trips an E2EE opaque envelope without persisting secret-like clear metadata", async () => {
         const account = await db.account.create({
-            data: { publicKey: "e2ee-public-key", encryptionMode: "e2ee" },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
             select: { id: true },
         });
         const ref = { service, accountId: "e2ee-account" };
@@ -627,9 +727,12 @@ describe("qualified Connected Account credential repository", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            content: { t: "encrypted", c: "opaque-e2ee-credential" },
-            metadata: {
-                providerIdentity: { email: "operator@example.com" },
+            status: "resolved",
+            credential: {
+                content: { t: "encrypted", c: "opaque-e2ee-credential" },
+                metadata: {
+                    providerIdentity: { email: "operator@example.com" },
+                },
             },
         });
         const stored = await db.serviceAccountToken.findFirstOrThrow({
@@ -644,7 +747,7 @@ describe("qualified Connected Account credential repository", () => {
     it("reseals the historical configuration alias once without rotating the logical revision", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "e2ee-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -724,11 +827,14 @@ describe("qualified Connected Account credential repository", () => {
                 accountId: account.id,
                 target: { kind: "account", ref },
             });
-        expect(stored?.configurationRevision).toBe(
+        if (!stored || "status" in stored) {
+            throw new Error("Expected resolved qualified configuration");
+        }
+        expect(stored.configurationRevision).toBe(
             created.configurationRevision,
         );
         expect(
-            stored?.configurationContent.t === "encrypted"
+            stored.configurationContent.t === "encrypted"
                 ? openAccountScopedBlobCiphertext({
                     kind:
                         "qualified_connected_account_configuration",
@@ -824,6 +930,295 @@ describe("qualified Connected Account credential repository", () => {
                 configurationRevision: created.configurationRevision,
             }),
         ]);
+    });
+
+    it("rejects health mutation before changing credential metadata or publishing a profile change when Account currentness is inconsistent", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ref = { service, accountId: "health/currentness" };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "credential" } },
+            metadata,
+        });
+        if (created.status !== "written") {
+            throw new Error("Expected credential create");
+        }
+        const beforeRow = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: { id: true, metadata: true, updatedAt: true },
+        });
+        const beforeAccount = await db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { seq: true },
+        });
+        const beforeChange = await db.accountChange.findUniqueOrThrow({
+            where: {
+                accountId_kind_entityId: {
+                    accountId: account.id,
+                    kind: "account",
+                    entityId: "self",
+                },
+            },
+            select: { cursor: true, hint: true },
+        });
+        await db.account.update({
+            where: { id: account.id },
+            data: {
+                publicKey: "incomplete-e2ee-public-key",
+                encryptionMode: "e2ee",
+            },
+        });
+
+        await expect(mutateQualifiedConnectedServiceCredentialHealth({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision: null,
+            health: {
+                v: 1,
+                status: "needs_reauth",
+                reconnectRequired: true,
+                providerErrorCode: "invalid_grant",
+            },
+        })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUniqueOrThrow({
+            where: { id: beforeRow.id },
+            select: { id: true, metadata: true, updatedAt: true },
+        })).resolves.toEqual(beforeRow);
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { seq: true },
+        })).resolves.toEqual(beforeAccount);
+        await expect(db.accountChange.findUniqueOrThrow({
+            where: {
+                accountId_kind_entityId: {
+                    accountId: account.id,
+                    kind: "account",
+                    entityId: "self",
+                },
+            },
+            select: { cursor: true, hint: true },
+        })).resolves.toEqual(beforeChange);
+    });
+
+    it("rejects health mutation before changing credential metadata or publishing a profile change when configuration mode is inconsistent", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ref = { service, accountId: "health/configuration-mode" };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "credential" } },
+            metadata,
+            initialConfiguration: {
+                expectedConfigurationRevision: null,
+                replacementContentEnvelope: {
+                    t: "plain",
+                    v: { region: "eu" },
+                },
+            },
+        });
+        if (
+            created.status !== "written"
+            || created.configurationRevision === null
+        ) {
+            throw new Error("Expected configured credential create");
+        }
+
+        const e2eeAccount = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const e2eeCreated =
+            await mutateQualifiedConnectedServiceCredential({
+                accountId: e2eeAccount.id,
+                ref,
+                expectedCredentialRevision: null,
+                authenticationModeId: "api-key",
+                content: {
+                    t: "encrypted",
+                    c: "opaque-e2ee-credential",
+                },
+                metadata,
+                initialConfiguration: {
+                    expectedConfigurationRevision: null,
+                    replacementContentEnvelope: {
+                        t: "encrypted",
+                        c: "opaque-e2ee-configuration",
+                    },
+                },
+            });
+        if (
+            e2eeCreated.status !== "written"
+            || e2eeCreated.configurationRevision === null
+        ) {
+            throw new Error("Expected E2EE configured credential create");
+        }
+        const e2eeConfiguration =
+            await db.serviceAccountToken.findFirstOrThrow({
+                where: { accountId: e2eeAccount.id },
+                select: { configurationContent: true },
+            });
+        if (e2eeConfiguration.configurationContent === null) {
+            throw new Error("Expected E2EE configuration bytes");
+        }
+        const targetRow = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: { id: true },
+        });
+        await db.serviceAccountToken.update({
+            where: { id: targetRow.id },
+            data: {
+                configurationContent:
+                    e2eeConfiguration.configurationContent,
+            },
+        });
+        const beforeRow = await db.serviceAccountToken.findUniqueOrThrow({
+            where: { id: targetRow.id },
+            select: {
+                id: true,
+                metadata: true,
+                configurationContent: true,
+                updatedAt: true,
+            },
+        });
+        const beforeAccount = await db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { seq: true },
+        });
+        const beforeChange = await db.accountChange.findUniqueOrThrow({
+            where: {
+                accountId_kind_entityId: {
+                    accountId: account.id,
+                    kind: "account",
+                    entityId: "self",
+                },
+            },
+            select: { cursor: true, hint: true },
+        });
+
+        await expect(mutateQualifiedConnectedServiceCredentialHealth({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision:
+                created.configurationRevision,
+            health: {
+                v: 1,
+                status: "needs_reauth",
+                reconnectRequired: true,
+                providerErrorCode: "invalid_grant",
+            },
+        })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUniqueOrThrow({
+            where: { id: targetRow.id },
+            select: {
+                id: true,
+                metadata: true,
+                configurationContent: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual(beforeRow);
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { seq: true },
+        })).resolves.toEqual(beforeAccount);
+        await expect(db.accountChange.findUniqueOrThrow({
+            where: {
+                accountId_kind_entityId: {
+                    accountId: account.id,
+                    kind: "account",
+                    entityId: "self",
+                },
+            },
+            select: { cursor: true, hint: true },
+        })).resolves.toEqual(beforeChange);
+    });
+
+    it("fails closed when Account currentness changes after a legacy-compatible health pre-read", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const legacy = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai-codex",
+            profileId: "work",
+        });
+        const ref = {
+            service: {
+                pluginId: legacy.servicePluginId,
+                localId: legacy.serviceLocalId,
+            },
+            accountId: legacy.connectedAccountId,
+        };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: legacy.authenticationModeId,
+            content: { t: "plain", v: { token: "credential" } },
+            metadata,
+            legacyIdentity: {
+                serviceId: "openai-codex",
+                profileId: "work",
+            },
+        });
+        if (created.status !== "written") {
+            throw new Error("Expected credential create");
+        }
+        const admitted = await readQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+        });
+        if (
+            admitted.status !== "resolved"
+            || admitted.credential.credentialRevision === null
+        ) {
+            throw new Error("Expected legacy-compatible credential read with a current credential revision");
+        }
+        const beforeRow = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: { id: true, metadata: true, updatedAt: true },
+        });
+        await db.account.update({
+            where: { id: account.id },
+            data: {
+                publicKey: "incomplete-e2ee-public-key",
+                encryptionMode: "e2ee",
+            },
+        });
+
+        await expect(mutateQualifiedConnectedServiceCredentialHealth({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision:
+                admitted.credential.credentialRevision,
+            expectedConfigurationRevision:
+                admitted.credential.configurationRevision,
+            health: {
+                v: 1,
+                status: "needs_reauth",
+                reconnectRequired: true,
+                providerErrorCode: "invalid_grant",
+            },
+        })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUniqueOrThrow({
+            where: { id: beforeRow.id },
+            select: { id: true, metadata: true, updatedAt: true },
+        })).resolves.toEqual(beforeRow);
     });
 
     it("rejects health settlement after the admitted configuration revision changes", async () => {
@@ -1312,7 +1707,10 @@ describe("qualified Connected Account credential repository", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            credentialRevision: replaced.credentialRevision,
+            status: "resolved",
+            credential: {
+                credentialRevision: replaced.credentialRevision,
+            },
         });
     });
 

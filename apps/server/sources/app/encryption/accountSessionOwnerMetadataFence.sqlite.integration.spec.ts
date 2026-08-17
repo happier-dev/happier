@@ -6,6 +6,7 @@ import {
     createLightSqliteHarness,
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
+import { acquireAccountEncryptionTransitionFenceInTx } from "./accountEncryptionTransition";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "./accountSessionOwnerMetadataFence";
 
 function deferred(): Readonly<{
@@ -80,4 +81,12 @@ describe("Account Session owner-metadata fence (SQLite integration)", () => {
             updatedAt: initialUpdatedAt,
         });
     }, 30_000);
+
+    it("reports a missing Account through the transition fence without leaking the raw lock failure", async () => {
+        await expect(inTx((tx) => (
+            acquireAccountEncryptionTransitionFenceInTx(tx, "missing-account")
+        ))).resolves.toEqual({
+            status: "account_not_found",
+        });
+    });
 });

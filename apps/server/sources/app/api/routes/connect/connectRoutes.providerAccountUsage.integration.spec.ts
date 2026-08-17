@@ -17,6 +17,7 @@ import {
     createLegacyGroupFixtureIdentity,
     createLegacyGroupMemberFixtureIdentity,
 } from "./testkit/qualifiedConnectedAccountFixtureIdentity";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 async function createConnectedServiceGroupMemberBinding(params: Readonly<{
     accountId: string;
@@ -44,6 +45,7 @@ async function createConnectedServiceGroupMemberBinding(params: Readonly<{
                 v: 2,
                 format: "account_scoped_v1",
                 kind: "oauth",
+                credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
                 providerAccountId:
                     "acct_provider_subject",
             },
@@ -82,6 +84,16 @@ async function createConnectedServiceGroupMemberBinding(params: Readonly<{
             priority: 1,
             enabled: true,
         },
+    });
+}
+
+async function createReadyE2eeAccount() {
+    return await db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
+        },
+        select: { id: true },
     });
 }
 
@@ -315,7 +327,7 @@ describe("connectRoutes (provider account usage canonical routes)", () => {
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "public-key", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const snapshot = createUsageSnapshot({ fetchedAt: 1_234, planLabel: "sealed-direct" });
 
         const app = createProviderAccountUsageTestApp();
@@ -389,7 +401,7 @@ describe("connectRoutes (provider account usage canonical routes)", () => {
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "public-key", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const snapshot = createUsageSnapshot({ fetchedAt: 1_234, planLabel: "sealed-malformed" });
 
         const app = createProviderAccountUsageTestApp();
@@ -470,7 +482,7 @@ describe("connectRoutes (provider account usage canonical routes)", () => {
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "public-key", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceGroupMemberBinding({ accountId: user.id, groupId: "team", generation: 7 });
         const snapshot = createUsageSnapshot({ fetchedAt: 2_345, planLabel: "sealed-group-member" });
 

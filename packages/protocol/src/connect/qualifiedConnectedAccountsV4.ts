@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -542,9 +543,7 @@ export const QualifiedProviderAccountUsageRecordResponseV4Schema = z.object({
   sources: z.array(QualifiedConnectedServiceUsageSourceV4Schema).max(500),
 }).strict();
 
-export type QualifiedConnectedAccountServiceRef = z.infer<
-  typeof QualifiedConnectedAccountServiceRefSchema
->;
+export type QualifiedConnectedAccountServiceRef = PluginContributionIdentityV1;
 export type QualifiedConnectedAccountGroupRef = z.infer<
   typeof QualifiedConnectedAccountGroupRefSchema
 >;

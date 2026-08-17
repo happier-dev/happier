@@ -16,9 +16,6 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   connectedServicesAccountGroupsEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED',
   connectedServicesAccountFallbackEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED',
 
-  channelBridgesEnabled: 'HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED',
-  channelBridgesTelegramEnabled: 'HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED',
-
   updatesOtaEnabled: 'HAPPIER_FEATURE_UPDATES_OTA__ENABLED',
 
   attachmentsUploadsEnabled: 'HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED',
@@ -33,6 +30,7 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   petsSyncEncryptedCustomPetSyncPolicy: 'HAPPIER_FEATURE_PETS_SYNC__ENCRYPTED_CUSTOM_PET_SYNC_POLICY',
 
   sessionsHandoffEnabled: 'HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED',
+  sessionsAgentSwitchingEnabled: 'HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED',
   sessionsFoldersEnabled: 'HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED',
   sessionsUsageLimitRecoveryEnabled: 'HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED',
   machinesTransferDirectPeerEnabled: 'HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED',
@@ -129,10 +127,27 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   // install/enable/trust/runtime derivation (5.1/5.2) governs actual availability. devHotReload
   // stays client + fail-closed (CLI/UI policy owns it).
   pluginsEnabled: 'HAPPIER_FEATURE_PLUGINS__ENABLED',
+  pluginsWebhooksEnabled: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED',
+  pluginsWebhooksProcessMaxRequests: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_REQUESTS',
+  pluginsWebhooksProcessMaxWorkingBytes: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_WORKING_BYTES',
+  pluginsWebhooksRouteRatePerMinute: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_RATE_PER_MINUTE',
+  pluginsWebhooksRouteConcurrency: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_CONCURRENCY',
+  pluginsWebhooksEndpointRatePerMinute: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_RATE_PER_MINUTE',
+  pluginsWebhooksEndpointConcurrency: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_CONCURRENCY',
+  pluginsWebhooksAccountRatePerMinute: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_RATE_PER_MINUTE',
+  pluginsWebhooksAccountConcurrency: 'HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_CONCURRENCY',
   pluginsUiEnabled: 'HAPPIER_FEATURE_PLUGINS_UI__ENABLED',
   pluginsUiHostedWebEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_HOSTED_WEB__ENABLED',
-  pluginsUiStructuredMessagesEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_STRUCTURED_MESSAGES__ENABLED',
   pluginsUiReactNativeBundlesEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES__ENABLED',
+  pluginsUiArtifactHostingEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__ENABLED',
+  pluginsUiArtifactHostingMaxArtifactBytes: 'HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ARTIFACT_BYTES',
+  pluginsUiArtifactHostingMaxAccountBytes: 'HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ACCOUNT_BYTES',
+
+  collectionMaxRowEncodedBytes: 'HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES',
+  collectionMaxBatchBytes: 'HAPPIER_COLLECTION_MAX_BATCH_BYTES',
+  collectionMaxBatchRows: 'HAPPIER_COLLECTION_MAX_BATCH_ROWS',
+  collectionMaxAccountRows: 'HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS',
+  collectionMaxAccountBytes: 'HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES',
 
   // Device/simulator preview gates (server-represented + default-allow per §4.1): viewing your own
   // simulator. The live-stream + browser.viewTargets dependency closure still gates availability.
@@ -199,6 +214,7 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   encryptionDefaultAccountMode: 'HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE',
   encryptionPlainAccountSettingsAtRest: 'HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST',
   encryptionPlainAccountCredentialsAtRest: 'HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST',
+  encryptionPlainAccountArtifactsAtRest: 'HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST',
 
   e2eeKeylessAccountsEnabled: 'HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED',
 });

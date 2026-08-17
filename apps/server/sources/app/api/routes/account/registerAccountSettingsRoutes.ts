@@ -8,14 +8,23 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { type Fastify } from "../../types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import {
+    ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
     AccountSettingsV2GetResponseSchema,
+    AccountSettingsV2UpdateRequestAdmissionSchema,
     AccountSettingsV2UpdateRequestSchema,
     AccountSettingsV2UpdateResponseSchema,
     type AccountSettingsStoredContentEnvelope,
 } from "@happier-dev/protocol";
 import { recordAccountSettingsSnapshotsForWrite } from "@/app/accountSettings/accountSettingsHistoryRepository";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
+import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { openPlainAccountSettingsDbValue, storePlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
+import {
+    AccountSettingsStorageUnavailableResponseSchema,
+    resolveAccountSettingsStorageUnavailableRouteError,
+} from "./accountSettingsStorageUnavailableRouteError";
 
 export function registerAccountSettingsRoutes(app: Fastify): void {
     // Get Account Settings API
@@ -31,6 +40,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     settingsVersion: z.number()
                 }),
                 400: z.object({ error: z.literal("plain_account_requires_settings_v2") }),
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({
                     error: z.literal('Failed to get account settings')
                 })
@@ -40,14 +50,28 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         try {
             const user = await db.account.findUnique({
                 where: { id: request.userId },
-                select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true }
+                select: {
+                    settings: true,
+                    settingsVersion: true,
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                }
             });
 
             if (!user) {
                 return reply.code(500).send({ error: 'Failed to get account settings' });
             }
 
-            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(user);
+            const currentness =
+                deriveAccountEncryptionCurrentnessFromRow(user);
+            if (currentness.status === "inconsistent") {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
+            const mode = currentness.currentness.encryptionMode;
             if (mode === "plain") {
                 return reply.code(400).send({ error: "plain_account_requires_settings_v2" });
             }
@@ -79,6 +103,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     currentSettings: z.string().nullable()
                 })]),
                 400: z.object({ error: z.literal("plain_account_requires_settings_v2") }),
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({
                     success: z.literal(false),
                     error: z.literal('Failed to update account settings')
@@ -92,16 +117,20 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
 
         try {
             const result = await inTx(async (tx) => {
-                const currentUser = await tx.account.findUnique({
-                    where: { id: userId },
-                    select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true }
-                });
-
-                if (!currentUser) {
+                const fence = await acquireAccountEncryptionTransitionFenceInTx(
+                    tx,
+                    userId,
+                );
+                if (fence.status === "account_not_found") {
                     return { type: 'internal-error' as const };
                 }
-
-                const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(currentUser);
+                if (fence.status === "account_inconsistent") {
+                    return {
+                        type: "storage-unavailable" as const,
+                    };
+                }
+                const currentUser = fence.account;
+                const mode = currentUser.currentness.encryptionMode;
                 if (mode === "plain") {
                     return { type: "plain-requires-v2" as const };
                 }
@@ -188,6 +217,11 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
             if (result.type === "plain-requires-v2") {
                 return reply.code(400).send({ error: "plain_account_requires_settings_v2" });
             }
+            if (result.type === "storage-unavailable") {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
 
             if (result.type === 'version-mismatch') {
                 return reply.code(200).send({
@@ -220,6 +254,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         schema: {
             response: {
                 200: AccountSettingsV2GetResponseSchema,
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({ error: z.literal("internal") }),
             },
         },
@@ -227,11 +262,25 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         try {
             const user = await db.account.findUnique({
                 where: { id: request.userId },
-                select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
+                select: {
+                    settings: true,
+                    settingsVersion: true,
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
             });
             if (!user) return reply.code(500).send({ error: "internal" });
 
-            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(user);
+            const currentness =
+                deriveAccountEncryptionCurrentnessFromRow(user);
+            if (currentness.status === "inconsistent") {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
+            const mode = currentness.currentness.encryptionMode;
             if (mode === "e2ee") {
                 return reply.send({
                     content: user.settings ? { t: "encrypted", c: user.settings } : null,
@@ -244,34 +293,51 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 content: opened,
                 version: user.settingsVersion,
             });
-        } catch {
+        } catch (error) {
+            const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
+            if (storageUnavailable) {
+                return reply.code(storageUnavailable.statusCode).send(storageUnavailable.body);
+            }
             return reply.code(500).send({ error: "internal" });
         }
     });
 
     app.post("/v2/account/settings", {
+        bodyLimit: ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
         preHandler: app.authenticate,
         schema: {
-            body: AccountSettingsV2UpdateRequestSchema,
+            body: AccountSettingsV2UpdateRequestAdmissionSchema,
             response: {
                 200: AccountSettingsV2UpdateResponseSchema,
                 400: z.object({ error: z.literal("invalid-params") }),
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({ error: z.literal("internal") }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const { content, expectedVersion } = request.body;
+        const parsedRequest = AccountSettingsV2UpdateRequestSchema.safeParse(request.body);
+        if (!parsedRequest.success) {
+            return reply.send({ success: false, error: "invalid", reason: "tooLarge" });
+        }
+        const { content, expectedVersion } = parsedRequest.data;
 
         try {
             const result = await inTx(async (tx) => {
-                const currentUser = await tx.account.findUnique({
-                    where: { id: userId },
-                    select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
-                });
-                if (!currentUser) return { type: "internal-error" as const };
-
-                const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(currentUser);
+                const fence = await acquireAccountEncryptionTransitionFenceInTx(
+                    tx,
+                    userId,
+                );
+                if (fence.status === "account_not_found") {
+                    return { type: "internal-error" as const };
+                }
+                if (fence.status === "account_inconsistent") {
+                    return {
+                        type: "storage-unavailable" as const,
+                    };
+                }
+                const currentUser = fence.account;
+                const mode = currentUser.currentness.encryptionMode;
                 if (mode === "plain") {
                     if (content && content.t !== "plain") {
                         return { type: "invalid-params" as const };
@@ -313,9 +379,31 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 if (count === 0) {
                     const account = await tx.account.findUnique({
                         where: { id: userId },
-                        select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
+                        select: {
+                            settings: true,
+                            settingsVersion: true,
+                            publicKey: true,
+                            encryptionMode: true,
+                            contentPublicKey: true,
+                            contentPublicKeySig: true,
+                        },
                     });
-                    const refreshedMode = account ? resolveEffectiveAccountEncryptionModeFromAccountRow(account) : mode;
+                    const refreshedCurrentness = account
+                        ? deriveAccountEncryptionCurrentnessFromRow(
+                            account,
+                        )
+                        : null;
+                    if (
+                        refreshedCurrentness?.status
+                        === "inconsistent"
+                    ) {
+                        return {
+                            type: "storage-unavailable" as const,
+                        };
+                    }
+                    const refreshedMode =
+                        refreshedCurrentness?.currentness
+                            .encryptionMode ?? mode;
                     const refreshedContent: AccountSettingsStoredContentEnvelope | null =
                         refreshedMode === "plain"
                             ? openPlainAccountSettingsDbValue({ accountId: userId, dbValue: account?.settings ?? null })
@@ -375,6 +463,11 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
             });
 
             if (result.type === "internal-error") return reply.code(500).send({ error: "internal" });
+            if (result.type === "storage-unavailable") {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
             if (result.type === "invalid-params") return reply.code(400).send({ error: "invalid-params" });
             if (result.type === "version-mismatch") {
                 return reply.send({
@@ -386,6 +479,10 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
             }
             return reply.send({ success: true, version: result.version });
         } catch (error) {
+            const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
+            if (storageUnavailable) {
+                return reply.code(storageUnavailable.statusCode).send(storageUnavailable.body);
+            }
             log({ module: "api", level: "error" }, `Failed to update v2 account settings: ${error}`);
             return reply.code(500).send({ error: "internal" });
         }

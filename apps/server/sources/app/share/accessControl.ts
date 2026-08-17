@@ -1,7 +1,9 @@
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { ShareAccessLevel } from "@/storage/prisma";
+import type { Prisma } from "@prisma/client";
 import {
+    createSessionTranscriptShareableWhere,
     isSessionTranscriptShareable,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -32,6 +34,73 @@ export interface SessionAccess {
 }
 
 /**
+ * Canonical current-participant predicate for reads that disclose Session
+ * state. A point-in-time access lookup is not sufficient when the deciding
+ * row query can run after a share has been revoked.
+ */
+export function buildCurrentSessionParticipantWhere(params: Readonly<{
+    userId: string;
+    sessionId: string;
+    minimumAccess?: "visible" | "edit" | "admin";
+    requirePermissionDelegation?: boolean;
+}>): Prisma.SessionWhereInput {
+    return {
+        id: params.sessionId,
+        OR: [
+            { accountId: params.userId },
+            {
+                AND: [
+                    createSessionTranscriptShareableWhere(),
+                    {
+                        shares: {
+                            some: {
+                                sharedWithUserId: params.userId,
+                                ...(params.minimumAccess === "edit" ? {
+                                    accessLevel: { in: [ShareAccessLevel.edit, ShareAccessLevel.admin] },
+                                } : params.minimumAccess === "admin" ? {
+                                    accessLevel: { in: [ShareAccessLevel.admin] },
+                                } : {}),
+                                ...(params.requirePermissionDelegation
+                                    ? { canApprovePermissions: true }
+                                    : {}),
+                            },
+                        },
+                    },
+                ],
+            },
+        ],
+    };
+}
+
+/**
+ * Final direct-share authorization check. Mutation routes call it inside their
+ * existing transaction so a revoked shared admin cannot retain authority from
+ * an earlier request-level admission check.
+ */
+export async function canManageSharingInTx(
+    tx: Pick<Tx, "session">,
+    params: Readonly<{
+        userId: string;
+        sessionId: string;
+        requirePermissionDelegation?: boolean;
+    }>,
+): Promise<boolean> {
+    const session = await tx.session.findFirst({
+        where: buildCurrentSessionParticipantWhere({
+            userId: params.userId,
+            sessionId: params.sessionId,
+            minimumAccess: "admin",
+            requirePermissionDelegation: params.requirePermissionDelegation,
+        }),
+        select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+    });
+    return session !== null && (
+        session.accountId === params.userId
+        || isSessionTranscriptShareable(session)
+    );
+}
+
+/**
  * Check user's access level for a session
  *
  * @param userId - User ID requesting access
@@ -47,7 +116,6 @@ export async function checkSessionAccess(
     const session = await client.session.findUnique({
         where: { id: sessionId },
         select: {
-            accountId: true,
             active: true,
             lastActiveAt: true,
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+    buildReviewCommentEventRequestBindingV1,
+    reviewCommentMutationInputWithoutEventEnvelopeV1,
     ReviewCommentV1Schema,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
     type ReviewCommentActorRefV1,
@@ -142,7 +144,11 @@ function reviewCommentCreateRequestFingerprint(params: Readonly<{
     input: ReviewCommentCreateRequestV1;
     storageMode?: "plain" | "e2ee";
 }>): string {
-    const { clientMutationId: _clientMutationId, ...immutableInput } = params.input;
+    const {
+        clientMutationId: _clientMutationId,
+        eventEnvelope: _eventEnvelope,
+        ...immutableInput
+    } = params.input;
     const immutableSnapshot = "capturedAt" in params.input.snapshot
         ? (({ capturedAt: _capturedAt, ...snapshot }) => snapshot)(params.input.snapshot)
         : params.input.snapshot;
@@ -164,8 +170,9 @@ function assertReviewCommentCurrentIntent(params: ReviewCommentCreateOperationPa
     const intent = params.currentIntent;
     const actor = params.actor;
     const input = params.input;
+    const logicalInput = reviewCommentMutationInputWithoutEventEnvelopeV1({ ...input });
     const effectBodySha256Base64Url = createHash("sha256")
-        .update(stringifyReviewCommentPrincipalCanonicalJsonV1(input))
+        .update(stringifyReviewCommentPrincipalCanonicalJsonV1(logicalInput))
         .digest("base64url");
     if (
         !intent
@@ -192,9 +199,17 @@ export function createReviewCommentOperations(
 ): ReviewCommentOperations {
     async function transitionComment(params: ReviewCommentMutationOperationParams<ReviewCommentTransitionRequestV1> & Readonly<{
         bulkActionId?: string;
+        bindingInput?: Record<string, unknown>;
+        bindingActionId?: "reviews.comments.transition" | "reviews.comments.bulkTransition";
     }>): Promise<ReviewCommentTransitionResponseV1> {
         const current = await requireComment(store, params.accountId, params.input.commentId);
-        if (params.input.expectedState && current.state !== params.input.expectedState) {
+        if (params.input.projectId !== current.projectId) {
+            throw new ReviewCommentOperationError("review_comment_conflict", "Review comment project did not match projectId");
+        }
+        if (current.serverRevision !== params.input.expectedServerRevision) {
+            throw new ReviewCommentOperationError("review_comment_conflict", "Review comment serverRevision did not match expectedServerRevision");
+        }
+        if (current.state !== params.input.expectedState) {
             throw new ReviewCommentOperationError("review_comment_conflict", "Review comment state did not match expectedState");
         }
         assertReviewCommentTransitionAllowed(current.state, params.input.toState);
@@ -240,6 +255,7 @@ export function createReviewCommentOperations(
             actor: params.actor,
             serverRevision: comment.serverRevision,
             eventKind: "transitioned",
+            bulkActionId: params.bulkActionId,
             clientMutationId: params.input.clientMutationId,
             authorDeviceId: params.input.authorDeviceId,
             clientLamport: params.input.clientLamport,
@@ -253,7 +269,17 @@ export function createReviewCommentOperations(
             comment,
             event,
             storageMode: params.storageMode,
+            accountVersion: params.accountVersion,
+            accountEncryptionCurrentness:
+                params.accountEncryptionCurrentness,
             eventEnvelope: params.input.eventEnvelope,
+            requestBinding: buildReviewCommentEventRequestBindingV1({
+                accountId: params.accountId,
+                projectId: current.projectId,
+                actor: params.actor,
+                actionId: params.bindingActionId ?? "reviews.comments.transition",
+                input: params.bindingInput ?? params.input,
+            }),
         });
         return { comment };
     }
@@ -328,7 +354,17 @@ export function createReviewCommentOperations(
                 comment,
                 event,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: params.input.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.create",
+                    input: params.input,
+                }),
                 createClientMutationId: params.input.clientMutationId,
                 createRequestFingerprint: reviewCommentCreateRequestFingerprint(params),
             });
@@ -346,8 +382,12 @@ export function createReviewCommentOperations(
         },
         async edit(params) {
             const current = await requireComment(store, params.accountId, params.input.commentId);
+            if (params.input.projectId !== current.projectId
+                || params.input.expectedServerRevision !== current.serverRevision) {
+                throw new ReviewCommentOperationError("review_comment_conflict", "Review comment currentness did not match");
+            }
             assertReviewCommentEditActorAllowed({ actor: params.actor, comment: current });
-            if (params.input.expectedBodyVersion && current.bodyVersion !== params.input.expectedBodyVersion) {
+            if (current.bodyVersion !== params.input.expectedBodyVersion) {
                 throw new ReviewCommentOperationError("review_comment_conflict", "Review comment bodyVersion did not match expectedBodyVersion");
             }
             const now = runtime.now();
@@ -385,12 +425,26 @@ export function createReviewCommentOperations(
                 comment,
                 event,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: current.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.edit",
+                    input: params.input,
+                }),
             });
             return { comment };
         },
         async reply(params) {
             const parent = await requireComment(store, params.accountId, params.input.parentCommentId);
+            if (params.input.projectId !== parent.projectId
+                || params.input.expectedParentServerRevision !== parent.serverRevision) {
+                throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent currentness did not match");
+            }
             assertReviewCommentReplyAllowed(parent);
             const now = runtime.now();
             const commentId = runtime.createId("review-comment");
@@ -437,7 +491,17 @@ export function createReviewCommentOperations(
                 accountId: params.accountId,
                 comment,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: parent.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.reply",
+                    input: params.input,
+                }),
                 event: buildReviewCommentEvent({
                     runtime,
                     accountId: params.accountId,
@@ -457,6 +521,10 @@ export function createReviewCommentOperations(
         async redact(params) {
             assertReviewCommentRedactionActorAllowed(params.actor);
             const current = await requireComment(store, params.accountId, params.input.commentId);
+            if (params.input.projectId !== current.projectId
+                || params.input.expectedServerRevision !== current.serverRevision) {
+                throw new ReviewCommentOperationError("review_comment_conflict", "Review comment currentness did not match");
+            }
             if (current.flags.redacted || current.tombstone) {
                 throw new ReviewCommentOperationError(
                     "review_comment_already_redacted",
@@ -497,12 +565,26 @@ export function createReviewCommentOperations(
                 comment,
                 event,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: current.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.redact",
+                    input: params.input,
+                }),
             });
             return { comment };
         },
         async setDisposition(params) {
             const current = await requireComment(store, params.accountId, params.input.commentId);
+            if (params.input.projectId !== current.projectId
+                || params.input.expectedServerRevision !== current.serverRevision) {
+                throw new ReviewCommentOperationError("review_comment_conflict", "Review comment currentness did not match");
+            }
             const actorKey = formatReviewCommentActorDispositionKey(params.actor);
             const comment = ReviewCommentV1Schema.parse({
                 ...current,
@@ -528,12 +610,26 @@ export function createReviewCommentOperations(
                 comment,
                 event,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: current.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.setDisposition",
+                    input: params.input,
+                }),
             });
             return { comment };
         },
         async attachEvidence(params) {
             const current = await requireComment(store, params.accountId, params.input.commentId);
+            if (params.input.projectId !== current.projectId
+                || params.input.expectedServerRevision !== current.serverRevision) {
+                throw new ReviewCommentOperationError("review_comment_conflict", "Review comment currentness did not match");
+            }
             assertReviewCommentUserOrOriginalAuthor({ actor: params.actor, comment: current });
             const comment = ReviewCommentV1Schema.parse({
                 ...current,
@@ -559,7 +655,17 @@ export function createReviewCommentOperations(
                 comment,
                 event,
                 storageMode: params.storageMode,
+                accountVersion: params.accountVersion,
+                accountEncryptionCurrentness:
+                    params.accountEncryptionCurrentness,
                 eventEnvelope: params.input.eventEnvelope,
+                requestBinding: buildReviewCommentEventRequestBindingV1({
+                    accountId: params.accountId,
+                    projectId: current.projectId,
+                    actor: params.actor,
+                    actionId: "reviews.comments.attachEvidence",
+                    input: params.input,
+                }),
             });
             return { comment };
         },
@@ -577,8 +683,10 @@ export function createReviewCommentOperations(
                         bulkActionId,
                         input: {
                             commentId,
+                            projectId: params.input.projectId,
                             toState: params.input.toState,
                             expectedState: params.input.expectedState,
+                            expectedServerRevision: params.input.expectedServerRevisions[commentId] ?? 0,
                             evidence: params.input.evidence,
                             reason: params.input.reason,
                             clientMutationId: params.input.clientMutationId,
@@ -586,6 +694,8 @@ export function createReviewCommentOperations(
                             clientLamport: params.input.clientLamport,
                             eventEnvelope: params.input.eventEnvelope,
                         },
+                        bindingActionId: "reviews.comments.bulkTransition",
+                        bindingInput: params.input,
                     });
                     updated.push(transitioned.comment);
                 } catch (error) {

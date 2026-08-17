@@ -20,6 +20,22 @@ function createTestApp() {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    typed.decorate(
+        "authenticate",
+        async (request: any, reply: any) => {
+            const userId =
+                request.headers["x-test-user-id"];
+            if (
+                typeof userId !== "string"
+                || !userId
+            ) {
+                return reply.code(401).send({
+                    error: "Unauthorized",
+                });
+            }
+            request.userId = userId;
+        },
+    );
     return trackApp(typed);
 }
 
@@ -111,6 +127,109 @@ describe("connectRoutes (OIDC callback) external auth flow (integration)", () =>
         expect(pendingRow).toBeTruthy();
         const accounts = await db.account.findMany();
         expect(accounts.length).toBe(0);
+
+        await app.close();
+    });
+
+    it("uses the generic OIDC callback to bind first-key step-up proof to the exact existing identity", async () => {
+        harness.resetEnv({
+            AUTH_SIGNUP_PROVIDERS: "okta",
+            AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify([
+                {
+                    id: "okta",
+                    type: "oidc",
+                    displayName: "Acme Okta",
+                    issuer: oidcIssuer,
+                    clientId: "oidc_client",
+                    clientSecret: "oidc_secret",
+                    redirectUrl:
+                        "https://api.example.test/v1/oauth/okta/callback",
+                },
+            ]),
+            HAPPIER_WEBAPP_URL: "https://app.example.test",
+        });
+        const account = await db.account.create({
+            data: {
+                publicKey: null,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        await db.accountIdentity.create({
+            data: {
+                accountId: account.id,
+                provider: "okta",
+                providerUserId: "user_1",
+                profile: {},
+            },
+        });
+        const proofHash = "d".repeat(64);
+        const requestDigest =
+            `aemrb1_${"A".repeat(43)}`;
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const paramsRes = await app.inject({
+            method: "GET",
+            url:
+                "/v1/auth/external/okta/params"
+                + "?mode=keyless"
+                + `&proofHash=${proofHash}`
+                + "&purpose=account_encryption_first_key"
+                + `&requestDigest=${
+                    encodeURIComponent(requestDigest)
+                }`,
+            headers: {
+                "x-test-user-id": account.id,
+            },
+        });
+        expect(
+            paramsRes.statusCode,
+            paramsRes.body,
+        ).toBe(200);
+        const paramsUrl = new URL(
+            (paramsRes.json() as { url: string }).url,
+        );
+        const authRes = await fetch(
+            paramsUrl.toString(),
+            { redirect: "manual" },
+        );
+        expect(authRes.status).toBe(302);
+        const callback = new URL(
+            authRes.headers.get("location")!,
+        );
+
+        const response = await app.inject({
+            method: "GET",
+            url: `${callback.pathname}${callback.search}`,
+        });
+        expect(
+            response.statusCode,
+            response.body,
+        ).toBe(302);
+        const redirect = new URL(
+            response.headers.location as string,
+        );
+        expect(redirect.searchParams.get("purpose"))
+            .toBe("account_encryption_first_key");
+        const pending =
+            redirect.searchParams.get("pending");
+        expect(pending).toBeTruthy();
+        const row = await db.repeatKey.findUnique({
+            where: { key: pending! },
+        });
+        expect(JSON.parse(row!.value)).toEqual({
+            v: 3,
+            flow: "auth",
+            purpose:
+                "account_encryption_first_key",
+            provider: "okta",
+            userId: account.id,
+            providerUserId: "user_1",
+            proofHash,
+            requestDigest,
+        });
 
         await app.close();
     });

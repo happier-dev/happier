@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from "@happier-dev/protocol";
 
 import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 const verifyToken = vi.fn(async () => null as any);
 vi.mock("@/app/auth/auth", () => ({
@@ -41,11 +43,13 @@ const dbMocks = createDbMocks({
     sessionMessage: ["findMany"],
 } as const);
 const txDbMocks = createDbMocks({
+    account: ["findUnique"],
     publicSessionShare: ["findUnique", "update", "updateMany"],
     session: ["findUnique"],
     sessionMessage: ["findMany"],
 } as const);
 const dbTransaction = createDbTransactionMock(() => ({
+    account: txDbMocks.db.account,
     publicSessionShare: txDbMocks.db.publicSessionShare,
     session: txDbMocks.db.session,
     sessionMessage: txDbMocks.db.sessionMessage,
@@ -54,6 +58,42 @@ const dbTransaction = createDbTransactionMock(() => ({
 installDbModuleMock(() => ({
     db: dbTransaction.wrapDb(dbMocks.db),
 }));
+
+const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+});
+const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
+const CURRENT_STORED_CONTENT_COMPATIBILITY = {
+    accepted: true,
+    supportsCurrentProtocol: true,
+    outcome: "accepted",
+    declaration: {
+        v: 1,
+        protocolVersion:
+            CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+    },
+    upgradeRequired: null,
+} as const;
+
+function createCurrentRouteTestBuilder(
+    options: Parameters<typeof createRouteTestBuilder>[0],
+) {
+    return createRouteTestBuilder({
+        ...options,
+        defaultRequest: {
+            accountStoredContentCompatibility:
+                CURRENT_STORED_CONTENT_COMPATIBILITY,
+            ...options.defaultRequest,
+            headers: {
+                "x-happier-account-stored-content-protocol": String(
+                    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                ),
+                ...options.defaultRequest?.headers,
+            },
+        },
+    });
+}
 
 describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     beforeEach(() => {
@@ -64,10 +104,18 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         inTx.mockReset();
         inTx.mockImplementation(async (run: (tx: typeof txDbMocks.db) => Promise<unknown>) =>
             await run(txDbMocks.db));
+        txDbMocks.db.account.findUnique.mockResolvedValue({
+            encryptionMode: "e2ee",
+            ...createSignedAccountContentBinding(),
+        });
         vi.stubEnv("HANDY_MASTER_SECRET", "public-share-test-secret");
     });
 
     it("does not call app.authenticate() for /v1/public-share/:token and succeeds even with invalid bearer", async () => {
+        const ownerAccount = {
+            encryptionMode: "e2ee",
+            ...createSignedAccountContentBinding(),
+        };
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
             sessionId: "s1",
@@ -79,16 +127,16 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             blockedUsers: undefined,
         });
         txDbMocks.db.publicSessionShare.updateMany.mockResolvedValue({ count: 1 });
-        txDbMocks.db.session.findUnique.mockResolvedValue({
+        const session = {
             id: "s1",
             seq: 1,
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -99,7 +147,16 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             materializationPublicationId: "publication-1",
             materializedThroughSourceAt: 1_700_000_000_000n,
             publishedThroughServerSeq: 1,
-        });
+        };
+        txDbMocks.db.session.findUnique.mockImplementation(async (request) => ({
+            ...session,
+            ...(request.select?.accountId === true
+                ? { accountId: "owner" }
+                : {}),
+        }));
+        txDbMocks.db.account.findUnique.mockImplementation(async (request) =>
+            request.where.id === "owner" ? ownerAccount : null,
+        );
 
         dbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
@@ -107,10 +164,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -119,13 +176,19 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
                 params: { token: "tok" },
                 query: {},
-                headers: { authorization: "Bearer bad" },
+                headers: {
+                    authorization: "Bearer bad",
+                    "x-happier-account-stored-content-protocol": String(
+                        CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                    ),
+                },
+                accountStoredContentCompatibility: undefined,
             },
             registerRoutes(app) {
                 app.authenticate.mockImplementation(async (_req: any, reply: any) => {
@@ -135,6 +198,20 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
                 publicShareRoutes(app as any);
             },
         });
+
+        const legacyReply = route.createReply();
+        const legacyPayload = await route.handler(
+            route.createRequest({
+                headers: {
+                    "x-happier-account-stored-content-protocol": undefined,
+                },
+            }),
+            legacyReply,
+        );
+        expect(legacyReply.statusCode).toBe(426);
+        expect(legacyPayload).toBeUndefined();
+        expect(txDbMocks.db.publicSessionShare.updateMany).not.toHaveBeenCalled();
+        expect(logPublicShareAccess).not.toHaveBeenCalled();
 
         const reply = route.createReply();
         const send = reply.send;
@@ -148,7 +225,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         const payload = await route.handler(route.createRequest(), reply);
 
         expect(route.app.authenticate).not.toHaveBeenCalled();
-        expect(verifyToken).toHaveBeenCalledTimes(1);
+        expect(verifyToken).toHaveBeenCalledTimes(2);
         expect(reply.statusCode).toBe(200);
         expect(payload).toEqual(
             expect.objectContaining({
@@ -165,7 +242,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         );
     });
 
-    it("preserves the released layout-zero public-share projection and consumes the share", async () => {
+    it("refuses the released layout-zero public-share projection without consuming the share", async () => {
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
             sessionId: "s1",
@@ -200,7 +277,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
@@ -216,24 +293,13 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         const reply = route.createReply();
         const payload = await route.handler(route.createRequest(), reply);
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(payload).toEqual({
-            session: expect.objectContaining({
-                id: "s1",
-                metadata: "legacy-whole-bag",
-                metadataVersion: 1,
-                metadataLayoutVersion: 0,
-                agentState: "legacy-owner-state",
-                agentStateVersion: 3,
-            }),
-            owner: expect.objectContaining({ id: "owner" }),
-            accessLevel: "view",
-            encryptedDataKey: null,
-            isConsentRequired: false,
-            messagesAccessToken: expect.any(String),
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
-        expect(txDbMocks.db.publicSessionShare.updateMany).toHaveBeenCalledTimes(1);
-        expect(logPublicShareAccess).toHaveBeenCalledTimes(1);
+        expect(txDbMocks.db.publicSessionShare.updateMany).not.toHaveBeenCalled();
+        expect(logPublicShareAccess).not.toHaveBeenCalled();
         expect(txDbMocks.db.session.findUnique).toHaveBeenCalledWith(
             expect.objectContaining({
                 select: expect.objectContaining({
@@ -245,6 +311,70 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
                 }),
             }),
         );
+    });
+
+    it("refuses public disclosure when the owning plain Account has an encrypted owner envelope", async () => {
+        txDbMocks.db.account.findUnique.mockResolvedValue({
+            encryptionMode: "plain",
+            publicKey: null,
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        });
+        txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
+            id: "ps1",
+            sessionId: "s1",
+            expiresAt: null,
+            maxUses: 1,
+            useCount: 0,
+            isConsentRequired: false,
+            encryptedDataKey: null,
+        });
+        txDbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            seq: 1,
+            accountId: "owner",
+            encryptionMode: "plain",
+            createdAt: new Date(1),
+            updatedAt: new Date(2),
+            metadata: STORED_SHARED_METADATA_V1,
+            metadataVersion: 1,
+            metadataLayoutVersion: 1,
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+            agentState: null,
+            agentStateVersion: 0,
+            active: true,
+            lastActiveAt: new Date(3),
+            account: { id: "owner" },
+            currentStorageState: "snapshot_complete",
+            acceptedThroughServerSeq: null,
+            materializationPublicationId: "publication-1",
+            materializedThroughSourceAt: 1_700_000_000_000n,
+            publishedThroughServerSeq: 1,
+        });
+
+        const { publicShareRoutes } = await import("./publicShareRoutes");
+        const route = createCurrentRouteTestBuilder({
+            method: "GET",
+            path: "/v1/public-share/:token",
+            defaultRequest: {
+                params: { token: "tok" },
+                query: {},
+                headers: {},
+            },
+            registerRoutes(app) {
+                publicShareRoutes(app as any);
+            },
+        });
+
+        const { reply, response } = await route.invoke();
+
+        expect(reply.statusCode).toBe(409);
+        expect(response).toEqual({
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
+        });
+        expect(txDbMocks.db.publicSessionShare.updateMany).not.toHaveBeenCalled();
+        expect(logPublicShareAccess).not.toHaveBeenCalled();
     });
 
     it("does not grant, log, or increment when an unlimited share rotates after authorization", async () => {
@@ -264,10 +394,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -285,10 +415,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -307,7 +437,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         }));
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
@@ -355,10 +485,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "admitted",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: "full-owner-agent-state",
             agentStateVersion: 9,
             active: true,
@@ -391,7 +521,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
@@ -412,7 +542,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             session: expect.objectContaining({
                 id: "s1",
                 updatedAt: 2,
-                metadata: "admitted",
+                metadata: STORED_SHARED_METADATA_V1,
                 metadataLayoutVersion: 1,
             }),
         }));
@@ -443,10 +573,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "admitted",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -464,7 +594,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
@@ -507,10 +637,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -528,10 +658,10 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             encryptionMode: "plain",
             createdAt: new Date(1),
             updatedAt: new Date(2),
-            metadata: "m",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             active: true,
@@ -540,7 +670,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token",
             defaultRequest: {
@@ -592,7 +722,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         ]);
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "GET",
             path: "/v1/public-share/:token/messages",
             defaultRequest: {

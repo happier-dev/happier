@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Tx } from "@/storage/inTx";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
-import { acquireAccountSessionOwnerMetadataFenceInTx } from "./accountSessionOwnerMetadataFence";
+import {
+    acquireAccountSessionOwnerMetadataFenceInTx,
+    AccountSessionOwnerMetadataFenceAccountNotFoundError,
+} from "./accountSessionOwnerMetadataFence";
 
 describe("acquireAccountSessionOwnerMetadataFenceInTx", () => {
     const envSnapshot = snapshotEnv();
@@ -70,7 +73,9 @@ describe("acquireAccountSessionOwnerMetadataFenceInTx", () => {
 
             await expect(
                 acquireAccountSessionOwnerMetadataFenceInTx(tx, "account-1"),
-            ).rejects.toThrow("exactly one Account row");
+            ).rejects.toBeInstanceOf(
+                AccountSessionOwnerMetadataFenceAccountNotFoundError,
+            );
             await expect(
                 acquireAccountSessionOwnerMetadataFenceInTx(tx, "account-1"),
             ).rejects.toThrow("exactly one Account row");
@@ -87,6 +92,8 @@ describe("acquireAccountSessionOwnerMetadataFenceInTx", () => {
 
         await expect(
             acquireAccountSessionOwnerMetadataFenceInTx(tx, "missing-account"),
-        ).rejects.toThrow("exactly one Account row");
+        ).rejects.toBeInstanceOf(
+            AccountSessionOwnerMetadataFenceAccountNotFoundError,
+        );
     });
 });

@@ -1,11 +1,17 @@
 import type { Prisma } from "@prisma/client";
 
+import { db } from "@/storage/db";
+import {
+    requiresSessionMetadataOwnerAccountMode,
+    type SessionMetadataOwnerAccountMode,
+} from "@/app/session/metadata/sessionMetadataRecipientProjection";
+
 import {
     createV2SessionListCursorWhere,
-    createV2SessionListPage,
     createV2SessionListRowPage,
     findV2SessionListRows,
     mapV2SessionListRows,
+    mergeSessionWhereInputs,
     V2_SESSION_LIST_ORDER_BY,
 } from "./v2SessionListPage";
 import {
@@ -18,11 +24,19 @@ import {
 } from "./v2SessionHotReadLimits";
 import type { V2SessionListInitialPageTiming } from "./v2SessionListServerTiming";
 import {
-    applySessionTranscriptPublicationCeilingToProjection,
+    createSessionTranscriptPublicationLiveFactsWhere,
+    createSessionTranscriptPublicationReadyEventWhere,
+    projectSessionTranscriptPublicationPreview,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 
 type V2SessionListInitialPageParams = Readonly<{
     userId: string;
+    admitFinalRows: (
+        rows: ReadonlyArray<V2SessionListRowCompat>,
+    ) => Promise<boolean>;
+    readOwnerAccountModes: (
+        accountIds: readonly string[],
+    ) => Promise<ReadonlyMap<string, SessionMetadataOwnerAccountMode>>;
     pageRows: ReadonlyArray<V2SessionListRowCompat>;
     limit: number;
     pinnedSessionIds: readonly string[];
@@ -38,11 +52,15 @@ function readNumberField(row: V2SessionListRowCompat, field: string): number | n
 }
 
 function readAttentionPublicationProjection(row: V2SessionListRowCompat) {
-    return applySessionTranscriptPublicationCeilingToProjection({
+    return projectSessionTranscriptPublicationPreview({
         seq: readNumberField(row, "seq") ?? 0,
         lastViewedSessionSeq: readNumberField(row, "lastViewedSessionSeq"),
         latestReadyEventSeq: readNumberField(row, "latestReadyEventSeq"),
         latestReadyEventAt: null,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        meaningfulActivityAt: row.meaningfulActivityAt,
+        lastActiveAt: row.lastActiveAt,
     }, row);
 }
 
@@ -54,7 +72,7 @@ function hasUnreadSessionActivity(projection: AttentionPublicationProjection): b
 
 function hasUnreadReadyEvent(projection: AttentionPublicationProjection): boolean {
     const latestReadyEventSeq = projection.latestReadyEventSeq;
-    if (latestReadyEventSeq === null) return false;
+    if (typeof latestReadyEventSeq !== "number") return false;
     return latestReadyEventSeq > (projection.lastViewedSessionSeq ?? 0);
 }
 
@@ -62,6 +80,7 @@ function hasPrimarySessionFailure(
     row: V2SessionListRowCompat,
     projection: AttentionPublicationProjection,
 ): boolean {
+    if (!projection.hasLiveFacts) return false;
     if (parseStoredSessionLatestTurnStatus(row.latestTurnStatus) !== "failed") return false;
     const issue = parseStoredSessionRuntimeIssue(row.lastRuntimeIssue);
     return issue?.v === 1
@@ -72,21 +91,75 @@ function hasPrimarySessionFailure(
 
 function isDurableAttentionRow(row: V2SessionListRowCompat): boolean {
     const publicationProjection = readAttentionPublicationProjection(row);
-    return row.pendingPermissionRequestCount > 0
+    return (publicationProjection.hasLiveFacts && (
+        row.pendingPermissionRequestCount > 0
         || row.pendingUserActionRequestCount > 0
         || hasPrimarySessionFailure(row, publicationProjection)
+    ))
         || hasUnreadReadyEvent(publicationProjection);
 }
 
-function createAttentionRowsWhere(): Prisma.SessionWhereInput {
+/**
+ * Candidate arm for `hasUnreadReadyEvent`, expressed as a column-to-column comparison so a session
+ * that was ready once and has since been read stops occupying a candidate slot forever.
+ *
+ * Superset proof against the confirmation step. `hasUnreadReadyEvent` reads the publication-ceiling
+ * projection, where a published `latestReadyEventSeq` keeps its stored value and
+ * `lastViewedSessionSeq` is only ever lowered (to `min(stored, ceiling)`, or read as `0` when it is
+ * absent). A confirmed row therefore satisfies `stored latestReadyEventSeq > min(stored
+ * lastViewedSessionSeq, ceiling)`; since publication requires `latestReadyEventSeq <= ceiling`, the
+ * `ceiling` side can never be the smaller term, so `latestReadyEventSeq > lastViewedSessionSeq`
+ * holds on the stored columns. The second disjunct covers the one case SQL cannot express through
+ * that comparison: a never-viewed session, where `lastViewedSessionSeq` is NULL and the projection
+ * reads it as `0`.
+ */
+function createV2SessionListUnreadReadyEventWhere(): Prisma.SessionWhereInput {
+    return {
+        OR: [
+            { latestReadyEventSeq: { gt: db.session.fields.lastViewedSessionSeq } },
+            { lastViewedSessionSeq: null, latestReadyEventSeq: { gt: 0 } },
+        ],
+    };
+}
+
+function createV2SessionListPublishedUnreadReadyEventWhere(): Prisma.SessionWhereInput {
+    return {
+        AND: [
+            createSessionTranscriptPublicationReadyEventWhere(),
+            createV2SessionListUnreadReadyEventWhere(),
+        ],
+    };
+}
+
+/**
+ * Candidate predicate for the durable-attention arm. `isDurableAttentionRow` is the confirmation
+ * step, so this only has to be a superset of the rows that can qualify.
+ *
+ */
+export function createV2SessionListAttentionRowsWhere(): Prisma.SessionWhereInput {
     return {
         archivedAt: null,
         AND: [{
             OR: [
-                { latestTurnStatus: "failed" },
-                { latestReadyEventSeq: { not: null } },
-                { pendingPermissionRequestCount: { gt: 0 } },
-                { pendingUserActionRequestCount: { gt: 0 } },
+                {
+                    AND: [
+                        createSessionTranscriptPublicationLiveFactsWhere(),
+                        { latestTurnStatus: "failed" },
+                    ],
+                },
+                createV2SessionListPublishedUnreadReadyEventWhere(),
+                {
+                    AND: [
+                        createSessionTranscriptPublicationLiveFactsWhere(),
+                        { pendingPermissionRequestCount: { gt: 0 } },
+                    ],
+                },
+                {
+                    AND: [
+                        createSessionTranscriptPublicationLiveFactsWhere(),
+                        { pendingUserActionRequestCount: { gt: 0 } },
+                    ],
+                },
             ],
         }],
     };
@@ -101,14 +174,17 @@ export async function createV2SessionAttentionPage(params: Readonly<{
     const candidateLimit = params.candidateLimit ?? resolveV2SessionListInitialAttentionRowLimit();
     const measureQuery = params.timing?.measureQuery ?? (<T>(fn: () => Promise<T>) => fn());
     const measurePage = params.timing?.measurePage ?? (<T>(fn: () => T) => fn());
+    // Merged, not nested: `findV2SessionListRows` extracts the cursor from the top-level `AND`
+    // and re-expresses it through each publication-recency branch. Nesting it would leave the
+    // finite creation-time branch conjoined with the raw activity predicate that it must ignore.
+    const createAttentionWhere = (): Prisma.SessionWhereInput =>
+        mergeSessionWhereInputs(
+            createV2SessionListAttentionRowsWhere(),
+            createV2SessionListCursorWhere(params.cursor),
+        );
     const candidateRows = await measureQuery(() => findV2SessionListRows({
         userId: params.userId,
-        where: {
-            AND: [
-                createAttentionRowsWhere(),
-                createV2SessionListCursorWhere(params.cursor),
-            ],
-        },
+        where: createAttentionWhere(),
         orderBy: V2_SESSION_LIST_ORDER_BY,
         take: candidateLimit + 1,
     }));
@@ -178,9 +254,8 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
                 attentionHasNext: false,
             }),
     ]);
-    const page = measurePage(() => createV2SessionListPage({
+    const page = measurePage(() => createV2SessionListRowPage({
         rows: params.pageRows,
-        userId: params.userId,
         limit: params.limit,
     }));
     const pageRows = params.pageRows.slice(0, params.limit);
@@ -191,9 +266,26 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
         pageRows,
     }));
 
+    if (!await params.admitFinalRows(mergedRows)) {
+        return null;
+    }
+
+    const ownerAccountModes = await params.readOwnerAccountModes(
+        mergedRows
+            .filter((row) => requiresSessionMetadataOwnerAccountMode({
+                session: row,
+            }))
+            .map((row) => row.accountId),
+    );
+
     return measurePage(() => ({
-        ...page,
-        sessions: mapV2SessionListRows({ rows: mergedRows, userId: params.userId }),
+        sessions: mapV2SessionListRows({
+            rows: mergedRows,
+            userId: params.userId,
+            ownerAccountModes,
+        }),
+        nextCursor: page.nextCursor,
+        hasNext: page.hasNext,
         attentionNextCursor: attentionPage.attentionNextCursor,
         attentionHasNext: attentionPage.attentionHasNext,
     }));

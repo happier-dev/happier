@@ -1,6 +1,7 @@
 import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
+    AutomationRunStateV3,
     ExternalSessionTranscriptInvalidationV1,
     ExecutionRunPublicState,
     PrimaryTurnStatusV1,
@@ -48,7 +49,10 @@ export type RecipientFilter =
     | { type: 'machine-only'; machineId: string }
     // All machine daemons for the user, excluding user/session scoped sockets.
     | { type: 'user-machine-scoped-only' }
-    | { type: 'all-user-authenticated-connections' };
+    | { type: 'all-user-authenticated-connections' }
+    // Content-free AccountChange wake. Only V3 stored-content sockets can consume
+    // the pluginDomain arm of the canonical change feed.
+    | { type: 'account-stored-content-v3' };
 
 // === UPDATE EVENT TYPES (Persistent) ===
 
@@ -146,18 +150,34 @@ export type UpdateEvent = {
     type: 'automation-run-updated';
     runId: string;
     automationId: string;
-    state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
+    state: AutomationRunStateV3;
     scheduledAt: number;
     startedAt?: number | null;
     finishedAt?: number | null;
     updatedAt: number;
     machineId?: string | null;
+    attempt?: number;
+} | {
+    type: 'automation-run-state-changed';
+    runId: string;
+    automationId: string;
+    originKind: 'scheduled' | 'manual' | 'pluginEvent' | 'conversation';
+    previousState: AutomationRunStateV3 | null;
+    currentState: AutomationRunStateV3;
+    transitionedAt: number;
+    claimedByMachineId: string | null;
 } | {
     type: 'automation-assignment-updated';
     machineId: string;
     automationId: string;
     enabled: boolean;
     updatedAt: number;
+} | {
+    /** Content-free invalidation: query the authoritative Automation projection. */
+    type: 'automation-source-status-updated';
+} | {
+    /** Content-free invalidation: catch up the canonical AccountChange feed. */
+    type: 'account-change';
 } | {
     type: 'update-account';
     userId: string;

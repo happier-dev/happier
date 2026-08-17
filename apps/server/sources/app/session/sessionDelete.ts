@@ -1,5 +1,8 @@
 import { Context } from "@/context";
-import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
+import {
+    deleteOwnedSession,
+    type DeleteOwnedSessionResult,
+} from "@/app/session/delete/deleteOwnedSession";
 
 /**
  * Delete a session and all its related data.
@@ -12,9 +15,12 @@ import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
  * 
  * @param ctx - Context with user information
  * @param sessionId - ID of the session to delete
- * @returns true if deletion was successful, false if session not found or not owned by user
+ * @returns a typed deletion or not-found result
  */
-export async function sessionDelete(ctx: Context, sessionId: string): Promise<boolean> {
+export async function sessionDelete(
+    ctx: Context,
+    sessionId: string,
+): Promise<DeleteOwnedSessionResult> {
     return await deleteOwnedSession({
         sessionId,
         ownerAccountId: ctx.uid,

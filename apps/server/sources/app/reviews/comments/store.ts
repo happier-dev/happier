@@ -2,16 +2,32 @@ import type { Prisma as PrismaTypes } from "@prisma/client";
 import type {
     ReviewCommentAnchorV1,
     ReviewCommentEventV1,
+    ReviewCommentEventRequestBindingV1,
     ReviewCommentListRequestV1,
     ReviewCommentV1,
     StoredJsonContentEnvelope,
 } from "@happier-dev/protocol";
-import { ReviewCommentEventV1Schema, ReviewCommentV1Schema, StoredJsonContentEnvelopeSchema } from "@happier-dev/protocol";
+import {
+    BoundReviewCommentEventSensitiveEnvelopeV1Schema,
+    ReviewCommentEventV1Schema,
+    ReviewCommentV1Schema,
+    StoredJsonContentEnvelopeSchema,
+} from "@happier-dev/protocol";
 
+import {
+    type AccountEncryptionCurrentness,
+} from "@/app/encryption/accountContentKeyAdmission";
+import {
+    acquireAccountEncryptionTransitionFenceInTx,
+} from "@/app/encryption/accountEncryptionTransition";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode, prismaRuntime as Prisma } from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
+import {
+    bindReviewCommentEventSensitiveForStorage,
+    decodeReviewCommentEventSensitiveFromStorage,
+} from "./events";
 import {
     applyReviewCommentListQuery,
     matchesReviewCommentListFilters,
@@ -34,7 +50,10 @@ export type ReviewCommentStoreCommitParams = Readonly<{
     comment: ReviewCommentV1;
     event: ReviewCommentEventV1;
     storageMode?: "plain" | "e2ee";
+    accountVersion?: number;
+    accountEncryptionCurrentness?: AccountEncryptionCurrentness;
     eventEnvelope?: StoredJsonContentEnvelope;
+    requestBinding: ReviewCommentEventRequestBindingV1;
 }>;
 
 export type ReviewCommentStoreCreateParams = ReviewCommentStoreCommitParams & Readonly<{
@@ -155,6 +174,63 @@ function storageMode(params: { storageMode?: "plain" | "e2ee" }): "plain" | "e2e
     return params.storageMode ?? "plain";
 }
 
+function bytesEqual(left: Uint8Array | null, right: Uint8Array | null): boolean {
+    if (left === null || right === null) return left === right;
+    if (left.byteLength !== right.byteLength) return false;
+    return Buffer.from(left.buffer, left.byteOffset, left.byteLength).equals(
+        Buffer.from(right.buffer, right.byteOffset, right.byteLength),
+    );
+}
+
+function accountEncryptionCurrentnessMatches(
+    expected: AccountEncryptionCurrentness,
+    actual: AccountEncryptionCurrentness,
+): boolean {
+    return expected.encryptionMode === actual.encryptionMode
+        && bytesEqual(expected.contentPublicKey, actual.contentPublicKey)
+        && bytesEqual(
+            expected.contentPublicKeySignature,
+            actual.contentPublicKeySignature,
+        )
+        && expected.contentPublicKeyFingerprint
+            === actual.contentPublicKeyFingerprint;
+}
+
+async function assertReviewCommentAccountWriteCurrentnessInTx(
+    tx: Tx,
+    params: Readonly<{
+        accountId: string;
+        storageMode: "plain" | "e2ee";
+        accountVersion?: number;
+        accountEncryptionCurrentness?: AccountEncryptionCurrentness;
+    }>,
+): Promise<void> {
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(
+        tx,
+        params.accountId,
+    );
+    if (
+        fence.status !== "ready"
+        || fence.account.currentness.encryptionMode !== params.storageMode
+        || (
+            typeof params.accountVersion === "number"
+            && fence.account.version !== params.accountVersion
+        )
+        || (
+            params.accountEncryptionCurrentness
+            && !accountEncryptionCurrentnessMatches(
+                params.accountEncryptionCurrentness,
+                fence.account.currentness,
+            )
+        )
+    ) {
+        throw new ReviewCommentOperationError(
+            "review_comment_encryption_mode_mismatch",
+            "Review-comment Account encryption state changed before persistence",
+        );
+    }
+}
+
 function parseStoredEnvelope(value: unknown, fieldName: string): StoredJsonContentEnvelope {
     const parsed = StoredJsonContentEnvelopeSchema.safeParse(value);
     if (!parsed.success) {
@@ -253,7 +329,7 @@ function rowToComment(row: ReviewCommentRow): ReviewCommentV1 {
 }
 
 function rowToEvent(row: ReviewCommentEventRow): ReviewCommentEventV1 {
-    return ReviewCommentEventV1Schema.parse({
+    const structuralEvent = ReviewCommentEventV1Schema.parse({
         eventId: row.event_id,
         commentId: row.comment_id,
         accountId: row.account_id,
@@ -265,7 +341,21 @@ function rowToEvent(row: ReviewCommentEventRow): ReviewCommentEventV1 {
         bulkActionId: row.bulk_action_id ?? undefined,
         authorDeviceId: row.author_device_id ?? undefined,
         clientLamport: row.client_lamport == null ? undefined : toNumber(row.client_lamport),
-        event: decodeStoredEnvelope(row.event_envelope_json, "event"),
+        event: row.client_mutation_id
+            ? { clientMutationId: row.client_mutation_id }
+            : {},
+    });
+    const rawEnvelope = parseJson(row.event_envelope_json);
+    const bound = BoundReviewCommentEventSensitiveEnvelopeV1Schema.safeParse(rawEnvelope);
+    if (!bound.success) {
+        return ReviewCommentEventV1Schema.parse({
+            ...structuralEvent,
+            event: decodeStoredEnvelope(row.event_envelope_json, "event"),
+        });
+    }
+    return decodeReviewCommentEventSensitiveFromStorage({
+        event: structuralEvent,
+        stored: bound.data,
     });
 }
 
@@ -449,13 +539,21 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             const event = ReviewCommentEventV1Schema.parse(params.event);
             const mode = storageMode(params);
             const values = buildStoredCommentValues(comment, mode);
-            const eventEnvelopeJson = encodeStoredEnvelope({
-                value: params.eventEnvelope ?? event.event,
-                fieldName: "event",
+            const eventEnvelopeJson = stringifyJson(bindReviewCommentEventSensitiveForStorage({
+                event,
+                requestBinding: params.requestBinding,
+                eventEnvelope: params.eventEnvelope,
                 storageMode: mode,
-            });
+            }));
             try {
                 return await inTx(async (tx) => {
+                    await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
+                        accountId: params.accountId,
+                        storageMode: mode,
+                        accountVersion: params.accountVersion,
+                        accountEncryptionCurrentness:
+                            params.accountEncryptionCurrentness,
+                    });
                     const existingRows = await tx.$queryRaw<ReviewCommentRow[]>(
                         createMutationLookupQuery(params.accountId, params.createClientMutationId),
                     );
@@ -530,6 +628,14 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             const comment = ReviewCommentV1Schema.parse(params.comment);
             const event = ReviewCommentEventV1Schema.parse(params.event);
             await inTx(async (tx) => {
+                const mode = storageMode(params);
+                await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
+                    accountId: params.accountId,
+                    storageMode: mode,
+                    accountVersion: params.accountVersion,
+                    accountEncryptionCurrentness:
+                        params.accountEncryptionCurrentness,
+                });
                 const existingRows = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`
                     SELECT server_revision
                     FROM review_comments
@@ -550,7 +656,6 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     );
                 }
 
-                const mode = storageMode(params);
                 const values = buildStoredCommentValues(comment, mode);
 
                 if (existing) {
@@ -617,11 +722,12 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         server_revision, created_at
                     ) VALUES (
                         ${event.eventId}, ${event.commentId}, ${params.accountId}, ${event.projectId},
-                        ${event.eventKind}, ${encodeStoredEnvelope({
-                            value: params.eventEnvelope ?? event.event,
-                            fieldName: "event",
+                        ${event.eventKind}, ${stringifyJson(bindReviewCommentEventSensitiveForStorage({
+                            event,
+                            requestBinding: params.requestBinding,
+                            eventEnvelope: params.eventEnvelope,
                             storageMode: mode,
-                        })}, ${event.bulkActionId ?? null},
+                        }))}, ${event.bulkActionId ?? null},
                         ${eventClientMutationId(event)}, ${stringifyJson(event.actor)}, ${event.authorDeviceId ?? null},
                         ${event.clientLamport ?? null}, ${event.serverRevision}, ${event.createdAt}
                     )

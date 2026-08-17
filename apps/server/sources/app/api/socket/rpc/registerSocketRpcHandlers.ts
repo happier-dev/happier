@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { Server, Socket } from "socket.io";
 
 import {
@@ -6,19 +8,21 @@ import {
     RPC_METHODS,
     SESSION_RPC_METHODS,
     parseSocketRpcAuthorizationContext,
-    resolveSocketRpcProviderStartingMethod,
     resolveSocketRpcSessionWriteAuthorizationMethod,
     type SocketRpcAuthorizationContext,
 } from "@happier-dev/protocol/rpc";
-import { StopSessionResultSchema } from "@happier-dev/protocol";
-import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import {
+    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+} from "@happier-dev/protocol";
+import {
+    SOCKET_RPC_EVENTS,
+    SocketRpcCancellationPayloadSchema,
+    SocketRpcRequestIdSchema,
+} from "@happier-dev/protocol/socketRpc";
 
 import { observeRpcCall, recordRpcCallFailure, recordRpcRegistration, recordRpcUnregistration } from "@/app/monitoring/metrics/index";
 import { readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
-import {
-    readSessionSyncSocketCompatibility,
-    revalidateSessionSyncSocketCompatibility,
-} from "@/app/clientCompatibility/socketEnforcement";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { log } from "@/utils/logging/log";
 import type {
@@ -29,6 +33,7 @@ import { readSessionPublisherAuthorityProjection } from "@/app/presence/sessionP
 import { publishSessionPublisherClose } from "@/app/presence/publishSessionPublisherClose";
 
 import { canCallSessionScopedRpcMethod, canRegisterSessionScopedRpcMethod } from "../sessionScopedBinding";
+import { readVerifiedMachineSocketInstallationIdFromSocketData } from "../machineSocketInstallationProof";
 import { forwardRpcCall } from "./forwardRpcCall";
 import type { RpcForwardTargetGuard } from "./_types";
 import { buildRpcMethodRoom } from "./rpcMethodRoom";
@@ -54,6 +59,41 @@ type MachineScopedRpcMethod = Readonly<{
     machineId: string;
     rpcMethod: string;
 }>;
+
+type ActiveSocketRpcCancellation = {
+    controller: AbortController;
+    targetRequestId: string;
+    targetSocketId: string | null;
+    cancelled: boolean;
+};
+
+function readOptionalSocketRpcRequestId(data: unknown): string | null | undefined {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const requestId = (data as { requestId?: unknown }).requestId;
+    if (requestId === undefined) return undefined;
+    const parsed = SocketRpcRequestIdSchema.safeParse(requestId);
+    return parsed.success ? parsed.data : null;
+}
+
+function cancelActiveSocketRpcCall(params: Readonly<{
+    io: Server;
+    active: ActiveSocketRpcCancellation;
+}>): void {
+    if (params.active.cancelled) return;
+    params.active.cancelled = true;
+    params.active.controller.abort();
+    if (!params.active.targetSocketId) return;
+    try {
+        params.io.to(params.active.targetSocketId).emit(SOCKET_RPC_EVENTS.CANCEL, {
+            requestId: params.active.targetRequestId,
+        });
+    } catch (error) {
+        log(
+            { module: "websocket-rpc", level: "warn", targetSocketId: params.active.targetSocketId },
+            `RPC target cancellation failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
+}
 
 function normalizeRpcMethodName(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -171,6 +211,80 @@ function readMachineScopedSocketMachineId(socket: SocketDataCarrier): string | n
     if (typeof machineId !== "string") return null;
     const trimmed = machineId.trim();
     return trimmed ? trimmed : null;
+}
+
+function readMachineIdPrefix(method: string): string | null {
+    const separatorIndex = method.indexOf(":");
+    if (separatorIndex <= 0) return null;
+    const prefix = method.slice(0, separatorIndex).trim();
+    return prefix || null;
+}
+
+const RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS = new Set<string>([
+    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+]);
+
+function readReservedServerOriginTargetMachineId(method: string): string | null {
+    const separatorIndex = method.indexOf(":");
+    if (separatorIndex <= 0 || !RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS.has(method.slice(separatorIndex + 1))) {
+        return null;
+    }
+    const machineId = method.slice(0, separatorIndex).trim();
+    return machineId || null;
+}
+
+function isReservedServerOriginRpcMethod(method: string): boolean {
+    return [...RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS].some((reservedMethod) => (
+        method === reservedMethod || method.endsWith(`:${reservedMethod}`)
+    ));
+}
+
+function isSessionServerStartReservedRpcMethod(method: string): boolean {
+    return method === SESSION_SERVER_START_DAEMON_RPC_METHOD_V1
+        || method.endsWith(`:${SESSION_SERVER_START_DAEMON_RPC_METHOD_V1}`);
+}
+
+function canRegisterReservedServerOriginRpcMethod(params: Readonly<{
+    socket: SocketDataCarrier;
+    method: string;
+}>): boolean {
+    const targetMachineId = readReservedServerOriginTargetMachineId(params.method);
+    if (
+        targetMachineId === null
+        || readMachineScopedSocketMachineId(params.socket) !== targetMachineId
+    ) {
+        return false;
+    }
+    return !isSessionServerStartReservedRpcMethod(params.method)
+        || readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) !== null;
+}
+
+function canRegisterMachineScopedRpcMethod(params: Readonly<{
+    socketMachineId: string;
+    method: string;
+}>): boolean {
+    const methodMachineId = readMachineIdPrefix(params.method);
+    return methodMachineId === null || methodMachineId === params.socketMachineId;
+}
+
+function createExplicitMachineStopTargetGuard(
+    request: Readonly<{ machineId: string }>,
+): RpcForwardTargetGuard {
+    const matchesRequestMachine = (target: SocketDataCarrier): boolean => (
+        readMachineScopedSocketMachineId(target) === request.machineId
+    );
+    return {
+        filterTargets: async (targets) => targets.filter(matchesRequestMachine),
+        runOperation: async ({ target, operation, readLatestTarget }) => {
+            if (!matchesRequestMachine(target)) return { status: "unavailable" };
+            const latestTarget = await readLatestTarget();
+            if (!latestTarget || !matchesRequestMachine(latestTarget)) {
+                return { status: "unavailable" };
+            }
+            return { status: "current", value: await operation() };
+        },
+    };
 }
 
 function readSocketRegisteredRpcMethods(socket: SocketDataCarrier): readonly string[] {
@@ -293,12 +407,31 @@ export function registerSocketRpcHandlers(params: Readonly<{
     sessionPublisherPresence?: SessionPublisherPresenceForRpc;
 }>): void {
     const ownedMethods = new Set<string>();
+    // Caller request ids are meaningful only within this authenticated socket.
+    // The relay maps them to server-minted target ids, so a caller cannot name
+    // or cancel another caller's in-flight work at a shared target.
+    const activeCancellations = new Map<string, ActiveSocketRpcCancellation>();
+
+    params.socket.on(SOCKET_RPC_EVENTS.CANCEL, (data: unknown) => {
+        const parsed = SocketRpcCancellationPayloadSchema.safeParse(data);
+        if (!parsed.success) return;
+        const active = activeCancellations.get(parsed.data.requestId);
+        if (!active) return;
+        cancelActiveSocketRpcCall({ io: params.io, active });
+    });
 
     params.socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: unknown) => {
         try {
             const method = normalizeRpcMethodName((data as { method?: unknown } | undefined)?.method);
             if (!method) {
                 params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Invalid method name" });
+                return;
+            }
+            if (
+                isReservedServerOriginRpcMethod(method)
+                && !canRegisterReservedServerOriginRpcMethod({ socket: params.socket, method })
+            ) {
+                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
                 return;
             }
             if (!await canRegisterSessionScopedRpcMethod({ socket: params.socket, accountId: params.userId, method })) {
@@ -308,25 +441,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const machineScopedSocketMachineId = readMachineScopedSocketMachineId(params.socket);
             if (readSocketClientType(params.socket) === "machine-scoped") {
                 const machineId = machineScopedSocketMachineId ?? "";
-                if (!machineId) {
+                if (!machineId || !canRegisterMachineScopedRpcMethod({
+                    socketMachineId: machineId,
+                    method,
+                })) {
                     params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
                     return;
-                }
-                if (resolveSocketRpcProviderStartingMethod(method)) {
-                    const compatibility = readSessionSyncSocketCompatibility(params.socket);
-                    const currentCompatibility = revalidateSessionSyncSocketCompatibility(
-                        compatibility?.parseResult ?? { status: "missing" },
-                        process.env,
-                        "machine-scoped",
-                    );
-                    if (!currentCompatibility.accepted) {
-                        params.socket.emit(SOCKET_RPC_EVENTS.ERROR, {
-                            type: "register",
-                            error: "client-upgrade-required",
-                            ...(currentCompatibility.upgradeRequired ?? {}),
-                        });
-                        return;
-                    }
                 }
                 const state = await readMachineAvailabilityState({ accountId: params.userId, machineId });
                 if (state !== "available") {
@@ -386,7 +506,34 @@ export function registerSocketRpcHandlers(params: Readonly<{
     params.socket.on(SOCKET_RPC_EVENTS.CALL, async (data: unknown, callback?: (response: unknown) => void) => {
         const startedAt = Date.now();
         let method: string | null = null;
+        let callerRequestId: string | undefined;
+        let cancellation: ActiveSocketRpcCancellation | undefined;
         try {
+            const parsedRequestId = readOptionalSocketRpcRequestId(data);
+            if (parsedRequestId === null) {
+                callback?.({
+                    ok: false,
+                    error: "Invalid RPC request correlation",
+                });
+                return;
+            }
+            callerRequestId = parsedRequestId;
+            if (callerRequestId) {
+                if (activeCancellations.has(callerRequestId)) {
+                    callback?.({
+                        ok: false,
+                        error: "RPC request correlation is already active",
+                    });
+                    return;
+                }
+                cancellation = {
+                    controller: new AbortController(),
+                    targetRequestId: `rpc_${randomUUID()}`,
+                    targetSocketId: null,
+                    cancelled: false,
+                };
+                activeCancellations.set(callerRequestId, cancellation);
+            }
             method = normalizeRpcMethodName((data as { method?: unknown } | undefined)?.method);
             const callParams = (data as { params?: unknown } | undefined)?.params;
             const timeoutMs = (data as { timeoutMs?: unknown } | undefined)?.timeoutMs;
@@ -397,6 +544,17 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ok: false,
                     error: "Invalid parameters: method is required",
                 });
+                return;
+            }
+
+            if (isReservedServerOriginRpcMethod(method)) {
+                recordRpcCallFailure(method, "forbidden");
+                observeRpcCall({
+                    method,
+                    durationMs: Date.now() - startedAt,
+                    result: "error",
+                });
+                callback?.(buildForbiddenRpcResponse());
                 return;
             }
 
@@ -460,6 +618,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 return;
             }
 
+            // Only resolveRpcCallTarget can mint this narrow attestation after
+            // owner/share authorization. In particular, no client-supplied
+            // `authorization` field is considered for permission decisions.
+            if (targetResolution.permissionRespondAuthorization) {
+                authorization = targetResolution.permissionRespondAuthorization;
+            }
+
             const explicitMachineStopRequest = readExplicitMachineStopRequest(method, authorization);
             if (method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) && !explicitMachineStopRequest) {
                 callback?.({
@@ -487,8 +652,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     },
                 });
                 if (explicitMachineStopCapture.status === "rejected") {
-                    callback?.(explicitMachineStopCapture.reason === "unauthorized"
-                        ? buildForbiddenRpcResponse()
+                    callback?.(explicitMachineStopCapture.reason === "machine_control_unavailable"
+                        ? {
+                            ok: false,
+                            error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+                            errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+                        }
                         : {
                             ok: false,
                             error: "Session stop target unavailable",
@@ -497,11 +666,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
             }
 
-            const targetGuard = createSessionModelTransitionTargetGuard({
-                method,
-                targetUserId: targetResolution.targetUserId,
-                presence: params.sessionPublisherPresence,
-            });
+            const targetGuard = explicitMachineStopRequest
+                ? createExplicitMachineStopTargetGuard(explicitMachineStopRequest)
+                : createSessionModelTransitionTargetGuard({
+                    method,
+                    targetUserId: targetResolution.targetUserId,
+                    presence: params.sessionPublisherPresence,
+                });
             const forwarded = await forwardRpcCall({
                 io: params.io,
                 targetUserId: targetResolution.targetUserId,
@@ -513,20 +684,28 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ? { transportResponseEnvelopeVersion: 1 as const }
                     : {}),
                 callerSocketId: params.socket.id,
+                callerSocket: params.socket,
                 ...(targetGuard ? { targetGuard } : {}),
+                ...(cancellation
+                    ? {
+                        cancellation: {
+                            targetRequestId: cancellation.targetRequestId,
+                            signal: cancellation.controller.signal,
+                            onTargetSelected: (target) => {
+                                cancellation!.targetSocketId = target.id;
+                            },
+                        },
+                    }
+                    : {}),
             });
             if (
                 explicitMachineStopRequest
                 && explicitMachineStopCapture?.status === "captured"
                 && forwarded.ok
             ) {
-                const stopResult = StopSessionResultSchema.safeParse(forwarded.result);
                 const didProveStopped = (
                     forwarded.transportAcknowledgement?.kind === "session.stop"
                     && forwarded.transportAcknowledgement.status === "stopped"
-                ) || (
-                    stopResult.success
-                    && stopResult.data.status === "stopped"
                 );
                 if (didProveStopped) {
                     const presence = params.sessionPublisherPresence;
@@ -573,10 +752,22 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ok: false,
                 error: error instanceof Error ? error.message : "Internal error",
             });
+        } finally {
+            if (
+                callerRequestId
+                && cancellation
+                && activeCancellations.get(callerRequestId) === cancellation
+            ) {
+                activeCancellations.delete(callerRequestId);
+            }
         }
     });
 
     params.socket.on("disconnect", async () => {
+        for (const active of activeCancellations.values()) {
+            cancelActiveSocketRpcCall({ io: params.io, active });
+        }
+        activeCancellations.clear();
         const methods = [...ownedMethods];
         ownedMethods.clear();
         writeSocketRegisteredRpcMethods(params.socket, ownedMethods);

@@ -140,4 +140,39 @@ describe("enableAuthentication (defensive error handling)", () => {
 
         await app.close();
     });
+
+    it("captures the account stored-content HTTP declaration once on the authenticated request", async () => {
+        verifyToken.mockResolvedValueOnce({ userId: "u1" });
+        enforceLoginEligibility.mockResolvedValueOnce({ ok: true });
+
+        const { enableAuthentication } = await import("./enableAuthentication");
+        const app = Fastify({ logger: false }) as any;
+        enableAuthentication(app);
+        app.get(
+            "/private",
+            { preHandler: app.authenticate },
+            async (request: any) => request.accountStoredContentCompatibility,
+        );
+        await app.ready();
+
+        const res = await app.inject({
+            method: "GET",
+            url: "/private",
+            headers: {
+                authorization: "Bearer t",
+                "x-happier-account-stored-content-protocol": "1",
+            },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({
+            accepted: true,
+            supportsCurrentProtocol: true,
+            outcome: "accepted",
+            declaration: { v: 1, protocolVersion: 1 },
+            upgradeRequired: null,
+        });
+
+        await app.close();
+    });
 });

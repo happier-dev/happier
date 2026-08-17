@@ -209,6 +209,7 @@ describe("qualified Connected Account V4 credential routes", () => {
         const ref = { service, accountId: "provider/account" };
         const target = { kind: "account" as const, ref };
         const credential = {
+            revisionSemantics: "revisioned" as const,
             credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
             authenticationModeId: "token",
             configurationRevision: "configuration-revision",
@@ -218,12 +219,16 @@ describe("qualified Connected Account V4 credential routes", () => {
         const configuration = {
             target,
             authenticationModeId: "token",
+            revisionSemantics: credential.revisionSemantics,
             credentialRevision: credential.credentialRevision,
             configurationRevision: "configuration-revision",
             configurationContent: { t: "plain" as const, v: { region: "eu" } },
         };
         const readQualifiedConnectedServiceCredential =
-            vi.fn(async () => credential);
+            vi.fn(async () => ({
+                status: "resolved" as const,
+                credential,
+            }));
         const readQualifiedConnectedAccountConfiguration =
             vi.fn(async () => configuration);
         const app = createTestApp();
@@ -268,6 +273,133 @@ describe("qualified Connected Account V4 credential routes", () => {
             accountId: "account-owner",
             target,
         });
+    });
+
+    it("returns the stable unsupported-format conflict for a retained legacy credential", async () => {
+        const ref = { service, accountId: "provider/account" };
+        const readQualifiedConnectedServiceCredential =
+            vi.fn(async () => ({ status: "unsupported_format" as const }));
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
+            listQualifiedConnectedAccounts: vi.fn(),
+            mutateQualifiedConnectedServiceCredential: vi.fn(),
+            readQualifiedConnectedServiceCredential,
+        });
+        await app.ready();
+
+        const credentialQuery =
+            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                QualifiedConnectedAccountRefSchema,
+                ref,
+            );
+        const response = await app.inject({
+            method: "GET",
+            url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
+        });
+
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({
+            error: "connect_credential_unsupported_format",
+        });
+    });
+
+    it("keeps an absent credential on the V4 not-found path", async () => {
+        const ref = { service, accountId: "provider/account" };
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
+            listQualifiedConnectedAccounts: vi.fn(),
+            mutateQualifiedConnectedServiceCredential: vi.fn(),
+            readQualifiedConnectedServiceCredential:
+                vi.fn(async () => ({ status: "not_found" as const })),
+        });
+        await app.ready();
+
+        const credentialQuery =
+            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                QualifiedConnectedAccountRefSchema,
+                ref,
+            );
+        const response = await app.inject({
+            method: "GET",
+            url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
+        });
+
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({
+            error: "connect_credential_not_found",
+        });
+    });
+
+    it("keeps an unsupported credential health mutation distinct from not found", async () => {
+        const ref = { service, accountId: "provider/account" };
+        const mutateQualifiedConnectedServiceCredentialHealth =
+            vi.fn(async () => ({ status: "unsupported_format" as const }));
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
+            listQualifiedConnectedAccounts: vi.fn(),
+            mutateQualifiedConnectedServiceCredential: vi.fn(),
+            mutateQualifiedConnectedServiceCredentialHealth,
+        });
+        await app.ready();
+
+        const response = await app.inject({
+            method: "PATCH",
+            url: "/v4/connect/qualified/credential/health",
+            payload: {
+                ref,
+                expectedCredentialRevision:
+                    "csr_abcdefghijklmnopqrstuvwxyz",
+                expectedConfigurationRevision: null,
+                health: {
+                    v: 1,
+                    status: "needs_reauth",
+                    reconnectRequired: true,
+                    providerErrorCode: "invalid_grant",
+                },
+            },
+        });
+
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({
+            error: "connect_credential_unsupported_format",
+        });
+    });
+
+    it("maps credential health storage-mode mismatch to invalid params", async () => {
+        const ref = { service, accountId: "provider/account" };
+        const mutateQualifiedConnectedServiceCredentialHealth =
+            vi.fn(async () => ({ status: "storage_mode_mismatch" as const }));
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
+            listQualifiedConnectedAccounts: vi.fn(),
+            mutateQualifiedConnectedServiceCredential: vi.fn(),
+            mutateQualifiedConnectedServiceCredentialHealth,
+        });
+        await app.ready();
+
+        const response = await app.inject({
+            method: "PATCH",
+            url: "/v4/connect/qualified/credential/health",
+            payload: {
+                ref,
+                expectedCredentialRevision:
+                    "csr_abcdefghijklmnopqrstuvwxyz",
+                expectedConfigurationRevision: null,
+                health: {
+                    v: 1,
+                    status: "needs_reauth",
+                    reconnectRequired: true,
+                    providerErrorCode: "invalid_grant",
+                },
+            },
+        });
+
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: "invalid-params" });
     });
 
     it("replaces account configuration through the credential/configuration CAS owner", async () => {

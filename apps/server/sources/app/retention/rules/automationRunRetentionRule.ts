@@ -1,6 +1,9 @@
-import { createDeleteManyRetentionRule } from './createDeleteManyRetentionRule';
+import {
+    AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES,
+    AUTOMATION_RUN_TERMINAL_STATES,
+} from '@/app/automations/automationTypes';
 
-const TERMINAL_AUTOMATION_RUN_STATES = ['succeeded', 'failed', 'cancelled', 'expired'] as const;
+import { createDeleteManyRetentionRule } from './createDeleteManyRetentionRule';
 
 export function createAutomationRunRetentionRule() {
     return createDeleteManyRetentionRule({
@@ -9,7 +12,15 @@ export function createAutomationRunRetentionRule() {
         primaryField: 'id',
         cutoffField: 'finishedAt',
         extraWhere: () => ({
-            state: { in: TERMINAL_AUTOMATION_RUN_STATES },
+            state: { in: AUTOMATION_RUN_TERMINAL_STATES },
+            // A succeeded Conversation Run is the only terminal Run whose
+            // reply lifecycle may still require custody. Preserve it until
+            // the handoff has a terminal disposition.
+            OR: [
+                { state: { not: 'succeeded' } },
+                { originKind: { not: 'conversation' } },
+                { replyHandoffState: { in: AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES } },
+            ],
         }),
     });
 }

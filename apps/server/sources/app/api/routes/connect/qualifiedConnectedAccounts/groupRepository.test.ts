@@ -69,6 +69,7 @@ describe("qualified Connected Account group repository", () => {
     it("projects one strict structured service identity", () => {
         expect(toQualifiedConnectedAccountGroup(row())).toMatchObject({
             ref: groupRef,
+            incarnation: "group-row",
             activeConnectedAccountId: accountRef.accountId,
             members: [{
                 connectedAccountId: accountRef.accountId,

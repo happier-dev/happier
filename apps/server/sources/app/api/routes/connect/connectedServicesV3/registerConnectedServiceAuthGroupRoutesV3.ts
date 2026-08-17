@@ -20,6 +20,7 @@ import {
     listQualifiedConnectedAccountGroups,
     patchQualifiedConnectedAccountGroup,
     patchQualifiedConnectedAccountGroupRuntimeState,
+    readQualifiedConnectedAccountGroupForLegacyV3Mutation,
     readQualifiedConnectedAccountGroupForLegacyProjection,
     setQualifiedConnectedAccountGroupActiveAccount,
     updateQualifiedConnectedAccountGroupMember,
@@ -172,6 +173,30 @@ async function readLegacyGroup(params: Readonly<{
         : null;
 }
 
+async function readLegacyGroupForMutation(params: Readonly<{
+    accountId: string;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+}>) {
+    const result =
+        await readQualifiedConnectedAccountGroupForLegacyV3Mutation({
+            accountId: params.accountId,
+            service: resolveLegacyQualifiedConnectedAccountService(
+                params.serviceId,
+            ),
+            groupId: params.groupId,
+        });
+    if (result.status !== "current") return result;
+    return {
+        status: "current" as const,
+        group: projectLegacyGroup(
+            result.group,
+            params.serviceId,
+            result.activeProfileId,
+        ),
+    };
+}
+
 function generationConflict(
     result: QualifiedConnectedAccountGroupMutationResult,
 ): number | null {
@@ -299,7 +324,13 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 enabled: member.enabled,
             })),
             activeConnectedAccountId: activeProfileId,
+            legacyV3Mutation: true,
         });
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         if (result.status === "already_exists") {
             return reply.code(409).send({
                 error: "connect_group_already_exists",
@@ -372,16 +403,22 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
         const serviceId =
             ConnectedServiceIdSchema.parse(request.params.serviceId);
         const groupId = request.params.groupId;
-        const current = await readLegacyGroup({
+        const legacyMutation = await readLegacyGroupForMutation({
             accountId: request.userId,
             serviceId,
             groupId,
         });
-        if (!current) {
+        if (legacyMutation.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (legacyMutation.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_group_not_found",
             });
         }
+        const current = legacyMutation.group;
         const policyPatch = parsePolicyPatchForRequest(request.body.policy);
         if (policyPatch === null) {
             return reply.code(400).send({
@@ -501,6 +538,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 error: "connect_group_not_found",
             });
         }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         if (
             result.status === "member_not_found"
             || result.status === "member_disabled"
@@ -576,6 +618,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 error: "connect_group_not_found",
             });
         }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         const generation = generationConflict(result);
         if (generation !== null) {
             return reply.code(409).send({
@@ -617,16 +664,22 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
         const serviceId =
             ConnectedServiceIdSchema.parse(request.params.serviceId);
         const groupId = request.params.groupId;
-        const current = await readLegacyGroup({
+        const legacyMutation = await readLegacyGroupForMutation({
             accountId: request.userId,
             serviceId,
             groupId,
         });
-        if (!current) {
+        if (legacyMutation.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (legacyMutation.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_group_not_found",
             });
         }
+        const current = legacyMutation.group;
         if (
             request.body.expectedGeneration !== undefined
             && request.body.expectedGeneration !== current.generation
@@ -704,6 +757,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 error: "connect_group_not_found",
             });
         }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         if (result.status === "member_not_found") {
             return reply.code(400).send({
                 error: "connect_group_member_not_found",
@@ -778,6 +836,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 error: "connect_group_not_found",
             });
         }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         if (result.status === "member_not_found") {
             return reply.code(400).send({
                 error: "connect_group_member_profile_not_found",
@@ -831,16 +894,22 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                     error: "connect_group_generation_required",
                 });
             }
-            const current = await readLegacyGroup({
+            const legacyMutation = await readLegacyGroupForMutation({
                 accountId: request.userId,
                 serviceId,
                 groupId: request.params.groupId,
             });
-            if (!current) {
+            if (legacyMutation.status === "incarnation_superseded") {
+                return reply.code(409).send({
+                    error: "connect_group_incarnation_conflict",
+                });
+            }
+            if (legacyMutation.status === "not_found") {
                 return reply.code(404).send({
                     error: "connect_group_member_not_found",
                 });
             }
+            const current = legacyMutation.group;
             if (
                 request.body.expectedGeneration !== current.generation
             ) {
@@ -894,6 +963,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
             ) {
                 return reply.code(404).send({
                     error: "connect_group_member_not_found",
+                });
+            }
+            if (result.status === "incarnation_superseded") {
+                return reply.code(409).send({
+                    error: "connect_group_incarnation_conflict",
                 });
             }
             const generation = generationConflict(result);
@@ -964,6 +1038,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                     error: "connect_group_member_not_found",
                 });
             }
+            if (result.status === "incarnation_superseded") {
+                return reply.code(409).send({
+                    error: "connect_group_incarnation_conflict",
+                });
+            }
             const generation = generationConflict(result);
             if (generation !== null) {
                 return reply.code(409).send({
@@ -1015,16 +1094,22 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 error: "connect_group_generation_required",
             });
         }
-        const current = await readLegacyGroup({
+        const legacyMutation = await readLegacyGroupForMutation({
             accountId: request.userId,
             serviceId,
             groupId: request.params.groupId,
         });
-        if (!current) {
+        if (legacyMutation.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (legacyMutation.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_group_not_found",
             });
         }
+        const current = legacyMutation.group;
         const member = current.members.find((candidate) =>
             candidate.profileId === request.body.profileId
             && candidate.enabled);
@@ -1077,6 +1162,11 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
         if (result.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_group_not_found",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         if (

@@ -21,7 +21,10 @@ describe("canonical session transcript writer", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         sessionUpdate.mockResolvedValue({ seq: 8 });
-        sessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        sessionFindUnique.mockResolvedValue({
+            encryptionMode: "plain",
+            currentStorageState: "machine_only",
+        });
         sessionMessageFindMany.mockResolvedValue([]);
         sessionMessageCreate.mockResolvedValue({
             id: "message-1",
@@ -65,6 +68,145 @@ describe("canonical session transcript writer", () => {
         });
         expect(sessionUpdate).not.toHaveBeenCalled();
         expect(sessionMessageCreate).not.toHaveBeenCalled();
+    }, 60_000);
+
+    it("persists an admitted-input receipt and opaque equality evidence through the canonical writer", async () => {
+        const service = await import("./sessionTranscriptWrite");
+        const writeSessionTranscriptMessageInTx = Reflect.get(service, "writeSessionTranscriptMessageInTx") as
+            | ((tx: Tx, params: unknown) => Promise<unknown>)
+            | undefined;
+        expect(writeSessionTranscriptMessageInTx).toBeTypeOf("function");
+
+        const receipt = {
+            v: 1,
+            issuer: "authenticatedAccount",
+            actorAccountId: "account-1",
+            sessionRelationship: "sharedEditor",
+        } as const;
+        const equalityEvidence = {
+            kind: "plainDigest",
+            digest: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        } as const;
+        await expect(writeSessionTranscriptMessageInTx!(createTx(), {
+            sessionId: "session-1",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            content: { t: "plain", v: { role: "user", text: "hello" } },
+            localId: "pending:item-1",
+            sidechainId: null,
+            messageRole: "user",
+            inputAdmissionReceipt: receipt,
+            requestEqualityEvidenceV1: equalityEvidence,
+        })).resolves.toMatchObject({ ok: true });
+
+        expect(sessionMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                inputAdmissionReceipt: receipt,
+                requestEqualityEvidenceV1: equalityEvidence,
+            }),
+        }));
+    }, 60_000);
+
+    it("rejects every current structured presentation before mutation while preserving incumbent ACP and built-in content", async () => {
+        const writer = await import("./sessionTranscriptWrite");
+
+        const rejected = await writer.writeSessionTranscriptMessageInTx(createTx(), {
+            sessionId: "session-1",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "structured:invalid",
+            sidechainId: null,
+            messageRole: "agent",
+            content: {
+                t: "plain",
+                v: {
+                    v: 1,
+                    profile: "pluginTranscriptV1",
+                    owner: { pluginId: "acme.transcript", contributionLocalId: "review-card" },
+                    snapshot: {
+                        kind: "field",
+                        label: "Live field",
+                        control: { kind: "text", settingId: "secret" },
+                    },
+                },
+            },
+        });
+
+        expect(rejected).toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_invalid",
+        });
+        expect(sessionUpdate).not.toHaveBeenCalled();
+        expect(sessionMessageCreate).not.toHaveBeenCalled();
+
+        const blocked = await writer.writeSessionTranscriptMessageInTx(createTx(), {
+            sessionId: "session-1",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "structured:valid",
+            sidechainId: null,
+            messageRole: "agent",
+            content: {
+                t: "plain",
+                v: {
+                    v: 1,
+                    profile: "pluginTranscriptV1",
+                    owner: { pluginId: "acme.transcript", contributionLocalId: "review-card" },
+                    snapshot: { kind: "text", text: "Historical snapshot" },
+                },
+            },
+        });
+
+        expect(blocked).toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_unavailable",
+        });
+        expect(sessionUpdate).not.toHaveBeenCalled();
+        expect(sessionMessageCreate).not.toHaveBeenCalled();
+
+        const rawAcp = await writer.writeSessionTranscriptMessageInTx(createTx(), {
+            sessionId: "session-1",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "acp:incumbent",
+            sidechainId: null,
+            messageRole: "agent",
+            content: {
+                t: "plain",
+                v: {
+                    role: "agent",
+                    content: { type: "acp", data: { type: "message", message: "Incumbent ACP" } },
+                },
+            },
+        });
+        const builtInStructured = await writer.writeSessionTranscriptMessageInTx(createTx(), {
+            sessionId: "session-1",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "built-in:review-comments",
+            sidechainId: null,
+            messageRole: "agent",
+            content: {
+                t: "plain",
+                v: {
+                    role: "agent",
+                    content: { type: "acp", data: { type: "message", message: "Review comments" } },
+                    meta: { happier: { kind: "review_comments.v1", payload: {} } },
+                },
+            },
+        });
+
+        expect(rawAcp).toMatchObject({ ok: true, message: { seq: 8 } });
+        expect(builtInStructured).toMatchObject({ ok: true, message: { seq: 8 } });
+        expect(sessionUpdate).toHaveBeenCalledTimes(2);
+        expect(sessionMessageCreate).toHaveBeenCalledTimes(2);
     }, 60_000);
 
     it("writes a historical batch gaplessly and exact retries allocate nothing", async () => {
@@ -119,6 +261,92 @@ describe("canonical session transcript writer", () => {
         });
 
         expect(retry).toMatchObject({ ok: true, didWrite: false, firstSeq: 8, lastSeq: 9 });
+        expect(sessionUpdate).not.toHaveBeenCalled();
+        expect(sessionMessageCreate).not.toHaveBeenCalled();
+    }, 60_000);
+
+    it("admits compatibility history only with hosted authority and rejects it before allocation in finite storage", async () => {
+        const writer = await import("./sessionTranscriptWrite");
+        const params = {
+            sessionId: "session-1",
+            writeAuthority: "hosted" as const,
+            storagePolicy: "optional" as const,
+            items: [{
+                localId: "history:host-compatibility",
+                sidechainId: null,
+                messageRole: "agent" as const,
+                content: { t: "plain" as const, v: { role: "agent", text: "hosted history" } },
+            }],
+        };
+
+        await expect(writer.writeHistoricalSessionMessageBatchInTx(createTx(), params)).resolves.toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_storage_authority_mismatch",
+        });
+        expect(sessionUpdate).not.toHaveBeenCalled();
+        expect(sessionMessageCreate).not.toHaveBeenCalled();
+
+        sessionFindUnique.mockResolvedValue({
+            encryptionMode: "plain",
+            currentStorageState: "hosted",
+        });
+        await expect(writer.writeHistoricalSessionMessageBatchInTx(createTx(), params))
+            .resolves.toMatchObject({ ok: true, didWrite: true, firstSeq: 8, lastSeq: 8 });
+        expect(sessionUpdate).toHaveBeenCalledTimes(1);
+        expect(sessionMessageCreate).toHaveBeenCalledTimes(1);
+    }, 60_000);
+
+    it("persists historical observation provenance as part of the stable import identity", async () => {
+        const writer = await import("./sessionTranscriptWrite");
+        const provenance = { kind: "non_dependent" as const, source: "history" as const };
+        const item = {
+            localId: "history:source-fact",
+            sidechainId: null,
+            messageRole: "user" as const,
+            content: { t: "plain" as const, v: { role: "user", text: "historical source fact" } },
+            transcriptObservationProvenance: provenance,
+        };
+        sessionMessageCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+            id: "message-history-source-fact",
+            sessionId: "session-1",
+            seq: data.seq,
+            localId: data.localId,
+            sidechainId: data.sidechainId,
+            messageRole: data.messageRole,
+            content: data.content,
+            sourceCreatedAt: null,
+            sourceUpdatedAt: null,
+            transcriptObservationProvenance: data.transcriptObservationProvenance ?? null,
+            deliveryResolution: null,
+            createdAt: data.createdAt,
+            updatedAt: data.createdAt,
+        }));
+
+        const first = await writer.writeHistoricalSessionMessageBatchInTx(createTx(), {
+            sessionId: "session-1",
+            storagePolicy: "optional",
+            items: [item],
+        });
+
+        expect(first).toMatchObject({ ok: true, didWrite: true });
+        expect(sessionMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ transcriptObservationProvenance: provenance }),
+        }));
+
+        vi.clearAllMocks();
+        sessionMessageFindMany.mockResolvedValue(first.ok ? first.messages : []);
+        const changedProvenance = await writer.writeHistoricalSessionMessageBatchInTx(createTx(), {
+            sessionId: "session-1",
+            storagePolicy: "optional",
+            items: [{ ...item, transcriptObservationProvenance: { kind: "non_dependent", source: "external" } }],
+        });
+
+        expect(changedProvenance).toEqual({
+            ok: false,
+            error: "stable-item-conflict",
+            localId: "history:source-fact",
+        });
         expect(sessionUpdate).not.toHaveBeenCalled();
         expect(sessionMessageCreate).not.toHaveBeenCalled();
     }, 60_000);

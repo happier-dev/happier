@@ -12,6 +12,7 @@ function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
         maxDeletesPerRulePerRun: 500,
         domains: {
             sessions: { mode: 'keep_forever' },
+            sessionSidechainMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             usageEvents: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },
@@ -36,6 +37,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             enabled: false,
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -57,14 +59,16 @@ describe('retention/retentionPolicyToCapabilities', () => {
             enabled: false,
             sessions: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
-            usageEvents: { mode: 'keep_forever' },
         });
+        expect(capabilities).not.toHaveProperty('sessionMessages');
+        expect(capabilities).not.toHaveProperty('usageEvents');
     });
 
     it('maps finite retention policies to capability payload contracts', () => {
         const capabilities = retentionPolicyToCapabilities(createPolicy({
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
                 userFeedItems: { mode: 'keep_forever' },
@@ -91,9 +95,11 @@ describe('retention/retentionPolicyToCapabilities', () => {
             },
             accountChanges: { mode: 'delete_older_than', days: 14 },
             voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
-            usageEvents: { mode: 'delete_older_than', days: 180 },
             automationRuns: { mode: 'delete_older_than', days: 45 },
             automationRunEvents: { mode: 'delete_older_than', days: 45 },
         });
+        expect(capabilities).not.toHaveProperty('sessionMessages');
+        expect(capabilities).not.toHaveProperty('usageEvents');
+        expect(Object.prototype.hasOwnProperty.call(capabilities, 'sessionSidechainMessages')).toBe(false);
     });
 });

@@ -3,6 +3,7 @@ import type { Fastify } from "@/app/api/types";
 import type { ReviewCommentActorRefV1, ReviewCommentPrincipalHeaderV1 } from "@happier-dev/protocol";
 import type { z } from "zod";
 import {
+    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     createReviewCommentPrincipalSigningInputV1,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
@@ -17,6 +18,7 @@ import {
     ReviewCommentSetDispositionRequestV1Schema,
     ReviewCommentPrincipalHeaderV1Schema,
     ReviewCommentTransitionRequestV1Schema,
+    reviewCommentMutationInputWithoutEventEnvelopeV1,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
@@ -25,6 +27,7 @@ import {
     createReviewCommentOperations,
     type ReviewCommentOperations,
 } from "./operations";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { db } from "@/storage/db";
 import { ReviewCommentOperationError } from "./errors";
@@ -168,10 +171,17 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     const currentIntent = params.headerPrincipal.currentIntent;
     if (currentIntent) {
         const body = ReviewCommentCreateRequestV1Schema.safeParse(params.body);
+        const logicalEffectBodySha256Base64Url = body.success
+            ? createHash("sha256")
+                .update(stringifyReviewCommentPrincipalCanonicalJsonV1(
+                    reviewCommentMutationInputWithoutEventEnvelopeV1({ ...body.data }),
+                ))
+                .digest("base64url")
+            : null;
         if (
             proof.method !== "POST"
             || proof.path !== "/v1/reviews/comments"
-            || currentIntent.effectBodySha256Base64Url !== proof.bodySha256Base64Url
+            || currentIntent.effectBodySha256Base64Url !== logicalEffectBodySha256Base64Url
             || params.headerPrincipal.actor.kind !== "agent"
             || currentIntent.agentId !== params.headerPrincipal.actor.agentId
             || currentIntent.sessionId !== params.headerPrincipal.actor.sessionId
@@ -265,8 +275,26 @@ async function resolveDefaultPrincipal(request: Readonly<{
 }>): Promise<ReviewCommentPrincipal> {
     const account = await db.account.findUnique({
         where: { id: request.userId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            seq: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    const mode = account
+        ? resolveEffectiveAccountEncryptionModeFromAccountRow(account)
+        : null;
+    if (!account || mode?.status !== "ready" || currentness?.status !== "ready") {
+        throw new ReviewCommentOperationError(
+            "review_comment_encryption_mode_mismatch",
+            "Review comments are unavailable until Account encryption state is consistent",
+        );
+    }
     const headerPrincipal = readReviewCommentPrincipalHeader(request.headers);
     const verifiedHeaderPrincipal = headerPrincipal
         ? await verifyReviewCommentPrincipalHeader({
@@ -289,6 +317,7 @@ async function resolveDefaultPrincipal(request: Readonly<{
             pluginId: grantPluginId,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: readReviewCommentCreateTargetScope(request.body),
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
         })
         : [];
     return {
@@ -296,7 +325,9 @@ async function resolveDefaultPrincipal(request: Readonly<{
         actor,
         grants: trustedGrants.map((grant) => grant.capability),
         ...(verifiedHeaderPrincipal?.currentIntent ? { currentIntent: verifiedHeaderPrincipal.currentIntent } : {}),
-        storageMode: account ? resolveEffectiveAccountEncryptionModeFromAccountRow(account) : "e2ee",
+        storageMode: mode.mode,
+        accountVersion: account.seq,
+        accountEncryptionCurrentness: currentness.currentness,
     };
 }
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
     createSessionRouteTestBuilder,
+    accountFindUnique,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
@@ -61,9 +62,10 @@ describe("sessionRoutes v2 archived sessions listing", () => {
             nextCursor: null,
             hasNext: false,
         });
+        expect(accountFindUnique).not.toHaveBeenCalled();
     });
 
-    it("preserves the released layout-zero shared archived-row projection", async () => {
+    it("refuses the released layout-zero shared archived-row projection until owner migration", async () => {
         const now = new Date(1_000);
         const row = {
             id: "legacy-shared-archived",
@@ -102,25 +104,10 @@ describe("sessionRoutes v2 archived sessions listing", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/archived");
         const { reply, response } = await route.invoke({ query: { limit: 1 } });
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(response).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "legacy-shared-archived",
-                    metadata: "legacy-whole-bag",
-                    metadataVersion: 1,
-                    metadataLayoutVersion: 0,
-                    agentState: "legacy-owner-state",
-                    agentStateVersion: 3,
-                    archivedAt: now.getTime(),
-                    share: {
-                        accessLevel: "view",
-                        canApprovePermissions: false,
-                    },
-                }),
-            ],
-            nextCursor: null,
-            hasNext: false,
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
         expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({

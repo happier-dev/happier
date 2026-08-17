@@ -5,6 +5,9 @@ import { registerAutomationAssignmentRoutes } from "./registerAutomationAssignme
 import { registerAutomationCrudRoutes } from "./registerAutomationCrudRoutes";
 import { registerAutomationDaemonRoutes } from "./registerAutomationDaemonRoutes";
 import { registerAutomationRunRoutes } from "./registerAutomationRunRoutes";
+import { registerAutomationEventRoutes } from "./registerAutomationEventRoutes";
+import { registerAutomationV3Routes } from "./registerAutomationV3Routes";
+import { registerAutomationConversationRoutes } from "./registerAutomationConversationRoutes";
 
 export function automationRoutes(app: Fastify): void {
     const gated = createServerFeatureGatedRouteApp(app, "automations", process.env);
@@ -13,4 +16,7 @@ export function automationRoutes(app: Fastify): void {
     registerAutomationAssignmentRoutes(gated);
     registerAutomationDaemonRoutes(gated);
     registerAutomationRunRoutes(gated);
+    registerAutomationEventRoutes(gated);
+    registerAutomationConversationRoutes(gated);
+    registerAutomationV3Routes(gated);
 }

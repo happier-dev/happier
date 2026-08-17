@@ -1,5 +1,6 @@
 import type { FeatureId } from "@happier-dev/protocol";
 import {
+    AccountStoredContentUpgradeRequiredV1Schema,
     CreateOrUpdateSessionOrganizationFolderRequestSchema,
     CreateOrUpdateSessionOrganizationFolderResponseSchema,
     CreateOrUpdateSessionOrganizationTagRequestSchema,
@@ -29,6 +30,7 @@ import {
 } from "@happier-dev/protocol";
 import { z } from "zod";
 
+import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import {
     canAccessSyncedSessionForOrganization,
@@ -117,6 +119,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: SessionOrganizationSnapshotResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-organization-snapshot-request") }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
             },
         },
     }, async (request, reply) => {
@@ -129,6 +132,21 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             accountId: request.userId,
             request: parsedRequest.data,
         });
+
+        const includesCurrentOnlyDisplayState = [
+            ...snapshot.folders,
+            ...snapshot.tags,
+            ...snapshot.labels,
+        ].some((entry) => entry.displayState?.status === "unavailable");
+        if (
+            includesCurrentOnlyDisplayState
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
 
         return reply.send({ snapshot });
     });

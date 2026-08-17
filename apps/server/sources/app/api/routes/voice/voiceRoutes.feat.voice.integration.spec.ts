@@ -1,9 +1,11 @@
 import Fastify from "fastify";
+import fastifyRateLimit from "@fastify/rate-limit";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
+import { resolveApiRateLimitPluginOptions } from "@/app/api/utils/apiRateLimitPolicy";
 import { HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE } from "@happier-dev/protocol";
 import { voiceRoutes } from "./voiceRoutes";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -15,6 +17,7 @@ const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
 function createTestApp() {
     const app = Fastify();
+    app.register(fastifyRateLimit, resolveApiRateLimitPluginOptions(process.env));
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -885,6 +888,8 @@ describe("voiceRoutes (integration, sqlite)", () => {
 
     it("rejects blank, invalid-Unicode, or oversized opaque ids at the voice lifecycle boundary", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-voice-lifecycle-validation" }, select: { id: true } });
+        const fetchSpy = vi.fn();
+        vi.stubGlobal("fetch", fetchSpy);
         const app = createTestApp();
         voiceRoutes(app as any);
         await app.ready();
@@ -892,7 +897,7 @@ describe("voiceRoutes (integration, sqlite)", () => {
         const blankStart = await bindVoiceSession(app, user.id, "lease_validation", "   ");
         expect(blankStart.statusCode).toBe(400);
 
-        const oversizedProviderConversationId = "c".repeat(513);
+        const oversizedProviderConversationId = "c".repeat(192);
         const oversizedStart = await bindVoiceSession(app, user.id, "lease_validation", oversizedProviderConversationId);
         expect(oversizedStart.statusCode).toBe(400);
 
@@ -904,6 +909,8 @@ describe("voiceRoutes (integration, sqlite)", () => {
 
         const oversizedComplete = await completeVoiceSession(app, user.id, "lease_validation", oversizedProviderConversationId);
         expect(oversizedComplete.statusCode).toBe(400);
+
+        expect(fetchSpy).not.toHaveBeenCalled();
 
         const oversizedSession = await app.inject({
             method: "POST",
@@ -930,14 +937,14 @@ describe("voiceRoutes (integration, sqlite)", () => {
         expect(invalidUnicodeSession.statusCode).toBe(400);
     });
 
-    it("preserves max-length multibyte session and provider identifiers with a digest identity", async () => {
+    it("preserves max-length multibyte session and portable provider identifiers with a digest identity", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-voice-max-opaque-identifiers" }, select: { id: true } });
         const sessionId = "🙂".repeat(512);
-        const providerConversationId = ` ${"界".repeat(510)} `;
+        const providerConversationId = ` ${"界".repeat(189)} `;
         let bindingNonce = "";
 
         expect([...sessionId]).toHaveLength(512);
-        expect([...providerConversationId]).toHaveLength(512);
+        expect([...providerConversationId]).toHaveLength(191);
         vi.stubGlobal("fetch", vi.fn(async (url: any) => {
             const u = String(url);
             if (u.includes("/v1/convai/conversation/token")) {

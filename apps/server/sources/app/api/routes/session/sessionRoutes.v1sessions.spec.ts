@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import tweetnacl from "tweetnacl";
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+} from "@happier-dev/protocol";
 import { createEnvReset } from "../../testkit/env";
 
 import {
@@ -18,6 +22,7 @@ import {
     sessionFindUnique,
     sessionUpdateMany,
     sessionShareFindMany,
+    txExecuteRawUnsafe,
     txSessionCreate,
     txSessionUpdate,
 } from "./sessionRoutes.testkit";
@@ -25,6 +30,93 @@ import { DEFAULT_SESSION_ROLLBACK_ELIGIBLE_TURN_RELATION_LIMIT } from "./v2Sessi
 
 const OWNER_METADATA_CIPHERTEXT =
     "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+const OWNER_METADATA_ENVELOPE = {
+    t: "encrypted",
+    c: OWNER_METADATA_CIPHERTEXT,
+} as const;
+const LEGACY_ACCOUNT_STORED_CONTENT_COMPATIBILITY = {
+    supportsCurrentProtocol: false,
+    outcome: "legacy-protocol-too-old",
+    declaration: { v: 1 as const, protocolVersion: 1 },
+    upgradeRequired: {
+        error: "client-upgrade-required",
+        requirement: {
+            v: 1 as const,
+            kind: "account-stored-content" as const,
+            minimumProtocolVersion:
+                CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+        },
+    },
+} as const;
+
+function createE2eeAccountFixture() {
+    const signing = tweetnacl.sign.keyPair();
+    const content = tweetnacl.box.keyPair();
+    return {
+        encryptionMode: "e2ee" as const,
+        publicKey: Buffer.from(signing.publicKey).toString("hex"),
+        contentPublicKey: new Uint8Array(content.publicKey),
+        contentPublicKeySig: new Uint8Array(
+            tweetnacl.sign.detached(
+                Buffer.concat([
+                    Buffer.from(
+                        "Happy content key v1\u0000",
+                        "utf8",
+                    ),
+                    Buffer.from(content.publicKey),
+                ]),
+                signing.secretKey,
+            ),
+        ),
+    };
+}
+
+function v1ListSessionRow(
+    id: string,
+    updatedAtMs: number,
+    overrides: Partial<{
+        accountId: string;
+        metadataLayoutVersion: number;
+        ownerMetadata: string | null;
+        encryptionMode: "e2ee" | "plain";
+    }> = {},
+) {
+    const updatedAt = new Date(updatedAtMs);
+    return {
+        id,
+        seq: 1,
+        accountId: overrides.accountId ?? "u1",
+        currentStorageState: "hosted",
+        createdAt: updatedAt,
+        updatedAt,
+        meaningfulActivityAt: updatedAt,
+        archivedAt: null,
+        encryptionMode: overrides.encryptionMode ?? "e2ee",
+        metadata: "{}",
+        metadataVersion: 1,
+        metadataLayoutVersion: overrides.metadataLayoutVersion ?? 1,
+        ownerMetadata:
+            Object.prototype.hasOwnProperty.call(overrides, "ownerMetadata")
+                ? overrides.ownerMetadata ?? null
+                : JSON.stringify(OWNER_METADATA_ENVELOPE),
+        agentState: null,
+        agentStateVersion: 0,
+        lastViewedSessionSeq: 0,
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+        latestTurnId: null,
+        latestTurnStatus: null,
+        latestTurnStatusObservedAt: null,
+        lastRuntimeIssue: null,
+        turns: [],
+        dataEncryptionKey: null,
+        pendingCount: 0,
+        pendingBlockedCount: 0,
+        pendingVersion: 0,
+        active: false,
+        lastActiveAt: updatedAt,
+    };
+}
 
 function legacyCreateBody(body: Readonly<{
     tag: string;
@@ -44,7 +136,9 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         resetStoragePolicyEnv();
         resetSessionRouteMocks();
         accountFindUnique.mockReset();
-        accountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+        accountFindUnique.mockResolvedValue(
+            createE2eeAccountFixture(),
+        );
         sessionFindMany.mockReset();
         sessionShareFindMany.mockReset();
         sessionFindFirst.mockReset();
@@ -62,6 +156,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                 id: "s1",
                 seq: 1,
                 accountId: "u1",
+                currentStorageState: "hosted",
                 createdAt: now,
                 updatedAt: now,
                 metadata: "m1",
@@ -103,6 +198,100 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                 }),
             ],
         });
+        expect(accountFindUnique).not.toHaveBeenCalled();
+    });
+
+    it("reads Account currentness only for emitted layout-one owners", async () => {
+        sessionFindMany.mockResolvedValue([
+            v1ListSessionRow("owned-layout-one-omitted", 1),
+        ]);
+        const sharedRows = Array.from({ length: 150 }, (_, index) => ({
+            accessLevel: "view",
+            canApprovePermissions: false,
+            encryptedDataKey: null,
+            sharedByUserId: "owner",
+            sharedByUser: {},
+            session: v1ListSessionRow(
+                `shared-${index}`,
+                1_000 + index,
+                { accountId: "owner" },
+            ),
+        }));
+        sessionShareFindMany.mockResolvedValue(sharedRows);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { reply, response } = await route.invoke();
+
+        expect(reply.statusCode).toBe(200);
+        const emitted = (response as { sessions: Array<{ id: string }> }).sessions;
+        expect(emitted).toHaveLength(150);
+        expect(emitted.map((session) => session.id)).not.toContain(
+            "owned-layout-one-omitted",
+        );
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
+        expect(accountFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "owner" },
+        }));
+    });
+
+    it("does not require current stored-content support for a layout-one candidate omitted from the emitted 150", async () => {
+        sessionFindMany.mockResolvedValue(
+            Array.from({ length: 150 }, (_, index) =>
+                v1ListSessionRow(
+                    `legacy-visible-owned-${index}`,
+                    1_000 + index,
+                    {
+                        metadataLayoutVersion: 0,
+                        ownerMetadata: null,
+                    },
+                )),
+        );
+        sessionShareFindMany.mockResolvedValue([{
+            accessLevel: "view",
+            canApprovePermissions: false,
+            encryptedDataKey: null,
+            sharedByUserId: "owner",
+            sharedByUser: {},
+            session: v1ListSessionRow(
+                "layout-one-shared-candidate",
+                1,
+                { accountId: "owner" },
+            ),
+        }]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { reply, response } = await route.invoke({
+            accountStoredContentCompatibility:
+                LEGACY_ACCOUNT_STORED_CONTENT_COMPATIBILITY,
+        });
+
+        expect(reply.statusCode).toBe(200);
+        const emitted = (response as { sessions: Array<{ id: string }> }).sessions;
+        expect(emitted).toHaveLength(150);
+        expect(emitted.map((session) => session.id)).not.toContain(
+            "layout-one-shared-candidate",
+        );
+        expect(accountFindUnique).not.toHaveBeenCalled();
+    });
+
+    it("reads Account currentness exactly once when emitted rows include owned layout one", async () => {
+        sessionFindMany.mockResolvedValue([
+            v1ListSessionRow("owned-layout-one-newer", 2_000),
+            v1ListSessionRow("owned-layout-one-older", 1_999),
+        ]);
+        sessionShareFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { reply, response } = await route.invoke();
+
+        expect(reply.statusCode).toBe(200);
+        expect(response).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "owned-layout-one-newer" }),
+                expect.objectContaining({ id: "owned-layout-one-older" }),
+            ],
+        });
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
     });
 
     it("GET /v1/sessions returns materialized turn observed timestamps for owned sessions", async () => {
@@ -112,6 +301,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                 id: "s1",
                 seq: 1,
                 accountId: "u1",
+                currentStorageState: "hosted",
                 createdAt: now,
                 updatedAt: now,
                 metadata: "m1",
@@ -139,71 +329,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                     id: "s1",
                     latestTurnStatus: "in_progress",
                     latestTurnStatusObservedAt: 1234,
-                }),
-            ],
-        });
-    });
-
-    it("GET /v1/sessions falls back when rollback turn columns are unavailable", async () => {
-        const now = new Date(1);
-        sessionFindMany
-            .mockRejectedValueOnce(Object.assign(new Error("Column SessionTurn.rollbackState does not exist"), { code: "P2022" }))
-            .mockResolvedValueOnce([
-                {
-                    id: "s1",
-                    seq: 9,
-                    accountId: "u1",
-                    currentStorageState: "server_partial",
-                    acceptedThroughServerSeq: 4,
-                    materializationPublicationId: null,
-                    materializedThroughSourceAt: null,
-                    publishedThroughServerSeq: null,
-                    createdAt: now,
-                    updatedAt: now,
-                    meaningfulActivityAt: now,
-                    archivedAt: null,
-                    encryptionMode: "e2ee",
-                    metadata: "m1",
-                    metadataVersion: 1,
-                    agentState: null,
-                    agentStateVersion: 0,
-                    lastViewedSessionSeq: 9,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: BigInt(1234),
-                    lastRuntimeIssue: null,
-                    dataEncryptionKey: null,
-                    pendingCount: 0,
-                    pendingVersion: 0,
-                    active: true,
-                    lastActiveAt: now,
-                },
-            ]);
-        sessionShareFindMany.mockResolvedValue([]);
-
-        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
-        const { response: res } = await route.invoke();
-
-        expect(sessionFindMany).toHaveBeenCalledTimes(2);
-        expect(sessionFindMany.mock.calls[1]?.[0]?.select).not.toHaveProperty("turns");
-        expect(sessionFindMany.mock.calls[1]?.[0]?.select).toEqual(expect.objectContaining({
-            currentStorageState: true,
-            acceptedThroughServerSeq: true,
-            materializationPublicationId: true,
-            materializedThroughSourceAt: true,
-            publishedThroughServerSeq: true,
-        }));
-        expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "s1",
-                    seq: 4,
-                    lastViewedSessionSeq: 4,
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: 1234,
-                    rollbackEligibleTurnStarts: [],
+                    transcriptShareable: true,
                 }),
             ],
         });
@@ -228,7 +354,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                     metadata: "m2",
                     metadataVersion: 1,
                     metadataLayoutVersion: 1,
-                    ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+                    ownerMetadata: JSON.stringify(OWNER_METADATA_ENVELOPE),
                     agentState: "full-owner-agent-state",
                     agentStateVersion: 8,
                     pendingCount: 9,
@@ -250,6 +376,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                     pendingVersion: 10,
                     metadata: "m2",
                     metadataLayoutVersion: 1,
+                    transcriptShareable: true,
                 }),
             ],
         });
@@ -261,7 +388,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         });
     });
 
-    it("GET /v1/sessions preserves the released layout-zero shared projection", async () => {
+    it("GET /v1/sessions fails a layout-zero shared projection closed", async () => {
         const now = new Date(1);
         sessionFindMany.mockResolvedValue([]);
         sessionShareFindMany.mockResolvedValue([
@@ -295,19 +422,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
         const { reply, response: res } = await route.invoke();
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "legacy-shared",
-                    metadata: "legacy-whole-bag",
-                    metadataVersion: 1,
-                    metadataLayoutVersion: 0,
-                    agentState: "legacy-owner-state",
-                    agentStateVersion: 8,
-                    accessLevel: "view",
-                }),
-            ],
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
         expect(sessionShareFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -343,10 +461,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
                     meaningfulActivityAt: at,
                     archivedAt: null,
                     encryptionMode: "plain",
-                    metadata: "{}",
+                    metadata: JSON.stringify({ v: 1 }),
                     metadataVersion: 1,
                     metadataLayoutVersion: 1,
-                    ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+                    ownerMetadata: JSON.stringify(OWNER_METADATA_ENVELOPE),
                     agentState: null,
                     agentStateVersion: 0,
                     lastViewedSessionSeq: 0,
@@ -554,24 +672,45 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         );
     });
 
-    it("POST /v1/sessions refuses to activate layout-v1 for a fresh session", async () => {
+    it("POST /v1/sessions returns typed upgrade-required before a missing-declaration layout-v1 create", async () => {
         sessionFindUnique.mockResolvedValue(null);
         const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
-        const { reply, response } = await route.invoke({
+        const { reply } = await route.invoke({
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                outcome: "legacy-missing",
+                declaration: null,
+                upgradeRequired: {
+                    error: "client-upgrade-required",
+                    requirement: {
+                        v: 1,
+                        kind: "account-stored-content",
+                        minimumProtocolVersion:
+                            CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                    },
+                },
+            },
             body: {
                 tag: "t-layout-v1",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { ciphertext: "shared" },
-                ownerMetadata: { ciphertext: OWNER_METADATA_CIPHERTEXT },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: "full-owner-agent-state",
                 dataEncryptionKey: null,
             },
         });
 
-        expect(reply.statusCode).toBe(409);
-        expect(response).toEqual(expect.objectContaining({
-            code: "metadata_privacy_upgrade_required",
-        }));
+        expect(reply.statusCode).toBe(426);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "client-upgrade-required",
+            requirement: {
+                v: 1,
+                kind: "account-stored-content",
+                minimumProtocolVersion:
+                    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+            },
+        });
+        expect(txExecuteRawUnsafe).not.toHaveBeenCalled();
         expect(txSessionCreate).not.toHaveBeenCalled();
     });
 
@@ -655,6 +794,9 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             expect.objectContaining({ id: "s2" }),
             1,
             "upd-id",
+            expect.objectContaining({
+                metadataLayoutVersion: 0,
+            }),
         );
         expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
             userId: "u1",
@@ -813,75 +955,59 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         });
     });
 
-    it("POST /v1/sessions forwards encryptionMode=plain when plaintext storage is optional", async () => {
+    it("POST /v1/sessions refuses a plain layout-zero create when plaintext storage is optional", async () => {
         resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
-        const now = new Date(1);
-        txSessionCreate.mockResolvedValue({
-            id: "s2",
-            seq: 2,
-            createdAt: now,
-            updatedAt: now,
-            metadata: "m2",
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: null,
-            pendingCount: 0,
-            pendingVersion: 0,
-            active: true,
-            lastActiveAt: now,
-            encryptionMode: "plain",
-        });
-
         const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
-        await route.invoke({
+        const { reply } = await route.invoke({
             body: legacyCreateBody({ tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null, encryptionMode: "plain" }),
         });
 
-        expect(txSessionCreate).toHaveBeenCalledWith(
-            expect.objectContaining({
-                data: expect.objectContaining({
-                    encryptionMode: "plain",
-                }),
-            }),
-        );
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
+        });
+        expect(txSessionCreate).not.toHaveBeenCalled();
     });
 
-    it("POST /v1/sessions defaults encryptionMode to the account mode when not specified", async () => {
+    it("POST /v1/sessions rejects account key material for a plain layout-zero Session", async () => {
         resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
-        const now = new Date(1);
-        accountFindUnique.mockResolvedValue({ encryptionMode: "plain" });
-        txSessionCreate.mockResolvedValue({
-            id: "s2",
-            seq: 2,
-            createdAt: now,
-            updatedAt: now,
-            metadata: "m2",
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: null,
-            pendingCount: 0,
-            pendingVersion: 0,
-            active: true,
-            lastActiveAt: now,
-            encryptionMode: "plain",
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        const { reply } = await route.invoke({
+            body: legacyCreateBody({
+                tag: "t2",
+                metadata: "m2",
+                agentState: null,
+                dataEncryptionKey: "retained-key-material",
+                encryptionMode: "plain",
+            }),
         });
 
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
+        });
+        expect(txSessionCreate).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/sessions refuses layout zero when the effective mode defaults to the plain Account mode", async () => {
+        resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        accountFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+
         const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
-        await route.invoke({
+        const { reply } = await route.invoke({
             body: legacyCreateBody({ tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null }),
         });
 
-        expect(txSessionCreate).toHaveBeenCalledWith(
-            expect.objectContaining({
-                data: expect.objectContaining({
-                    encryptionMode: "plain",
-                }),
-            }),
-        );
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
+        });
+        expect(txSessionCreate).not.toHaveBeenCalled();
     });
 
     it("POST /v1/sessions stores agentState when provided", async () => {

@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEnvReset } from "./testkit/env";
 import type { Fastify as AppFastify } from "./types";
 import { startSocket } from "./socket";
+
+const {
+    closeRedisSocketClusterClient,
+    onShutdown,
+} = vi.hoisted(() => ({
+    closeRedisSocketClusterClient: vi.fn(),
+    onShutdown: vi.fn(),
+}));
 const serverCtor = vi.fn();
 vi.mock("socket.io", () => ({
     Server: function ServerMock(this: any, ...args: any[]) {
@@ -10,7 +18,7 @@ vi.mock("socket.io", () => ({
 }));
 
 vi.mock("@/utils/process/shutdown", () => ({
-    onShutdown: vi.fn(),
+    onShutdown,
 }));
 
 const createAdapter = vi.fn((_client: any, opts?: any) => ({ name: "adapter", opts }));
@@ -18,10 +26,20 @@ vi.mock("@socket.io/redis-streams-adapter", () => ({
     createAdapter: (arg: any, opts?: any) => createAdapter(arg, opts),
 }));
 
-const redisClient = { name: "redis" };
+const relayAdmissionRedis = {
+    disconnect: vi.fn(),
+    off: vi.fn(),
+    on: vi.fn(),
+    set: vi.fn(),
+};
+const redisClient = {
+    name: "redis",
+    duplicate: vi.fn(() => relayAdmissionRedis),
+};
 const getRedisClient = vi.fn(() => redisClient);
 vi.mock("@/storage/redis/redis", () => ({
-    getRedisClient: () => getRedisClient(),
+    closeRedisSocketClusterClient,
+    getRedisSocketClusterClient: () => getRedisClient(),
 }));
 
 function createFastifyLikeApp(): AppFastify {
@@ -36,7 +54,13 @@ describe("startSocket redis adapter config", () => {
         // startSocket reads process.env at call time, so module caching does not affect these tests.
         // Avoid vi.resetModules(): it would re-evaluate modules that register global prom-client metrics.
         vi.clearAllMocks();
-        serverCtor.mockReturnValue({ on: vi.fn(), close: vi.fn(), to: vi.fn(), use: vi.fn() });
+        serverCtor.mockReturnValue({
+            on: vi.fn(),
+            off: vi.fn(),
+            close: vi.fn(),
+            to: vi.fn(),
+            use: vi.fn(),
+        });
         resetSocketAdapterEnv();
     });
 
@@ -164,5 +188,20 @@ describe("startSocket redis adapter config", () => {
                 readCount: 222,
             }),
         );
+    });
+
+    it("disconnects the dedicated redis client during socket shutdown", async () => {
+        resetSocketAdapterEnv({
+            HAPPY_SERVER_FLAVOR: "full",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
+            REDIS_URL: "redis://localhost:6379",
+        });
+        startSocket(createFastifyLikeApp());
+        const shutdown = onShutdown.mock.calls.find(([name]) => name === "api:socket")?.[1];
+
+        expect(shutdown).toEqual(expect.any(Function));
+        await shutdown();
+
+        expect(closeRedisSocketClusterClient).toHaveBeenCalledTimes(1);
     });
 });

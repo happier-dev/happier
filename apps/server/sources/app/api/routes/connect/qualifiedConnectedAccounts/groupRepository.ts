@@ -19,12 +19,17 @@ import type { Prisma } from "@prisma/client";
 
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
-import { isPrismaErrorCode } from "@/storage/prisma";
+import {
+    getDbProviderFromEnv,
+    isPrismaErrorCode,
+    prismaRuntime as PrismaRuntime,
+} from "@/storage/prisma";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
 import {
     createQualifiedConnectedAccountGroupDigest,
     createQualifiedConnectedAccountIdentityDigest,
     createQualifiedConnectedAccountServiceDigest,
+    parseStoredQualifiedConnectedAccountGroupRef,
     resolveLegacyServiceIdForQualifiedConnectedAccountService,
 } from "./identity";
 import {
@@ -85,23 +90,13 @@ function parseStoredJson<T>(
 export function toQualifiedConnectedAccountGroup(
     row: QualifiedGroupRow,
 ): QualifiedConnectedAccountGroupV4 {
-    const service = QualifiedConnectedAccountServiceRefSchema.parse({
-        pluginId: row.servicePluginId,
-        localId: row.serviceLocalId,
-    });
+    const groupRef =
+        parseStoredQualifiedConnectedAccountGroupRef(row);
+    const service = groupRef.service;
     const serviceDigest =
         createQualifiedConnectedAccountServiceDigest(service);
-    const groupRef = { service, groupId: row.groupId };
     const groupDigest =
         createQualifiedConnectedAccountGroupDigest(groupRef);
-    if (
-        row.qualifiedServiceDigest !== serviceDigest
-        || row.qualifiedGroupDigest !== groupDigest
-    ) {
-        throw new Error(
-            "Qualified Connected Account group identity digest mismatch",
-        );
-    }
     const members = row.members.map((member) => {
         const credential = member.credential;
         if (
@@ -163,6 +158,7 @@ export function toQualifiedConnectedAccountGroup(
     return QualifiedConnectedAccountGroupV4Schema.parse({
         v: 1,
         ref: groupRef,
+        incarnation: row.id,
         displayName: row.displayName,
         policy: parseStoredJson(
             ConnectedServiceAuthGroupPolicyV1Schema,
@@ -351,13 +347,12 @@ async function readQualifiedGroupRowInTx(
         include: qualifiedGroupInclude,
     });
     if (!row) return null;
+    const storedRef =
+        parseStoredQualifiedConnectedAccountGroupRef(row);
     if (
-        row.servicePluginId !== service.pluginId
-        || row.serviceLocalId !== service.localId
-        || row.groupId !== params.groupId
-        || row.qualifiedServiceDigest
-            !== createQualifiedConnectedAccountServiceDigest(service)
-        || row.qualifiedGroupDigest !== qualifiedGroupDigest
+        storedRef.service.pluginId !== service.pluginId
+        || storedRef.service.localId !== service.localId
+        || storedRef.groupId !== params.groupId
     ) {
         throw new Error(
             "Qualified Connected Account group identity digest collision",
@@ -365,6 +360,10 @@ async function readQualifiedGroupRowInTx(
     }
     return row;
 }
+
+type QualifiedGroupStoredRow = NonNullable<
+    Awaited<ReturnType<typeof readQualifiedGroupRowInTx>>
+>;
 
 export async function readQualifiedConnectedAccountGroup(
     params: Readonly<{
@@ -412,6 +411,7 @@ export type QualifiedConnectedAccountGroupMutationResult =
         status: "generation_superseded";
         generation: number;
     }>
+    | Readonly<{ status: "incarnation_superseded" }>
     | Readonly<{ status: "source_superseded" }>
     | Readonly<{ status: "member_not_found" }>
     | Readonly<{ status: "member_disabled" }>
@@ -420,11 +420,183 @@ export type QualifiedConnectedAccountGroupMutationResult =
         resetAtMs?: number;
     }>;
 
+export type QualifiedConnectedAccountGroupLegacyV3MutationReadResult =
+    | Readonly<{
+        status: "current";
+        group: QualifiedConnectedAccountGroupV4;
+        activeProfileId: string | null;
+    }>
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "incarnation_superseded" }>;
+
 class QualifiedGroupMemberCasConflictError extends Error {
     constructor() {
         super("Qualified Connected Account group member CAS lost");
         this.name = "QualifiedGroupMemberCasConflictError";
     }
+}
+
+/**
+ * A released V3 mutation cannot carry a group incarnation. The fence records
+ * the one incarnation that remains eligible for that route shape, and it is
+ * never rewritten after delete/recreate. V4 adapters pass `null` when their
+ * wire request omitted the token, so their unfenced mutations fail closed.
+ */
+type QualifiedGroupLegacyV3FenceStorage = Pick<
+    Tx,
+    "$executeRaw" | "$queryRaw"
+>;
+
+type QualifiedGroupLegacyV3FenceRow = Readonly<{
+    legacy_v3_eligible_incarnation: string;
+}>;
+
+async function readQualifiedGroupLegacyV3EligibleIncarnationInTx(
+    tx: QualifiedGroupLegacyV3FenceStorage,
+    params: Readonly<{
+        accountId: string;
+        qualifiedGroupDigest: string;
+    }>,
+): Promise<string | null> {
+    const rows = await tx.$queryRaw<QualifiedGroupLegacyV3FenceRow[]>(
+        PrismaRuntime.sql`
+            SELECT legacy_v3_eligible_incarnation
+            FROM connected_service_auth_group_legacy_v3_mutation_fence
+            WHERE account_id = ${params.accountId}
+              AND qualified_group_digest = ${params.qualifiedGroupDigest}
+        `,
+    );
+    if (rows.length > 1) {
+        throw new Error(
+            "Qualified Connected Account legacy V3 group fence is not unique",
+        );
+    }
+    return rows[0]?.legacy_v3_eligible_incarnation ?? null;
+}
+
+async function createQualifiedGroupLegacyV3FenceIfAbsentInTx(
+    tx: QualifiedGroupLegacyV3FenceStorage,
+    params: Readonly<{
+        accountId: string;
+        qualifiedGroupDigest: string;
+        incarnation: string;
+    }>,
+): Promise<void> {
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const insert = provider === "mysql"
+        ? PrismaRuntime.sql`
+            INSERT IGNORE INTO connected_service_auth_group_legacy_v3_mutation_fence (
+                account_id,
+                qualified_group_digest,
+                legacy_v3_eligible_incarnation
+            ) VALUES (
+                ${params.accountId},
+                ${params.qualifiedGroupDigest},
+                ${params.incarnation}
+            )
+        `
+        : PrismaRuntime.sql`
+            INSERT INTO connected_service_auth_group_legacy_v3_mutation_fence (
+                account_id,
+                qualified_group_digest,
+                legacy_v3_eligible_incarnation
+            ) VALUES (
+                ${params.accountId},
+                ${params.qualifiedGroupDigest},
+                ${params.incarnation}
+            )
+            ON CONFLICT (account_id, qualified_group_digest) DO NOTHING
+        `;
+    await tx.$executeRaw(insert);
+}
+
+type QualifiedGroupMutationAdmissionStorage =
+    QualifiedGroupListStorage & QualifiedGroupLegacyV3FenceStorage;
+
+type QualifiedGroupMutationAdmissionResult =
+    | Readonly<{ status: "current"; current: QualifiedGroupStoredRow }>
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "incarnation_superseded" }>;
+
+/**
+ * Owns mutation admission for both wire generations. V4 supplies an exact
+ * row incarnation and does not read the legacy marker. V3 has no incarnation,
+ * so its durable eligible incarnation is read before classifying an absent or
+ * duplicate current row: a deleted/recreated group cannot be re-admitted by a
+ * delayed V3 mutation.
+ */
+async function readQualifiedGroupMutationAdmissionInTx(
+    tx: QualifiedGroupMutationAdmissionStorage,
+    params: Readonly<{
+        accountId: string;
+        service: QualifiedConnectedAccountServiceRef;
+        groupId: string;
+        expectedIncarnation?: string | null;
+    }>,
+): Promise<QualifiedGroupMutationAdmissionResult> {
+    if (params.expectedIncarnation === undefined) {
+        const service = QualifiedConnectedAccountServiceRefSchema.parse(
+            params.service,
+        );
+        const groupRef = QualifiedConnectedAccountGroupRefSchema.parse({
+            service,
+            groupId: params.groupId,
+        });
+        const legacyV3EligibleIncarnation =
+            await readQualifiedGroupLegacyV3EligibleIncarnationInTx(tx, {
+                accountId: params.accountId,
+                qualifiedGroupDigest:
+                    createQualifiedConnectedAccountGroupDigest(groupRef),
+            });
+        const current = await readQualifiedGroupRowInTx(tx, {
+            accountId: params.accountId,
+            service,
+            groupId: params.groupId,
+        });
+        if (legacyV3EligibleIncarnation === null) {
+            return current
+                ? { status: "incarnation_superseded" }
+                : { status: "not_found" };
+        }
+        if (!current || current.id !== legacyV3EligibleIncarnation) {
+            return { status: "incarnation_superseded" };
+        }
+        return { status: "current", current };
+    }
+
+    const current = await readQualifiedGroupRowInTx(tx, params);
+    if (!current) return { status: "not_found" };
+    if (params.expectedIncarnation !== current.id) {
+        return { status: "incarnation_superseded" };
+    }
+    return { status: "current", current };
+}
+
+/**
+ * Mutation-only legacy V3 read admission. Ordinary V3 projections remain
+ * readable after recreation; callers use this only when an early legacy no-op
+ * could otherwise bypass the repository's mutation admission check.
+ */
+export async function readQualifiedConnectedAccountGroupForLegacyV3Mutation(
+    params: Readonly<{
+        accountId: string;
+        service: QualifiedConnectedAccountServiceRef;
+        groupId: string;
+    }>,
+): Promise<QualifiedConnectedAccountGroupLegacyV3MutationReadResult> {
+    return await inTx(async (tx) => {
+        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
+            ...params,
+            expectedIncarnation: undefined,
+        });
+        if (admission.status !== "current") return admission;
+        const current = admission.current;
+        return {
+            status: "current",
+            group: toQualifiedConnectedAccountGroup(current),
+            activeProfileId: current.activeProfileId,
+        };
+    });
 }
 
 async function settleQualifiedGroupMemberCasConflict(
@@ -433,10 +605,12 @@ async function settleQualifiedGroupMemberCasConflict(
         service: QualifiedConnectedAccountServiceRef;
         groupId: string;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
-    const latest = await readQualifiedGroupRowInTx(db, params);
-    if (!latest) return { status: "not_found" };
+    const admission = await readQualifiedGroupMutationAdmissionInTx(db, params);
+    if (admission.status !== "current") return admission;
+    const latest = admission.current;
     if (params.expectedGeneration !== undefined) {
         return {
             status: "generation_superseded",
@@ -496,6 +670,7 @@ export async function createQualifiedConnectedAccountGroup(
             state?: unknown;
         }>>;
         activeConnectedAccountId?: string | null;
+        legacyV3Mutation?: boolean;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const parsed = QualifiedConnectedAccountGroupCreateV4Schema.parse({
@@ -503,12 +678,6 @@ export async function createQualifiedConnectedAccountGroup(
         group: params.group,
     });
     return await inTx(async (tx) => {
-        const existing = await readQualifiedGroupRowInTx(tx, {
-            accountId: params.accountId,
-            service: parsed.service,
-            groupId: parsed.group.groupId,
-        });
-        if (existing) return { status: "already_exists" };
         const serviceDigest =
             createQualifiedConnectedAccountServiceDigest(parsed.service);
         const groupDigest =
@@ -516,6 +685,27 @@ export async function createQualifiedConnectedAccountGroup(
                 service: parsed.service,
                 groupId: parsed.group.groupId,
             });
+        if (params.legacyV3Mutation === true) {
+            const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
+                accountId: params.accountId,
+                service: parsed.service,
+                groupId: parsed.group.groupId,
+                expectedIncarnation: undefined,
+            });
+            if (admission.status === "current") {
+                return { status: "already_exists" };
+            }
+            if (admission.status === "incarnation_superseded") {
+                return admission;
+            }
+        } else {
+            const existing = await readQualifiedGroupRowInTx(tx, {
+                accountId: params.accountId,
+                service: parsed.service,
+                groupId: parsed.group.groupId,
+            });
+            if (existing) return { status: "already_exists" };
+        }
         const legacyServiceId =
             resolveLegacyServiceIdForQualifiedConnectedAccountService(
                 parsed.service,
@@ -556,6 +746,14 @@ export async function createQualifiedConnectedAccountGroup(
             ) {
                 return { status: "member_not_found" };
             }
+            if (
+                resolveQualifiedConnectedAccountStoredMetadata({
+                    rowId: credential.id,
+                    metadata: credential.metadata,
+                }).revisionSemantics === "legacy_unfenced"
+            ) {
+                return { status: "source_superseded" };
+            }
             credentials.set(member.connectedAccountId, credential);
         }
         if (params.activeConnectedAccountId !== undefined
@@ -592,6 +790,11 @@ export async function createQualifiedConnectedAccountGroup(
                     : params.activeConnectedAccountId ?? null,
             },
             select: { id: true },
+        });
+        await createQualifiedGroupLegacyV3FenceIfAbsentInTx(tx, {
+            accountId: params.accountId,
+            qualifiedGroupDigest: groupDigest,
+            incarnation: created.id,
         });
         if (initialMembers.length > 0) {
             await tx.connectedServiceAuthGroupMember.createMany({
@@ -641,6 +844,7 @@ export async function patchQualifiedConnectedAccountGroup(
         accountId: string;
         patch: unknown;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
         activeConnectedAccountId?: string | null;
         preserveLegacyNoopSemantics?: boolean;
     }>,
@@ -649,12 +853,14 @@ export async function patchQualifiedConnectedAccountGroup(
         params.patch,
     );
     return await inTx(async (tx) => {
-        const current = await readQualifiedGroupRowInTx(tx, {
+        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
             accountId: params.accountId,
             service: patch.service,
             groupId: patch.groupId,
+            expectedIncarnation: params.expectedIncarnation,
         });
-        if (!current) return { status: "not_found" };
+        if (admission.status !== "current") return admission;
+        const current = admission.current;
         if (
             params.expectedGeneration !== undefined
             && params.expectedGeneration !== current.generation
@@ -708,6 +914,15 @@ export async function patchQualifiedConnectedAccountGroup(
                     === params.activeConnectedAccountId);
             if (!activeMember) return { status: "member_not_found" };
             if (!activeMember.enabled) return { status: "member_disabled" };
+            if (
+                typeof activeMember.credential.id !== "string"
+                || resolveQualifiedConnectedAccountStoredMetadata({
+                    rowId: activeMember.credential.id,
+                    metadata: activeMember.credential.metadata,
+                }).revisionSemantics === "legacy_unfenced"
+            ) {
+                return { status: "source_superseded" };
+            }
             const runtimeBlocker =
                 readConnectedServiceManualActiveProfileRuntimeBlocker(
                     parseStoredJson(
@@ -795,11 +1010,19 @@ export async function patchQualifiedConnectedAccountGroup(
             },
         });
         if (updated.count !== 1) {
-            const latest = await readQualifiedGroupRowInTx(tx, {
-                accountId: params.accountId,
-                service: patch.service,
-                groupId: patch.groupId,
-            });
+            const latestAdmission =
+                await readQualifiedGroupMutationAdmissionInTx(tx, {
+                    accountId: params.accountId,
+                    service: patch.service,
+                    groupId: patch.groupId,
+                    expectedIncarnation: params.expectedIncarnation,
+                });
+            if (latestAdmission.status === "incarnation_superseded") {
+                return { status: "incarnation_superseded" };
+            }
+            const latest = latestAdmission.status === "current"
+                ? latestAdmission.current
+                : null;
             if (
                 latest
                 && latest.generation !== current.generation
@@ -829,16 +1052,20 @@ export async function deleteQualifiedConnectedAccountGroup(
         service: QualifiedConnectedAccountServiceRef;
         groupId: string;
         expectedRuntimeStateRevision?: number;
+        expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const service =
         QualifiedConnectedAccountServiceRefSchema.parse(params.service);
     return await inTx(async (tx) => {
-        const current = await readQualifiedGroupRowInTx(tx, {
-            ...params,
+        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
+            accountId: params.accountId,
             service,
+            groupId: params.groupId,
+            expectedIncarnation: params.expectedIncarnation,
         });
-        if (!current) return { status: "not_found" };
+        if (admission.status !== "current") return admission;
+        const current = admission.current;
         if (
             params.expectedRuntimeStateRevision !== undefined
             && params.expectedRuntimeStateRevision
@@ -857,11 +1084,19 @@ export async function deleteQualifiedConnectedAccountGroup(
             },
         });
         if (deleted.count !== 1) {
-            const latest = await readQualifiedGroupRowInTx(tx, {
-                accountId: params.accountId,
-                service,
-                groupId: params.groupId,
-            });
+            const latestAdmission =
+                await readQualifiedGroupMutationAdmissionInTx(tx, {
+                    accountId: params.accountId,
+                    service,
+                    groupId: params.groupId,
+                    expectedIncarnation: params.expectedIncarnation,
+                });
+            if (latestAdmission.status === "incarnation_superseded") {
+                return { status: "incarnation_superseded" };
+            }
+            const latest = latestAdmission.status === "current"
+                ? latestAdmission.current
+                : null;
             if (
                 latest
                 && latest.generation !== current.generation
@@ -899,6 +1134,7 @@ export async function patchQualifiedConnectedAccountGroupRuntimeState(
         accountId: string;
         patch: unknown;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const patch =
@@ -906,12 +1142,14 @@ export async function patchQualifiedConnectedAccountGroupRuntimeState(
             params.patch,
         );
     return await inTx(async (tx) => {
-        const current = await readQualifiedGroupRowInTx(tx, {
+        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
             accountId: params.accountId,
             service: patch.service,
             groupId: patch.groupId,
+            expectedIncarnation: params.expectedIncarnation,
         });
-        if (!current) return { status: "not_found" };
+        if (admission.status !== "current") return admission;
+        const current = admission.current;
         if (
             params.expectedGeneration !== undefined
             && params.expectedGeneration !== current.generation
@@ -960,11 +1198,19 @@ export async function patchQualifiedConnectedAccountGroupRuntimeState(
             },
         });
         if (write.count !== 1) {
-            const latest = await readQualifiedGroupRowInTx(tx, {
-                accountId: params.accountId,
-                service: patch.service,
-                groupId: patch.groupId,
-            });
+            const latestAdmission =
+                await readQualifiedGroupMutationAdmissionInTx(tx, {
+                    accountId: params.accountId,
+                    service: patch.service,
+                    groupId: patch.groupId,
+                    expectedIncarnation: params.expectedIncarnation,
+                });
+            if (latestAdmission.status === "incarnation_superseded") {
+                return { status: "incarnation_superseded" };
+            }
+            const latest = latestAdmission.status === "current"
+                ? latestAdmission.current
+                : null;
             if (
                 latest
                 && latest.generation !== current.generation
@@ -1009,6 +1255,7 @@ async function mutateQualifiedGroupMember(
         mutation: unknown;
         operation: "create" | "update";
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
         activateWhenGroupHasNoLegacyActiveAccount?: boolean;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
@@ -1018,12 +1265,14 @@ async function mutateQualifiedGroupMember(
         );
     try {
         return await inTx(async (tx) => {
-            const current = await readQualifiedGroupRowInTx(tx, {
+            const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
                 accountId: params.accountId,
                 service: mutation.group.service,
                 groupId: mutation.group.groupId,
+                expectedIncarnation: params.expectedIncarnation,
             });
-            if (!current) return { status: "not_found" };
+            if (admission.status !== "current") return admission;
+            const current = admission.current;
             if (
                 params.expectedGeneration !== undefined
                 && params.expectedGeneration !== current.generation
@@ -1080,6 +1329,14 @@ async function mutateQualifiedGroupMember(
                         !== current.qualifiedServiceDigest
                 ) {
                     return { status: "member_not_found" };
+                }
+                if (
+                    resolveQualifiedConnectedAccountStoredMetadata({
+                        rowId: credential.id,
+                        metadata: credential.metadata,
+                    }).revisionSemantics === "legacy_unfenced"
+                ) {
+                    return { status: "source_superseded" };
                 }
                 createdMemberLegacyProfileId = credential.profileId;
                 await tx.connectedServiceAuthGroupMember.create({
@@ -1196,17 +1453,26 @@ async function mutateQualifiedGroupMember(
                 service: mutation.group.service,
                 groupId: mutation.group.groupId,
                 expectedGeneration: params.expectedGeneration,
+                expectedIncarnation: params.expectedIncarnation,
             });
         }
         if (isPrismaErrorCode(error, "P2002")) {
             return { status: "already_exists" };
         }
         if (isPrismaErrorCode(error, "P2003")) {
-            const latest = await readQualifiedGroupRowInTx(db, {
-                accountId: params.accountId,
-                service: mutation.group.service,
-                groupId: mutation.group.groupId,
-            });
+            const latestAdmission =
+                await readQualifiedGroupMutationAdmissionInTx(db, {
+                    accountId: params.accountId,
+                    service: mutation.group.service,
+                    groupId: mutation.group.groupId,
+                    expectedIncarnation: params.expectedIncarnation,
+                });
+            if (latestAdmission.status === "incarnation_superseded") {
+                return { status: "incarnation_superseded" };
+            }
+            const latest = latestAdmission.status === "current"
+                ? latestAdmission.current
+                : null;
             return latest
                 ? { status: "member_not_found" }
                 : { status: "not_found" };
@@ -1220,6 +1486,7 @@ export async function createQualifiedConnectedAccountGroupMember(
         accountId: string;
         mutation: unknown;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
         activateWhenGroupHasNoLegacyActiveAccount?: boolean;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
@@ -1234,6 +1501,7 @@ export async function updateQualifiedConnectedAccountGroupMember(
         accountId: string;
         mutation: unknown;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     return await mutateQualifiedGroupMember({
@@ -1247,6 +1515,7 @@ export async function deleteQualifiedConnectedAccountGroupMember(
         accountId: string;
         mutation: unknown;
         expectedGeneration?: number;
+        expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const mutation =
@@ -1255,12 +1524,14 @@ export async function deleteQualifiedConnectedAccountGroupMember(
         );
     try {
         return await inTx(async (tx) => {
-            const current = await readQualifiedGroupRowInTx(tx, {
+            const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
                 accountId: params.accountId,
                 service: mutation.group.service,
                 groupId: mutation.group.groupId,
+                expectedIncarnation: params.expectedIncarnation,
             });
-            if (!current) return { status: "not_found" };
+            if (admission.status !== "current") return admission;
+            const current = admission.current;
             if (
                 params.expectedGeneration !== undefined
                 && params.expectedGeneration !== current.generation
@@ -1342,24 +1613,31 @@ export async function deleteQualifiedConnectedAccountGroupMember(
             service: mutation.group.service,
             groupId: mutation.group.groupId,
             expectedGeneration: params.expectedGeneration,
+            expectedIncarnation: params.expectedIncarnation,
         });
     }
 }
 
 export async function setQualifiedConnectedAccountGroupActiveAccount(
-    params: Readonly<{ accountId: string; mutation: unknown }>,
+    params: Readonly<{
+        accountId: string;
+        mutation: unknown;
+        expectedIncarnation?: string | null;
+    }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const mutation =
         QualifiedConnectedAccountGroupActiveAccountV4Schema.parse(
             params.mutation,
         );
     return await inTx(async (tx) => {
-        const current = await readQualifiedGroupRowInTx(tx, {
+        const admission = await readQualifiedGroupMutationAdmissionInTx(tx, {
             accountId: params.accountId,
             service: mutation.group.service,
             groupId: mutation.group.groupId,
+            expectedIncarnation: params.expectedIncarnation,
         });
-        if (!current) return { status: "not_found" };
+        if (admission.status !== "current") return admission;
+        const current = admission.current;
         if (
             mutation.expectedGeneration !== undefined
             && mutation.expectedGeneration !== current.generation
@@ -1405,6 +1683,15 @@ export async function setQualifiedConnectedAccountGroupActiveAccount(
                 === mutation.connectedAccountId);
         if (!member) return { status: "member_not_found" };
         if (!member.enabled) return { status: "member_disabled" };
+        if (
+            typeof member.credential.id !== "string"
+            || resolveQualifiedConnectedAccountStoredMetadata({
+                rowId: member.credential.id,
+                metadata: member.credential.metadata,
+            }).revisionSemantics === "legacy_unfenced"
+        ) {
+            return { status: "source_superseded" };
+        }
         const runtimeBlocker =
             readConnectedServiceManualActiveProfileRuntimeBlocker(
                 parseStoredJson(
@@ -1438,12 +1725,15 @@ export async function setQualifiedConnectedAccountGroupActiveAccount(
             },
         });
         if (updated.count !== 1) {
-            const latest = await readQualifiedGroupRowInTx(tx, {
-                accountId: params.accountId,
-                service: mutation.group.service,
-                groupId: mutation.group.groupId,
-            });
-            if (!latest) return { status: "not_found" };
+            const latestAdmission =
+                await readQualifiedGroupMutationAdmissionInTx(tx, {
+                    accountId: params.accountId,
+                    service: mutation.group.service,
+                    groupId: mutation.group.groupId,
+                    expectedIncarnation: params.expectedIncarnation,
+                });
+            if (latestAdmission.status !== "current") return latestAdmission;
+            const latest = latestAdmission.current;
             if (latest.generation !== current.generation) {
                 return {
                     status: "generation_superseded",

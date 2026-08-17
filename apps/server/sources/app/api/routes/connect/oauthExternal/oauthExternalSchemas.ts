@@ -1,4 +1,7 @@
 import { z } from "zod";
+import {
+    AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+} from "@happier-dev/protocol";
 
 export const oauthStateAttemptSchema = z.object({
     provider: z.string(),
@@ -45,4 +48,24 @@ export const authPendingSchema = z.union([
     authPendingV2Schema,
     authPendingLegacyKeylessSchema,
     authPendingLegacyKeyedSchema,
+]);
+
+export const accountEncryptionFirstKeyStepUpPendingSchema = z
+    .object({
+        v: z.literal(3),
+        flow: z.literal("auth"),
+        purpose:
+            z.literal("account_encryption_first_key"),
+        provider: z.string().min(1),
+        userId: z.string().min(1),
+        providerUserId: z.string().min(1),
+        proofHash: z.string().regex(/^[0-9a-f]{64}$/),
+        requestDigest:
+            AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+    })
+    .strict();
+
+export const oauthAuthPendingSchema = z.union([
+    authPendingSchema,
+    accountEncryptionFirstKeyStepUpPendingSchema,
 ]);

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
-import { admitAccountContentKey } from "./accountContentKeyAdmission";
+import {
+    admitAccountContentKey,
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "./accountContentKeyAdmission";
 
 function createBinding() {
     const signing = tweetnacl.sign.keyPair();
@@ -105,5 +108,80 @@ describe("accountContentKeyAdmission", () => {
 
         expect(result).toEqual({ status: "invalid_binding" });
         expect(client.findUnique).toHaveBeenCalledTimes(2);
+    });
+
+    it("reports an e2ee Account missing its signing key as inconsistent", () => {
+        const binding = createBinding();
+
+        expect(deriveAccountEncryptionCurrentnessFromRow({
+            encryptionMode: "e2ee",
+            publicKey: null,
+            contentPublicKey: binding.contentPublicKey,
+            contentPublicKeySig: binding.contentPublicKeySignature,
+        })).toEqual({
+            status: "inconsistent",
+            reason: "missing_or_invalid_signing_key",
+        });
+    });
+
+    it("reports an e2ee Account missing its content-key binding as inconsistent", () => {
+        const binding = createBinding();
+
+        expect(deriveAccountEncryptionCurrentnessFromRow({
+            encryptionMode: "e2ee",
+            publicKey: binding.accountPublicKeyHex,
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        })).toEqual({
+            status: "inconsistent",
+            reason: "missing_content_key_binding",
+        });
+    });
+
+    it("reports an e2ee Account with an invalid content-key binding as inconsistent", () => {
+        const binding = createBinding();
+
+        expect(deriveAccountEncryptionCurrentnessFromRow({
+            encryptionMode: "e2ee",
+            publicKey: binding.accountPublicKeyHex,
+            contentPublicKey: binding.contentPublicKey,
+            contentPublicKeySig: new Uint8Array(tweetnacl.sign.signatureLength),
+        })).toEqual({
+            status: "inconsistent",
+            reason: "invalid_content_key_binding",
+        });
+    });
+
+    it("preserves normal plain and valid e2ee currentness", () => {
+        const binding = createBinding();
+
+        expect(deriveAccountEncryptionCurrentnessFromRow({
+            encryptionMode: "plain",
+            publicKey: null,
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        })).toEqual({
+            status: "ready",
+            currentness: {
+                encryptionMode: "plain",
+                contentPublicKey: null,
+                contentPublicKeySignature: null,
+                contentPublicKeyFingerprint: null,
+            },
+        });
+        expect(deriveAccountEncryptionCurrentnessFromRow({
+            encryptionMode: "e2ee",
+            publicKey: binding.accountPublicKeyHex,
+            contentPublicKey: binding.contentPublicKey,
+            contentPublicKeySig: binding.contentPublicKeySignature,
+        })).toEqual({
+            status: "ready",
+            currentness: {
+                encryptionMode: "e2ee",
+                contentPublicKey: binding.contentPublicKey,
+                contentPublicKeySignature: binding.contentPublicKeySignature,
+                contentPublicKeyFingerprint: expect.any(String),
+            },
+        });
     });
 });

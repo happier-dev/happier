@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
+    PluginPermissionGrantListActionInputV1Schema,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     type PluginPermissionGrantAuditEventV1,
     type PluginPermissionGrantRequestV1,
@@ -25,6 +27,7 @@ function pendingRequest(): PluginPermissionGrantRequestV1 {
         pluginId: CODERABBIT_PLUGIN_ID,
         capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
         targetScope: { kind: "project", projectId: "project-1" },
+        subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
         authoritySource: PUBLISHER_AUTHORITY,
         requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
         reason: "Publish approved review comments directly.",
@@ -43,6 +46,7 @@ function activeGrant(request: PluginPermissionGrantRequestV1): PluginPermissionG
         pluginId: request.pluginId,
         capability: request.capability,
         targetScope: request.targetScope,
+        subject: request.subject,
         authoritySource: request.authoritySource,
         status: "active",
         requestId: "request-winning-race",
@@ -54,6 +58,50 @@ function activeGrant(request: PluginPermissionGrantRequestV1): PluginPermissionG
 }
 
 describe("plugin permission grant operations", () => {
+    it("resolves an exact caller-owned grant outside the bounded newest-grants page", async () => {
+        const request = pendingRequest();
+        const oldGrant: PluginPermissionGrantV1 = {
+            ...activeGrant(request),
+            id: "grant-old",
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const newestGrants = Array.from({ length: 200 }, (_, index): PluginPermissionGrantV1 => ({
+            ...activeGrant(request),
+            id: `grant-new-${index}`,
+            createdAt: index + 2,
+            updatedAt: index + 2,
+        }));
+        let broadListCount = 0;
+        const store: PluginPermissionGrantStore = {
+            async list() {
+                broadListCount += 1;
+                return { grants: newestGrants, pendingRequests: [] };
+            },
+            async getRequest() { return null; },
+            async getGrant({ grantId }) { return grantId === oldGrant.id ? oldGrant : null; },
+            async createPendingRequest() {},
+            async grantPendingRequest() {},
+            async resolvePendingRequestWithExistingGrant() {},
+            async revokeGrant() {},
+            async dismissPendingRequest() {},
+        };
+        const operations = createPluginPermissionGrantOperations(store);
+        const input = PluginPermissionGrantListActionInputV1Schema.parse({
+            pluginId: request.pluginId,
+            grantId: oldGrant.id,
+            includeRevoked: true,
+            includeResolvedRequests: false,
+            limit: 1,
+        });
+
+        await expect(operations.list({ accountId: request.accountId, input })).resolves.toEqual({
+            grants: [oldGrant],
+            pendingRequests: [],
+        });
+        expect(broadListCount).toBe(0);
+    });
+
     it("returns the durable terminal winner for same grant and dismiss retries without another audit write", async () => {
         const request = pendingRequest();
         const grant = activeGrant(request);
@@ -211,7 +259,7 @@ describe("plugin permission grant operations", () => {
             },
             (request) => request.machineId === PUBLISHER_AUTHORITY.machineId
                 && request.installationId === PUBLISHER_AUTHORITY.installationId
-                ? { pluginId: CODERABBIT_PLUGIN_ID, source: PUBLISHER_AUTHORITY }
+                ? { source: PUBLISHER_AUTHORITY }
                 : null,
         );
 
@@ -223,6 +271,7 @@ describe("plugin permission grant operations", () => {
                 pluginId: existing.pluginId,
                 capability: existing.capability,
                 targetScope: existing.targetScope,
+                subject: existing.subject,
                 requester: {
                     kind: "plugin",
                     pluginId: existing.pluginId,
@@ -278,7 +327,7 @@ describe("plugin permission grant operations", () => {
             },
             (authorityRequest) => authorityRequest.machineId === PUBLISHER_AUTHORITY.machineId
                 && authorityRequest.installationId === PUBLISHER_AUTHORITY.installationId
-                ? { pluginId: CODERABBIT_PLUGIN_ID, source: PUBLISHER_AUTHORITY }
+                ? { source: PUBLISHER_AUTHORITY }
                 : null,
         );
 
@@ -323,7 +372,7 @@ describe("plugin permission grant operations", () => {
                     observedAuthorityRequests.push(request);
                     return request.machineId === PUBLISHER_AUTHORITY.machineId
                         && request.installationId === PUBLISHER_AUTHORITY.installationId
-                        ? { pluginId, source: PUBLISHER_AUTHORITY }
+                        ? { source: PUBLISHER_AUTHORITY }
                         : null;
                 },
             );
@@ -331,6 +380,7 @@ describe("plugin permission grant operations", () => {
                 pluginId,
                 capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
                 targetScope: { kind: "project" as const, projectId: "project-1" },
+                subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
                 requester: { kind: "plugin" as const, pluginId },
                 reason: "Write approved review comments directly.",
             };
@@ -348,9 +398,6 @@ describe("plugin permission grant operations", () => {
                 accountId: "account-1",
                 machineId: PUBLISHER_AUTHORITY.machineId,
                 installationId: PUBLISHER_AUTHORITY.installationId,
-                pluginId,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "project", projectId: "project-1" },
             }]);
         }
     });

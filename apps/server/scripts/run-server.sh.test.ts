@@ -15,7 +15,7 @@ async function writeFakeYarn(params: Readonly<{ dir: string; logPath: string }>)
 set -e
 echo "YARN $@" >> "${params.logPath}"
 echo "ENV DATABASE_URL=$DATABASE_URL" >> "${params.logPath}"
-if echo "$*" | grep -Eq "prisma migrate deploy|migrate:sqlite:deploy"; then
+if echo "$*" | grep -Eq "migrate:full:deploy|migrate:sqlite:deploy|migrate:mysql:deploy"; then
   state_path="${statePath}"
   count=0
   if [ -f "$state_path" ]; then
@@ -82,7 +82,7 @@ describe('run-server.sh', () => {
     expect(yarnLines.join('\n')).toContain('YARN --cwd apps/server start:light');
   });
 
-  it('runs migrate deploy for postgres then starts full flavor by default', async () => {
+  it('runs the canonical full migration deploy for postgres then starts full flavor by default', async () => {
     const res = spawnSync('sh', [getScriptPath()], {
       env: {
         ...process.env,
@@ -98,7 +98,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/schema.prisma');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:full:deploy');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 
@@ -120,7 +120,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines.filter((l) => l.includes('prisma migrate deploy --schema prisma/schema.prisma'))).toHaveLength(2);
+    expect(yarnLines.filter((l) => l.includes('migrate:full:deploy'))).toHaveLength(2);
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 
@@ -140,7 +140,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/mysql/schema.prisma');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:mysql:deploy');
   });
 
   it('runs the canonical sqlite deploy owner and derives DATABASE_URL from HAPPIER_SERVER_LIGHT_DATA_DIR when missing', async () => {

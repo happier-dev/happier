@@ -2,9 +2,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
     createSessionRouteTestBuilder,
+    accountFindUnique,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
+
+const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+});
+const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
 
 describe("sessionRoutes v2 active sessions listing", () => {
     beforeEach(() => {
@@ -49,7 +56,7 @@ describe("sessionRoutes v2 active sessions listing", () => {
                 metadata: "m2",
                 metadataVersion: 1,
                 metadataLayoutVersion: 1,
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 agentState: null,
                 agentStateVersion: 0,
                 lastViewedSessionSeq: 1,
@@ -81,7 +88,7 @@ describe("sessionRoutes v2 active sessions listing", () => {
                 createdAt: now,
                 updatedAt: now,
                 archivedAt: null,
-                metadata: "{}",
+                metadata: STORED_SHARED_METADATA_V1,
                 metadataVersion: 1,
                 agentState: null,
                 agentStateVersion: 0,
@@ -131,6 +138,7 @@ describe("sessionRoutes v2 active sessions listing", () => {
                             ],
                         },
                     ],
+                    currentStorageState: "hosted",
                     active: true,
                     lastActiveAt: { gt: expect.any(Date) },
                 }),
@@ -207,10 +215,10 @@ describe("sessionRoutes v2 active sessions listing", () => {
             updatedAt: at,
             meaningfulActivityAt: at,
             archivedAt: null,
-            metadata: "{}",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: null,
             agentStateVersion: 0,
             lastViewedSessionSeq: 0,
@@ -266,9 +274,13 @@ describe("sessionRoutes v2 active sessions listing", () => {
             skip: 2,
             take: 1,
         }));
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
+        expect(accountFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "owner" },
+        }));
     });
 
-    it("preserves the released layout-zero shared active-row projection", async () => {
+    it("refuses a released layout-zero shared active-row projection until owner migration", async () => {
         const now = new Date(1_000);
         sessionFindMany.mockResolvedValue([{
             id: "legacy-shared-active",
@@ -303,23 +315,10 @@ describe("sessionRoutes v2 active sessions listing", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/active");
         const { reply, response } = await route.invoke({ query: { limit: 1 } });
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(response).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "legacy-shared-active",
-                    metadata: "legacy-whole-bag",
-                    metadataVersion: 1,
-                    metadataLayoutVersion: 0,
-                    agentState: "legacy-owner-state",
-                    agentStateVersion: 3,
-                    dataEncryptionKey: null,
-                    share: {
-                        accessLevel: "view",
-                        canApprovePermissions: false,
-                    },
-                }),
-            ],
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
     });
 

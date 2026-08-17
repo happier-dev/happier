@@ -297,6 +297,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             serverIdentityId: "srv_authClaimIdentity",
         });
         expect(claimJson.token.length).toBeGreaterThan(10);
+        expect(claimJson.token).not.toBe(token);
 
         const row = await db.terminalAuthRequest.findUnique({
             where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(publicKeyBase64)) },

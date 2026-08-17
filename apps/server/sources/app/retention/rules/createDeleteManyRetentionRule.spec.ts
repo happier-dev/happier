@@ -24,6 +24,7 @@ function createPolicy(): RetentionPolicy {
         maxDeletesPerRulePerRun: 100,
         domains: {
             sessions: { mode: 'keep_forever' },
+            sessionSidechainMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             usageEvents: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },

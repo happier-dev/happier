@@ -40,9 +40,14 @@ function createSocket(overrides?: Readonly<{ id?: string; clientType?: string; m
 
 function createIo() {
     const roomEmit = vi.fn();
+    const localRoomEmit = vi.fn((event: string, payload: unknown) => roomEmit(event, payload));
     return {
         roomEmit,
+        localRoomEmit,
         to: vi.fn((_room: string) => ({ emit: roomEmit })),
+        local: {
+            to: vi.fn((_room: string) => ({ emit: localRoomEmit })),
+        },
     };
 }
 
@@ -770,7 +775,7 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
             frame: expect.objectContaining({ kind: 'open' }),
         }));
         expect(io.to).not.toHaveBeenCalledWith('machine:machine_1:user_1');
-        expect(io.to).toHaveBeenCalledWith('socket_1');
+        expect(io.local.to).toHaveBeenCalledWith('socket_1');
         expect(coordinator.admit).not.toHaveBeenCalled();
         expect(coordinator.routeOwnerEnvelope).not.toHaveBeenCalled();
     });
@@ -1979,6 +1984,43 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         }
     });
 
+    it('settles the authoritative local user once when the cluster adapter is unavailable at idle expiry', async () => {
+        vi.useFakeTimers();
+        try {
+            const mod = await loadRegisterRelayModule();
+            expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+            if (!mod?.registerPeerTcpTunnelRelaySocketHandler) return;
+
+            const socket = createSocket();
+            const io = createIo();
+            const isolatedReplica = createIsolatedReplicaCoordinator();
+            mod.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+                io,
+                serverRoutedEnabled: true,
+                allowedPorts: [3000],
+                relayAuthorizationTrustRoots,
+                maxIdleMs: 30,
+                coordinator: isolatedReplica.coordinator,
+            });
+
+            socket.trigger('peer:tunnel:v1', createOpenEnvelope('tun_cluster_partition_idle'));
+            await vi.advanceTimersByTimeAsync(0);
+            io.roomEmit.mockClear();
+            io.localRoomEmit.mockClear();
+
+            await vi.advanceTimersByTimeAsync(31);
+
+            expect(io.localRoomEmit.mock.calls.filter(([, payload]) =>
+                (payload as { frame?: { tunnelId?: unknown; reasonCode?: unknown } }).frame?.tunnelId
+                    === 'tun_cluster_partition_idle'
+                && (payload as { frame?: { reasonCode?: unknown } }).frame?.reasonCode
+                    === 'relay_cap_exceeded',
+            )).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('emits socket-loss closure only after disconnect cleanup removes relay state', async () => {
         const mod = await loadRegisterRelayModule();
         expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
@@ -2155,6 +2197,29 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
             userReplicaIo.roomEmit.mockClear();
             machineReplicaIo.roomEmit.mockClear();
 
+            machineSocket.trigger(
+                'peer:tunnel:v1',
+                createMachineDataEnvelope(
+                    'tun_remote_recipient_disconnect',
+                    'remote-machine-response',
+                    0,
+                    { recipient: { kind: 'user', socketId: userSocket.id } },
+                ),
+            );
+            await vi.waitFor(() => {
+                expect(userReplicaIo.localRoomEmit).toHaveBeenCalledWith(
+                    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+                    expect.objectContaining({
+                        frame: expect.objectContaining({
+                            kind: 'data',
+                            tunnelId: 'tun_remote_recipient_disconnect',
+                        }),
+                    }),
+                );
+            });
+            userReplicaIo.roomEmit.mockClear();
+            userReplicaIo.localRoomEmit.mockClear();
+
             isolatedReplica.disconnectMachine();
             machineSocket.trigger('disconnect');
             const socketLossAbortCount = [
@@ -2166,6 +2231,16 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
                 && (payload as { frame?: { reasonCode?: unknown } }).frame?.reasonCode
                     === 'relay_socket_disconnected',
             ).length;
+            expect(userReplicaIo.localRoomEmit).toHaveBeenCalledWith(
+                PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+                expect.objectContaining({
+                    frame: expect.objectContaining({
+                        kind: 'abort',
+                        tunnelId: 'tun_remote_recipient_disconnect',
+                        reasonCode: 'relay_socket_disconnected',
+                    }),
+                }),
+            );
 
             userReplicaIo.roomEmit.mockClear();
             userSocket.trigger(

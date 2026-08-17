@@ -72,8 +72,10 @@ if [ "$should_migrate" = "1" ] && [ "${RUN_MIGRATIONS:-1}" != "0" ]; then
   while [ "$i" -le "$attempts" ]; do
     if [ "$provider" = "sqlite" ]; then
       migration_command="migrate:sqlite:deploy"
+    elif [ "$provider" = "mysql" ]; then
+      migration_command="migrate:mysql:deploy"
     else
-      migration_command="prisma migrate deploy --schema $schema"
+      migration_command="migrate:full:deploy"
     fi
     echo "[entrypoint] Running ${migration_command} (${provider}) (attempt $i/$attempts)..."
 
@@ -83,8 +85,14 @@ if [ "$should_migrate" = "1" ] && [ "${RUN_MIGRATIONS:-1}" != "0" ]; then
       else
         status=$?
       fi
+    elif [ "$provider" = "mysql" ]; then
+      if out="$(yarn --cwd apps/server migrate:mysql:deploy 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
     else
-      if out="$(yarn --cwd apps/server prisma migrate deploy --schema "$schema" 2>&1)"; then
+      if out="$(yarn --cwd apps/server migrate:full:deploy 2>&1)"; then
         status=0
       else
         status=$?

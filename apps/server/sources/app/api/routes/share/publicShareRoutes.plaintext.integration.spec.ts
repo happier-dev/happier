@@ -1,14 +1,50 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "crypto";
-import { PUBLIC_SHARE_ENCRYPTED_DATA_KEY_CURRENT_V0_BYTES } from "@happier-dev/protocol";
+import type { FastifyRequest } from "fastify";
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    PUBLIC_SHARE_ENCRYPTED_DATA_KEY_CURRENT_V0_BYTES,
+    buildAccountStoredContentCompatibilityHttpHeadersV1,
+} from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { publicShareRoutes } from "./publicShareRoutes";
 
 const OWNER_METADATA_CIPHERTEXT_V1 =
     "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
+    t: "encrypted",
+    c: OWNER_METADATA_CIPHERTEXT_V1,
+});
+const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
+const CURRENT_ACCOUNT_STORED_CONTENT_HEADERS =
+    buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    );
+
+function createCurrentClientTestApp() {
+    const app = createAuthenticatedTestApp();
+    app.addHook("onRequest", async (request: FastifyRequest) => {
+        Object.assign(
+            request.headers,
+            CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+        );
+    });
+    return app;
+}
+
+async function createCurrentE2eeAccount() {
+    return db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
+        },
+        select: { id: true },
+    });
+}
 
 describe("publicShareRoutes plaintext sessions (integration)", () => {
     let harness: LightSqliteHarness;
@@ -27,19 +63,16 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("publishes a layout-one Agent-state tombstone without owner ciphertext", async () => {
-        const owner = await db.account.create({
-            data: { publicKey: "pk_layout_one_public_recipient" },
-            select: { id: true },
-        });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_layout_one_public_recipient",
                 encryptionMode: "plain",
-                metadata: "shared-safe",
+                metadata: STORED_SHARED_METADATA_V1,
                 metadataVersion: 4,
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 agentState: "owner-private-agent-state",
                 agentStateVersion: 9,
                 dataEncryptionKey: null,
@@ -57,7 +90,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -69,7 +102,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json().session).toMatchObject({
                 id: session.id,
-                metadata: "shared-safe",
+                metadata: STORED_SHARED_METADATA_V1,
                 metadataVersion: 4,
                 metadataLayoutVersion: 1,
                 agentState: null,
@@ -89,8 +122,133 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
         }
     });
 
+    it("projects finite public-share activity through the snapshot publication boundary", async () => {
+        const owner = await createCurrentE2eeAccount();
+        const session = await db.session.create({
+            data: {
+                accountId: owner.id,
+                tag: `s_public_share_finite_activity_${crypto.randomUUID()}`,
+                encryptionMode: "plain",
+                metadataLayoutVersion: 1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
+                agentState: null,
+                dataEncryptionKey: null,
+                seq: 9,
+                currentStorageState: "snapshot_complete",
+                acceptedThroughServerSeq: 4,
+                materializationPublicationId: "public-share-activity-publication-v1",
+                materializedThroughSourceAt: 42_000n,
+                publishedThroughServerSeq: 4,
+                createdAt: new Date(10_000),
+                updatedAt: new Date(100_000),
+                active: true,
+                lastActiveAt: new Date(110_000),
+            },
+            select: { id: true },
+        });
+        const token = `tok_public_share_finite_activity_${crypto.randomUUID()}`;
+        await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash: createHash("sha256").update(token, "utf8").digest(),
+                encryptedDataKey: null,
+                isConsentRequired: false,
+            },
+        });
+
+        const app = createCurrentClientTestApp();
+        publicShareRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "GET",
+                url: `/v1/public-share/${encodeURIComponent(token)}`,
+            });
+
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().session).toMatchObject({
+                id: session.id,
+                seq: 4,
+                updatedAt: 42_000,
+                active: false,
+                activeAt: 42_000,
+            });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it.each([
+        {
+            name: "malformed JSON",
+            metadata: "owner-private-path=/Users/alice/secret-project",
+            sentinel: "/Users/alice/secret-project",
+        },
+        {
+            name: "strict-unknown owner fields",
+            metadata: JSON.stringify({
+                v: 1,
+                path: "/Users/alice/secret-project",
+                machineId: "owner-private-machine",
+                operationClaimId: "owner-private-claim",
+            }),
+            sentinel: "owner-private-claim",
+        },
+    ])("fails public disclosure closed for $name plaintext layout-one metadata", async ({
+        metadata,
+        sentinel,
+    }) => {
+        const owner = await createCurrentE2eeAccount();
+        const session = await db.session.create({
+            data: {
+                accountId: owner.id,
+                tag: `s_invalid_plain_shared_${sentinel.length}`,
+                encryptionMode: "plain",
+                metadata,
+                metadataVersion: 4,
+                metadataLayoutVersion: 1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                agentState: "owner-private-agent-state",
+                agentStateVersion: 9,
+                dataEncryptionKey: null,
+            },
+            select: { id: true },
+        });
+        const token = `tok_invalid_plain_shared_${sentinel.length}`;
+        await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash: createHash("sha256").update(token, "utf8").digest(),
+                encryptedDataKey: null,
+                isConsentRequired: false,
+            },
+        });
+
+        const app = createCurrentClientTestApp();
+        publicShareRoutes(app as any);
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "GET",
+                url: `/v1/public-share/${encodeURIComponent(token)}`,
+            });
+
+            expect(response.statusCode, response.body).toBe(409);
+            expect(response.json()).toMatchObject({
+                code: "metadata_privacy_upgrade_required",
+            });
+            expect(response.body).not.toContain(sentinel);
+            expect(response.body).not.toContain("owner-private-agent-state");
+        } finally {
+            await app.close();
+        }
+    });
+
     it("creates and accesses a public share for a plaintext session without encryptedDataKey", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const externalSessionOperationPresentationV1 = {
             v: 1,
             operationId: "operation-public-safe-1",
@@ -105,10 +263,9 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                 tag: "s_plain",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadata: JSON.stringify({
                     v: 1,
-                    flavor: "claude",
                     externalSessionOperationPresentationV1,
                 }),
                 agentState: null,
@@ -117,7 +274,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -154,18 +311,18 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
         }
     });
 
-    it.each(["machine_only", "server_partial"] as const)(
+    it.each(["machine_only", "server_partial", "legacy_external_unknown"] as const)(
         "rejects public-share creation and reads while transcript storage is %s",
         async (currentStorageState) => {
-            const owner = await db.account.create({ data: { publicKey: `pk_${currentStorageState}` }, select: { id: true } });
+            const owner = await createCurrentE2eeAccount();
             const session = await db.session.create({
                 data: {
                     accountId: owner.id,
                     tag: `s_${currentStorageState}`,
                     encryptionMode: "plain",
                     metadataLayoutVersion: 1,
-                    ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                    metadata: JSON.stringify({ v: 1, flavor: "claude" }),
+                    ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                    metadata: STORED_SHARED_METADATA_V1,
                     agentState: null,
                     dataEncryptionKey: null,
                     currentStorageState,
@@ -176,7 +333,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             const token = `tok_${currentStorageState}`;
             const tokenHash = createHash("sha256").update(token, "utf8").digest();
 
-            const app = createAuthenticatedTestApp();
+            const app = createCurrentClientTestApp();
             publicShareRoutes(app as any);
             await app.ready();
             try {
@@ -211,14 +368,14 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     );
 
     it("returns 404 for message reads when an E2EE session public share is missing encryptedDataKey", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_2" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_e2ee",
                 encryptionMode: "e2ee",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadata: "ciphertext",
                 agentState: null,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
@@ -238,7 +395,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -253,14 +410,14 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("returns 404 for root reads without consuming maxUses when an E2EE public share is missing encryptedDataKey", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_missing_key_root" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_e2ee_missing_key_root",
                 encryptionMode: "e2ee",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadata: "ciphertext",
                 agentState: null,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
@@ -283,7 +440,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -303,14 +460,14 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("returns 404 for root reads without consuming maxUses when an E2EE public share has a malformed encryptedDataKey", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_malformed_key_root" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_e2ee_malformed_key_root",
                 encryptionMode: "e2ee",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadata: "ciphertext",
                 agentState: null,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
@@ -333,7 +490,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -353,14 +510,14 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("returns 404 for message reads without consuming maxUses when an E2EE public share has a malformed encryptedDataKey", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_malformed_key_messages" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_e2ee_malformed_key_messages",
                 encryptionMode: "e2ee",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadata: "ciphertext",
                 agentState: null,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
@@ -390,7 +547,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -410,15 +567,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("counts a plaintext public share viewer open only once across metadata and messages reads", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_viewer_open_max_uses" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_viewer_open_max_uses",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: JSON.stringify({ v: 1, flavor: "codex" }),
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -447,7 +604,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -476,15 +633,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("rejects capped plaintext public share message reads without a metadata access grant", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_message_max_uses" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_message_max_uses",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: JSON.stringify({ v: 1, flavor: "codex" }),
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -513,7 +670,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -539,15 +696,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("rolls back the final capped use when transactional access logging fails", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_log_rollback" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_log_rollback",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: "{}",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -574,7 +731,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             END
         `);
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -595,15 +752,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("allows only one concurrent root read for a maxUses=1 plaintext public share", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_root_max_uses" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_root_max_uses",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: JSON.stringify({ v: 1, flavor: "codex" }),
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -625,7 +782,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             select: { id: true },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -646,15 +803,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("returns messageRole metadata for public share message reads", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_3" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_message_role",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: JSON.stringify({ v: 1, flavor: "codex" }),
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -697,7 +854,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -724,15 +881,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("returns the newest public share messages by transcript seq instead of createdAt", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_4" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_message_seq_order",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: JSON.stringify({ v: 1, flavor: "codex" }),
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -770,7 +927,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -792,15 +949,15 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     });
 
     it("treats literal false consent as false and supports the exact released unlimited-share viewer request", async () => {
-        const owner = await db.account.create({ data: { publicKey: "pk_owner_strict_consent" }, select: { id: true } });
+        const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
                 tag: "s_plain_strict_consent",
                 encryptionMode: "plain",
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                metadata: "{}",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
                 agentState: null,
                 dataEncryptionKey: null,
             },
@@ -824,7 +981,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
             },
         });
 
-        const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
         publicShareRoutes(app as any);
         await app.ready();
         try {
@@ -861,18 +1018,17 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
     it.each(["plain", "e2ee"] as const)(
         "returns only canonical main rows for a %s public transcript",
         async (encryptionMode) => {
-            const owner = await db.account.create({
-                data: { publicKey: `pk_owner_main_scope_${encryptionMode}` },
-                select: { id: true },
-            });
+            const owner = await createCurrentE2eeAccount();
             const session = await db.session.create({
                 data: {
                     accountId: owner.id,
                     tag: `s_main_scope_${encryptionMode}`,
                     encryptionMode,
                     metadataLayoutVersion: 1,
-                    ownerMetadata: OWNER_METADATA_CIPHERTEXT_V1,
-                    metadata: encryptionMode === "plain" ? "{}" : "ciphertext",
+                    ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                    metadata: encryptionMode === "plain"
+                        ? STORED_SHARED_METADATA_V1
+                        : "ciphertext",
                     agentState: null,
                     dataEncryptionKey: encryptionMode === "plain" ? null : Buffer.from([1, 2, 3]),
                 },
@@ -911,7 +1067,7 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                 },
             });
 
-            const app = createAuthenticatedTestApp();
+        const app = createCurrentClientTestApp();
             publicShareRoutes(app as any);
             await app.ready();
             try {

@@ -1,7 +1,13 @@
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
-import { canManageSharing, canManagePermissionDelegation, areFriends } from "@/app/share/accessControl";
+import {
+    areFriends,
+    buildCurrentSessionParticipantWhere,
+    canManagePermissionDelegation,
+    canManageSharing,
+    canManageSharingInTx,
+} from "@/app/share/accessControl";
 import { ShareAccessLevel } from "@/storage/prisma";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, buildSessionShareRevokedUpdate } from "@/app/events/eventRouter";
@@ -18,9 +24,13 @@ import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
     projectSessionMetadataForRecipient,
+    readSessionMetadataOwnerAccountMode,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-
-type SessionShareRow = Awaited<ReturnType<typeof db.sessionShare.findFirst>>;
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
 
 function resolveEffectiveShareApprovalCapability(input: Readonly<{
     accessLevel: ShareAccessLevel;
@@ -55,18 +65,33 @@ export function shareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
 
-        const shares = await db.sessionShare.findMany({
-            where: { sessionId },
-            include: {
-                sharedWithUser: {
-                    select: PROFILE_SELECT
-                }
+        const session = await db.session.findFirst({
+            where: buildCurrentSessionParticipantWhere({
+                userId,
+                sessionId,
+                minimumAccess: "admin",
+            }),
+            select: {
+                ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                shares: {
+                    include: {
+                        sharedWithUser: {
+                            select: PROFILE_SELECT,
+                        },
+                    },
+                    orderBy: { createdAt: 'desc' },
+                },
             },
-            orderBy: { createdAt: 'desc' }
         });
+        if (!session || (
+            session.accountId !== userId
+            && !isSessionTranscriptShareable(session)
+        )) {
+            return reply.code(403).send({ error: 'Forbidden' });
+        }
 
         return reply.send({
-            shares: shares.map(share => ({
+            shares: session.shares.map(share => ({
                 id: share.id,
                 sharedWithUser: toShareUserProfile(share.sharedWithUser),
                 accessLevel: share.accessLevel,
@@ -138,13 +163,22 @@ export function shareRoutes(app: Fastify) {
             accessLevel: accessLevel as ShareAccessLevel,
             requestedCanApprovePermissions: canApprovePermissions,
         });
+        const supportsCurrentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         const share = await inTx(async (tx) => {
+            if (!await canManageSharingInTx(tx, {
+                userId: ownerId,
+                sessionId,
+                requirePermissionDelegation: canApprovePermissions === true,
+            })) {
+                return { type: "forbidden" as const };
+            }
             const currentSession = await tx.session.findUnique({
                 where: { id: sessionId },
                 select: {
                     id: true,
-                    accountId: true,
                     encryptionMode: true,
                     metadata: true,
                     metadataVersion: true,
@@ -158,10 +192,30 @@ export function shareRoutes(app: Fastify) {
             if (!currentSession) {
                 return { type: "not-found" as const };
             }
+            if (
+                currentSession.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                && !supportsCurrentProtocol
+            ) {
+                return {
+                    type: "client-upgrade-required" as const,
+                };
+            }
             try {
+                const ownerAccountMode = currentSession.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                    ? await readSessionMetadataOwnerAccountMode(
+                        tx,
+                        currentSession.accountId,
+                    )
+                    : undefined;
                 projectSessionMetadataForRecipient({
                     session: currentSession,
-                    recipientAccountId: null,
+                    recipient: {
+                        type: "shared",
+                        accountId: null,
+                        ownerAccountMode,
+                    },
                 });
             } catch (error) {
                 if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -233,8 +287,18 @@ export function shareRoutes(app: Fastify) {
 
             return { type: "ok" as const, share };
         });
+        if (share.type === "forbidden") {
+            return reply.code(403).send({ error: "Forbidden" });
+        }
         if (share.type === "privacy-error") {
             return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
+        }
+        if (share.type === "client-upgrade-required") {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            );
+            return;
         }
         if (share.type === "not-found") {
             return reply.code(404).send({ error: "Session not found" });
@@ -310,7 +374,14 @@ export function shareRoutes(app: Fastify) {
             existingCanApprovePermissions: existing.canApprovePermissions,
         });
 
-        const share = await inTx(async (tx) => {
+        const result = await inTx(async (tx) => {
+            if (!await canManageSharingInTx(tx, {
+                userId,
+                sessionId,
+                requirePermissionDelegation: canApprovePermissions !== undefined,
+            })) {
+                return { type: "forbidden" as const };
+            }
             const share = await tx.sessionShare.update({
                 where: { id: shareId },
                 data: {
@@ -348,17 +419,21 @@ export function shareRoutes(app: Fastify) {
                 });
             });
 
-            return share;
+            return { type: "ok" as const, share };
         });
+
+        if (result.type === "forbidden") {
+            return reply.code(403).send({ error: "Forbidden" });
+        }
 
         return reply.send({
             share: {
-                id: share.id,
-                sharedWithUser: toShareUserProfile(share.sharedWithUser),
-                accessLevel: share.accessLevel,
-                canApprovePermissions: share.canApprovePermissions,
-                createdAt: share.createdAt.getTime(),
-                updatedAt: share.updatedAt.getTime()
+                id: result.share.id,
+                sharedWithUser: toShareUserProfile(result.share.sharedWithUser),
+                accessLevel: result.share.accessLevel,
+                canApprovePermissions: result.share.canApprovePermissions,
+                createdAt: result.share.createdAt.getTime(),
+                updatedAt: result.share.updatedAt.getTime()
             }
         });
     });
@@ -384,12 +459,15 @@ export function shareRoutes(app: Fastify) {
         }
 
         const result = await inTx(async (tx) => {
+            if (!await canManageSharingInTx(tx, { userId, sessionId })) {
+                return { type: "forbidden" as const };
+            }
             const share = await tx.sessionShare.findFirst({
                 where: { id: shareId, sessionId }
             });
 
             if (!share) {
-                return { share: null as SessionShareRow | null };
+                return { type: "not-found" as const };
             }
 
             await tx.sessionShare.delete({
@@ -415,10 +493,13 @@ export function shareRoutes(app: Fastify) {
                 });
             });
 
-            return { share };
+            return { type: "ok" as const, share };
         });
 
-        if (!result.share) {
+        if (result.type === "forbidden") {
+            return reply.code(403).send({ error: "Forbidden" });
+        }
+        if (result.type === "not-found") {
             return reply.code(404).send({ error: 'Share not found' });
         }
 

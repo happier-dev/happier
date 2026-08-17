@@ -7,6 +7,12 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 const logSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
+// These route contracts use the database mock below. Avoid loading the real
+// Prisma client solely to resolve transaction-provider metadata.
+vi.mock("@/storage/prisma", () => ({
+    getDbProviderFromEnv: () => "sqlite",
+    isPrismaErrorCode: () => false,
+}));
 
 const dbMocks = createDbMocks({
     voiceSessionLease: ["count", "create", "findMany", "delete", "deleteMany"],
@@ -46,6 +52,7 @@ describe("voiceRoutes (secure)", () => {
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
             REVENUECAT_SECRET_KEY: "rc_secret",
+            HAPPIER_API_RATE_LIMITS_ENABLED: "false",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
@@ -269,6 +276,30 @@ describe("voiceRoutes (secure)", () => {
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
+        expect(renderedLogs()).toContain("http_5xx");
+        expect(renderedLogs()).not.toContain("u1");
+    });
+
+    it("keeps RevenueCat failure diagnostics bounded and excludes account and raw error material", async () => {
+        const accountId = "account-private-9f3b5df4";
+        const rawFailure = "https://api.revenuecat.com/v1/subscribers/account-private-9f3b5df4?authorization=Bearer%20revenuecat-secret";
+        (globalThis.fetch as any).mockRejectedValueOnce(rawFailure);
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: accountId, body: { sessionId: "s1" } });
+
+        expect(reply.code).toHaveBeenCalledWith(503);
+        expect(renderedLogs()).toContain("network_error");
+        expect(renderedLogs()).not.toContain(accountId);
+        expect(renderedLogs()).not.toContain(rawFailure);
+        expect(renderedLogs()).not.toContain("revenuecat-secret");
     });
 
     it("returns 503 when RevenueCat credentials are invalid (401)", async () => {
@@ -314,7 +345,9 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 429 when user already has an active session", async () => {
-        leaseFindMany.mockResolvedValueOnce([{ id: "lease_other" }]);
+        leaseFindMany
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: "lease_other" }]);
 
         (globalThis.fetch as any).mockResolvedValueOnce({
             ok: true,
@@ -334,7 +367,18 @@ describe("voiceRoutes (secure)", () => {
         expect(reply.code).toHaveBeenCalledWith(429);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "too_many_sessions" }));
         expect(leaseCreate).toHaveBeenCalledTimes(1);
-        expect(leaseDelete).toHaveBeenCalledTimes(1);
+        expect(leaseFindMany).toHaveBeenNthCalledWith(2, {
+            where: {
+                accountId: "u1",
+                expiresAt: { gt: new Date("2026-02-03T12:00:00.000Z") },
+                conversation: null,
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            take: 1,
+            select: { id: true },
+        });
+        expect(leaseDelete).toHaveBeenCalledWith({ where: { id: "lease_1" } });
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
     it("returns token when user is subscribed (voice entitlement)", async () => {

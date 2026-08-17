@@ -8,6 +8,8 @@ import {
 } from "vitest";
 import {
     buildConnectedServiceCredentialRecord,
+    encodeQualifiedConnectedAccountV4StructuredQueryValue,
+    QualifiedConnectedAccountRefSchema,
     type ConnectedServiceCredentialRecordV1,
 } from "@happier-dev/protocol";
 
@@ -16,6 +18,9 @@ import {
     createLightSqliteHarness,
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
+import {
+    createSignedAccountContentBinding,
+} from "@/testkit/accountEncryption";
 import {
     buildAccountConnectedServicesProjection,
 } from "@/app/api/routes/account/connectedServicesProjection";
@@ -26,14 +31,19 @@ import {
     registerAccountEncryptionMigrateRoutes,
 } from "../../account/registerAccountEncryptionMigrateRoutes";
 import {
+    acquireQualifiedConnectedServiceRefreshLease,
+    deleteQualifiedConnectedServiceCredential,
     listQualifiedConnectedAccounts,
     mutateQualifiedConnectedAccountConfiguration,
     mutateQualifiedConnectedServiceCredential,
+    mutateQualifiedConnectedServiceCredentialHealth,
     readQualifiedConnectedAccountConfiguration,
     readQualifiedConnectedServiceCredential,
 } from "./credentialRepository";
 import {
     createQualifiedConnectedAccountGroup,
+    createQualifiedConnectedAccountGroupMember,
+    setQualifiedConnectedAccountGroupActiveAccount,
 } from "./groupRepository";
 import {
     createQualifiedConnectedAccountGroupDigest,
@@ -46,6 +56,12 @@ import {
     registerConnectedServiceCredentialRoutesV2,
 } from "../connectedServicesV2/registerConnectedServiceCredentialRoutesV2";
 import {
+    registerConnectedServiceV1ShimRoutes,
+} from "../connectedServicesV2/registerConnectedServiceV1ShimRoutes";
+import {
+    registerQualifiedConnectedAccountCredentialRoutesV4,
+} from "./registerQualifiedConnectedAccountCredentialRoutesV4";
+import {
     registerConnectedServiceAuthGroupRoutesV3,
 } from "../connectedServicesV3/registerConnectedServiceAuthGroupRoutesV3";
 import {
@@ -53,6 +69,7 @@ import {
     createUsageSnapshot,
 } from "../providerAccountUsageTestkit";
 import {
+    writeQualifiedProviderAccountUsageRecord,
     writeQualifiedProviderAccountUsageRecordFromLegacyBoundary,
 } from "./usageRepository";
 import {
@@ -265,10 +282,13 @@ describe("qualified Connected Account activated legacy compatibility", () => {
                 accountId: account.id,
                 ref,
             })).resolves.toMatchObject({
-                authenticationModeId,
-                credentialRevision,
-                configurationRevision: null,
-                content: { t: "plain", v: record },
+                status: "resolved",
+                credential: {
+                    authenticationModeId,
+                    credentialRevision,
+                    configurationRevision: null,
+                    content: { t: "plain", v: record },
+                },
             });
 
             const replacement = claudeRecord(profileId, kind);
@@ -313,10 +333,174 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         },
     );
 
+    it("keeps an authoritative retained legacy credential decode failure distinct from absence through V4", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const profileId = "retained-invalid-binding";
+        const identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai-codex",
+            profileId,
+            credentialKind: "oauth",
+        });
+        const ref = {
+            service: {
+                pluginId: identity.servicePluginId,
+                localId: identity.serviceLocalId,
+            },
+            accountId: identity.connectedAccountId,
+        };
+        const retainedRecord = buildConnectedServiceCredentialRecord({
+            now: 1_000,
+            serviceId: "github",
+            profileId: "different-profile",
+            kind: "oauth",
+            oauth: {
+                accessToken: "retained-secret",
+                refreshToken: "retained-refresh",
+                idToken: null,
+                scope: null,
+                tokenType: "Bearer",
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: account.id,
+                vendor: "openai-codex",
+                profileId,
+                ...identity,
+                token: encodeUtf8(JSON.stringify(retainedRecord)),
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "oauth",
+                    credentialRevision,
+                    providerEmail: null,
+                    providerAccountId: null,
+                },
+            },
+        });
+
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+        })).resolves.toEqual({ status: "unsupported_format" });
+
+        const encodedRef =
+            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                QualifiedConnectedAccountRefSchema,
+                ref,
+            );
+        await withAuthenticatedTestApp(
+            (app) =>
+                registerQualifiedConnectedAccountCredentialRoutesV4(app),
+            async (app) => {
+                const response = await app.inject({
+                    method: "GET",
+                    url:
+                        `/v4/connect/qualified/credential?ref=${encodeURIComponent(encodedRef)}`,
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(response.statusCode).toBe(409);
+                expect(response.json()).toEqual({
+                    error: "connect_credential_unsupported_format",
+                });
+                expect(response.body).not.toContain("retained-secret");
+            },
+        );
+    });
+
+    it("keeps a corrupt native V4 sealed credential fail-closed without exposing its content", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "server_sealed",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ref = {
+            service: {
+                pluginId: "example.connected-accounts",
+                localId: "native-v4",
+            },
+            accountId: "corrupt-sealed",
+        };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: {
+                t: "plain",
+                v: { token: "native-v4-secret-must-not-leak" },
+            },
+            metadata: { scopes: [] },
+        });
+        if (created.status !== "written") {
+            throw new Error("Expected native V4 credential create");
+        }
+        const row = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: { id: true },
+        });
+        await db.serviceAccountToken.update({
+            where: { id: row.id },
+            data: {
+                token: encodeUtf8(JSON.stringify({
+                    v: 1,
+                    storage: "server_sealed_json_v1",
+                    ciphertext:
+                        Buffer.from("corrupt-sealed-bytes").toString("base64"),
+                })),
+            },
+        });
+
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+        })).rejects.toThrow();
+
+        const encodedRef =
+            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                QualifiedConnectedAccountRefSchema,
+                ref,
+            );
+        await withAuthenticatedTestApp(
+            (app) =>
+                registerQualifiedConnectedAccountCredentialRoutesV4(app),
+            async (app) => {
+                const response = await app.inject({
+                    method: "GET",
+                    url:
+                        `/v4/connect/qualified/credential?ref=${encodeURIComponent(encodedRef)}`,
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(response.statusCode).toBe(500);
+                expect(response.body).not.toContain(
+                    "native-v4-secret-must-not-leak",
+                );
+            },
+        );
+    });
+
     it("reads and reconnects an activated E2EE V2 row on the same canonical credential", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "e2ee-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -355,11 +539,14 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            authenticationModeId: "oauth",
-            credentialRevision,
-            content: {
-                t: "encrypted",
-                c: "opaque-legacy-e2ee",
+            status: "resolved",
+            credential: {
+                authenticationModeId: "oauth",
+                credentialRevision,
+                content: {
+                    t: "encrypted",
+                    c: "opaque-legacy-e2ee",
+                },
             },
         });
 
@@ -635,7 +822,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
     it("derives the released projection kind from canonical authentication-mode identity", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-canonical-projection-kind",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -815,9 +1002,12 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            authenticationModeId: "setup-token",
-            configurationRevision: created.configurationRevision,
-            content: { t: "plain", v: replacementRecord },
+            status: "resolved",
+            credential: {
+                authenticationModeId: "setup-token",
+                configurationRevision: created.configurationRevision,
+                content: { t: "plain", v: replacementRecord },
+            },
         });
         await expect(listQualifiedConnectedAccounts({
             accountId: account.id,
@@ -964,7 +1154,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
     it("serves and reconnects a configured V4-built E2EE built-in through released V2 routes", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "e2ee-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -1069,11 +1259,14 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            authenticationModeId: "oauth",
-            configurationRevision: created.configurationRevision,
-            content: {
-                t: "encrypted",
-                c: "replacement-v2-e2ee-credential",
+            status: "resolved",
+            credential: {
+                authenticationModeId: "oauth",
+                configurationRevision: created.configurationRevision,
+                content: {
+                    t: "encrypted",
+                    c: "replacement-v2-e2ee-credential",
+                },
             },
         });
         await expect(readQualifiedConnectedAccountConfiguration({
@@ -1330,7 +1523,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
     it("round-trips and CAS-replaces an E2EE configuration sidecar without exposing plaintext", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "e2ee-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -1421,7 +1614,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         expect(storedConfiguration).not.toContain('"t":"plain"');
     });
 
-    it("rejects a mismatched stored qualified identity before an Account encryption transition", async () => {
+    it("returns the old-reader-safe predecessor refusal before inspecting a mismatched stored qualified identity", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -1431,7 +1624,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         });
         const account = await db.account.create({
             data: {
-                publicKey: "mismatched-qualified-identity-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "opaque-settings-ciphertext",
                 settingsVersion: 0,
@@ -1535,7 +1728,10 @@ describe("qualified Connected Account activated legacy compatibility", () => {
                         },
                     });
 
-                    expect(response.statusCode, response.body).toBe(500);
+                    expect(response.statusCode, response.body).toBe(400);
+                    expect(response.json()).toEqual({
+                        error: "invalid-params",
+                    });
                     expect(
                         mutationObserver.accountMutationAttempted(),
                     ).toBe(false);
@@ -1579,7 +1775,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         }
     });
 
-    it("migrates one qualified credential and configuration sidecar atomically from E2EE to plain", async () => {
+    it("refuses a predecessor migration of a configured qualified credential without mutating it", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -1589,7 +1785,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         });
         const account = await db.account.create({
             data: {
-                publicKey: "e2ee-public-key",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "opaque-settings-ciphertext",
                 settingsVersion: 0,
@@ -1736,23 +1932,36 @@ describe("qualified Connected Account activated legacy compatibility", () => {
                     headers: { "x-test-user-id": account.id },
                     payload: migrationPayload,
                 });
-                expect(migrated.statusCode).toBe(200);
+                expect(migrated.statusCode).toBe(400);
                 expect(migrated.json()).toEqual({
-                    success: true,
-                    mode: "plain",
-                    settingsVersion: 1,
+                    error: "invalid-params",
                 });
             },
         );
 
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                encryptionMode: true,
+                settings: true,
+                settingsVersion: true,
+            },
+        })).resolves.toEqual({
+            encryptionMode: "e2ee",
+            settings: "opaque-settings-ciphertext",
+            settingsVersion: 0,
+        });
         await expect(readQualifiedConnectedServiceCredential({
             accountId: account.id,
             ref,
         })).resolves.toMatchObject({
-            authenticationModeId: "oauth",
-            content: {
-                t: "plain",
-                v: { accessToken: "replacement-credential" },
+            status: "resolved",
+            credential: {
+                authenticationModeId: "oauth",
+                content: {
+                    t: "encrypted",
+                    c: "opaque-credential-ciphertext",
+                },
             },
         });
         await expect(readQualifiedConnectedAccountConfiguration({
@@ -1760,8 +1969,8 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             target: { kind: "account", ref },
         })).resolves.toMatchObject({
             configurationContent: {
-                t: "plain",
-                v: { endpoint: "https://example.invalid" },
+                t: "encrypted",
+                c: "opaque-configuration-ciphertext",
             },
         });
         const migratedRow = await db.serviceAccountToken.findFirstOrThrow({
@@ -1769,17 +1978,890 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             select: { id: true, token: true, configurationContent: true },
         });
         expect(migratedRow.id).toBe(before.id);
-        expect(Buffer.from(migratedRow.token).toString("utf8"))
-            .toContain('"t":"plain"');
+        expect(Buffer.from(migratedRow.token)).toEqual(
+            Buffer.from(before.token),
+        );
         expect(Buffer.from(
             migratedRow.configurationContent ?? [],
-        ).toString("utf8")).toContain('"t":"plain"');
+        )).toEqual(Buffer.from(
+            before.configurationContent ?? [],
+        ));
         expect(await db.serviceAccountToken.count({
             where: { accountId: account.id },
         })).toBe(1);
     });
 
-    it("prevents the released raw vendor-token seam from overwriting or deleting a V4 credential", async () => {
+    it("requires an explicit revision across legacy credential mutation paths without changing qualified rows, configuration, or groups", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const plainAccount = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const v3ProfileId = "revision-required-v3";
+        const v3Identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "claude-subscription",
+            profileId: v3ProfileId,
+            credentialKind: "token",
+        });
+        const v3Ref = {
+            service: {
+                pluginId: v3Identity.servicePluginId,
+                localId: v3Identity.serviceLocalId,
+            },
+            accountId: v3Identity.connectedAccountId,
+        };
+        const v3Record = claudeRecord(v3ProfileId, "token");
+        const v3Created = await mutateQualifiedConnectedServiceCredential({
+            accountId: plainAccount.id,
+            ref: v3Ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "setup-token",
+            content: { t: "plain", v: v3Record },
+            metadata: { scopes: [] },
+            initialConfiguration: {
+                expectedConfigurationRevision: null,
+                replacementContentEnvelope: {
+                    t: "plain",
+                    v: { endpoint: "https://v3.example.test" },
+                },
+            },
+        });
+        if (
+            v3Created.status !== "written"
+            || v3Created.configurationRevision === null
+        ) {
+            throw new Error("Expected V3 guard fixture create");
+        }
+        await expect(createQualifiedConnectedAccountGroup({
+            accountId: plainAccount.id,
+            service: v3Ref.service,
+            group: { groupId: "revision-required-v3" },
+            initialMembers: [{
+                connectedAccountId: v3Ref.accountId,
+            }],
+            activeConnectedAccountId: v3Ref.accountId,
+        })).resolves.toMatchObject({ status: "written" });
+
+        const e2eeAccount = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const createE2eeFixture = async (profileId: string) => {
+            const identity = resolveLegacyServiceAccountTokenIdentityFields({
+                serviceId: "openai-codex",
+                profileId,
+                credentialKind: "oauth",
+            });
+            const ref = {
+                service: {
+                    pluginId: identity.servicePluginId,
+                    localId: identity.serviceLocalId,
+                },
+                accountId: identity.connectedAccountId,
+            };
+            const created = await mutateQualifiedConnectedServiceCredential({
+                accountId: e2eeAccount.id,
+                ref,
+                expectedCredentialRevision: null,
+                authenticationModeId: "oauth",
+                content: {
+                    t: "encrypted",
+                    c: `initial-${profileId}`,
+                },
+                metadata: { scopes: [] },
+                initialConfiguration: {
+                    expectedConfigurationRevision: null,
+                    replacementContentEnvelope: {
+                        t: "encrypted",
+                        c: `configuration-${profileId}`,
+                    },
+                },
+            });
+            if (
+                created.status !== "written"
+                || created.configurationRevision === null
+            ) {
+                throw new Error("Expected E2EE guard fixture create");
+            }
+            return { identity, ref, created };
+        };
+        const v2Fixture = await createE2eeFixture("revision-required-v2");
+        const v1Fixture = await createE2eeFixture("default");
+        await expect(createQualifiedConnectedAccountGroup({
+            accountId: e2eeAccount.id,
+            service: v2Fixture.ref.service,
+            group: { groupId: "revision-required-v2" },
+            initialMembers: [{
+                connectedAccountId: v2Fixture.ref.accountId,
+            }],
+            activeConnectedAccountId: v2Fixture.ref.accountId,
+        })).resolves.toMatchObject({ status: "written" });
+
+        const snapshotQualifiedState = async (params: Readonly<{
+            accountId: string;
+            qualifiedIdentityDigest: string;
+        }>) => ({
+            credential: await db.serviceAccountToken.findFirstOrThrow({
+                where: {
+                    accountId: params.accountId,
+                    qualifiedIdentityDigest: params.qualifiedIdentityDigest,
+                },
+                select: {
+                    id: true,
+                    token: true,
+                    metadata: true,
+                    configurationContent: true,
+                    configurationRevision: true,
+                    expiresAt: true,
+                    refreshLeaseOwnerMachineId: true,
+                    refreshLeaseExpiresAt: true,
+                    updatedAt: true,
+                },
+            }),
+            groups: await db.connectedServiceAuthGroup.findMany({
+                where: { accountId: params.accountId },
+                orderBy: { id: "asc" },
+                select: {
+                    id: true,
+                    groupId: true,
+                    activeConnectedAccountId: true,
+                    activeProfileId: true,
+                    generation: true,
+                    runtimeStateRevision: true,
+                    stateJson: true,
+                    updatedAt: true,
+                    members: {
+                        orderBy: { id: "asc" },
+                        select: {
+                            id: true,
+                            credentialId: true,
+                            enabled: true,
+                            priority: true,
+                            stateJson: true,
+                            updatedAt: true,
+                        },
+                    },
+                },
+            }),
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => {
+                registerConnectedServiceV1ShimRoutes(app, {
+                    credentialMaxLen: 220_000,
+                });
+                registerConnectedServiceCredentialRoutesV2(app, {
+                    credentialMaxLen: 220_000,
+                });
+                registerConnectedServiceCredentialRoutesV3(app);
+            },
+            async (app) => {
+                const v3WriteB = await app.inject({
+                    method: "POST",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: {
+                        content: { t: "plain", v: v3Record },
+                        expectedCredentialRevision:
+                            v3Created.credentialRevision,
+                    },
+                });
+                expect(v3WriteB.statusCode).toBe(200);
+                const v3RevisionB = (
+                    v3WriteB.json() as { credentialRevision: string }
+                ).credentialRevision;
+                expect(v3RevisionB).not.toBe(v3Created.credentialRevision);
+
+                const v2WriteB = await app.inject({
+                    method: "POST",
+                    url:
+                        "/v2/connect/openai-codex/profiles/revision-required-v2/credential",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "replacement-v2",
+                        },
+                        expectedCredentialRevision:
+                            v2Fixture.created.credentialRevision,
+                    },
+                });
+                expect(v2WriteB.statusCode).toBe(200);
+                const v2RevisionB = (
+                    v2WriteB.json() as { credentialRevision: string }
+                ).credentialRevision;
+                expect(v2RevisionB).not.toBe(
+                    v2Fixture.created.credentialRevision,
+                );
+
+                const v1WriteB = await app.inject({
+                    method: "POST",
+                    url: "/v2/connect/openai-codex/profiles/default/credential",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "replacement-v1-b",
+                        },
+                        expectedCredentialRevision:
+                            v1Fixture.created.credentialRevision,
+                    },
+                });
+                expect(v1WriteB.statusCode).toBe(200);
+                const v1RevisionB = (
+                    v1WriteB.json() as { credentialRevision: string }
+                ).credentialRevision;
+                expect(v1RevisionB).not.toBe(
+                    v1Fixture.created.credentialRevision,
+                );
+
+                const explicitV3Create = await app.inject({
+                    method: "POST",
+                    url: "/v3/connect/claude-subscription/profiles/revision-required-v3-create/credential",
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: {
+                        content: {
+                            t: "plain",
+                            v: claudeRecord(
+                                "revision-required-v3-create",
+                                "token",
+                            ),
+                        },
+                        expectedCredentialRevision: null,
+                    },
+                });
+                expect(explicitV3Create.statusCode).toBe(200);
+
+                const explicitV2Create = await app.inject({
+                    method: "POST",
+                    url: "/v2/connect/openai-codex/profiles/revision-required-v2-create/credential",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "explicit-v2-create",
+                        },
+                        expectedCredentialRevision: null,
+                    },
+                });
+                expect(explicitV2Create.statusCode).toBe(200);
+
+                const v3Before = await snapshotQualifiedState({
+                    accountId: plainAccount.id,
+                    qualifiedIdentityDigest:
+                        v3Identity.qualifiedIdentityDigest,
+                });
+                const v2Before = await snapshotQualifiedState({
+                    accountId: e2eeAccount.id,
+                    qualifiedIdentityDigest:
+                        v2Fixture.identity.qualifiedIdentityDigest,
+                });
+                const v1Before = await snapshotQualifiedState({
+                    accountId: e2eeAccount.id,
+                    qualifiedIdentityDigest:
+                        v1Fixture.identity.qualifiedIdentityDigest,
+                });
+
+                const staleV3Write = await app.inject({
+                    method: "POST",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: {
+                        content: { t: "plain", v: v3Record },
+                        expectedCredentialRevision:
+                            v3Created.credentialRevision,
+                    },
+                });
+                expect(staleV3Write.statusCode).toBe(409);
+                expect(staleV3Write.json()).toEqual({
+                    error: "connect_credential_mutation_superseded",
+                    reason: "revision_mismatch",
+                    credentialRevision: v3RevisionB,
+                });
+
+                const staleV2Write = await app.inject({
+                    method: "POST",
+                    url:
+                        "/v2/connect/openai-codex/profiles/revision-required-v2/credential",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "stale-v2-write",
+                        },
+                        expectedCredentialRevision:
+                            v2Fixture.created.credentialRevision,
+                    },
+                });
+                expect(staleV2Write.statusCode).toBe(409);
+                expect(staleV2Write.json()).toEqual({
+                    error: "connect_credential_mutation_superseded",
+                    reason: "revision_mismatch",
+                    credentialRevision: v2RevisionB,
+                });
+
+                const staleV3Health = await app.inject({
+                    method: "PATCH",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential/health`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: {
+                        expectedCredentialRevision:
+                            v3Created.credentialRevision,
+                        health: {
+                            v: 1,
+                            status: "needs_reauth",
+                            reconnectRequired: true,
+                        },
+                    },
+                });
+                expect(staleV3Health.statusCode).toBe(409);
+                expect(staleV3Health.json()).toEqual({
+                    error: "connect_credential_mutation_superseded",
+                    reason: "revision_mismatch",
+                    credentialRevision: v3RevisionB,
+                });
+
+                const staleV3Delete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential?cleanupGroupReferences=true&expectedCredentialRevision=${encodeURIComponent(v3Created.credentialRevision)}`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                });
+                expect(staleV3Delete.statusCode).toBe(409);
+                expect(staleV3Delete.json()).toEqual({
+                    error: "connect_credential_mutation_superseded",
+                    reason: "revision_mismatch",
+                    credentialRevision: v3RevisionB,
+                });
+
+                const staleV2Delete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v2/connect/openai-codex/profiles/revision-required-v2/credential"
+                        + `?cleanupGroupReferences=true&expectedCredentialRevision=${encodeURIComponent(v2Fixture.created.credentialRevision)}`,
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                });
+                expect(staleV2Delete.statusCode).toBe(409);
+                expect(staleV2Delete.json()).toEqual({
+                    error: "connect_credential_mutation_superseded",
+                    reason: "revision_mismatch",
+                    credentialRevision: v2RevisionB,
+                });
+
+                const unguardedV3Write = await app.inject({
+                    method: "POST",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: { content: { t: "plain", v: v3Record } },
+                });
+                expect(unguardedV3Write.statusCode).toBe(400);
+                expect(unguardedV3Write.json()).toEqual({
+                    error: "invalid-params",
+                });
+
+                const unguardedV2Write = await app.inject({
+                    method: "POST",
+                    url:
+                        "/v2/connect/openai-codex/profiles/revision-required-v2/credential",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "unguarded-v2-write",
+                        },
+                    },
+                });
+                expect(unguardedV2Write.statusCode).toBe(400);
+                expect(unguardedV2Write.json()).toEqual({
+                    error: "connect_credential_invalid",
+                });
+
+                const unguardedV3Health = await app.inject({
+                    method: "PATCH",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential/health`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                    payload: {
+                        health: {
+                            v: 1,
+                            status: "needs_reauth",
+                            reconnectRequired: true,
+                        },
+                    },
+                });
+                expect(unguardedV3Health.statusCode).toBe(400);
+                expect(unguardedV3Health.json()).toEqual({
+                    error: "invalid-params",
+                });
+
+                const unguardedV3Delete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        `/v3/connect/claude-subscription/profiles/${v3ProfileId}/credential?cleanupGroupReferences=true`,
+                    headers: { "x-test-user-id": plainAccount.id },
+                });
+                expect(unguardedV3Delete.statusCode).toBe(400);
+                expect(unguardedV3Delete.json()).toEqual({
+                    error: "invalid-params",
+                });
+
+                const unguardedV2Delete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v2/connect/openai-codex/profiles/revision-required-v2/credential?cleanupGroupReferences=true",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                });
+                expect(unguardedV2Delete.statusCode).toBe(400);
+                expect(unguardedV2Delete.json()).toEqual({
+                    error: "connect_credential_invalid",
+                });
+
+                const unguardedV1Write = await app.inject({
+                    method: "POST",
+                    url: "/v1/connect/openai-codex/register-sealed",
+                    headers: { "x-test-user-id": e2eeAccount.id },
+                    payload: {
+                        sealed: {
+                            format: "account_scoped_v1",
+                            ciphertext: "replacement-v1",
+                        },
+                    },
+                });
+                expect(unguardedV1Write.statusCode).toBe(400);
+                expect(unguardedV1Write.json()).toEqual({
+                    error: "connect_credential_invalid",
+                });
+
+                await expect(snapshotQualifiedState({
+                    accountId: plainAccount.id,
+                    qualifiedIdentityDigest:
+                        v3Identity.qualifiedIdentityDigest,
+                })).resolves.toEqual(v3Before);
+                await expect(snapshotQualifiedState({
+                    accountId: e2eeAccount.id,
+                    qualifiedIdentityDigest:
+                        v2Fixture.identity.qualifiedIdentityDigest,
+                })).resolves.toEqual(v2Before);
+                await expect(snapshotQualifiedState({
+                    accountId: e2eeAccount.id,
+                    qualifiedIdentityDigest:
+                        v1Fixture.identity.qualifiedIdentityDigest,
+                })).resolves.toEqual(v1Before);
+            },
+        );
+
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: plainAccount.id,
+            ref: v3Ref,
+        })).resolves.toMatchObject({
+            status: "resolved",
+            credential: {
+                credentialRevision: expect.any(String),
+                content: { t: "plain", v: v3Record },
+            },
+        });
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: e2eeAccount.id,
+            ref: v2Fixture.ref,
+        })).resolves.toMatchObject({
+            status: "resolved",
+            credential: {
+                credentialRevision: expect.any(String),
+                content: { t: "encrypted", c: "replacement-v2" },
+            },
+        });
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: e2eeAccount.id,
+            ref: v1Fixture.ref,
+        })).resolves.toMatchObject({
+            status: "resolved",
+            credential: {
+                credentialRevision: expect.any(String),
+                content: { t: "encrypted", c: "replacement-v1-b" },
+            },
+        });
+    });
+
+    it("keeps raw, V2, and V3 rows unfenced while refusing every credential, group, usage, and cache authority effect", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const v3ProfileId = "unfenced-v3";
+        const v3Identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "claude-subscription",
+            profileId: v3ProfileId,
+            credentialKind: "token",
+        });
+        const v3Ref = {
+            service: {
+                pluginId: v3Identity.servicePluginId,
+                localId: v3Identity.serviceLocalId,
+            },
+            accountId: v3Identity.connectedAccountId,
+        };
+        const v3Record = claudeRecord(v3ProfileId, "token");
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: account.id,
+                vendor: "claude-subscription",
+                profileId: v3ProfileId,
+                ...v3Identity,
+                token: encodeUtf8(JSON.stringify(v3Record)),
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "token",
+                    providerEmail: "unfenced-v3@example.com",
+                    providerAccountId: "unfenced-v3-provider",
+                },
+            },
+        });
+
+        const v2Identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai-codex",
+            profileId: "unfenced-v2",
+            credentialKind: "oauth",
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: account.id,
+                vendor: "openai-codex",
+                profileId: "unfenced-v2",
+                ...v2Identity,
+                token: new Uint8Array([2]),
+                metadata: {
+                    v: 2,
+                    format: "account_scoped_v1",
+                    kind: "oauth",
+                    providerEmail: null,
+                    providerAccountId: null,
+                },
+            },
+        });
+
+        const rawIdentity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai",
+            profileId: "unfenced-raw",
+            credentialKind: "token",
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: account.id,
+                vendor: "openai",
+                profileId: "unfenced-raw",
+                ...rawIdentity,
+                token: new Uint8Array([3]),
+                metadata: null,
+            },
+        });
+
+        await expect(listQualifiedConnectedAccounts({
+            accountId: account.id,
+            service: v3Ref.service,
+        })).resolves.toEqual([
+            expect.objectContaining({
+                ref: v3Ref,
+                revisionSemantics: "legacy_unfenced",
+                credentialRevision: null,
+            }),
+        ]);
+        const allProfiles = await listQualifiedConnectedAccounts({
+            accountId: account.id,
+            service: {
+                pluginId: v2Identity.servicePluginId,
+                localId: v2Identity.serviceLocalId,
+            },
+        });
+        expect(allProfiles).toEqual([
+            expect.objectContaining({
+                revisionSemantics: "legacy_unfenced",
+                credentialRevision: null,
+            }),
+        ]);
+        await expect(listQualifiedConnectedAccounts({
+            accountId: account.id,
+            service: {
+                pluginId: rawIdentity.servicePluginId,
+                localId: rawIdentity.serviceLocalId,
+            },
+        })).resolves.toEqual([
+            expect.objectContaining({
+                revisionSemantics: "legacy_unfenced",
+                credentialRevision: null,
+            }),
+        ]);
+        await expect(readQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref: v3Ref,
+        })).resolves.toMatchObject({
+            status: "resolved",
+            credential: {
+                revisionSemantics: "legacy_unfenced",
+                credentialRevision: null,
+                content: { t: "plain", v: v3Record },
+            },
+        });
+
+        const before = await db.serviceAccountToken.findUniqueOrThrow({
+            where: {
+                accountId_qualifiedIdentityDigest: {
+                    accountId: account.id,
+                    qualifiedIdentityDigest:
+                        v3Identity.qualifiedIdentityDigest,
+                },
+            },
+            select: {
+                token: true,
+                metadata: true,
+                configurationContent: true,
+                configurationRevision: true,
+                refreshLeaseOwnerMachineId: true,
+                refreshLeaseExpiresAt: true,
+                updatedAt: true,
+            },
+        });
+
+        await expect(mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref: v3Ref,
+            expectedCredentialRevision: credentialRevision,
+            expectedConfigurationRevision: null,
+            authenticationModeId: v3Identity.authenticationModeId,
+            content: { t: "plain", v: v3Record },
+            metadata: { scopes: [] },
+        })).resolves.toEqual({ status: "revision_required" });
+        await expect(mutateQualifiedConnectedAccountConfiguration({
+            accountId: account.id,
+            target: { kind: "account", ref: v3Ref },
+            expectedCredentialRevision: credentialRevision,
+            expectedConfigurationRevision: null,
+            replacementContentEnvelope: {
+                t: "plain",
+                v: { endpoint: "https://unfenced.example.test" },
+            },
+        })).resolves.toEqual({ status: "revision_required" });
+        await expect(mutateQualifiedConnectedServiceCredentialHealth({
+            accountId: account.id,
+            ref: v3Ref,
+            expectedCredentialRevision: credentialRevision,
+            expectedConfigurationRevision: null,
+            health: {
+                v: 1,
+                status: "needs_reauth",
+                reconnectRequired: true,
+            },
+        })).resolves.toEqual({ status: "revision_required" });
+        await expect(deleteQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref: v3Ref,
+            expectedCredentialRevision: credentialRevision,
+            cleanupGroupReferences: true,
+        })).resolves.toEqual({ status: "revision_required" });
+        await expect(acquireQualifiedConnectedServiceRefreshLease({
+            accountId: account.id,
+            ref: v3Ref,
+            expectedCredentialRevision: credentialRevision,
+            ownerId: "unfenced-owner",
+            ttlMs: 60_000,
+        })).resolves.toEqual({ status: "revision_required" });
+        await expect(createQualifiedConnectedAccountGroup({
+            accountId: account.id,
+            service: v3Ref.service,
+            group: { groupId: "unfenced-group" },
+            initialMembers: [{
+                connectedAccountId: v3Ref.accountId,
+            }],
+            activeConnectedAccountId: v3Ref.accountId,
+        })).resolves.toEqual({ status: "source_superseded" });
+
+        const historicalGroupRef = {
+            service: v3Ref.service,
+            groupId: "historical-unfenced-group",
+        };
+        const historicalGroup = await createQualifiedConnectedAccountGroup({
+            accountId: account.id,
+            service: historicalGroupRef.service,
+            group: { groupId: historicalGroupRef.groupId },
+        });
+        if (historicalGroup.status !== "written") {
+            throw new Error("Expected empty historical group creation");
+        }
+        await expect(createQualifiedConnectedAccountGroupMember({
+            accountId: account.id,
+            mutation: {
+                group: historicalGroupRef,
+                connectedAccountId: v3Ref.accountId,
+            },
+        })).resolves.toEqual({ status: "source_superseded" });
+
+        // Simulate an already-persisted historical membership. The owner must
+        // refuse making it active without rewriting the passive legacy row.
+        const [storedHistoricalGroup, storedV3Credential] = await Promise.all([
+            db.connectedServiceAuthGroup.findUniqueOrThrow({
+                where: {
+                    accountId_qualifiedGroupDigest: {
+                        accountId: account.id,
+                        qualifiedGroupDigest:
+                            createQualifiedConnectedAccountGroupDigest(
+                                historicalGroupRef,
+                            ),
+                    },
+                },
+                select: {
+                    id: true,
+                    vendor: true,
+                    groupId: true,
+                    qualifiedServiceDigest: true,
+                    qualifiedGroupDigest: true,
+                    activeConnectedAccountId: true,
+                    activeProfileId: true,
+                    generation: true,
+                    runtimeStateRevision: true,
+                },
+            }),
+            db.serviceAccountToken.findUniqueOrThrow({
+                where: {
+                    accountId_qualifiedIdentityDigest: {
+                        accountId: account.id,
+                        qualifiedIdentityDigest:
+                            v3Identity.qualifiedIdentityDigest,
+                    },
+                },
+                select: {
+                    id: true,
+                    profileId: true,
+                    qualifiedIdentityDigest: true,
+                },
+            }),
+        ]);
+        await db.connectedServiceAuthGroupMember.create({
+            data: {
+                groupDbId: storedHistoricalGroup.id,
+                accountId: account.id,
+                credentialId: storedV3Credential.id,
+                qualifiedServiceDigest:
+                    storedHistoricalGroup.qualifiedServiceDigest,
+                qualifiedGroupDigest:
+                    storedHistoricalGroup.qualifiedGroupDigest,
+                qualifiedIdentityDigest:
+                    storedV3Credential.qualifiedIdentityDigest,
+                vendor: storedHistoricalGroup.vendor,
+                groupId: storedHistoricalGroup.groupId,
+                profileId: storedV3Credential.profileId,
+                stateJson: "{}",
+            },
+        });
+        await expect(setQualifiedConnectedAccountGroupActiveAccount({
+            accountId: account.id,
+            mutation: {
+                group: historicalGroupRef,
+                connectedAccountId: v3Ref.accountId,
+            },
+        })).resolves.toEqual({ status: "source_superseded" });
+        await expect(db.connectedServiceAuthGroup.findUniqueOrThrow({
+            where: { id: storedHistoricalGroup.id },
+            select: {
+                activeConnectedAccountId: true,
+                activeProfileId: true,
+                generation: true,
+                runtimeStateRevision: true,
+            },
+        })).resolves.toEqual({
+            activeConnectedAccountId:
+                storedHistoricalGroup.activeConnectedAccountId,
+            activeProfileId: storedHistoricalGroup.activeProfileId,
+            generation: storedHistoricalGroup.generation,
+            runtimeStateRevision:
+                storedHistoricalGroup.runtimeStateRevision,
+        });
+
+        const recordKey = createProviderAccountUsageRecordKey();
+        const snapshot = createUsageSnapshot({
+            fetchedAt: 1_000,
+            recordKey,
+            serviceId: "claude-subscription",
+            profileId: v3ProfileId,
+        });
+        await expect(writeQualifiedProviderAccountUsageRecord({
+            accountId: account.id,
+            recordId: snapshot.recordId,
+            recordKey,
+            payloadMode: "plain_json_v1",
+            status: "ok",
+            snapshot,
+            fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs,
+            source: { ref: v3Ref, bindingKind: "account" },
+            expectedCredentialRevision: credentialRevision,
+            expectedConfigurationRevision: null,
+        })).rejects.toMatchObject({
+            code: "connected_service_usage_source_binding",
+            kind: "unavailable",
+        });
+
+        await expect(buildAccountConnectedServicesProjection({
+            tx: db,
+            accountId: account.id,
+            includeGroups: false,
+        })).resolves.toMatchObject({
+            connectedServiceCredentialRevisionsV1: [],
+            connectedAccountsV4: expect.arrayContaining([
+                expect.objectContaining({
+                    ref: v3Ref,
+                    revisionSemantics: "legacy_unfenced",
+                    credentialRevision: null,
+                }),
+            ]),
+        });
+        await expect(db.serviceAccountToken.findUniqueOrThrow({
+            where: {
+                accountId_qualifiedIdentityDigest: {
+                    accountId: account.id,
+                    qualifiedIdentityDigest:
+                        v3Identity.qualifiedIdentityDigest,
+                },
+            },
+            select: {
+                token: true,
+                metadata: true,
+                configurationContent: true,
+                configurationRevision: true,
+                refreshLeaseOwnerMachineId: true,
+                refreshLeaseExpiresAt: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual(before);
+        await expect(db.connectedServiceAuthGroup.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+        await expect(db.providerAccountUsageRecord.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+        await expect(db.connectedServiceUsageSource.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+    });
+
+    it("contracts the raw vendor-token seam before it can overwrite or delete a V4 credential", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -1813,12 +2895,11 @@ describe("qualified Connected Account activated legacy compatibility", () => {
         await expect(mutateLegacyConnectedServiceVendorToken({
             accountId: account.id,
             vendor: "openai",
-            token: encodeUtf8("must-not-overwrite"),
-        })).resolves.toEqual({ status: "connected_credential_conflict" });
+        })).resolves.toEqual({ status: "revision_required" });
         await expect(deleteLegacyConnectedServiceVendorToken({
             accountId: account.id,
             vendor: "openai",
-        })).resolves.toEqual({ status: "connected_credential_conflict" });
+        })).resolves.toEqual({ status: "revision_required" });
         const after = await db.serviceAccountToken.findFirstOrThrow({
             where: { accountId: account.id },
             select: { id: true, token: true, metadata: true },

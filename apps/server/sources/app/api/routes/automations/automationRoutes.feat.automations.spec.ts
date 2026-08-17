@@ -11,17 +11,19 @@ const dbMocks = createDbMocks({
 const findAccountById = dbMocks.db.account.findUnique;
 
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
-    kind: "happier_automation_template_encrypted_v1",
-    payloadCiphertext: "ciphertext-base64",
+    kind: "happier_automation_template_plain_v1",
+    payload: { prompt: "daily sweep" },
 });
 
-const listAutomations = vi.fn(async () => []);
+const listAutomations = vi.fn(async (): Promise<unknown[]> => []);
+const getAutomation = vi.fn(async (): Promise<unknown | null> => null);
 const createAutomation = vi.fn(async () => ({
     id: "a1",
     accountId: "u1",
     name: "Daily sweep",
     description: null,
     enabled: true,
+    triggerKind: "schedule",
     scheduleKind: "interval",
     scheduleExpr: null,
     everyMs: 60_000,
@@ -36,12 +38,48 @@ const createAutomation = vi.fn(async () => ({
     assignments: [{ machineId: "m1", enabled: true, priority: 0 }],
 }));
 const updateAutomation = vi.fn(async () => null);
+const verifyAutomationConversationTargetV1 = vi.fn(async () => ({
+    kind: "notVerified" as const,
+    reason: "notFound" as const,
+}));
+const listAutomationConversationTargetsV1 = vi.fn(async () => ({ items: [], nextCursor: null }));
 const claimAutomationRun = vi.fn(async () => ({
     run: {
         id: "run-1",
         automationId: "a1",
         accountId: "u1",
         state: "claimed",
+        originKind: "scheduled",
+        occurrenceKey: null,
+        occurrenceEvidenceEqualityTag: null,
+        originSourceSelectorId: null,
+        triggerEvidenceEnvelope: null,
+        executionInputEnvelope: JSON.stringify({
+            kind: "happier_automation_run_execution_input_v1",
+            targetType: "new_session",
+            templateVersion: 1,
+            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+            origin: { kind: "scheduled", scheduledFor: Date.parse("2026-02-12T10:00:00.000Z") },
+        }),
+        executionDispatchState: null,
+        executionAttempt: 0,
+        executionDispatchCommittedAt: null,
+        executionDispatchDueAt: null,
+        executionNativeRunId: null,
+        executionNativeCallId: null,
+        executionNativeSidechainId: null,
+        resultEnvelope: null,
+        replyContextEnvelope: null,
+        replyHandoffActionPluginId: null,
+        replyHandoffActionLocalId: null,
+        replyHandoffTargetMachineId: null,
+        replyHandoffTargetMachineInstallationId: null,
+        replyHandoffTargetMaterializationId: null,
+        replyHandoffId: null,
+        replyHandoffState: "none",
+        replyHandoffAttempt: 0,
+        replyHandoffDueAt: null,
+        replyHandoffReceiptEnvelope: null,
         scheduledAt: new Date("2026-02-12T10:00:00.000Z"),
         dueAt: new Date("2026-02-12T10:00:00.000Z"),
         claimedAt: new Date("2026-02-12T10:00:00.000Z"),
@@ -56,16 +94,36 @@ const claimAutomationRun = vi.fn(async () => ({
         producedSessionId: null,
         createdAt: new Date("2026-02-12T10:00:00.000Z"),
         updatedAt: new Date("2026-02-12T10:00:00.000Z"),
+        automation: {
+            id: "a1",
+            name: "Daily sweep",
+            enabled: true,
+            triggerKind: "schedule",
+            targetType: "new_session",
+            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+        },
+    },
+    accountCurrentness: {
+        mode: "plain",
+        version: 0,
+        contentKeyFingerprint: null,
     },
 }));
 
 vi.mock("@/app/automations/automationCrudService", () => ({
     listAutomations,
+    getAutomation,
     createAutomation,
     updateAutomation,
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
+}));
+vi.mock("@/app/automations/automationConversationTargetVerificationService", () => ({
+    AUTOMATION_CONVERSATION_TARGET_CALLER_PLUGIN_ID_V1: "happier.channels",
+    AutomationConversationTargetVerificationCallerError: class extends Error {},
+    listAutomationConversationTargetsV1,
+    verifyAutomationConversationTargetV1,
 }));
 installDbModuleMock(() => ({
     db: dbMocks.db,
@@ -80,10 +138,15 @@ describe("automationRoutes", () => {
         resetAutomationsEnv({
             HAPPIER_FEATURE_AUTOMATIONS__ENABLED: undefined,
         });
-        findAccountById.mockResolvedValue({ publicKey: "pk-test", encryptionMode: null });
+        findAccountById.mockResolvedValue({
+            publicKey: null,
+            encryptionMode: "plain",
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        });
     });
 
-    it("registers CRUD and daemon claim endpoints", async () => {
+    it("registers CRUD, legacy daemon, V3 worker, and the E3 Event admission boundary", async () => {
         const { automationRoutes } = await import("./automationRoutes");
         const listRoute = createRouteTestBuilder({
             method: "GET",
@@ -106,10 +169,66 @@ describe("automationRoutes", () => {
                 automationRoutes(app as any);
             },
         });
+        const v3RunDetailRoute = createRouteTestBuilder({
+            method: "GET",
+            path: "/v3/automations/:id/runs/:runId",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const v3AssignmentWakeRoute = createRouteTestBuilder({
+            method: "GET",
+            path: "/v3/automations/worker/assignments",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const eventStatusRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/events/source-status/report",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const eventListRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/events/sources/list",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const eventAdmitRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/events/admit",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const conversationTargetVerifyRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/conversation/target/verify",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const storedDefinitionReadRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/events/stored-definitions/read",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
 
         expect(listRoute.handler).toBeTypeOf("function");
         expect(createRoute.handler).toBeTypeOf("function");
         expect(claimRoute.handler).toBeTypeOf("function");
+        expect(v3RunDetailRoute.handler).toBeTypeOf("function");
+        expect(v3AssignmentWakeRoute.handler).toBeTypeOf("function");
+        expect(storedDefinitionReadRoute.handler).toBeTypeOf("function");
+        expect(eventStatusRoute.handler).toBeTypeOf("function");
+        expect(eventListRoute.routeExists).toBe(false);
+        expect(eventAdmitRoute.handler).toBeTypeOf("function");
+        expect(conversationTargetVerifyRoute.routeExists).toBe(true);
     });
 
     it("does not register routes when HAPPIER_FEATURE_AUTOMATIONS__ENABLED=0", async () => {
@@ -131,12 +250,33 @@ describe("automationRoutes", () => {
                 automationRoutes(app as any);
             },
         });
+        const eventStatusRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/events/source-status/report",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const conversationTargetVerifyRoute = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/automations/conversation/target/verify",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
 
         expect(route.handler).toBeTypeOf("function");
         expect(claimRoute.handler).toBeTypeOf("function");
 
         const { reply } = await route.invoke({ userId: "u1" });
         expect(reply.code).toHaveBeenCalledWith(404);
+        expect(eventStatusRoute.handler).toBeTypeOf("function");
+        const { reply: eventReply } = await eventStatusRoute.invoke({ userId: "u1" });
+        expect(eventReply.code).toHaveBeenCalledWith(404);
+        const { reply: conversationTargetVerifyReply } = await conversationTargetVerifyRoute.invoke({
+            userId: "u1",
+        });
+        expect(conversationTargetVerifyReply.code).toHaveBeenCalledWith(404);
     });
 
     it("creates an automation from POST /v2/automations", async () => {
@@ -161,8 +301,272 @@ describe("automationRoutes", () => {
             },
         });
 
-        expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({ accountId: "u1" }));
+        expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({
+            accountId: "u1",
+            requireV2DefinitionRepresentability: true,
+        }));
         expect(response).toEqual(expect.objectContaining({ id: "a1", name: "Daily sweep" }));
+    });
+
+    it("asks the canonical owner for only V2-representable definitions", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { response } = await route.invoke({ userId: "u1" });
+
+        expect(listAutomations).toHaveBeenCalledWith({
+            accountId: "u1",
+            expectedTriggerKind: "schedule",
+            requireV2DefinitionRepresentability: true,
+        });
+        expect(response).toEqual([]);
+    });
+
+    it("returns the existing 404 before mutating known-incompatible Event or Conversation definitions through V2", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "PATCH",
+            path: "/v2/automations/:id",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const currentStoredContentCompatibility = {
+            supportsCurrentProtocol: true,
+            supportsPluginDataProtocol: true,
+            outcome: "accepted" as const,
+            declaration: { v: 1, protocolVersion: 3 },
+            upgradeRequired: null,
+        };
+
+        for (const automationId of ["event-automation", "conversation-automation"]) {
+            const { response, reply } = await route.invoke({
+                userId: "u1",
+                params: { id: automationId },
+                accountStoredContentCompatibility: currentStoredContentCompatibility,
+                body: { name: "Not a V2 mutation" },
+            });
+
+            expect(response).toEqual({ error: "automation_not_found" });
+            expect(reply.code).toHaveBeenCalledWith(404);
+            expect(reply.code).not.toHaveBeenCalledWith(409);
+        }
+
+        expect(getAutomation).toHaveBeenNthCalledWith(1, {
+            accountId: "u1",
+            automationId: "event-automation",
+            expectedTriggerKind: "schedule",
+            requireV2DefinitionRepresentability: true,
+        });
+        expect(getAutomation).toHaveBeenNthCalledWith(2, {
+            accountId: "u1",
+            automationId: "conversation-automation",
+            expectedTriggerKind: "schedule",
+            requireV2DefinitionRepresentability: true,
+        });
+        expect(updateAutomation).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 before a predecessor patch can write legacy content over an execution-run definition", async () => {
+        getAutomation.mockResolvedValueOnce({
+            ...await createAutomation(),
+            targetType: "execution_run",
+        });
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "PATCH",
+            path: "/v2/automations/:id",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            params: { id: "execution-run-automation" },
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                supportsPluginDataProtocol: false,
+                outcome: "legacy-missing",
+                declaration: null,
+                upgradeRequired: null,
+            },
+            body: { name: "Must not mutate a current target" },
+        });
+
+        expect(response).toEqual({ error: "automation_not_found" });
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(updateAutomation).not.toHaveBeenCalled();
+    });
+
+    it("admits the exact predecessor encrypted outer target only for a legacy compatibility request", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                supportsPluginDataProtocol: false,
+                outcome: "legacy-missing",
+                declaration: null,
+                upgradeRequired: null,
+            },
+            body: {
+                name: "Predecessor encrypted target",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: JSON.stringify({
+                    kind: "happier_automation_template_encrypted_v1",
+                    payloadCiphertext: "ciphertext-base64",
+                    existingSessionId: "session-legacy",
+                }),
+            },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(createAutomation).toHaveBeenCalledWith({
+            accountId: "u1",
+            requireV2DefinitionRepresentability: true,
+            input: expect.objectContaining({
+                legacyTemplateEnvelopeAdmission: {
+                    kind: "legacy-encrypted-existing-session-v1",
+                    existingSessionId: "session-legacy",
+                },
+            }),
+        });
+        expect(response).toEqual(expect.objectContaining({ id: "a1" }));
+    });
+
+    it("rejects the predecessor encrypted outer target from a current compatibility request", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true,
+                supportsPluginDataProtocol: true,
+                outcome: "accepted",
+                declaration: {
+                    v: 1,
+                    protocolVersion: 3,
+                },
+                upgradeRequired: null,
+            },
+            body: {
+                name: "Current caller cannot send predecessor envelope",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: JSON.stringify({
+                    kind: "happier_automation_template_encrypted_v1",
+                    payloadCiphertext: "ciphertext-base64",
+                    existingSessionId: "session-legacy",
+                }),
+            },
+        });
+
+        expect(createAutomation).not.toHaveBeenCalled();
+        expect(reply.code).toHaveBeenCalledWith(400);
+    });
+
+    it("admits the exact predecessor plain outer target only for a legacy compatibility request", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/automations",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+        const predecessorPlainTarget = JSON.stringify({
+            kind: "happier_automation_template_plain_v1",
+            payload: {
+                prompt: "resume predecessor session",
+                existingSessionId: "session-legacy-plain",
+                sessionEncryptionMode: "plain",
+            },
+            existingSessionId: "session-legacy-plain",
+        });
+
+        const legacy = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                supportsPluginDataProtocol: false,
+                outcome: "legacy-missing",
+                declaration: null,
+                upgradeRequired: null,
+            },
+            body: {
+                name: "Predecessor plain target",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: predecessorPlainTarget,
+            },
+        });
+
+        expect(legacy.reply.code).not.toHaveBeenCalledWith(400);
+        expect(createAutomation).toHaveBeenCalledWith({
+            accountId: "u1",
+            requireV2DefinitionRepresentability: true,
+            input: expect.objectContaining({
+                legacyTemplateEnvelopeAdmission: {
+                    kind: "legacy-plain-existing-session-v1",
+                    existingSessionId: "session-legacy-plain",
+                },
+            }),
+        });
+
+        vi.clearAllMocks();
+        findAccountById.mockResolvedValue({
+            publicKey: null,
+            encryptionMode: "plain",
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        });
+
+        const current = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true,
+                supportsPluginDataProtocol: true,
+                outcome: "accepted",
+                declaration: { v: 1, protocolVersion: 3 },
+                upgradeRequired: null,
+            },
+            body: {
+                name: "Current caller cannot send predecessor plain envelope",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: predecessorPlainTarget,
+            },
+        });
+
+        expect(createAutomation).not.toHaveBeenCalled();
+        expect(current.reply.code).toHaveBeenCalledWith(400);
     });
 
     it("returns 400 for invalid automation payloads", async () => {
@@ -211,7 +615,10 @@ describe("automationRoutes", () => {
             },
         });
 
-        expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({ accountId: "u1" }));
+        expect(createAutomation).toHaveBeenCalledWith(expect.objectContaining({
+            accountId: "u1",
+            requireV2DefinitionRepresentability: true,
+        }));
         expect(reply.code).toHaveBeenCalledWith(500);
         expect(response).toEqual({ error: "automation_create_failed" });
     });
@@ -232,7 +639,13 @@ describe("automationRoutes", () => {
         });
 
         expect(claimAutomationRun).toHaveBeenCalledWith(
-            expect.objectContaining({ accountId: "u1", machineId: "m1", leaseDurationMs: 30_000 }),
+            expect.objectContaining({
+                accountId: "u1",
+                machineId: "m1",
+                leaseDurationMs: 30_000,
+                expectedTriggerKind: "schedule",
+                requireV2RunRepresentability: true,
+            }),
         );
         expect(response).toEqual(expect.objectContaining({ run: expect.objectContaining({ id: "run-1" }) }));
     });

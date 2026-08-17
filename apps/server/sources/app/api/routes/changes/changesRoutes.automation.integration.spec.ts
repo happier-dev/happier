@@ -63,4 +63,81 @@ describe("changesRoutes automation changes (integration)", () => {
             },
         );
     });
+
+    it("keeps a Collection full reread broad when a later exact change coalesces before polling", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-changes-collection-full" },
+            select: { id: true },
+        });
+        const pluginId = "example.tasks";
+        const collectionId = "tasks";
+        const firstDigest = "a".repeat(43);
+        const laterDigest = "b".repeat(43);
+        const entityId = `pluginDomain/${pluginId}/data-collection/${collectionId}`;
+
+        const fullCursor = await inTx(async (tx) => (
+            await markAccountChanged(tx, {
+                accountId: account.id,
+                kind: "pluginDomain",
+                entityId,
+                hint: {
+                    pluginDomain: "dataCollection",
+                    pluginId,
+                    collectionId,
+                    contractDigest: firstDigest,
+                    revision: 4,
+                    full: true,
+                },
+            })
+        ));
+        const exactCursor = await inTx(async (tx) => (
+            await markAccountChanged(tx, {
+                accountId: account.id,
+                kind: "pluginDomain",
+                entityId,
+                hint: {
+                    pluginDomain: "dataCollection",
+                    pluginId,
+                    collectionId,
+                    contractDigest: laterDigest,
+                    revision: 5,
+                    rowIds: ["task-1"],
+                },
+            })
+        ));
+
+        expect(exactCursor).toBeGreaterThan(fullCursor);
+        await withAuthenticatedTestApp(
+            (app) => changesRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "GET",
+                    url: "/v2/changes?after=0&limit=50",
+                    headers: {
+                        "x-test-user-id": account.id,
+                        "x-happier-account-stored-content-protocol": "3",
+                    },
+                });
+
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toEqual({
+                    changes: [{
+                        cursor: exactCursor,
+                        kind: "pluginDomain",
+                        entityId,
+                        changedAt: expect.any(Number),
+                        hint: {
+                            pluginDomain: "dataCollection",
+                            pluginId,
+                            collectionId,
+                            contractDigest: laterDigest,
+                            revision: 5,
+                            full: true,
+                        },
+                    }],
+                    nextCursor: exactCursor,
+                });
+            },
+        );
+    });
 });

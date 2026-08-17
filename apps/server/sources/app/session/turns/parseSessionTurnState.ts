@@ -23,6 +23,13 @@ export type SessionTurnStoredRow = Readonly<{
     terminalAt?: StoredBigInt;
     lastRuntimeIssueJson?: string | null;
     transcriptAnchorsJson?: string | null;
+    /**
+     * Private query projection used by the canonical external transcript
+     * reader to locate a turn without parsing every SessionTurn row.
+     */
+    transcriptAnchorProjectionVersion?: number | null;
+    transcriptAnchorMinSeq?: number | null;
+    transcriptAnchorMaxSeq?: number | null;
     rollbackState?: string | null;
     rollbackReason?: string | null;
     agentRollbackOrdinal?: number | null;

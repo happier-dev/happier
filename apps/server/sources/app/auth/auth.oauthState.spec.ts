@@ -6,6 +6,7 @@ import { auth } from "./auth";
 
 describe("auth (oauth state tokens)", () => {
     const envBackup = snapshotEnv();
+    const requestDigest = `aemrb1_${"A".repeat(43)}`;
 
     beforeAll(async () => {
         await applyLightAuthTestEnv();
@@ -74,6 +75,59 @@ describe("auth (oauth state tokens)", () => {
             publicKey: null,
             proofHash: "sha256hex_1",
         });
+    });
+
+    it("round-trips a first-key migration step-up binding through the existing auth state token", async () => {
+        const token = await (auth as any).createOauthStateToken({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_step_up_1",
+            userId: "account_1",
+            proofHash: "a".repeat(64),
+            purpose: "account_encryption_first_key",
+            requestDigest,
+        });
+
+        await expect((auth as any).verifyOauthStateToken(token)).resolves.toEqual({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_step_up_1",
+            userId: "account_1",
+            publicKey: null,
+            proofHash: "a".repeat(64),
+            purpose: "account_encryption_first_key",
+            requestDigest,
+        });
+    });
+
+    it("preserves a V5 transition-bound first-key step-up digest through OAuth state", async () => {
+        const transitionDigest = `aemtb1_${"A".repeat(43)}`;
+        const token = await (auth as any).createOauthStateToken({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_transition_step_up_1",
+            userId: "account_1",
+            proofHash: "a".repeat(64),
+            purpose: "account_encryption_first_key",
+            requestDigest: transitionDigest,
+        });
+
+        await expect((auth as any).verifyOauthStateToken(token)).resolves.toMatchObject({
+            purpose: "account_encryption_first_key",
+            requestDigest: transitionDigest,
+        });
+    });
+
+    it("rejects a first-key state that is not bound to a canonical migration digest", async () => {
+        await expect((auth as any).createOauthStateToken({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_step_up_invalid",
+            userId: "account_1",
+            proofHash: "a".repeat(64),
+            purpose: "account_encryption_first_key",
+            requestDigest: "not-a-canonical-digest",
+        })).rejects.toThrow(/step-up binding/i);
     });
 
     it("rejects creating oauth state tokens with an empty provider", async () => {

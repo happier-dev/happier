@@ -1,5 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { computeContentPublicKeyFingerprint } from "@happier-dev/protocol";
+import {
+    computeContentPublicKeyFingerprint,
+    type SessionTranscriptObservationProvenanceV1,
+    VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
+} from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 import { createEnvPatcher } from "@/testkit/env";
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
@@ -13,6 +17,7 @@ type SessionWriteTxMock = {
     };
     session: {
         findUnique: MockFunction;
+        findFirst: MockFunction;
         update: MockFunction;
         updateMany: MockFunction;
     };
@@ -20,6 +25,7 @@ type SessionWriteTxMock = {
         findUnique: MockFunction;
     };
     sessionMessage: {
+        findFirst: MockFunction;
         findUnique: MockFunction;
         findMany: MockFunction;
         create: MockFunction;
@@ -39,6 +45,7 @@ type SessionWriteTxMock = {
 };
 
 let currentTx: SessionWriteTxMock;
+let transactionQueue: SessionWriteTxMock[] = [];
 
 function createAccountContentBinding() {
     const signingKeyPair = tweetnacl.sign.keyPair();
@@ -62,11 +69,18 @@ function createAccountContentBinding() {
     };
 }
 
+function hostedTranscriptPublication(accountId = "u1") {
+    return {
+        accountId,
+        currentStorageState: "hosted" as const,
+    };
+}
+
 const hasCurrentSessionScopedMachineAccessInTx = vi.fn(async () => true);
 vi.mock("@/app/api/socket/sessionScopedBinding", () => ({ hasCurrentSessionScopedMachineAccessInTx }));
 
 vi.mock("@/storage/inTx", () => ({
-    inTx: async <T>(fn: (tx: SessionWriteTxMock) => T | Promise<T>) => await fn(currentTx),
+    inTx: async <T>(fn: (tx: SessionWriteTxMock) => T | Promise<T>) => await fn(transactionQueue.shift() ?? currentTx),
 }));
 
 const getSessionParticipantUserIds = vi.fn<(...args: unknown[]) => Promise<string[]>>();
@@ -89,7 +103,7 @@ vi.mock("@/app/monitoring/metrics/sessionWriteMetrics", () => ({
 const dbMocks = createDbMocks({
     session: ["findUnique"],
     sessionShare: ["findUnique"],
-    sessionMessage: ["findUnique"],
+    sessionMessage: ["findUnique", "findMany"],
 } as const);
 installDbModuleMock({ db: dbMocks.db });
 
@@ -137,6 +151,7 @@ describe("sessionWriteService", () => {
         sessionMessageRoleMismatchCounter.inc.mockReset();
         dbMocks.reset();
         storagePolicyEnv.restore();
+        transactionQueue = [];
 
         currentTx = {
             account: {
@@ -144,6 +159,7 @@ describe("sessionWriteService", () => {
             },
             session: {
                 findUnique: vi.fn(),
+                findFirst: vi.fn().mockResolvedValue({ id: "s1" }),
                 update: vi.fn(),
                 updateMany: vi.fn(),
             },
@@ -151,6 +167,7 @@ describe("sessionWriteService", () => {
                 findUnique: vi.fn(),
             },
             sessionMessage: {
+                findFirst: vi.fn(),
                 findUnique: vi.fn(),
                 findMany: vi.fn(),
                 create: vi.fn(),
@@ -327,7 +344,8 @@ describe("sessionWriteService", () => {
                     runtimeActivityActiveCount: 0,
                     runtimeActivityObservedAt: BigInt(900),
                     runtimeActivityRevision: BigInt(4),
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
 
@@ -546,6 +564,7 @@ describe("sessionWriteService", () => {
                 localId: " historical-id ",
                 sidechainId: null,
                 messageRole: "agent",
+                rowRevision: BigInt(0),
                 content: { t: "plain", v: { role: "agent", content: { type: "text", text: "old" } } } as const,
                 sourceCreatedAt: new Date(100),
                 sourceUpdatedAt: new Date(200),
@@ -728,6 +747,243 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
         });
 
+        it("accepts recovered history for an already-committed legacy localId without rewriting the legacy row", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date(10);
+            const existing = {
+                id: "m-legacy-history",
+                seq: 4,
+                localId: "legacy-history-id",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "plain", v: { role: "agent", content: { type: "text", text: "already committed" } } } as const,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                rowRevision: BigInt(0),
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    runtimeActivityRevision: BigInt(1),
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "plain",
+                    shares: [],
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValueOnce(existing);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: existing.localId,
+                content: existing.content,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: { kind: "non_dependent", source: "history" },
+            })).resolves.toMatchObject({
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                message: { id: existing.id, localId: existing.localId },
+                participantCursors: [],
+            });
+
+            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("still rejects non-history provenance over an already-committed legacy localId", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date(10);
+            const existing = {
+                id: "m-legacy-live",
+                seq: 4,
+                localId: "legacy-live-id",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "plain", v: { role: "agent", content: { type: "text", text: "already committed" } } } as const,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                rowRevision: BigInt(0),
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    runtimeActivityRevision: BigInt(1),
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "plain",
+                    shares: [],
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValueOnce(existing);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: existing.localId,
+                content: existing.content,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: { kind: "non_dependent", source: "external" },
+            })).resolves.toEqual({ ok: false, error: "invalid-params" });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("rejects a newer trusted duplicate observation when snapshot publication owns transcript storage", async () => {
+            const committedFence = new Date(10);
+            const existing = {
+                id: "m-snapshot-owned",
+                seq: 4,
+                localId: "snapshot-owned-observation",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "encrypted" as const, c: "cipher" },
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: { kind: "non_dependent" as const, source: "history" as const },
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    updatedAt: committedFence,
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "e2ee",
+                    shares: [{ sharedWithUserId: "u2" }],
+                    active: true,
+                    archivedAt: null,
+                })
+                .mockResolvedValueOnce({ currentStorageState: "snapshot_complete" });
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.update.mockResolvedValue({
+                ...existing,
+                sourceUpdatedAt: new Date(201),
+            });
+            markAccountChanged.mockResolvedValue(101);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: existing.localId,
+                content: existing.content,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 201 },
+                trustedTranscriptObservationProvenance: existing.transcriptObservationProvenance,
+            })).resolves.toEqual({
+                ok: false,
+                error: "invalid-params",
+                code: "session_storage_authority_mismatch",
+            });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("does not advance trusted currentness for a structured snapshot before its reader floor exists", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date(10);
+            const structuredContent = {
+                t: "plain" as const,
+                v: {
+                    v: 1,
+                    profile: "pluginTranscriptV1",
+                    owner: { pluginId: "acme.preview", contributionLocalId: "review-card" },
+                    snapshot: { kind: "text", text: "must not advance" },
+                },
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    runtimeActivityRevision: BigInt(1),
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "plain",
+                    shares: [],
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValueOnce({
+                id: "m-structured",
+                seq: 4,
+                localId: "history-structured",
+                sidechainId: null,
+                messageRole: "agent",
+                content: structuredContent,
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            });
+            // Without the publication admission below, the trusted-currentness
+            // path would accept the retry and advance this source watermark.
+            currentTx.sessionMessage.update.mockResolvedValueOnce({
+                id: "m-structured",
+                seq: 4,
+                localId: "history-structured",
+                sidechainId: null,
+                messageRole: "agent",
+                content: structuredContent,
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(201),
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            });
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: "history-structured",
+                content: structuredContent,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 201 },
+                trustedTranscriptObservationProvenance: { kind: "non_dependent", source: "history" },
+            })).resolves.toEqual({
+                ok: false,
+                error: "invalid-params",
+                code: "session_structured_presentation_unavailable",
+            });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+        });
+
         it.each(["existing", "p2002-race"] as const)(
             "advances identical trusted chronology without publishing a content update through the %s path",
             async (path) => {
@@ -752,6 +1008,7 @@ describe("sessionWriteService", () => {
                     localId: "history-id",
                     sidechainId: null,
                     messageRole: "agent",
+                    rowRevision: BigInt(0),
                     content: { t: "plain", v: { role: "agent", content: { type: "text", text: "same" } } } as const,
                     sourceCreatedAt: new Date(100),
                     sourceUpdatedAt: new Date(200),
@@ -784,11 +1041,13 @@ describe("sessionWriteService", () => {
                         .mockResolvedValueOnce(authorityRow)
                         .mockResolvedValueOnce(accessRow);
                     if (path === "existing") {
+                        currentTx.session.findUnique.mockResolvedValueOnce(hostedTranscriptPublication());
                         currentTx.sessionMessage.findUnique.mockResolvedValueOnce(row);
                     } else {
                         currentTx.session.findUnique
                             .mockResolvedValueOnce(authorityRow)
-                            .mockResolvedValueOnce(accessRow);
+                            .mockResolvedValueOnce(accessRow)
+                            .mockResolvedValueOnce(hostedTranscriptPublication());
                         currentTx.session.update.mockResolvedValue({ seq: 5 });
                         currentTx.sessionMessage.findUnique
                             .mockResolvedValueOnce(null)
@@ -809,8 +1068,8 @@ describe("sessionWriteService", () => {
                 });
 
                 expect(currentTx.sessionMessage.update).toHaveBeenCalledWith({
-                    where: { id: "m-history" },
-                    data: { sourceUpdatedAt: new Date(201) },
+                    where: { id: "m-history", rowRevision: BigInt(0) },
+                    data: { sourceUpdatedAt: new Date(201), rowRevision: { increment: BigInt(1) } },
                     select: expect.any(Object),
                 });
                 expect(advanced).toMatchObject({
@@ -836,6 +1095,248 @@ describe("sessionWriteService", () => {
             },
         );
 
+        it("re-evaluates a trusted watermark after its row-revision CAS loses", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date(10);
+            const session = {
+                accountId: "u1",
+                tag: "session",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+                lastActiveAt: committedFence,
+                updatedAt: new Date(20),
+            };
+            const stale = {
+                id: "m-trusted-revision-race",
+                seq: 4,
+                localId: "trusted-revision-race",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "plain", v: { role: "agent", content: { type: "text", text: "same" } } } as const,
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                rowRevision: BigInt(0),
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            const reRead = { ...stale, rowRevision: BigInt(1), updatedAt: new Date(301) };
+            const advanced = {
+                ...reRead,
+                sourceUpdatedAt: new Date(201),
+                rowRevision: BigInt(2),
+                updatedAt: new Date(302),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            currentTx.sessionMessage.findUnique
+                .mockResolvedValueOnce(stale)
+                .mockResolvedValueOnce(reRead);
+            currentTx.sessionMessage.update
+                .mockRejectedValueOnce({ code: "P2025" })
+                .mockResolvedValueOnce(advanced);
+
+            const result = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: "trusted-revision-race",
+                content: stale.content,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 201 },
+                trustedTranscriptObservationProvenance: { kind: "non_dependent", source: "history" },
+            });
+
+            expect(result).toMatchObject({
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                message: { sourceUpdatedAt: new Date(201) },
+            });
+            if (!result.ok) throw new Error("expected row-revision retry to succeed");
+            expect(Object.prototype.hasOwnProperty.call(result.message, "rowRevision")).toBe(false);
+
+            expect(currentTx.sessionMessage.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                where: { id: stale.id, rowRevision: BigInt(0) },
+            }));
+            expect(currentTx.sessionMessage.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                where: { id: stale.id, rowRevision: BigInt(1) },
+            }));
+        });
+
+        it("revalidates publisher authority before retrying a lost trusted row-revision CAS", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date(10);
+            const session = {
+                accountId: "u1",
+                tag: "session",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+                lastActiveAt: committedFence,
+                updatedAt: new Date(20),
+            };
+            const existing = {
+                id: "m-trusted-revision-authority",
+                seq: 4,
+                localId: "trusted-revision-authority",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "plain", v: { role: "agent", content: { type: "text", text: "same" } } } as const,
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: {
+                    kind: "non_dependent",
+                    source: "history",
+                } satisfies SessionTranscriptObservationProvenanceV1,
+                rowRevision: BigInt(0),
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.session.updateMany
+                .mockResolvedValueOnce({ count: 1 })
+                .mockResolvedValueOnce({ count: 0 });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.update.mockRejectedValueOnce({ code: "P2025" });
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: existing.localId,
+                content: existing.content,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 201 },
+                trustedTranscriptObservationProvenance: existing.transcriptObservationProvenance,
+            })).resolves.toEqual({ ok: false, error: "forbidden" });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledTimes(2);
+            expect(currentTx.sessionMessage.findUnique).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("rejects a trusted local-id retry that changes an established role", async () => {
+            const committedFence = new Date(10);
+            const existing = {
+                id: "m-trusted-role-conflict",
+                seq: 4,
+                localId: "trusted-role-conflict",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "encrypted" as const, c: "cipher" },
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: { kind: "non_dependent" as const, source: "history" as const },
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    runtimeActivityRevision: BigInt(1),
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "e2ee",
+                    currentStorageState: "hosted",
+                    shares: [],
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: existing.localId,
+                messageRole: "user",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: existing.transcriptObservationProvenance,
+            })).resolves.toEqual({
+                ok: false,
+                error: "invalid-params",
+                code: "session_message_role_conflict",
+            });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("publishes one trusted local-id role backfill while keeping watermark-only retries silent", async () => {
+            const committedFence = new Date(10);
+            const existing = {
+                id: "m-trusted-role-backfill",
+                seq: 4,
+                localId: "trusted-role-backfill",
+                sidechainId: null,
+                messageRole: null,
+                rowRevision: BigInt(0),
+                content: { t: "encrypted" as const, c: "cipher" },
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(200),
+                transcriptObservationProvenance: { kind: "non_dependent" as const, source: "history" as const },
+                createdAt: new Date(300),
+                updatedAt: new Date(300),
+            };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    runtimeActivityRevision: BigInt(1),
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "e2ee",
+                    currentStorageState: "hosted",
+                    shares: [],
+                    active: true,
+                    archivedAt: null,
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication())
+                .mockResolvedValueOnce(hostedTranscriptPublication());
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.update.mockResolvedValue({ ...existing, messageRole: "agent" });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: existing.localId,
+                messageRole: "agent",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: existing.transcriptObservationProvenance,
+            })).resolves.toMatchObject({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                badgeAttentionChanged: false,
+                participantCursors: [{ accountId: "u1", cursor: 101 }],
+            });
+
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(expect.objectContaining({
+                where: { id: existing.id, rowRevision: BigInt(0) },
+                data: { messageRole: "agent", rowRevision: { increment: BigInt(1) } },
+            }));
+            expect(markAccountChanged).toHaveBeenCalledTimes(1);
+        });
+
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
@@ -849,11 +1350,20 @@ describe("sessionWriteService", () => {
                 seq: 4,
                 localId: "l1",
                 sidechainId: null,
+                rowRevision: BigInt(0),
                 content: { t: "encrypted", c: "c1" },
                 createdAt: new Date(1),
                 updatedAt: new Date(2),
             });
-
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "c1" },
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
             const res = await createSessionMessage({
                 actorUserId: "u1",
                 sessionId: "s1",
@@ -892,6 +1402,155 @@ describe("sessionWriteService", () => {
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
+        it("does not mutate a P2002 collision after shared edit access is revoked", async () => {
+            const session = {
+                accountId: "owner",
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [{ sharedWithUserId: "editor" }],
+                active: true,
+                archivedAt: null,
+            };
+            const staleWinner = {
+                id: "m-revoked-access",
+                seq: 4,
+                localId: "revoked-access",
+                sidechainId: null,
+                messageRole: "user",
+                content: { t: "encrypted" as const, c: "previous" },
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.sessionShare.findUnique
+                .mockResolvedValueOnce({ accessLevel: "edit" })
+                .mockResolvedValueOnce(null);
+            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.update.mockResolvedValue({ ...staleWinner, content: { t: "encrypted", c: "next" } });
+            markAccountChanged.mockResolvedValueOnce(101).mockResolvedValueOnce(102);
+
+            dbMocks.db.session.findUnique.mockResolvedValue(session);
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(staleWinner);
+
+            await expect(createSessionMessage({
+                actorUserId: "editor",
+                sessionId: "s1",
+                ciphertext: "next",
+                localId: staleWinner.localId,
+                messageRole: "user",
+            })).resolves.toEqual({ ok: false, error: "forbidden" });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("does not update a stale P2002 collision winner outside its recovery transaction", async () => {
+            const session = {
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+            };
+            const staleWinner = {
+                id: "m-winner-moved",
+                seq: 4,
+                localId: "winner-moved",
+                sidechainId: null,
+                messageRole: "user",
+                content: { t: "encrypted" as const, c: "previous" },
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+            const movedWinner = { ...staleWinner, sidechainId: "sidechain-moved" };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(movedWinner);
+            currentTx.sessionMessage.update.mockResolvedValue({ ...staleWinner, content: { t: "encrypted", c: "next" } });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            dbMocks.db.session.findUnique.mockResolvedValue(session);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(staleWinner);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "next",
+                localId: staleWinner.localId,
+                messageRole: "user",
+            })).resolves.toEqual({ ok: false, error: "invalid-params" });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("rejects a P2002 collision that changes an established role", async () => {
+            const session = {
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+            };
+            const existing = {
+                id: "m-role-conflict",
+                seq: 4,
+                localId: "role-conflict",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "encrypted" as const, c: "cipher" },
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            dbMocks.db.session.findUnique.mockResolvedValue(session);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(existing);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: existing.localId,
+                messageRole: "user",
+            })).resolves.toEqual({
+                ok: false,
+                error: "invalid-params",
+                code: "session_message_role_conflict",
+            });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
         it("rejects (sessionId, localId) reuse across sidechains", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
@@ -901,6 +1560,15 @@ describe("sessionWriteService", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
             dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: "sc-1",
+                content: { t: "encrypted", c: "c1" },
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
                 localId: "l1",
@@ -925,12 +1593,105 @@ describe("sessionWriteService", () => {
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
+        it("preserves Voice History no-attention when a concurrent insert wins and the duplicate reconciles a correction", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const updatedAt = new Date("2020-01-01T00:00:00.000Z");
+            const voiceHistorySession = {
+                accountId: "u1",
+                tag: VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [],
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(voiceHistorySession);
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+
+            dbMocks.db.session.findUnique.mockResolvedValue(voiceHistorySession);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
+                id: "m-voice-history",
+                seq: 4,
+                localId: "voice-history-final",
+                sidechainId: null,
+                messageRole: "agent",
+                rowRevision: BigInt(0),
+                content: { t: "encrypted", c: "previous" },
+                createdAt,
+                updatedAt,
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m-voice-history",
+                seq: 4,
+                localId: "voice-history-final",
+                sidechainId: null,
+                messageRole: "agent",
+                rowRevision: BigInt(0),
+                content: { t: "encrypted", c: "previous" },
+                createdAt,
+                updatedAt,
+            });
+
+            currentTx.sessionMessage.update.mockResolvedValue({
+                id: "m-voice-history",
+                seq: 4,
+                localId: "voice-history-final",
+                sidechainId: null,
+                messageRole: "agent",
+                rowRevision: BigInt(1),
+                content: { t: "encrypted", c: "corrected" },
+                createdAt,
+                updatedAt,
+            });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "voice-history",
+                ciphertext: "corrected",
+                localId: "voice-history-final",
+                messageRole: "agent",
+            });
+
+            expect(res).toEqual({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                badgeAttentionChanged: false,
+                attentionImpact: {
+                    affectsUnread: false,
+                    affectsMeaningfulActivity: false,
+                },
+                message: expect.objectContaining({
+                    id: "m-voice-history",
+                    seq: 4,
+                    localId: "voice-history-final",
+                }),
+                participantCursors: [
+                    { accountId: "u1", cursor: 101 },
+                ],
+            });
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(expect.objectContaining({
+                where: { id: "m-voice-history", rowRevision: BigInt(0) },
+                data: {
+                    content: { t: "encrypted", c: "corrected" },
+                    sidechainId: null,
+                    messageRole: "agent",
+                    rowRevision: { increment: BigInt(1) },
+                },
+            }));
+        });
+
         it("updates existing message content for (sessionId, localId) when payload changes", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
             const updatedAt = new Date("2020-01-01T00:00:00.000Z");
 
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
+                currentStorageState: "hosted",
                 shares: [{ sharedWithUserId: "u2" }],
             });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
@@ -939,6 +1700,7 @@ describe("sessionWriteService", () => {
 
             dbMocks.db.session.findUnique.mockResolvedValue({
                 accountId: "u1",
+                currentStorageState: "hosted",
                 shares: [{ sharedWithUserId: "u2" }],
             });
             dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
@@ -947,6 +1709,17 @@ describe("sessionWriteService", () => {
                 seq: 4,
                 localId: "l1",
                 sidechainId: null,
+                rowRevision: BigInt(0),
+                content: { t: "encrypted", c: "prev" },
+                createdAt,
+                updatedAt,
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                rowRevision: BigInt(0),
                 content: { t: "encrypted", c: "prev" },
                 createdAt,
                 updatedAt,
@@ -957,6 +1730,7 @@ describe("sessionWriteService", () => {
                 seq: 4,
                 localId: "l1",
                 sidechainId: null,
+                rowRevision: BigInt(1),
                 content: { t: "encrypted", c: "next" },
                 createdAt,
                 updatedAt,
@@ -995,11 +1769,234 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    where: { id: "m1" },
-                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null, messageRole: null },
+                    where: { id: "m1", rowRevision: BigInt(0) },
+                    data: {
+                        content: { t: "encrypted", c: "next" },
+                        sidechainId: null,
+                        messageRole: null,
+                        rowRevision: { increment: BigInt(1) },
+                    },
                 }),
             );
             expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
+        });
+
+        it("re-evaluates an ordinary local-id correction after its row-revision CAS loses", async () => {
+            const initial = {
+                t: "encrypted" as const,
+                c: "initial",
+            };
+            const corrected = {
+                t: "encrypted" as const,
+                c: "corrected",
+            };
+            const session = {
+                accountId: "u1",
+                tag: "session",
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+            };
+            const stale = {
+                id: "m-ordinary-revision-race",
+                seq: 4,
+                localId: "ordinary-revision-race",
+                sidechainId: null,
+                messageRole: null,
+                content: initial,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                rowRevision: BigInt(0),
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+            const reRead = {
+                ...stale,
+                content: corrected,
+                messageRole: "user",
+                rowRevision: BigInt(1),
+                updatedAt: new Date(3),
+            };
+            const winningCorrection = {
+                ...stale,
+                messageRole: "agent",
+                rowRevision: BigInt(2),
+                updatedAt: new Date(4),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.findUnique
+                .mockResolvedValueOnce(stale)
+                .mockResolvedValueOnce(reRead);
+            currentTx.sessionMessage.update
+                .mockRejectedValueOnce({ code: "P2025" })
+                .mockResolvedValueOnce(winningCorrection);
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: initial.c,
+                localId: stale.localId,
+                messageRole: "agent",
+            })).resolves.toMatchObject({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                message: {
+                    content: initial,
+                    messageRole: "agent",
+                },
+            });
+
+            expect(currentTx.sessionMessage.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                where: { id: stale.id, rowRevision: BigInt(0) },
+            }));
+            expect(currentTx.sessionMessage.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                where: { id: stale.id, rowRevision: BigInt(1) },
+            }));
+        });
+
+        it("does not mutate a local-id collision winner after hosted write authority changes", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const initialHostedSession = {
+                accountId: "u1",
+                encryptionMode: "plain",
+                shares: [],
+                active: true,
+                archivedAt: null,
+            };
+            const content = {
+                t: "plain" as const,
+                v: { role: "user", content: { type: "text", text: "collision correction" } },
+            };
+            const existing = {
+                id: "m-collision-authority",
+                seq: 4,
+                localId: "collision-authority",
+                sidechainId: null,
+                messageRole: "user",
+                content: {
+                    t: "plain" as const,
+                    v: { role: "user", content: { type: "text", text: "winner" } },
+                },
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+
+            currentTx.session.findUnique.mockImplementation(async (args: { select?: unknown }) => {
+                const select = args.select;
+                if (
+                    select
+                    && typeof select === "object"
+                    && Object.keys(select).length === 1
+                    && "currentStorageState" in select
+                ) {
+                    return { currentStorageState: "machine_only" };
+                }
+                return initialHostedSession;
+            });
+            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+
+            dbMocks.db.session.findUnique.mockResolvedValue({
+                ...initialHostedSession,
+                currentStorageState: "machine_only",
+            });
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.update.mockResolvedValue({ ...existing, content });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                content,
+                localId: "collision-authority",
+                messageRole: "user",
+            })).resolves.toEqual({
+                ok: false,
+                error: "invalid-params",
+                code: "session_storage_authority_mismatch",
+            });
+
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("backfills a duplicate role with one private row-revision increment", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const updatedAt = new Date("2020-01-01T00:00:00.000Z");
+            const session = {
+                accountId: "u1",
+                encryptionMode: "e2ee",
+                currentStorageState: "hosted",
+                shares: [],
+                active: true,
+                archivedAt: null,
+            };
+            const existing = {
+                id: "m-role",
+                seq: 4,
+                localId: "role-backfill",
+                sidechainId: null,
+                messageRole: null,
+                content: { t: "encrypted" as const, c: "cipher" },
+                createdAt,
+                updatedAt,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                transcriptObservationProvenance: null,
+                rowRevision: BigInt(0),
+            };
+
+            currentTx.session.findUnique.mockResolvedValue(session);
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            dbMocks.db.session.findUnique.mockResolvedValue(session);
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
+            currentTx.sessionMessage.create.mockRejectedValue({
+                code: "P2002",
+                meta: { target: ["sessionId", "localId"] },
+            });
+            currentTx.sessionMessage.update.mockResolvedValue({ ...existing, messageRole: "agent" });
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            await expect(createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: "role-backfill",
+                messageRole: "agent",
+            })).resolves.toMatchObject({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                badgeAttentionChanged: false,
+                participantCursors: [{ accountId: "u1", cursor: 101 }],
+            });
+
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(expect.objectContaining({
+                where: { id: "m-role", rowRevision: BigInt(0) },
+                data: { messageRole: "agent", rowRevision: { increment: BigInt(1) } },
+            }));
+            expect(markAccountChanged).toHaveBeenCalledTimes(1);
         });
 
         it("rejects message creation if actor has no edit access", async () => {
@@ -1029,6 +2026,8 @@ describe("sessionWriteService", () => {
                     shares: [{ sharedWithUserId: "u2" }],
                 })
                 .mockResolvedValueOnce({
+                    accountId: "u1",
+                    currentStorageState: "hosted",
                     seq: 9,
                     lastViewedSessionSeq: 9,
                     pendingCount: 0,
@@ -1043,6 +2042,7 @@ describe("sessionWriteService", () => {
                 seq: 10,
                 localId: "l1",
                 sidechainId: null,
+                rowRevision: BigInt(0),
                 content: { t: "encrypted", c: "cipher" },
                 createdAt,
                 updatedAt,
@@ -1083,7 +2083,7 @@ describe("sessionWriteService", () => {
                 hint: { lastMessageSeq: 10, lastMessageId: "m1" },
             });
             expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
-            expect(currentTx.session.findUnique).toHaveBeenCalledTimes(1);
+            expect(currentTx.session.findUnique).toHaveBeenCalledTimes(2);
             expect(currentTx.sessionMessage.findUnique).not.toHaveBeenCalled();
             expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
@@ -1477,6 +2477,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 })
+                .mockResolvedValueOnce(hostedTranscriptPublication())
                 .mockResolvedValueOnce({
                     lastViewedSessionSeq: 12,
                 });
@@ -1517,7 +2518,7 @@ describe("sessionWriteService", () => {
                 data: { lastViewedSessionSeq: 10 },
             });
             expect(currentTx.session.update).toHaveBeenCalledTimes(1);
-            expect(currentTx.session.findUnique).toHaveBeenNthCalledWith(2, {
+            expect(currentTx.session.findUnique).toHaveBeenNthCalledWith(3, {
                 where: { id: "s1" },
                 select: { lastViewedSessionSeq: true },
             });
@@ -2066,6 +3067,16 @@ describe("sessionWriteService", () => {
                 seq: 4,
                 localId: "l1",
                 sidechainId: null,
+                rowRevision: BigInt(0),
+                content: { t: "encrypted", c: "cipher" },
+                createdAt,
+                updatedAt,
+            });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
                 content: { t: "encrypted", c: "cipher" },
                 createdAt,
                 updatedAt,
@@ -2209,7 +3220,7 @@ describe("sessionWriteService", () => {
     });
 
     describe("updateSessionMetadata", () => {
-        it("preserves released layout-zero metadata edits with a layout-fenced CAS", async () => {
+        it("rejects layout-zero metadata edits from a non-owner editor", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -2243,25 +3254,11 @@ describe("sessionWriteService", () => {
                 metadataCiphertext: "shared-editor-write",
             });
 
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: {
-                    id: "s1",
-                    metadataVersion: 5,
-                    metadataLayoutVersion: 0,
-                    ownerMetadata: null,
-                },
-                data: {
-                    metadata: "shared-editor-write",
-                    metadataVersion: 6,
-                },
-            });
             expect(res).toEqual({
-                ok: true,
-                version: 6,
-                metadata: "shared-editor-write",
-                participantCursors: expect.any(Array),
-                badgeAttentionChanged: false,
+                ok: false,
+                error: "forbidden",
             });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
         });
 
         it("still rejects a layout-zero metadata write from a view-only participant", async () => {
@@ -2415,7 +3412,7 @@ describe("sessionWriteService", () => {
     });
 
     describe("updateSessionAgentState", () => {
-        it("preserves released layout-zero Agent-state edits with a layout-fenced CAS", async () => {
+        it("rejects layout-zero Agent-state edits from a non-owner admin", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -2450,25 +3447,11 @@ describe("sessionWriteService", () => {
                 agentStateCiphertext: "shared-editor-write",
             });
 
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: {
-                    id: "s1",
-                    agentStateVersion: 5,
-                    metadataLayoutVersion: 0,
-                    ownerMetadata: null,
-                },
-                data: {
-                    agentState: "shared-editor-write",
-                    agentStateVersion: 6,
-                },
-            });
             expect(res).toEqual({
-                ok: true,
-                version: 6,
-                agentState: "shared-editor-write",
-                participantCursors: expect.any(Array),
-                badgeAttentionChanged: false,
+                ok: false,
+                error: "forbidden",
             });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
         });
 
         it("still rejects a layout-zero Agent-state write from an unshared participant", async () => {
@@ -2964,7 +3947,8 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
@@ -3012,6 +3996,9 @@ describe("sessionWriteService", () => {
                     status: "in_progress",
                     startedAt: BigInt(100),
                     updatedAt: BigInt(100),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: null,
+                    transcriptAnchorMaxSeq: null,
                     lastMutationId: "mutation-begin",
                 }),
             });
@@ -3067,7 +4054,86 @@ describe("sessionWriteService", () => {
             });
         });
 
-        it("touches the current active turn and refreshes in-progress projection freshness", async () => {
+        it("persists transcript anchors and their query projection when beginning a turn", async () => {
+            const transcriptAnchors = {
+                startUserMessageSeq: 14,
+                userMessageSeqs: [14, 16],
+                startSeqInclusive: 13,
+                endSeqInclusive: 21,
+                finalAssistantMessageSeq: 20,
+            } as const;
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "e2ee",
+                    seq: 5,
+                    pendingCount: 0,
+                    lastViewedSessionSeq: 5,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnStatus: null,
+                    lastRuntimeIssueJson: null,
+                    active: true,
+                    archivedAt: null,
+                    shares: [],
+                })
+                .mockResolvedValueOnce({
+                    latestTurnId: null,
+                    seq: 5,
+                    pendingCount: 0,
+                    lastViewedSessionSeq: 5,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnStatus: null,
+                    lastRuntimeIssue: null,
+                    active: true,
+                    archivedAt: null,
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurn.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurn.create.mockResolvedValue({
+                id: "row-turn-1",
+                sessionId: "s1",
+                turnId: "turn-1",
+                agentId: "codex",
+                agentTurnId: null,
+                status: "in_progress",
+                startedAt: BigInt(100),
+                updatedAt: BigInt(100),
+                terminalAt: null,
+                lastRuntimeIssue: null,
+                transcriptAnchorsJson: JSON.stringify(transcriptAnchors),
+                rollbackState: null,
+                rollbackReason: null,
+                agentRollbackOrdinal: null,
+                rollbackUpdatedAt: null,
+                lastMutationId: "mutation-begin-anchored",
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            await applySessionTurnMutation({
+                actorUserId: "u1",
+                mutation: {
+                    ...beginMutation,
+                    mutationId: "mutation-begin-anchored",
+                    transcriptAnchors,
+                },
+            });
+
+            expect(currentTx.sessionTurn.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    transcriptAnchorsJson: JSON.stringify(transcriptAnchors),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 13,
+                    transcriptAnchorMaxSeq: 21,
+                }),
+            });
+        });
+
+        it("touches the current active turn and derives a tolerant anchor query projection", async () => {
             expect(typeof applySessionTurnMutation).toBe("function");
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
@@ -3097,7 +4163,8 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
@@ -3106,6 +4173,13 @@ describe("sessionWriteService", () => {
                 terminalAt: null,
                 updatedAt: BigInt(100),
                 lastRuntimeIssueJson: null,
+                transcriptAnchorsJson: JSON.stringify({
+                    startUserMessageSeq: "legacy-invalid-entry",
+                    startSeqInclusive: 11,
+                    userMessageSeqs: [4, "legacy-invalid-entry"],
+                    endSeqInclusive: null,
+                    finalAssistantMessageSeq: 19,
+                }),
                 lastMutationId: "mutation-begin",
             });
             currentTx.sessionTurn.update.mockResolvedValue({
@@ -3138,6 +4212,9 @@ describe("sessionWriteService", () => {
                 data: expect.objectContaining({
                     status: "in_progress",
                     updatedAt: BigInt(250),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 4,
+                    transcriptAnchorMaxSeq: 19,
                     lastMutationId: "mutation-touch",
                 }),
             });
@@ -3710,8 +4787,27 @@ describe("sessionWriteService", () => {
             });
         });
 
-        it("lets newer same-context begin evidence clear a failed runtime issue", async () => {
+        it("lets newer same-context begin evidence clear a failed runtime issue and merge anchors", async () => {
             expect(typeof applySessionTurnMutation).toBe("function");
+            const retainedTranscriptAnchors = {
+                startUserMessageSeq: 3,
+                userMessageSeqs: [3, 5],
+                startSeqInclusive: 2,
+                endSeqInclusive: 8,
+                finalAssistantMessageSeq: 7,
+            } as const;
+            const beginTranscriptAnchors = {
+                userMessageSeqs: [5, 11],
+                endSeqInclusive: 12,
+                finalAssistantMessageSeq: 11,
+            } as const;
+            const mergedTranscriptAnchors = {
+                startUserMessageSeq: 3,
+                userMessageSeqs: [3, 5, 11],
+                startSeqInclusive: 2,
+                endSeqInclusive: 12,
+                finalAssistantMessageSeq: 11,
+            } as const;
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -3744,7 +4840,10 @@ describe("sessionWriteService", () => {
                 });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
-            currentTx.sessionTurn.findUnique.mockResolvedValue(failedUsageLimitTurnRow);
+            currentTx.sessionTurn.findUnique.mockResolvedValue({
+                ...failedUsageLimitTurnRow,
+                transcriptAnchorsJson: JSON.stringify(retainedTranscriptAnchors),
+            });
             currentTx.sessionTurn.update.mockResolvedValue({
                 ...failedUsageLimitTurnRow,
                 status: "in_progress",
@@ -3765,6 +4864,7 @@ describe("sessionWriteService", () => {
                     mutationId: "mutation-recovered-begin",
                     agentTurnId: "provider-turn-1",
                     observedAt: 300,
+                    transcriptAnchors: beginTranscriptAnchors,
                 },
             });
 
@@ -3776,6 +4876,10 @@ describe("sessionWriteService", () => {
                     updatedAt: BigInt(300),
                     terminalAt: null,
                     lastRuntimeIssueJson: null,
+                    transcriptAnchorsJson: JSON.stringify(mergedTranscriptAnchors),
+                    transcriptAnchorProjectionVersion: 1,
+                    transcriptAnchorMinSeq: 2,
+                    transcriptAnchorMaxSeq: 12,
                     lastMutationId: "mutation-recovered-begin",
                 }),
             });
@@ -4284,6 +5388,135 @@ describe("sessionWriteService", () => {
                 endSeqInclusive: 12,
                 userMessageSeqs: [1, 3, 5],
             });
+            expect(updateArg.data).toMatchObject({
+                transcriptAnchorProjectionVersion: 1,
+                transcriptAnchorMinSeq: 1,
+                transcriptAnchorMaxSeq: 12,
+            });
+        });
+
+        it("rejects a final assistant anchor outside the canonical turn transcript range", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    encryptionMode: "e2ee",
+                    seq: 12,
+                    pendingCount: 0,
+                    lastViewedSessionSeq: 12,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: BigInt(100),
+                    lastRuntimeIssue: null,
+                    active: true,
+                    archivedAt: null,
+                    shares: [],
+                })
+                .mockResolvedValueOnce({
+                    seq: 12,
+                    pendingCount: 0,
+                    lastViewedSessionSeq: 12,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: BigInt(100),
+                    lastRuntimeIssue: null,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
+            currentTx.sessionTurn.findUnique.mockResolvedValue({
+                ...completedTurnRow,
+                status: "in_progress",
+                terminalAt: null,
+                transcriptAnchorsJson: JSON.stringify({
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 10,
+                    userMessageSeqs: [1],
+                }),
+            });
+
+            const result = await applySessionTurnMutation({
+                actorUserId: "u1",
+                mutation: {
+                    v: 1,
+                    sessionId: "s1",
+                    mutationId: "mutation-invalid-final-anchor",
+                    turnId: "turn-1",
+                    action: "complete",
+                    transcriptAnchors: { finalAssistantMessageSeq: 11 },
+                    observedAt: 200,
+                },
+            });
+
+            expect(result).toEqual({ ok: false, error: "invalid-params" });
+            expect(currentTx.sessionTurn.update).not.toHaveBeenCalled();
+
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    accountId: "u1", encryptionMode: "e2ee", seq: 12,
+                    pendingCount: 0, lastViewedSessionSeq: 12,
+                    pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1", latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: BigInt(100), lastRuntimeIssue: null,
+                    active: true, archivedAt: null, shares: [],
+                })
+                .mockResolvedValueOnce({
+                    seq: 12, pendingCount: 0, lastViewedSessionSeq: 12,
+                    pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1", latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: BigInt(100), lastRuntimeIssue: null,
+                    active: true, archivedAt: null,
+                });
+            currentTx.sessionTurn.findUnique.mockResolvedValue({
+                ...completedTurnRow,
+                status: "in_progress",
+                terminalAt: null,
+                transcriptAnchorsJson: JSON.stringify({
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 10,
+                    userMessageSeqs: [1],
+                }),
+            });
+            currentTx.sessionMessage.findFirst.mockResolvedValue({
+                seq: 10,
+                messageRole: "agent",
+                sidechainId: null,
+            });
+            currentTx.sessionTurn.update.mockResolvedValue({
+                ...completedTurnRow,
+                transcriptAnchorsJson: JSON.stringify({
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 10,
+                    userMessageSeqs: [1],
+                    finalAssistantMessageSeq: 10,
+                }),
+            });
+            currentTx.session.update.mockResolvedValue({});
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const accepted = await applySessionTurnMutation({
+                actorUserId: "u1",
+                mutation: {
+                    v: 1,
+                    sessionId: "s1",
+                    mutationId: "mutation-valid-final-anchor",
+                    turnId: "turn-1",
+                    action: "complete",
+                    transcriptAnchors: { finalAssistantMessageSeq: 10 },
+                    observedAt: 201,
+                },
+            });
+
+            expect(currentTx.sessionMessage.findFirst).toHaveBeenCalledWith({
+                where: { sessionId: "s1", seq: 10 },
+                select: { seq: true, messageRole: true, sidechainId: true },
+            });
+            expect(accepted).toMatchObject({ ok: true, didApply: true });
         });
 
         it("treats receipt unique conflicts as duplicate mutations", async () => {
@@ -4852,7 +6085,8 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -4890,7 +6124,8 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -4987,19 +6222,255 @@ describe("sessionWriteService", () => {
     });
 
     describe("applySessionReadCursorOperation", () => {
+        it("does not scan transcript messages when the actor is unauthorized", async () => {
+            currentTx.session.findUnique.mockResolvedValueOnce({ accountId: "owner" });
+            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "intruder",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(res).toEqual({ ok: false, error: "forbidden" });
+            expect(dbMocks.db.sessionMessage.findMany).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.findMany).not.toHaveBeenCalled();
+        });
+
+        it("scans the published transcript outside transactions, then reauthorizes before lowering", async () => {
+            const lifecycle: string[] = [];
+            const initialAuthorizationTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("initial-authorization");
+                            return { accountId: "u1" };
+                        })
+                        .mockResolvedValueOnce({
+                            seq: 11,
+                            ...hostedTranscriptPublication(),
+                        }),
+                },
+                sessionShare: { findUnique: vi.fn() },
+                sessionMessage: {
+                    findMany: vi.fn(() => {
+                        throw new Error("transcript scan must not use the authorization transaction");
+                    }),
+                },
+            };
+            const finalTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("final-authorization");
+                            return { accountId: "u1" };
+                        })
+                        .mockImplementationOnce(async () => {
+                            lifecycle.push("fresh-session");
+                            return {
+                                seq: 11,
+                                ...hostedTranscriptPublication(),
+                                lastViewedSessionSeq: 11,
+                                latestReadyEventSeq: null,
+                                latestTurnStatus: "in_progress",
+                                pendingCount: 0,
+                                pendingBlockedCount: 0,
+                                pendingPermissionRequestCount: 0,
+                                pendingUserActionRequestCount: 0,
+                                active: true,
+                                archivedAt: null,
+                            };
+                        })
+                        .mockResolvedValueOnce(hostedTranscriptPublication()),
+                    updateMany: vi.fn(async () => {
+                        lifecycle.push("lower-cursor");
+                        return { count: 1 };
+                    }),
+                },
+                sessionShare: { findUnique: vi.fn() },
+            };
+            transactionQueue.push(
+                initialAuthorizationTx as unknown as SessionWriteTxMock,
+                finalTx as unknown as SessionWriteTxMock,
+            );
+            dbMocks.db.sessionMessage.findMany.mockImplementation(async (args) => {
+                if (args.select?.transcriptObservationProvenance) {
+                    lifecycle.push("external-scan");
+                    return [
+                        {
+                            id: "m11",
+                            seq: 11,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                        },
+                        {
+                            id: "m10",
+                            seq: 10,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "background" },
+                        },
+                        {
+                            id: "m9",
+                            seq: 9,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "external" },
+                        },
+                        {
+                            id: "m8",
+                            seq: 8,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "sidechain" },
+                        },
+                        {
+                            id: "m7",
+                            seq: 7,
+                            transcriptObservationProvenance: { kind: "non_dependent", source: "guessed" },
+                        },
+                    ];
+                }
+                const quietEvent = {
+                    t: "plain" as const,
+                    v: {
+                        role: "agent" as const,
+                        content: {
+                            type: "event" as const,
+                            id: "quota-wait-event",
+                            data: {
+                                type: "agent-quota-wait" as const,
+                                serviceId: "openai-codex",
+                                groupId: "main",
+                                resetAtMs: 1_900_000,
+                                reason: "connected_service_group_quota_exhausted" as const,
+                            },
+                        },
+                    },
+                };
+                return [
+                    { id: "m10", content: quietEvent },
+                    { id: "m9", content: quietEvent },
+                    { id: "m8", content: quietEvent },
+                    { id: "m7", content: { malformed: true } },
+                ];
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(lifecycle).toEqual([
+                "initial-authorization",
+                "external-scan",
+                "final-authorization",
+                "fresh-session",
+                "lower-cursor",
+            ]);
+            expect(initialAuthorizationTx.sessionMessage.findMany).not.toHaveBeenCalled();
+            expect(dbMocks.db.sessionMessage.findMany).toHaveBeenNthCalledWith(2, {
+                where: {
+                    sessionId: "s1",
+                    sidechainId: null,
+                    id: { in: ["m10", "m9", "m8", "m7"] },
+                },
+                select: { id: true, content: true },
+            });
+            expect(finalTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    lastViewedSessionSeq: { gt: 6 },
+                },
+                data: { lastViewedSessionSeq: 6 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 6,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+                didChange: true,
+                readState: "unread",
+            });
+        });
+
+        it("does not lower from a stale scan boundary when fresh published state is already unread", async () => {
+            const initialAuthorizationTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockResolvedValueOnce({ accountId: "u1" })
+                        .mockResolvedValueOnce({ seq: 7, ...hostedTranscriptPublication() }),
+                },
+                sessionShare: { findUnique: vi.fn() },
+            };
+            const finalTx = {
+                session: {
+                    findUnique: vi.fn()
+                        .mockResolvedValueOnce({ accountId: "u1" })
+                        .mockResolvedValueOnce({
+                            seq: 9,
+                            ...hostedTranscriptPublication(),
+                            lastViewedSessionSeq: 7,
+                            latestReadyEventSeq: null,
+                            latestTurnStatus: "in_progress",
+                            pendingCount: 0,
+                            pendingBlockedCount: 0,
+                            pendingPermissionRequestCount: 0,
+                            pendingUserActionRequestCount: 0,
+                            active: true,
+                            archivedAt: null,
+                        }),
+                    updateMany: vi.fn(),
+                },
+                sessionShare: { findUnique: vi.fn() },
+            };
+            transactionQueue.push(
+                initialAuthorizationTx as unknown as SessionWriteTxMock,
+                finalTx as unknown as SessionWriteTxMock,
+            );
+            dbMocks.db.sessionMessage.findMany
+                .mockResolvedValueOnce([{
+                    id: "m7",
+                    seq: 7,
+                    transcriptObservationProvenance: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "m7",
+                    content: { t: "encrypted", c: "ciphertext" },
+                }]);
+
+            const res = await applySessionReadCursorOperation({
+                actorUserId: "u1",
+                sessionId: "s1",
+                operation: { kind: "mark-unread" },
+            });
+
+            expect(finalTx.session.updateMany).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 7,
+                participantCursors: [],
+                badgeAttentionChanged: false,
+                didChange: false,
+                readState: "unread",
+            });
+        });
+
         it("marks unread by lowering the cursor with a lowering-aware write", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8, ...hostedTranscriptPublication() })
+                .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,
+                    ...hostedTranscriptPublication(),
                     lastViewedSessionSeq: 8,
                     pendingCount: 0,
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findMany.mockResolvedValueOnce([]);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
             markAccountChanged.mockResolvedValueOnce(200);
@@ -5027,11 +6498,14 @@ describe("sessionWriteService", () => {
             });
         });
 
-        it("marks unread before the latest unread-affecting main transcript message when raw seq only has maintenance events", async () => {
+        it("uses the published content scan when raw seq only has maintenance events", async () => {
             currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 742, ...hostedTranscriptPublication() })
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 742,
+                    ...hostedTranscriptPublication(),
                     latestReadyEventSeq: 110,
                     lastViewedSessionSeq: 742,
                     pendingCount: 0,
@@ -5041,34 +6515,19 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.sessionMessage.findMany.mockResolvedValueOnce([
-                {
-                    seq: 742,
-                    localId: "connected-service-account-switch-attempt:claude:account-a:account-b",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "ciphertext-742" },
-                },
-                {
-                    seq: 741,
-                    localId: "connected-service-account-switch-attempt:claude:account-a:account-b",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "ciphertext-741" },
-                },
-                {
-                    seq: 740,
-                    localId: "connected-service-account-switch-attempt:claude:account-a:account-b",
-                    messageRole: "event",
-                    content: { t: "encrypted", c: "ciphertext-740" },
-                },
-                {
+            dbMocks.db.sessionMessage.findMany
+                .mockResolvedValueOnce([{
+                    id: "m739",
                     seq: 739,
-                    localId: "agent-visible-message",
-                    messageRole: "agent",
-                    content: { t: "encrypted", c: "ciphertext-739" },
-                },
-            ]);
+                    transcriptObservationProvenance: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "m739",
+                    content: { t: "encrypted", c: "ciphertext" },
+                }]);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
             markAccountChanged.mockResolvedValueOnce(200);
@@ -5079,7 +6538,7 @@ describe("sessionWriteService", () => {
                 operation: { kind: "mark-unread" },
             });
 
-            expect(currentTx.sessionMessage.findMany).toHaveBeenCalledWith({
+            expect(dbMocks.db.sessionMessage.findMany).toHaveBeenNthCalledWith(1, {
                 where: {
                     sessionId: "s1",
                     sidechainId: null,
@@ -5087,10 +6546,9 @@ describe("sessionWriteService", () => {
                 orderBy: { seq: "desc" },
                 take: 100,
                 select: {
+                    id: true,
                     seq: true,
-                    localId: true,
-                    messageRole: true,
-                    content: true,
+                    transcriptObservationProvenance: true,
                 },
             });
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
@@ -5120,6 +6578,15 @@ describe("sessionWriteService", () => {
                     materializationPublicationId: null,
                     materializedThroughSourceAt: null,
                     publishedThroughServerSeq: null,
+                })
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 12,
+                    currentStorageState: "server_partial",
+                    acceptedThroughServerSeq: 8,
+                    materializationPublicationId: null,
+                    materializedThroughSourceAt: null,
+                    publishedThroughServerSeq: null,
                     latestReadyEventSeq: null,
                     lastViewedSessionSeq: 12,
                     pendingCount: 0,
@@ -5129,16 +6596,26 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
+                })
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    currentStorageState: "server_partial",
+                    acceptedThroughServerSeq: 8,
+                    materializationPublicationId: null,
+                    materializedThroughSourceAt: null,
+                    publishedThroughServerSeq: null,
                 });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.sessionMessage.findMany.mockResolvedValueOnce([
-                {
+            dbMocks.db.sessionMessage.findMany
+                .mockResolvedValueOnce([{
+                    id: "published-agent-message",
                     seq: 8,
-                    localId: "published-agent-message",
-                    messageRole: "agent",
-                    content: { t: "encrypted", c: "ciphertext-8" },
-                },
-            ]);
+                    transcriptObservationProvenance: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "published-agent-message",
+                    content: { t: "encrypted", c: "ciphertext" },
+                }]);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
             markAccountChanged.mockResolvedValueOnce(200);
@@ -5149,7 +6626,7 @@ describe("sessionWriteService", () => {
                 operation: { kind: "mark-unread" },
             });
 
-            expect(currentTx.sessionMessage.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            expect(dbMocks.db.sessionMessage.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
                 where: {
                     sessionId: "s1",
                     sidechainId: null,
@@ -5166,8 +6643,11 @@ describe("sessionWriteService", () => {
         it("preserves null when marking unread is already represented by a missing cursor", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8, ...hostedTranscriptPublication() })
+                .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,
+                    ...hostedTranscriptPublication(),
                     lastViewedSessionSeq: null,
                     pendingCount: 0,
                     pendingPermissionRequestCount: 0,
@@ -5176,6 +6656,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findMany.mockResolvedValueOnce([]);
 
             const res = await applySessionReadCursorOperation({
                 actorUserId: "u1",
@@ -5198,16 +6679,21 @@ describe("sessionWriteService", () => {
         it("does not make archived sessions contribute badge attention when marked unread", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({ seq: 8, ...hostedTranscriptPublication() })
+                .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({
                     seq: 8,
+                    ...hostedTranscriptPublication(),
                     lastViewedSessionSeq: 8,
                     pendingCount: 0,
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: new Date(123),
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findMany.mockResolvedValueOnce([]);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
             markAccountChanged.mockResolvedValueOnce(200);
@@ -5239,7 +6725,8 @@ describe("sessionWriteService", () => {
                     pendingUserActionRequestCount: 0,
                     active: true,
                     archivedAt: null,
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -5270,7 +6757,7 @@ describe("sessionWriteService", () => {
     });
 
     describe("patchSession", () => {
-        it("preserves released layout-zero atomic patches with one layout-fenced CAS", async () => {
+        it("rejects layout-zero atomic patches from a non-owner editor", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -5296,27 +6783,11 @@ describe("sessionWriteService", () => {
                 agentState: { ciphertext: null, expectedVersion: 9 },
             });
 
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: {
-                    id: "s1",
-                    metadataVersion: 5,
-                    agentStateVersion: 9,
-                    metadataLayoutVersion: 0,
-                    ownerMetadata: null,
-                },
-                data: {
-                    metadata: "shared-editor-write",
-                    metadataVersion: 6,
-                    agentState: null,
-                    agentStateVersion: 10,
-                },
-            });
             expect(res).toEqual({
-                ok: true,
-                participantCursors: expect.any(Array),
-                metadata: { version: 6, value: "shared-editor-write" },
-                agentState: { version: 10, value: null },
+                ok: false,
+                error: "forbidden",
             });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
         });
 
         it("atomically records a conditioned layout-zero model intent only while inactive", async () => {
@@ -5491,7 +6962,8 @@ describe("sessionWriteService", () => {
                     encryptionMode: "e2ee",
                     agentStateVersion: 9,
                     agentState: "legacy-agent-state",
-                });
+                })
+                .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValueOnce(["u1"]);
@@ -5751,13 +7223,84 @@ describe("sessionWriteService", () => {
             "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGdb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
         const ownerMetadataCiphertext =
             "oQohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh5AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGA==";
+        const previousOwnerMetadataEnvelope = { t: "encrypted", c: previousOwnerMetadataCiphertext } as const;
+        const caseOnlyDistinctPreviousOwnerMetadataEnvelope = { t: "encrypted", c: caseOnlyDistinctPreviousOwnerMetadataCiphertext } as const;
+        const ownerMetadataEnvelope = { t: "encrypted", c: ownerMetadataCiphertext } as const;
+        const storedPreviousOwnerMetadata = JSON.stringify(previousOwnerMetadataEnvelope);
+        const storedCaseOnlyDistinctPreviousOwnerMetadata = JSON.stringify(caseOnlyDistinctPreviousOwnerMetadataEnvelope);
+        const storedOwnerMetadata = JSON.stringify(ownerMetadataEnvelope);
 
         beforeEach(() => {
             storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
+            const accountContentBinding =
+                createAccountContentBinding();
+            currentTx.account.findUnique.mockResolvedValue({
+                encryptionMode: "e2ee",
+                publicKey: accountContentBinding.publicKey,
+                contentPublicKey:
+                    accountContentBinding.contentPublicKey,
+                contentPublicKeySig:
+                    accountContentBinding.contentPublicKeySig,
+            });
             currentTx.$queryRawUnsafe = vi.fn(
                 async (_query: string, accountId: string) => [{ id: accountId }],
             );
             currentTx.$executeRawUnsafe = vi.fn(async () => 1);
+        });
+
+        it.each([
+            {
+                accountMode: "plain" as const,
+                account: {
+                    encryptionMode: "plain",
+                    publicKey: null,
+                    contentPublicKey: null,
+                    contentPublicKeySig: null,
+                },
+                ownerEnvelope: ownerMetadataEnvelope,
+            },
+            {
+                accountMode: "e2ee" as const,
+                account: null,
+                ownerEnvelope: {
+                    t: "plain" as const,
+                    v: { v: 1 as const },
+                },
+            },
+        ])("rejects a $accountMode Account owner-envelope mismatch before fence or Session effects", async ({
+            account,
+            ownerEnvelope,
+        }) => {
+            if (account) {
+                currentTx.account.findUnique.mockResolvedValue(account);
+            }
+
+            const res = await updateSessionMetadataEnvelopeTuple({
+                mode: "owner",
+                actorUserId: "u1",
+                sessionId: "s1",
+                metadataLayoutVersion: 1,
+                expectedOwnerMetadata: ownerEnvelope,
+                sharedMetadata: {
+                    ciphertext: "shared-new",
+                    expectedVersion: 4,
+                },
+                ownerMetadata: ownerEnvelope,
+                agentState: {
+                    ciphertext: "agent-new",
+                    expectedVersion: 8,
+                },
+            });
+
+            expect(res).toEqual({
+                ok: false,
+                error: "invalid-params",
+            });
+            expect(currentTx.$queryRawUnsafe).not.toHaveBeenCalled();
+            expect(currentTx.$executeRawUnsafe).not.toHaveBeenCalled();
+            expect(currentTx.session.findUnique).not.toHaveBeenCalled();
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
         it("acquires the actor Account fence before owner Session access", async () => {
@@ -5779,7 +7322,7 @@ describe("sessionWriteService", () => {
                         metadataLayoutVersion: 1,
                         metadataVersion: 4,
                         metadata: "shared-old",
-                        ownerMetadata: previousOwnerMetadataCiphertext,
+                        ownerMetadata: storedPreviousOwnerMetadata,
                         agentStateVersion: 8,
                         agentState: "agent-old",
                     };
@@ -5793,13 +7336,12 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -5821,7 +7363,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
@@ -5838,13 +7380,12 @@ describe("sessionWriteService", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -5857,13 +7398,13 @@ describe("sessionWriteService", () => {
                     active: false,
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                 },
                 data: {
                     metadata: "shared-new",
                     metadataVersion: 5,
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     metadataLayoutVersion: 1,
                     agentState: "agent-new",
                     agentStateVersion: 9,
@@ -5872,10 +7413,12 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 participantCursors: [{ accountId: "u1", cursor: 10 }],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
-                ownerMetadata: { value: ownerMetadataCiphertext },
+                ownerMetadata: { value: storedOwnerMetadata },
                 agentState: { version: 9, value: "agent-new" },
             });
         });
@@ -5888,7 +7431,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
@@ -5902,13 +7445,12 @@ describe("sessionWriteService", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -5931,7 +7473,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-new",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "agent-new",
                 });
@@ -5945,13 +7487,12 @@ describe("sessionWriteService", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -5961,10 +7502,12 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 participantCursors: [],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
-                ownerMetadata: { value: ownerMetadataCiphertext },
+                ownerMetadata: { value: storedOwnerMetadata },
                 agentState: { version: 9, value: "agent-new" },
             });
             expect(currentTx.session.updateMany).not.toHaveBeenCalled();
@@ -5979,7 +7522,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 })
@@ -5988,7 +7531,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
@@ -6003,13 +7546,12 @@ describe("sessionWriteService", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -6022,13 +7564,13 @@ describe("sessionWriteService", () => {
                     active: false,
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                 },
                 data: {
                     metadata: "shared-new",
                     metadataVersion: 5,
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     metadataLayoutVersion: 1,
                     agentState: "agent-new",
                     agentStateVersion: 9,
@@ -6049,7 +7591,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 })
@@ -6058,7 +7600,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-new",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "agent-new",
                 });
@@ -6073,13 +7615,12 @@ describe("sessionWriteService", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -6089,10 +7630,12 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 participantCursors: [],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
-                ownerMetadata: { value: ownerMetadataCiphertext },
+                ownerMetadata: { value: storedOwnerMetadata },
                 agentState: { version: 9, value: "agent-new" },
             });
             expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
@@ -6107,7 +7650,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
                     metadata: "shared-old",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
@@ -6121,13 +7664,12 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-new",
                     expectedVersion: 4,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-new",
                     expectedVersion: 8,
@@ -6139,13 +7681,13 @@ describe("sessionWriteService", () => {
                     id: "s1",
                     metadataLayoutVersion: 1,
                     metadataVersion: 4,
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 8,
                 },
                 data: {
                     metadata: "shared-new",
                     metadataVersion: 5,
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     metadataLayoutVersion: 1,
                     agentState: "agent-new",
                     agentStateVersion: 9,
@@ -6154,76 +7696,14 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 participantCursors: [{ accountId: "u1", cursor: 10 }],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
-                ownerMetadata: { value: ownerMetadataCiphertext },
+                ownerMetadata: { value: storedOwnerMetadata },
                 agentState: { version: 9, value: "agent-new" },
             });
-        });
-
-        it("refuses a strict-valid owner migration before any Account or Session access", async () => {
-            const callLog: string[] = [];
-            const binding = createAccountContentBinding();
-            currentTx.$queryRawUnsafe = vi.fn(
-                async (_query: string, accountId: string) => {
-                    callLog.push(`fence:${accountId}`);
-                    return [{ id: accountId }];
-                },
-            );
-            currentTx.account.findUnique.mockImplementationOnce(async () => {
-                callLog.push("account:currentness");
-                return {
-                    publicKey: binding.publicKey,
-                    encryptionMode: "e2ee",
-                    contentPublicKey: binding.contentPublicKey,
-                    contentPublicKeySig: binding.contentPublicKeySig,
-                };
-            });
-            currentTx.session.findUnique
-                .mockImplementationOnce(async () => {
-                    callLog.push("session:access");
-                    return { accountId: "u1", shares: [] };
-                });
-
-            const result = await updateSessionMetadataEnvelopeTuple({
-                mode: "owner_migration",
-                actorUserId: "u1",
-                sessionId: "s1",
-                expectedAccountEncryptionMode: "e2ee",
-                expectedAccountContentPublicKeyFingerprint:
-                    binding.fingerprint,
-                source: {
-                    metadataLayoutVersion: 0,
-                    metadata: {
-                        version: 4,
-                        ciphertext: "legacy-whole-bag",
-                    },
-                    ownerMetadata: null,
-                    agentState: { version: 7, ciphertext: null },
-                },
-                target: {
-                    metadataLayoutVersion: 1,
-                    sharedMetadata: { ciphertext: "shared-safe" },
-                    ownerMetadata: {
-                        ciphertext: ownerMetadataCiphertext,
-                    },
-                    agentState: { ciphertext: null },
-                },
-            });
-
-            expect(result).toEqual({
-                ok: false,
-                error: "metadata_privacy_upgrade_required",
-            });
-            expect(callLog).toEqual([]);
-            expect(currentTx.$queryRawUnsafe).not.toHaveBeenCalled();
-            expect(currentTx.$executeRawUnsafe).not.toHaveBeenCalled();
-            expect(currentTx.account.findUnique).not.toHaveBeenCalled();
-            expect(currentTx.session.findUnique).not.toHaveBeenCalled();
-            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
-            expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
-            expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
         it("does not acquire the Account fence for a shared-editor mutation", async () => {
@@ -6236,7 +7716,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-old",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
@@ -6274,10 +7754,9 @@ describe("sessionWriteService", () => {
                 actorUserId: "u2",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: { ciphertext: "shared-safe", expectedVersion: 4 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: { ciphertext: "owner-full-state", expectedVersion: 8 },
             });
 
@@ -6306,10 +7785,9 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: { ciphertext: "shared-safe", expectedVersion: 4 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: { ciphertext: "owner-full-state", expectedVersion: 8 },
             });
 
@@ -6328,7 +7806,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-safe",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
@@ -6339,20 +7817,21 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: { ciphertext: "shared-safe", expectedVersion: 4 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: { ciphertext: "owner-full-state", expectedVersion: 8 },
             });
 
             expect(res).toEqual({
                 ok: true,
                 participantCursors: [],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-safe" },
                 agentStateVersion: 9,
-                ownerMetadata: { value: ownerMetadataCiphertext },
+                ownerMetadata: { value: storedOwnerMetadata },
                 agentState: { version: 9, value: "owner-full-state" },
             });
             expect(currentTx.session.updateMany).not.toHaveBeenCalled();
@@ -6366,7 +7845,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-current",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "agent-current",
                 });
@@ -6378,12 +7857,12 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext: ownerMetadataCiphertext,
+                expectedOwnerMetadata: ownerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-stale-writer-replacement",
                     expectedVersion: 5,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-stale-writer-replacement",
                     expectedVersion: 9,
@@ -6400,7 +7879,7 @@ describe("sessionWriteService", () => {
                         value: "shared-current",
                     },
                     ownerMetadata: {
-                        value: previousOwnerMetadataCiphertext,
+                        value: storedPreviousOwnerMetadata,
                     },
                     agentState: {
                         version: 9,
@@ -6419,7 +7898,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-current",
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "agent-current",
                 })
@@ -6428,7 +7907,7 @@ describe("sessionWriteService", () => {
                     metadataVersion: 5,
                     metadata: "shared-current",
                     ownerMetadata:
-                        caseOnlyDistinctPreviousOwnerMetadataCiphertext,
+                        storedCaseOnlyDistinctPreviousOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "agent-current",
                 });
@@ -6440,13 +7919,12 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    previousOwnerMetadataCiphertext,
+                expectedOwnerMetadata: previousOwnerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "shared-replacement",
                     expectedVersion: 5,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: "agent-replacement",
                     expectedVersion: 9,
@@ -6458,13 +7936,13 @@ describe("sessionWriteService", () => {
                     id: "s1",
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
-                    ownerMetadata: previousOwnerMetadataCiphertext,
+                    ownerMetadata: storedPreviousOwnerMetadata,
                     agentStateVersion: 9,
                 },
                 data: {
                     metadata: "shared-replacement",
                     metadataVersion: 6,
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     metadataLayoutVersion: 1,
                     agentState: "agent-replacement",
                     agentStateVersion: 10,
@@ -6481,7 +7959,7 @@ describe("sessionWriteService", () => {
                     },
                     ownerMetadata: {
                         value:
-                            caseOnlyDistinctPreviousOwnerMetadataCiphertext,
+                            storedCaseOnlyDistinctPreviousOwnerMetadata,
                     },
                     agentState: {
                         version: 9,
@@ -6502,7 +7980,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-old",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
@@ -6547,9 +8025,16 @@ describe("sessionWriteService", () => {
                     { accountId: "u1", cursor: 10 },
                     { accountId: "u2", cursor: 11 },
                 ],
+                sessionOwnerId: "u1",
+                ownerAccountMode: "e2ee",
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 6, value: "shared-new" },
                 agentStateVersion: 9,
+                ownerMetadata: { value: storedOwnerMetadata },
+                agentState: {
+                    version: 9,
+                    value: "owner-full-state",
+                },
             });
         });
 
@@ -6563,7 +8048,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-old",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 })
@@ -6571,7 +8056,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     metadata: "shared-old",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 })
@@ -6656,7 +8141,7 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 6,
                     metadata: "shared-editor-newer",
-                    ownerMetadata: ownerMetadataCiphertext,
+                    ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
@@ -6667,12 +8152,12 @@ describe("sessionWriteService", () => {
                 actorUserId: "u1",
                 sessionId: "s1",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext: ownerMetadataCiphertext,
+                expectedOwnerMetadata: ownerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: "stale-owner-shared-copy",
                     expectedVersion: 5,
                 },
-                ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: { ciphertext: "owner-full-state-next", expectedVersion: 9 },
             });
 
@@ -6686,7 +8171,7 @@ describe("sessionWriteService", () => {
                         value: "shared-editor-newer",
                     },
                     ownerMetadata: {
-                        value: ownerMetadataCiphertext,
+                        value: storedOwnerMetadata,
                     },
                     agentState: {
                         version: 9,

@@ -1,5 +1,6 @@
 import fastify from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
+import { ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER } from "@happier-dev/protocol";
 import { log, logger } from "@/utils/logging/log";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { onShutdown } from "@/utils/process/shutdown";
@@ -37,8 +38,15 @@ import { liveActivityHostedRelayRoutes } from "./routes/activity/liveActivityHos
 import { registerPeerMediationGrantRoutes } from "./routes/machines/peer/mediation/registerPeerMediationGrantRoutes";
 import { registerReviewCommentRoutes } from "@/app/reviews/comments/routes";
 import { registerPluginPermissionGrantRoutes } from "@/app/plugins/permissions/routes";
+import { registerPluginAvailabilityRoutes } from "@/app/plugins/availability/routes";
+import { pluginDataRoutes } from "./routes/plugins/data/pluginDataRoutes";
+import { registerPluginWebhookDaemonRoutes } from "./routes/plugins/webhooks/registerPluginWebhookDaemonRoutes";
+import { registerPluginWebhookIngressRoute } from "./routes/plugins/webhooks/registerPluginWebhookIngressRoute";
+import { registerPluginWebhookEndpointRoutes } from "./routes/plugins/webhooks/registerPluginWebhookEndpointRoutes";
+import { emitPluginWebhookDeliveryCommittedWakeV1 } from "@/app/plugins/webhooks/wake";
 import { registerLocalServiceRoutes } from "./routes/local/services/registerRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
+import { startAutomationReplyHandoffWorker } from "@/app/automations/automationReplyHandoffWorker";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -49,6 +57,8 @@ export const DEFAULT_API_CORS_MAX_AGE_SECONDS = 600;
 export const API_CORS_ALLOWED_HEADERS = [
     'authorization',
     'content-type',
+    ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
+    'idempotency-key',
     V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER,
 ];
 export const API_CORS_EXPOSED_HEADERS = [
@@ -103,6 +113,13 @@ export function registerApiRoutes(typed: Fastify): void {
     registerPeerMediationGrantRoutes(typed);
     registerLocalServiceRoutes(typed);
     registerPluginPermissionGrantRoutes(typed);
+    registerPluginAvailabilityRoutes(typed);
+    pluginDataRoutes(typed);
+    registerPluginWebhookDaemonRoutes(typed);
+    registerPluginWebhookEndpointRoutes(typed);
+    registerPluginWebhookIngressRoute(typed, {
+        onCommittedWake: emitPluginWebhookDeliveryCommittedWakeV1,
+    });
     registerReviewCommentRoutes(typed);
 }
 
@@ -144,6 +161,12 @@ export async function startApi() {
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
     await app.listen({ port, host: resolveApiListenHost(process.env) });
+    const automationReplyHandoffWorker = startAutomationReplyHandoffWorker({
+        dispatch: async (request) => await typed.forwardAutomationReplyHandoffToMachine(request),
+    });
+    onShutdown('automation-reply-handoff-worker', async () => {
+        await automationReplyHandoffWorker.stop();
+    });
     onShutdown('api:http', async () => {
         await app.close();
     });

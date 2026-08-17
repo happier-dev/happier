@@ -10,6 +10,8 @@ import {
   ExternalSessionOperationActionResponseV1Schema,
   FeaturesResponseSchema,
   makeExternalSessionHistoricalImportBatchIdV1,
+  type ExternalSessionMaterializeStartInputV1,
+  type ExternalSessionOperationSemanticRequestV1,
   type ExternalSessionOperationSocketBatchItemV1,
   type ExternalSessionOperationSocketCommandV1,
   type ExternalSessionOperationSocketResponseV1,
@@ -17,6 +19,9 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createExternalSessionMaterializeActionExecutor } from '../../cli/src/session/actions/externalSessions/materializeAction';
+import { createExternalSessionMaterializeStartActionExecutor } from '../../cli/src/session/actions/externalSessions/materializeStartAction';
+import { resolveExternalSessionOperationStartAdmission } from '../../cli/src/session/actions/externalSessions/operationRecordStore';
+import { readExternalSessionOperationSharedPresentation } from '../../cli/src/session/actions/externalSessions/operationProgressPublisher';
 import { createExternalSessionOperationExclusion } from '../../cli/src/session/external/operationExclusion';
 import { createExternalSessionOperationPrivateStagingStore } from '../../cli/src/session/external/staging/operationPrivateStaging';
 import { registerMachineExternalSessionsRpcHandlers } from '../../cli/src/api/machine/rpcHandlers.externalSessions';
@@ -38,6 +43,11 @@ const qualifiedIdentity = {
   agent: { pluginId: 'example.plugin', localId: 'example' },
   source: { kind: 'jsonl', contractVersion: 1 as const },
 };
+
+type MaterializeSemanticRequest = Extract<
+  ExternalSessionOperationSemanticRequestV1,
+  { plan: 'materialize' }
+>;
 
 function historyItem(id: string): ExternalSessionOperationSocketBatchItemV1 {
   return {
@@ -88,21 +98,45 @@ function createOperationSocketSender(input: Readonly<{
 }
 
 function registerMaterializeRpcExecutor(
-  executor: ReturnType<typeof createExternalSessionMaterializeActionExecutor>,
+  fixture: Readonly<{
+    activeServerDir: string;
+    configuredSource: MaterializeSemanticRequest['source'];
+    executor: ReturnType<typeof createExternalSessionMaterializeActionExecutor>;
+  }>,
 ): Readonly<{
   invoke(method: string, input: unknown): Promise<unknown>;
   dispose(): Promise<void>;
 }> {
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+  // The composed fixture installs only the daemon-owned result of linked/configured
+  // source resolution. RPC callers still cross the canonical strict public Start
+  // parser and receipt-aware admission before the private semantic request exists.
+  const materializeStart = createExternalSessionMaterializeStartActionExecutor({
+    resolveAdmission: async (intent, authorIntent) =>
+      await resolveExternalSessionOperationStartAdmission({
+        activeServerDir: fixture.activeServerDir,
+        durableIdempotencyKey: intent.idempotencyKey,
+        intent,
+        ...(authorIntent ? { authorIntent } : {}),
+        nowMs: Date.now(),
+        readSelectedPresentation:
+          readExternalSessionOperationSharedPresentation,
+      }),
+    describeSession: async (intent) => ({
+      ...intent,
+      source: fixture.configuredSource,
+    }),
+    startSemanticRequest: fixture.executor.start,
+  });
   const actionExecutor: RpcActionExecutor = {
     execute: async (actionId, input) => {
       switch (actionId) {
         case 'sessions.external.materialize.start':
-          return { ok: true, result: await executor.start(input) };
+          return { ok: true, result: await materializeStart.start(input) };
         case 'sessions.external.operation.status.get':
-          return { ok: true, result: await executor.status(input) };
+          return { ok: true, result: await fixture.executor.status(input) };
         case 'sessions.external.operation.resume':
-          return { ok: true, result: await executor.resume(input) };
+          return { ok: true, result: await fixture.executor.resume(input) };
         default:
           return {
             ok: false,
@@ -115,17 +149,9 @@ function registerMaterializeRpcExecutor(
   const features = FeaturesResponseSchema.parse({
     features: {},
     capabilities: {
-      compatibility: {
-        v: 1,
-        sessionSync: {
-          v: 1,
-          enforcement: 'observe',
-          minimumSessionSyncProtocolVersion: 1,
-          currentSessionSyncProtocolVersion: 2,
-          declarationTransport: 'headers-v1',
-        },
-        externalSessionImport: {
-          currentPublicationFenceVersion:
+      session: {
+        externalImport: {
+          publicationFenceVersion:
             EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1,
         },
       },
@@ -407,6 +433,16 @@ describe('materialize recovery composed across the daemon and SQLite server owne
       targetStorageMode: 'external-linked' as const,
       targetRuntimeMode: null,
     };
+    const publicRequest = {
+      request: {
+        v: request.v,
+        idempotencyKey: request.idempotencyKey,
+        sessionId: request.sessionId,
+        plan: request.plan,
+        targetStorageMode: request.targetStorageMode,
+        targetRuntimeMode: request.targetRuntimeMode,
+      },
+    } satisfies ExternalSessionMaterializeStartInputV1;
     const chronologicalItems = Array.from(
       { length: 450 },
       (_, index): ExternalSessionOperationSocketBatchItemV1 => ({
@@ -521,10 +557,14 @@ describe('materialize recovery composed across the daemon and SQLite server owne
 
     let activeRpc: ReturnType<typeof registerMaterializeRpcExecutor> | null = null;
     try {
-      activeRpc = registerMaterializeRpcExecutor(createRestartableExecutor());
+      activeRpc = registerMaterializeRpcExecutor({
+        activeServerDir,
+        configuredSource: request.source,
+        executor: createRestartableExecutor(),
+      });
       const interrupted = await activeRpc.invoke(
         RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
-        { request },
+        publicRequest,
       );
       const interruptedResponse =
         ExternalSessionOperationActionResponseV1Schema.parse(interrupted);
@@ -552,7 +592,11 @@ describe('materialize recovery composed across the daemon and SQLite server owne
       };
       await activeRpc.dispose();
       activeRpc = null;
-      activeRpc = registerMaterializeRpcExecutor(createRestartableExecutor());
+      activeRpc = registerMaterializeRpcExecutor({
+        activeServerDir,
+        configuredSource: request.source,
+        executor: createRestartableExecutor(),
+      });
       await expect(activeRpc.invoke(
         RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
         {
@@ -726,6 +770,16 @@ describe('materialize recovery composed across the daemon and SQLite server owne
         targetStorageMode: 'external-linked' as const,
         targetRuntimeMode: null,
       };
+      const publicRequest = {
+        request: {
+          v: request.v,
+          idempotencyKey: request.idempotencyKey,
+          sessionId: request.sessionId,
+          plan: request.plan,
+          targetStorageMode: request.targetStorageMode,
+          targetRuntimeMode: request.targetRuntimeMode,
+        },
+      } satisfies ExternalSessionMaterializeStartInputV1;
       const currentCommandKinds: ExternalSessionOperationSocketCommandV1['kind'][] = [];
       const executor = createExternalSessionMaterializeActionExecutor({
         activeServerDir,
@@ -802,10 +856,14 @@ describe('materialize recovery composed across the daemon and SQLite server owne
 
       let rpc: ReturnType<typeof registerMaterializeRpcExecutor> | null = null;
       try {
-        rpc = registerMaterializeRpcExecutor(executor);
+        rpc = registerMaterializeRpcExecutor({
+          activeServerDir,
+          configuredSource: request.source,
+          executor,
+        });
         const interrupted = await rpc.invoke(
           RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
-          { request },
+          publicRequest,
         );
         expect(interrupted).toMatchObject({
           ok: true,

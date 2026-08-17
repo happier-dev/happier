@@ -1,6 +1,12 @@
 import {
+    isSessionAgentTransitionDividerLocalId,
     isStoredContentKindAllowedForSessionByStoragePolicy,
+    isMessageStructuredPresentationV1Candidate,
+    readMessageStructuredPresentationV1,
+    SessionMessageRoleSchema,
     type SessionEncryptionMode,
+    type SessionInputAdmissionReceiptV1,
+    type SessionInputRequestEqualityEvidenceV1,
     type SessionMessageDeliveryResolutionV1,
     type SessionMessageRole,
     type SessionTranscriptObservationProvenanceV1,
@@ -31,7 +37,71 @@ export type SessionTranscriptStoragePolicy = "required_e2ee" | "optional" | "pla
 export type SessionTranscriptWriteAuthority = "hosted" | "historical_import";
 export type SessionTranscriptWriteRejectionCode =
     | EncryptionPolicyRejectionCode
-    | "session_storage_authority_mismatch";
+    | "session_storage_authority_mismatch"
+    | "session_message_role_conflict"
+    | "session_structured_presentation_invalid"
+    | "session_structured_presentation_unavailable";
+
+/**
+ * Canonical provenance for history observations. Historical-import adapters
+ * must preserve it so the batch writer's stable identity remains closed.
+ */
+export const HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE = {
+    kind: "non_dependent",
+    source: "history",
+} as const satisfies SessionTranscriptObservationProvenanceV1;
+
+/**
+ * One canonical comparison for a stored Session Message and an incoming
+ * same-localId candidate. Callers own whether a content correction is an
+ * update or a conflict; role identity itself is settled here.
+ */
+export type SessionMessageContentRoleComparison =
+    | Readonly<{
+        kind: "content-mismatch";
+        existingMessageRole: SessionMessageRole | null;
+      }>
+    | Readonly<{
+        kind: "role-conflict";
+        existingMessageRole: SessionMessageRole;
+      }>
+    | Readonly<{
+        kind: "match";
+        existingMessageRole: SessionMessageRole | null;
+        backfillsRole: boolean;
+      }>;
+
+export function compareSessionMessageContentAndRole(params: Readonly<{
+    existing: Readonly<{
+        content: unknown;
+        messageRole: unknown;
+    }>;
+    candidate: Readonly<{
+        content: PrismaJson.SessionMessageContent;
+        messageRole: SessionMessageRole | null;
+    }>;
+}>): SessionMessageContentRoleComparison {
+    const parsedExistingRole = SessionMessageRoleSchema.safeParse(params.existing.messageRole);
+    const existingMessageRole = parsedExistingRole.success ? parsedExistingRole.data : null;
+
+    if (!isDeepStrictEqual(params.existing.content, params.candidate.content)) {
+        return { kind: "content-mismatch", existingMessageRole };
+    }
+    if (
+        existingMessageRole !== null
+        && params.candidate.messageRole !== null
+        && existingMessageRole !== params.candidate.messageRole
+    ) {
+        return { kind: "role-conflict", existingMessageRole };
+    }
+    return {
+        kind: "match",
+        existingMessageRole,
+        // Preserve the established backfill contract: only an actual stored
+        // null is backfilled, never an invalid legacy value treated as null.
+        backfillsRole: params.existing.messageRole === null && params.candidate.messageRole !== null,
+    };
+}
 
 export type SessionTranscriptStorageModeConflict = Readonly<{
     ok: false;
@@ -80,22 +150,43 @@ export function validateSessionTranscriptStoredContent(params: Readonly<{
     storagePolicy: SessionTranscriptStoragePolicy;
 }>): Readonly<{ ok: true }> | SessionTranscriptStorageModeConflict {
     const writeKind = params.content.t === "plain" ? "plain" : "encrypted";
-    if (isStoredContentKindAllowedForSessionByStoragePolicy(
+    if (!isStoredContentKindAllowedForSessionByStoragePolicy(
         params.storagePolicy,
         params.sessionEncryptionMode,
         writeKind,
     )) {
-        return { ok: true };
+        return {
+            ok: false,
+            error: "storage-mode-conflict",
+            code: resolveEncryptionWriteRejectionCode({
+                storagePolicy: params.storagePolicy,
+                sessionEncryptionMode: params.sessionEncryptionMode,
+                writeKind,
+            }),
+        };
     }
-    return {
-        ok: false,
-        error: "storage-mode-conflict",
-        code: resolveEncryptionWriteRejectionCode({
-            storagePolicy: params.storagePolicy,
-            sessionEncryptionMode: params.sessionEncryptionMode,
-            writeKind,
-        }),
-    };
+
+    // The server cannot inspect E2EE ciphertext. For its readable plain
+    // canonical Message envelope, reserve the structured-presentation member
+    // until every reachable reader can replay it. This single writer
+    // admission covers direct, Pending, and historical import paths without a
+    // route-local compatibility branch.
+    if (params.content.t === "plain" && isMessageStructuredPresentationV1Candidate(params.content.v)) {
+        if (readMessageStructuredPresentationV1(params.content.v) !== null) {
+            return {
+                ok: false,
+                error: "storage-mode-conflict",
+                code: "session_structured_presentation_unavailable",
+            };
+        }
+        return {
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_invalid",
+        };
+    }
+
+    return { ok: true };
 }
 
 export type SessionTranscriptMessageWriteParams = Readonly<{
@@ -113,6 +204,9 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     sourceUpdatedAt?: Date;
     transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
     deliveryResolution?: SessionMessageDeliveryResolutionV1;
+    /** Only the Pending admission/settlement owner may supply immutable input evidence. */
+    inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
+    requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;
 }>;
 
 export type HistoricalSessionMessageItem = Readonly<{
@@ -122,6 +216,7 @@ export type HistoricalSessionMessageItem = Readonly<{
     content: PrismaJson.SessionMessageContent;
     sourceCreatedAt?: Date;
     sourceUpdatedAt?: Date;
+    transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
 }>;
 
 /**
@@ -177,6 +272,10 @@ export async function writeSessionTranscriptMessageInTx(
                 ? { transcriptObservationProvenance: params.transcriptObservationProvenance }
                 : {}),
             ...(params.deliveryResolution ? { deliveryResolution: params.deliveryResolution } : {}),
+            ...(params.inputAdmissionReceipt ? { inputAdmissionReceipt: params.inputAdmissionReceipt } : {}),
+            ...(params.requestEqualityEvidenceV1
+                ? { requestEqualityEvidenceV1: params.requestEqualityEvidenceV1 }
+                : {}),
         },
         select: SESSION_TRANSCRIPT_WRITE_SELECT,
     });
@@ -204,6 +303,7 @@ function historicalItemMatchesStoredMessage(
         content: unknown;
         sourceCreatedAt: Date | null;
         sourceUpdatedAt: Date | null;
+        transcriptObservationProvenance: unknown;
     }>,
 ): boolean {
     return stored.localId === item.localId
@@ -211,22 +311,34 @@ function historicalItemMatchesStoredMessage(
         && stored.messageRole === item.messageRole
         && isDeepStrictEqual(stored.content, item.content)
         && stored.sourceCreatedAt?.getTime() === item.sourceCreatedAt?.getTime()
-        && stored.sourceUpdatedAt?.getTime() === item.sourceUpdatedAt?.getTime();
+        && stored.sourceUpdatedAt?.getTime() === item.sourceUpdatedAt?.getTime()
+        && isDeepStrictEqual(
+            stored.transcriptObservationProvenance ?? undefined,
+            item.transcriptObservationProvenance,
+        );
 }
 
 /**
- * Canonical historical-import batch core. It has no publication, attention, Pending, ready, or
- * hosted-turn behavior; a later operation owner must authorize publication before calling it.
+ * Canonical stable-history batch core. The caller declares the storage authority
+ * it already owns; this batch has no publication, attention, Pending, ready, or
+ * hosted-turn behavior of its own.
  */
 async function writeHistoricalSessionMessageBatchWithModeInTx(
     tx: Tx,
     params: Readonly<{
         sessionId: string;
+        writeAuthority: SessionTranscriptWriteAuthority;
         sessionEncryptionMode: SessionEncryptionMode;
         storagePolicy: SessionTranscriptStoragePolicy;
         items: readonly HistoricalSessionMessageItem[];
     }>,
 ) {
+    const authority = await validateSessionTranscriptWriteAuthorityInTx(tx, {
+        sessionId: params.sessionId,
+        writeAuthority: params.writeAuthority,
+    });
+    if (!authority.ok) return authority;
+
     if (params.items.length === 0) {
         return { ok: true as const, didWrite: false, messages: [], firstSeq: null, lastSeq: null };
     }
@@ -234,6 +346,18 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
     const itemByLocalId = new Map<string, HistoricalSessionMessageItem>();
     for (const item of params.items) {
         if (!item.localId) return { ok: false as const, error: "invalid-item" as const };
+        // The Agent-transition divider local-ID namespace is reserved for the
+        // owner-only transition service. It is refused HERE, at the canonical
+        // historical-batch owner, rather than at any one of its adapters: the
+        // hosted `/transcript/import` route authorizes ordinary edit/admin
+        // collaborators, and the external-Session historical import command
+        // reaches this same writer. A row planted at the reserved localId would
+        // both forge a departure boundary and permanently block every future
+        // cutover's divider append on that Session. The whole batch is refused,
+        // because a partial write would still let the caller choose what lands.
+        if (isSessionAgentTransitionDividerLocalId(item.localId)) {
+            return { ok: false as const, error: "reserved-local-id" as const };
+        }
         const storageAdmission = validateSessionTranscriptStoredContent({
             content: item.content,
             sessionEncryptionMode: params.sessionEncryptionMode,
@@ -270,8 +394,9 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             messages.push(stored);
             continue;
         }
-        const persisted = await writeHistoricalSessionMessageInTx(tx, {
+        const persisted = await writeSessionTranscriptMessageInTx(tx, {
             sessionId: params.sessionId,
+            writeAuthority: params.writeAuthority,
             sessionEncryptionMode: params.sessionEncryptionMode,
             storagePolicy: params.storagePolicy,
             content: item.content,
@@ -280,6 +405,9 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             messageRole: item.messageRole,
             ...(item.sourceCreatedAt ? { sourceCreatedAt: item.sourceCreatedAt } : {}),
             ...(item.sourceUpdatedAt ? { sourceUpdatedAt: item.sourceUpdatedAt } : {}),
+            ...(item.transcriptObservationProvenance
+                ? { transcriptObservationProvenance: item.transcriptObservationProvenance }
+                : {}),
         });
         if (!persisted.ok) return persisted;
         didWrite = true;
@@ -300,6 +428,7 @@ export async function writeHistoricalSessionMessageBatchInTx(
     tx: Tx,
     params: Readonly<{
         sessionId: string;
+        writeAuthority?: SessionTranscriptWriteAuthority;
         storagePolicy: SessionTranscriptStoragePolicy;
         items: readonly HistoricalSessionMessageItem[];
     }>,
@@ -311,6 +440,7 @@ export async function writeHistoricalSessionMessageBatchInTx(
     if (!session) return { ok: false as const, error: "session-not-found" as const };
     return await writeHistoricalSessionMessageBatchWithModeInTx(tx, {
         ...params,
+        writeAuthority: params.writeAuthority ?? "historical_import",
         sessionEncryptionMode: session.encryptionMode === "plain" ? "plain" : "e2ee",
     });
 }

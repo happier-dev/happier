@@ -3,20 +3,20 @@ import { z } from "zod";
 import { AccountSettingsStoredContentEnvelopeSchema } from "@happier-dev/protocol";
 
 import {
-    accountSettingsContentEquals,
     accountSettingsSnapshotToContent,
     resolveAccountSettingsSnapshotContentKind,
 } from "@/app/accountSettings/accountSettingsHistoryContent";
-import { recordAccountSettingsSnapshotsForWrite } from "@/app/accountSettings/accountSettingsHistoryRepository";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
-import { buildAccountSettingsChangedUpdate, buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
-import { afterTx, inTx } from "@/storage/inTx";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
-import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
+import {
+    AccountSettingsStorageUnavailableResponseSchema,
+    resolveAccountSettingsStorageUnavailableRouteError,
+} from "./accountSettingsStorageUnavailableRouteError";
 
 const AccountSettingsHistoryVersionParamsSchema = z.object({
     version: z.coerce.number().int().min(0),
@@ -39,22 +39,9 @@ const AccountSettingsHistoryDetailResponseSchema = z.object({
     createdAt: z.string(),
 });
 
-const AccountSettingsHistoryRestoreRequestSchema = z.object({
-    expectedVersion: z.number().int().min(0),
-    content: AccountSettingsStoredContentEnvelopeSchema.nullable().optional(),
-});
-
-const AccountSettingsHistoryRestoreResponseSchema = z.union([
-    z.object({
-        success: z.literal(true),
-        version: z.number().int().min(0),
-    }),
-    z.object({
-        success: z.literal(false),
-        error: z.literal("version-mismatch"),
-        currentVersion: z.number().int().min(0),
-    }),
-]);
+const AccountSettingsHistoryRestoreClientUpdateRequiredResponseSchema = z.object({
+    error: z.literal("account_settings_restore_client_update_required"),
+}).strict();
 
 const AccountSettingsHistoryErrorResponseSchema = z.object({
     error: z.union([
@@ -73,11 +60,31 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         schema: {
             response: {
                 200: AccountSettingsHistoryListResponseSchema,
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: AccountSettingsHistoryErrorResponseSchema,
             },
         },
     }, async (request, reply) => {
         try {
+            const account = await db.account.findUnique({
+                where: { id: request.userId },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
+            });
+            if (
+                !account
+                || deriveAccountEncryptionCurrentnessFromRow(
+                    account,
+                ).status === "inconsistent"
+            ) {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
             const snapshots = await db.accountSettingsSnapshot.findMany({
                 where: { accountId: request.userId },
                 orderBy: [
@@ -101,6 +108,10 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                 })),
             });
         } catch (error) {
+            const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
+            if (storageUnavailable) {
+                return reply.code(storageUnavailable.statusCode).send(storageUnavailable.body);
+            }
             log({ module: "api", level: "error" }, `Failed to list account settings history: ${error}`);
             return reply.code(500).send({ error: "internal" });
         }
@@ -116,6 +127,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
             response: {
                 200: AccountSettingsHistoryDetailResponseSchema,
                 404: AccountSettingsHistoryErrorResponseSchema,
+                503: AccountSettingsStorageUnavailableResponseSchema,
                 500: AccountSettingsHistoryErrorResponseSchema,
             },
         },
@@ -123,6 +135,25 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         const { version } = request.params as { version: number };
 
         try {
+            const account = await db.account.findUnique({
+                where: { id: request.userId },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
+            });
+            if (
+                !account
+                || deriveAccountEncryptionCurrentnessFromRow(
+                    account,
+                ).status === "inconsistent"
+            ) {
+                return reply.code(503).send({
+                    error: "account_settings_storage_unavailable",
+                });
+            }
             const snapshot = await db.accountSettingsSnapshot.findUnique({
                 where: {
                     accountId_version: {
@@ -151,6 +182,10 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                 createdAt: snapshot.createdAt.toISOString(),
             });
         } catch (error) {
+            const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
+            if (storageUnavailable) {
+                return reply.code(storageUnavailable.statusCode).send(storageUnavailable.body);
+            }
             log({ module: "api", level: "error" }, `Failed to get account settings history snapshot: ${error}`);
             return reply.code(500).send({ error: "internal" });
         }
@@ -160,146 +195,15 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         preHandler: app.authenticate,
         schema: {
             params: AccountSettingsHistoryVersionParamsSchema,
-            body: AccountSettingsHistoryRestoreRequestSchema,
             response: {
-                200: AccountSettingsHistoryRestoreResponseSchema,
-                400: AccountSettingsHistoryErrorResponseSchema,
-                404: AccountSettingsHistoryErrorResponseSchema,
-                500: AccountSettingsHistoryErrorResponseSchema,
+                426: AccountSettingsHistoryRestoreClientUpdateRequiredResponseSchema,
             },
         },
-    }, async (request, reply) => {
-        const userId = request.userId;
-        const { version } = request.params as { version: number };
-        const { expectedVersion, content: clientValidatedContent } = request.body;
-
-        if (clientValidatedContent === undefined) {
-            return reply.code(400).send({ error: "invalid-params" });
-        }
-
-        try {
-            const result = await inTx(async (tx) => {
-                const snapshot = await tx.accountSettingsSnapshot.findUnique({
-                    where: {
-                        accountId_version: {
-                            accountId: userId,
-                            version,
-                        },
-                    },
-                    select: {
-                        accountId: true,
-                        version: true,
-                        settingsDbValue: true,
-                        encryptionMode: true,
-                    },
-                });
-                if (!snapshot) return { type: "not-found" as const };
-
-                const snapshotContent = accountSettingsSnapshotToContent(snapshot);
-                if (snapshot.settingsDbValue && !snapshotContent) {
-                    return { type: "internal-error" as const };
-                }
-                if (!accountSettingsContentEquals(snapshotContent, clientValidatedContent ?? null)) {
-                    return { type: "invalid-params" as const };
-                }
-
-                const currentUser = await tx.account.findUnique({
-                    where: { id: userId },
-                    select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
-                });
-                if (!currentUser) return { type: "internal-error" as const };
-
-                const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(currentUser);
-                if (mode !== snapshot.encryptionMode) {
-                    return { type: "invalid-params" as const };
-                }
-
-                if (currentUser.settingsVersion !== expectedVersion) {
-                    return {
-                        type: "version-mismatch" as const,
-                        currentVersion: currentUser.settingsVersion,
-                    };
-                }
-
-                const nextVersion = expectedVersion + 1;
-                const { count } = await tx.account.updateMany({
-                    where: { id: userId, settingsVersion: expectedVersion },
-                    data: {
-                        settings: snapshot.settingsDbValue,
-                        settingsVersion: nextVersion,
-                        updatedAt: new Date(),
-                    },
-                });
-                if (count === 0) {
-                    const account = await tx.account.findUnique({
-                        where: { id: userId },
-                        select: { settingsVersion: true },
-                    });
-                    return {
-                        type: "version-mismatch" as const,
-                        currentVersion: account?.settingsVersion ?? 0,
-                    };
-                }
-
-                await recordAccountSettingsSnapshotsForWrite({
-                    tx,
-                    previous: {
-                        accountId: userId,
-                        version: expectedVersion,
-                        settingsDbValue: currentUser.settings,
-                        encryptionMode: mode,
-                    },
-                    next: {
-                        accountId: userId,
-                        version: nextVersion,
-                        settingsDbValue: snapshot.settingsDbValue,
-                        encryptionMode: mode,
-                    },
-                });
-
-                const cursor = await markAccountChanged(tx, {
-                    accountId: userId,
-                    kind: "account",
-                    entityId: "self",
-                    hint: { settingsVersion: nextVersion },
-                });
-
-                afterTx(tx, () => {
-                    const updatePayload = buildUpdateAccountUpdate(
-                        userId,
-                        { settingsV2: { content: snapshotContent, version: nextVersion } },
-                        cursor,
-                        randomKeyNaked(12),
-                    );
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: updatePayload,
-                        recipientFilter: { type: "user-scoped-only" },
-                    });
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: buildAccountSettingsChangedUpdate(nextVersion, cursor, randomKeyNaked(12)),
-                        recipientFilter: { type: "user-machine-scoped-only" },
-                    });
-                });
-
-                return { type: "success" as const, version: nextVersion };
-            });
-
-            if (result.type === "internal-error") return reply.code(500).send({ error: "internal" });
-            if (result.type === "not-found") return reply.code(404).send({ error: "not_found" });
-            if (result.type === "invalid-params") return reply.code(400).send({ error: "invalid-params" });
-            if (result.type === "version-mismatch") {
-                return reply.send({
-                    success: false,
-                    error: "version-mismatch",
-                    currentVersion: result.currentVersion,
-                });
-            }
-            return reply.send({ success: true, version: result.version });
-        } catch (error) {
-            log({ module: "api", level: "error" }, `Failed to restore account settings history snapshot: ${error}`);
-            return reply.code(500).send({ error: "internal" });
-        }
+    }, async (_request, reply) => {
+        // Exact snapshot replacement cannot classify E2EE content, so it must
+        // not remain a second restore writer beside client-side normalization.
+        return reply.code(426).send({
+            error: "account_settings_restore_client_update_required",
+        });
     });
 }

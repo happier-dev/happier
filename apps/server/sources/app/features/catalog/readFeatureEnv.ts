@@ -26,6 +26,8 @@ import {
   MACHINE_TUNNEL_SERVER_ROUTED_MAX_SUBSTREAMS_HARD_MAX,
   MachineLiveStreamRelayCapsV1Schema,
   LocalServicePublicExposureModeV1Schema,
+  PLUGIN_COLLECTION_LIMITS_V1,
+  PluginDataCollectionsCapabilitiesSchema,
   normalizeMachineTunnelAllowedPorts,
   normalizeMachineTunnelPreferredEncoding,
   normalizeMachineTunnelPositiveInt,
@@ -37,10 +39,11 @@ import {
   type LocalServicePublicExposureModeV1,
   type LocalServicePublicPolicyV1,
   type PeerTcpTunnelEncoding,
+  type PluginDataCollectionsCapabilities,
 } from '@happier-dev/protocol';
 import { resolvePeerMediationGrantSigningConfig } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
 import { resolveEffectiveWebappBaseUrl } from '../../serverUrls/effectiveServerUrls';
-import { FEATURE_ENV_KEYS } from './featureEnvSchema';
+import { FEATURE_ENV_KEYS, type FeatureEnvKey } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
   enabled: boolean;
@@ -71,11 +74,6 @@ export type SessionUsageLimitRecoveryFeatureEnv = Readonly<{
   enabled: boolean;
 }>;
 
-export type ChannelBridgesFeatureEnv = Readonly<{
-  enabled: boolean;
-  telegramEnabled: boolean;
-}>;
-
 export type UpdatesFeatureEnv = Readonly<{
   otaEnabled: boolean;
 }>;
@@ -97,6 +95,10 @@ export type PetsFeatureEnv = Readonly<{
 
 export type SessionHandoffFeatureEnv = Readonly<{
   handoffEnabled: boolean;
+}>;
+
+export type SessionAgentSwitchingFeatureEnv = Readonly<{
+  agentSwitchingEnabled: boolean;
 }>;
 
 export type SessionFoldersFeatureEnv = Readonly<{
@@ -176,13 +178,44 @@ export type BrowserFeatureEnv = Readonly<{
 export type PluginsFeatureEnv = Readonly<{
   // Core platform + UI projection gates (default-allow).
   enabled: boolean;
+  // Public ingress is security-sensitive and remains disabled until the operator completes rollout.
+  webhooksEnabled: boolean;
+  webhookIngressPolicy: WebhookIngressPolicyV1;
   uiEnabled: boolean;
   // Plugin UI tier kill-switches (server-represented + default-ALLOW per §4.1/§13.5.3). These are
   // coarse server/build kill-switches only; per-plugin install/enable/trust/runtime derivation
   // (5.1/5.2) governs actual availability. The finer devHotReload tier stays client + fail-closed.
   uiHostedWebEnabled: boolean;
-  uiStructuredMessagesEnabled: boolean;
   uiReactNativeBundlesEnabled: boolean;
+  // Operator infrastructure limits. Missing or incoherent values leave artifact hosting unavailable.
+  uiArtifactHostingEnabled: boolean;
+  uiArtifactHostingMaxArtifactBytes: number | undefined;
+  uiArtifactHostingMaxAccountBytes: number | undefined;
+  collectionLimits: PluginDataCollectionsCapabilities;
+}>;
+
+/**
+ * The one server-owned ingress policy. These are operational ceilings only:
+ * no manifest, endpoint, or plugin contribution can supply or raise them.
+ */
+export type WebhookIngressPolicyV1 = Readonly<{
+  version: 1;
+  process: Readonly<{
+    maxRequests: number;
+    maxWorkingBytes: number;
+  }>;
+  route: Readonly<{
+    ratePerMinute: number;
+    concurrency: number;
+  }>;
+  endpoint: Readonly<{
+    ratePerMinute: number;
+    concurrency: number;
+  }>;
+  account: Readonly<{
+    ratePerMinute: number;
+    concurrency: number;
+  }>;
 }>;
 
 export type DevicesFeatureEnv = Readonly<{
@@ -269,6 +302,7 @@ export type EncryptionFeatureEnv = Readonly<{
   defaultAccountMode: "e2ee" | "plain";
   plainAccountSettingsAtRest: "none" | "server_sealed";
   plainAccountCredentialsAtRest: "none" | "server_sealed";
+  plainAccountArtifactsAtRest: "none" | "server_sealed";
 }>;
 
 export type E2eeFeatureEnv = Readonly<{
@@ -463,13 +497,6 @@ export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): Connect
   };
 }
 
-export function readChannelBridgesFeatureEnv(env: NodeJS.ProcessEnv): ChannelBridgesFeatureEnv {
-  return {
-    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesEnabled], true),
-    telegramEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.channelBridgesTelegramEnabled], true),
-  };
-}
-
 export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv {
   return {
     otaEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.updatesOtaEnabled], true),
@@ -523,6 +550,12 @@ export function readPeerMediationFeatureEnv(env: NodeJS.ProcessEnv): PeerMediati
 export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHandoffFeatureEnv {
   return {
     handoffEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsHandoffEnabled], true),
+  };
+}
+
+export function readSessionAgentSwitchingFeatureEnv(env: NodeJS.ProcessEnv): SessionAgentSwitchingFeatureEnv {
+  return {
+    agentSwitchingEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsAgentSwitchingEnabled], true),
   };
 }
 
@@ -731,6 +764,119 @@ export function readBrowserFeatureEnv(env: NodeJS.ProcessEnv): BrowserFeatureEnv
   };
 }
 
+function readLoweredWebhookIngressLimit(
+  env: NodeJS.ProcessEnv,
+  key: FeatureEnvKey,
+  ceiling: number,
+): number {
+  const raw = env[key];
+  if (typeof raw !== 'string' || !/^[1-9][0-9]*$/u.test(raw.trim())) return ceiling;
+  const value = Number(raw.trim());
+  return Number.isSafeInteger(value) && value <= ceiling ? value : ceiling;
+}
+
+function readWebhookIngressPolicyV1(env: NodeJS.ProcessEnv): WebhookIngressPolicyV1 {
+  return Object.freeze({
+    version: 1,
+    process: Object.freeze({
+      maxRequests: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxRequests, 4),
+      maxWorkingBytes: readLoweredWebhookIngressLimit(
+        env,
+        FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxWorkingBytes,
+        512 * 1_024 * 1_024,
+      ),
+    }),
+    route: Object.freeze({
+      ratePerMinute: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksRouteRatePerMinute, 600),
+      concurrency: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksRouteConcurrency, 16),
+    }),
+    endpoint: Object.freeze({
+      ratePerMinute: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksEndpointRatePerMinute, 300),
+      concurrency: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksEndpointConcurrency, 8),
+    }),
+    account: Object.freeze({
+      ratePerMinute: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksAccountRatePerMinute, 3_000),
+      concurrency: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksAccountConcurrency, 32),
+    }),
+  });
+}
+
+const DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS: PluginDataCollectionsCapabilities = Object.freeze({
+  maxRowEncodedBytes: 512 * 1024,
+  maxBatchBytes: 16 * 1024 * 1024,
+  maxBatchRows: 100,
+  maxAccountRows: 10_000,
+  maxAccountBytes: 256 * 1024 * 1024,
+});
+
+function readCollectionDeploymentPositiveInt(input: Readonly<{
+  env: NodeJS.ProcessEnv;
+  key: FeatureEnvKey;
+  fallback: number;
+  maximum: number;
+}>): number {
+  const raw = input.env[input.key];
+  if (raw === undefined) return input.fallback;
+  const value = raw.trim();
+  if (!/^[1-9][0-9]*$/u.test(value)) {
+    throw new Error(`${input.key} must be a positive safe integer.`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > input.maximum) {
+    throw new Error(`${input.key} must be at most ${input.maximum}.`);
+  }
+  return parsed;
+}
+
+/**
+ * The one operator-configured Collection deployment policy. It is read by
+ * feature projection, activation readiness, and mutation enforcement; none
+ * of those consumers parses environment variables independently.
+ */
+function readPluginDataCollectionsDeploymentLimits(env: NodeJS.ProcessEnv): PluginDataCollectionsCapabilities {
+  const limits = {
+    maxRowEncodedBytes: readCollectionDeploymentPositiveInt({
+      env,
+      key: FEATURE_ENV_KEYS.collectionMaxRowEncodedBytes,
+      fallback: DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS.maxRowEncodedBytes,
+      maximum: PLUGIN_COLLECTION_LIMITS_V1.maximumStoredRowEncodedBytes,
+    }),
+    maxBatchBytes: readCollectionDeploymentPositiveInt({
+      env,
+      key: FEATURE_ENV_KEYS.collectionMaxBatchBytes,
+      fallback: DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS.maxBatchBytes,
+      maximum: PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchEncodedBytes,
+    }),
+    maxBatchRows: readCollectionDeploymentPositiveInt({
+      env,
+      key: FEATURE_ENV_KEYS.collectionMaxBatchRows,
+      fallback: DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS.maxBatchRows,
+      maximum: PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows,
+    }),
+    maxAccountRows: readCollectionDeploymentPositiveInt({
+      env,
+      key: FEATURE_ENV_KEYS.collectionMaxAccountRows,
+      fallback: DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS.maxAccountRows,
+      maximum: PLUGIN_COLLECTION_LIMITS_V1.maximumAccountRows,
+    }),
+    maxAccountBytes: readCollectionDeploymentPositiveInt({
+      env,
+      key: FEATURE_ENV_KEYS.collectionMaxAccountBytes,
+      fallback: DEFAULT_PLUGIN_DATA_COLLECTIONS_LIMITS.maxAccountBytes,
+      maximum: PLUGIN_COLLECTION_LIMITS_V1.maximumAccountEncodedBytes,
+    }),
+  } satisfies PluginDataCollectionsCapabilities;
+  const parsed = PluginDataCollectionsCapabilitiesSchema.safeParse(limits);
+  if (!parsed.success) {
+    throw new Error(
+      'HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES, HAPPIER_COLLECTION_MAX_BATCH_BYTES, '
+      + 'HAPPIER_COLLECTION_MAX_BATCH_ROWS, HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS, and '
+      + 'HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES must form a coherent Collection deployment policy.',
+    );
+  }
+  return Object.freeze(parsed.data);
+}
+
 export function readPluginsFeatureEnv(env: NodeJS.ProcessEnv): PluginsFeatureEnv {
   // Core plugin platform + UI projection default to allow (server is the gate). The plugin UI tiers
   // are also server-represented + default-ALLOW kill-switches (§4.1/§13.5.3): the server/build can
@@ -738,10 +884,19 @@ export function readPluginsFeatureEnv(env: NodeJS.ProcessEnv): PluginsFeatureEnv
   // governs actual render. The finer reactNativeBundles.devHotReload tier stays client/fail-closed.
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsEnabled], true),
+    webhooksEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsWebhooksEnabled], false),
+    webhookIngressPolicy: readWebhookIngressPolicyV1(env),
     uiEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiEnabled], true),
     uiHostedWebEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiHostedWebEnabled], true),
-    uiStructuredMessagesEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiStructuredMessagesEnabled], true),
     uiReactNativeBundlesEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiReactNativeBundlesEnabled], true),
+    uiArtifactHostingEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiArtifactHostingEnabled], false),
+    uiArtifactHostingMaxArtifactBytes: readOptionalPositiveInt(
+      env[FEATURE_ENV_KEYS.pluginsUiArtifactHostingMaxArtifactBytes],
+    ),
+    uiArtifactHostingMaxAccountBytes: readOptionalPositiveInt(
+      env[FEATURE_ENV_KEYS.pluginsUiArtifactHostingMaxAccountBytes],
+    ),
+    collectionLimits: readPluginDataCollectionsDeploymentLimits(env),
   };
 }
 
@@ -950,12 +1105,17 @@ export function readEncryptionFeatureEnv(env: NodeJS.ProcessEnv): EncryptionFeat
   const plainAccountCredentialsAtRest: EncryptionFeatureEnv["plainAccountCredentialsAtRest"] =
     rawCredentialsAtRest === "none" || rawCredentialsAtRest === "server_sealed" ? (rawCredentialsAtRest as any) : "server_sealed";
 
+  const rawArtifactsAtRest = (env[FEATURE_ENV_KEYS.encryptionPlainAccountArtifactsAtRest] ?? "").toString().trim().toLowerCase();
+  const plainAccountArtifactsAtRest: EncryptionFeatureEnv["plainAccountArtifactsAtRest"] =
+    rawArtifactsAtRest === "none" || rawArtifactsAtRest === "server_sealed" ? rawArtifactsAtRest : "server_sealed";
+
   return {
     storagePolicy,
     allowAccountOptOut,
     defaultAccountMode,
     plainAccountSettingsAtRest,
     plainAccountCredentialsAtRest,
+    plainAccountArtifactsAtRest,
   };
 }
 

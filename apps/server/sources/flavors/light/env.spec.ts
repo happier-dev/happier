@@ -63,7 +63,7 @@ describe("light env helpers", () => {
   });
 
   it("resolveLightSqliteDatabaseUrl includes canonical sqlite URL params", () => {
-    expect(resolveLightSqliteDatabaseUrl("/tmp/happier-data", "linux")).toBe(
+    expect(resolveLightSqliteDatabaseUrl("/tmp/happier-data", "linux", {})).toBe(
       "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4",
     );
   });

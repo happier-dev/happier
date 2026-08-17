@@ -8,13 +8,17 @@ import {
 
 import { resolveSessionRollbackEligibleTurnRelationLimit } from "./v2SessionHotReadLimits";
 import {
-    applySessionTranscriptPublicationCeilingToProjection,
     createSessionTranscriptShareableWhere,
-    resolveSessionTranscriptNonOwnerRecencyMs,
+    filterSessionTranscriptPublicationSequenceFacts,
+    isSessionTranscriptShareable,
+    projectSessionTranscriptPublicationPreview,
+    resolveSessionTranscriptPublicationRecencyMs,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import {
     projectSessionMetadataForRecipient,
+    requiresSessionMetadataOwnerAccountMode,
+    type SessionMetadataOwnerAccountMode,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 
 export function createSessionRollbackEligibleTurnsSelect(
@@ -65,7 +69,6 @@ const V2_SESSION_LIST_SHARE_SELECT = {
 
 const V2_SESSION_LIST_ROW_BASE_SELECT = {
     id: true,
-    seq: true,
     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     accountId: true,
     createdAt: true,
@@ -108,22 +111,6 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
 } as const satisfies Prisma.SessionSelect;
 
 const {
-    pendingRequestObservedAt: _legacySelectPendingRequestObservedAt,
-    latestTurnId: _legacySelectLatestTurnId,
-    latestTurnStatusObservedAt: _legacySelectLatestTurnStatusObservedAt,
-    runtimeActivityState: _legacySelectRuntimeActivityState,
-    runtimeActivityActiveCount: _legacySelectRuntimeActivityActiveCount,
-    runtimeActivityObservedAt: _legacySelectRuntimeActivityObservedAt,
-    runtimeActivityRevision: _legacySelectRuntimeActivityRevision,
-    turns: _legacySelectTurns,
-    latestReadyEventSeq: _legacySelectLatestReadyEventSeq,
-    latestReadyEventAt: _legacySelectLatestReadyEventAt,
-    thinking: _legacySelectThinking,
-    thinkingAt: _legacySelectThinkingAt,
-    ...V2_SESSION_LIST_ROW_LEGACY_SELECT
-} = V2_SESSION_LIST_ROW_BASE_SELECT;
-
-const {
     turns: _ownerSelectTurns,
     shares: _ownerSelectShares,
     ...V2_SESSION_OWNER_ROW_SELECT
@@ -133,15 +120,11 @@ export type V2SessionListRow = Prisma.SessionGetPayload<{
     select: typeof V2_SESSION_LIST_ROW_BASE_SELECT;
 }>;
 
-export type V2SessionListLegacyRow = Prisma.SessionGetPayload<{
-    select: typeof V2_SESSION_LIST_ROW_LEGACY_SELECT;
-}>;
-
 export type V2SessionOwnerRow = Prisma.SessionGetPayload<{
     select: typeof V2_SESSION_OWNER_ROW_SELECT;
 }>;
 
-export type V2SessionListRowCompat = V2SessionListRow | V2SessionListLegacyRow;
+export type V2SessionListRowCompat = V2SessionListRow;
 type V2SessionRowCompat = V2SessionListRowCompat | V2SessionOwnerRow;
 
 export function createV2SessionListVisibilityWhere(params: Readonly<{ userId: string }>): Prisma.SessionWhereInput {
@@ -168,22 +151,15 @@ export function createV2SessionListRowSelect(params: Readonly<{ userId: string }
     } as const satisfies Prisma.SessionSelect;
 }
 
-export function createV2SessionListLegacyRowSelect(params: Readonly<{ userId: string }>) {
-    return {
-        ...V2_SESSION_LIST_ROW_LEGACY_SELECT,
-        shares: {
-            where: { sharedWithUserId: params.userId },
-            select: V2_SESSION_LIST_SHARE_SELECT,
-        },
-    } as const satisfies Prisma.SessionSelect;
-}
-
 export function createV2SessionOwnerRowSelect() {
     return V2_SESSION_OWNER_ROW_SELECT;
 }
 
 export function getV2SessionListEffectiveActivityAt(row: Pick<V2SessionRowCompat, "createdAt" | "meaningfulActivityAt">): Date {
-    return row.meaningfulActivityAt ?? row.createdAt;
+    return new Date(resolveSessionTranscriptPublicationRecencyMs({
+        createdAt: row.createdAt,
+        liveRecencyAt: row.meaningfulActivityAt,
+    }, row));
 }
 
 function readNullableDateField(row: V2SessionRowCompat, field: string): Date | null {
@@ -209,7 +185,11 @@ function readNullableTimestampField(row: V2SessionRowCompat, field: string): num
 
 export function readSessionTranscriptAuthorityFields(row: unknown): Partial<Pick<
     V2SessionRecord,
-    'currentStorageState' | 'acceptedThroughServerSeq' | 'materializedThroughSourceAt' | 'publishedThroughServerSeq'
+    | 'currentStorageState'
+    | 'acceptedThroughServerSeq'
+    | 'materializedThroughSourceAt'
+    | 'publishedThroughServerSeq'
+    | 'transcriptShareable'
 >> {
     const record = row as Record<string, unknown>;
     const currentStorageState = record.currentStorageState;
@@ -236,6 +216,7 @@ export function readSessionTranscriptAuthorityFields(row: unknown): Partial<Pick
             ? materializedThroughSourceAt
             : null,
         publishedThroughServerSeq: readNullableSequence(record.publishedThroughServerSeq),
+        transcriptShareable: isSessionTranscriptShareable(record),
     };
 }
 
@@ -291,62 +272,108 @@ function readRuntimeActivityProjection(row: V2SessionRowCompat): Partial<V2Sessi
     };
 }
 
-export function mapV2SessionListRow(params: Readonly<{ row: V2SessionRowCompat; userId: string }>): V2SessionRecord {
+export function mapV2SessionListRow(params: Readonly<{
+    row: V2SessionRowCompat;
+    userId: string;
+    ownerAccountMode?: SessionMetadataOwnerAccountMode;
+    ownerAccountModes?: ReadonlyMap<string, SessionMetadataOwnerAccountMode>;
+}>): V2SessionRecord {
     const { row, userId } = params;
+    const ownerAccountMode = params.ownerAccountModes?.get(row.accountId)
+        ?? params.ownerAccountMode;
     const viewerShare = "shares" in row ? row.shares[0] ?? null : null;
     const isOwner = row.accountId === userId;
-    const pendingRequestObservedAt = readNullableDateField(row, "pendingRequestObservedAt");
-    const latestReadyEventAt = readNullableDateField(row, "latestReadyEventAt");
-    const rawThinkingAt = readNullableDateField(row, "thinkingAt")?.getTime() ?? null;
-    const latestTurnStatus = parseStoredSessionLatestTurnStatus(row.latestTurnStatus);
-    const latestTurnStatusObservedAt = readNullableTimestampField(row, "latestTurnStatusObservedAt");
-    const thinking = isTerminalTurnStatus(latestTurnStatus) ? false : readBooleanField(row, "thinking");
-    const thinkingAt = isTerminalTurnStatus(latestTurnStatus)
-        ? (latestTurnStatusObservedAt ?? rawThinkingAt)
-        : rawThinkingAt;
-    const runtimeActivityProjection = readRuntimeActivityProjection(row);
-    const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
+    const publicationProjection = projectSessionTranscriptPublicationPreview({
         seq: row.seq,
         lastViewedSessionSeq: row.lastViewedSessionSeq,
         latestReadyEventSeq: readNullableNumberField(row, "latestReadyEventSeq"),
-        latestReadyEventAt,
+        latestReadyEventAt: readNullableDateField(row, "latestReadyEventAt"),
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        meaningfulActivityAt: row.meaningfulActivityAt,
+        lastActiveAt: row.lastActiveAt,
     }, row);
+    const hasLiveFacts = publicationProjection.hasLiveFacts;
+    const pendingRequestObservedAt = hasLiveFacts
+        ? readNullableDateField(row, "pendingRequestObservedAt")
+        : null;
+    const latestTurnStatus = hasLiveFacts
+        ? parseStoredSessionLatestTurnStatus(row.latestTurnStatus)
+        : null;
+    const latestTurnStatusObservedAt = hasLiveFacts
+        ? readNullableTimestampField(row, "latestTurnStatusObservedAt")
+        : null;
+    const rawThinkingAt = hasLiveFacts
+        ? readNullableDateField(row, "thinkingAt")?.getTime() ?? null
+        : null;
+    const thinking = hasLiveFacts
+        && !isTerminalTurnStatus(latestTurnStatus)
+        && readBooleanField(row, "thinking");
+    const thinkingAt = !hasLiveFacts
+        ? null
+        : isTerminalTurnStatus(latestTurnStatus)
+            ? (latestTurnStatusObservedAt ?? rawThinkingAt)
+            : rawThinkingAt;
+    const runtimeActivityProjection = hasLiveFacts
+        ? readRuntimeActivityProjection(row)
+        : {};
     const metadataProjection = projectSessionMetadataForRecipient({
         session: row,
-        recipientAccountId: userId,
+        recipient: isOwner
+            ? requiresSessionMetadataOwnerAccountMode({
+                session: row,
+              }) && ownerAccountMode
+                ? {
+                    type: "owner",
+                    accountId: userId,
+                    accountMode: ownerAccountMode,
+                  }
+                : {
+                    type: "legacy_owner",
+                    accountId: userId,
+                  }
+            : {
+                type: "shared",
+                accountId: userId,
+                ownerAccountMode,
+              },
     });
 
     return {
         id: row.id,
         seq: publicationProjection.seq,
         createdAt: row.createdAt.getTime(),
-        updatedAt: isOwner
-            ? row.updatedAt.getTime()
-            : resolveSessionTranscriptNonOwnerRecencyMs(row, row.updatedAt),
-        meaningfulActivityAt: getV2SessionListEffectiveActivityAt(row).getTime(),
-        active: row.active,
-        activeAt: row.lastActiveAt.getTime(),
+        updatedAt: publicationProjection.updatedAt,
+        meaningfulActivityAt: publicationProjection.meaningfulActivityAt,
+        active: hasLiveFacts && row.active,
+        activeAt: publicationProjection.activeAt,
         archivedAt: row.archivedAt?.getTime() ?? null,
         encryptionMode: row.encryptionMode === "plain" ? "plain" : "e2ee",
         ...metadataProjection,
         lastViewedSessionSeq: publicationProjection.lastViewedSessionSeq ?? null,
-        pendingPermissionRequestCount: row.pendingPermissionRequestCount,
-        pendingUserActionRequestCount: row.pendingUserActionRequestCount,
+        pendingPermissionRequestCount: hasLiveFacts ? row.pendingPermissionRequestCount : 0,
+        pendingUserActionRequestCount: hasLiveFacts ? row.pendingUserActionRequestCount : 0,
         pendingRequestObservedAt: pendingRequestObservedAt?.getTime() ?? null,
-        latestTurnId: readNullableStringField(row, "latestTurnId"),
+        latestTurnId: hasLiveFacts
+            ? readNullableStringField(row, "latestTurnId")
+            : null,
         latestTurnStatus,
         latestTurnStatusObservedAt,
-        lastRuntimeIssue: parseStoredSessionRuntimeIssue(row.lastRuntimeIssue),
+        lastRuntimeIssue: hasLiveFacts ? parseStoredSessionRuntimeIssue(row.lastRuntimeIssue) : null,
         ...runtimeActivityProjection,
-        rollbackEligibleTurnStarts: readSessionTurnRollbackEligibleStarts(row),
+        rollbackEligibleTurnStarts: filterSessionTranscriptPublicationSequenceFacts(
+            readSessionTurnRollbackEligibleStarts(row),
+            row,
+        ),
         latestReadyEventSeq: publicationProjection.latestReadyEventSeq ?? null,
         latestReadyEventAt: publicationProjection.latestReadyEventAt?.getTime() ?? null,
         thinking,
         thinkingAt,
         ...readSessionTranscriptAuthorityFields(row),
-        pendingCount: row.pendingCount,
-        pendingBlockedCount: row.pendingBlockedCount,
-        pendingVersion: row.pendingVersion,
+        acceptedThroughServerSeq: publicationProjection.acceptedThroughServerSeq,
+        pendingCount: hasLiveFacts ? row.pendingCount : 0,
+        pendingBlockedCount: hasLiveFacts ? row.pendingBlockedCount : 0,
+        pendingVersion: hasLiveFacts ? row.pendingVersion : 0,
         dataEncryptionKey: isOwner
             ? encodeSessionDataEncryptionKey(row.dataEncryptionKey)
             : (viewerShare?.encryptedDataKey ? Buffer.from(viewerShare.encryptedDataKey).toString("base64") : null),
@@ -361,11 +388,18 @@ export function mapV2SessionListRow(params: Readonly<{ row: V2SessionRowCompat; 
     };
 }
 
-export function mapV2SessionOwnerRow(row: V2SessionOwnerRow): V2SessionRecord {
+export function mapV2SessionOwnerRow(
+    row: V2SessionOwnerRow,
+    ownerAccountMode?: SessionMetadataOwnerAccountMode,
+): V2SessionRecord {
     const {
         rollbackEligibleTurnStarts: _rollbackEligibleTurnStarts,
         ...session
-    } = mapV2SessionListRow({ row, userId: row.accountId });
+    } = mapV2SessionListRow({
+        row,
+        userId: row.accountId,
+        ownerAccountMode,
+    });
     return session;
 }
 

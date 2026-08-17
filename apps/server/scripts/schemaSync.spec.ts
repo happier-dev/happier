@@ -132,6 +132,48 @@ model VoiceConversation {
         expect(mysql).toContain("sessionId String? @db.VarChar(512)");
     });
 
+    it("pins canonical AutomationRun occurrence keys to their binary ASCII width in MySQL", () => {
+        const master = `
+generator client { provider = "prisma-client-js" }
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model AutomationRun {
+    id            String @id
+    occurrenceKey String?
+}
+`;
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toContain("occurrenceKey String? @db.Char(43)");
+    });
+
+    it("pins Automation catalog reporter materialization identity to its canonical MySQL width", () => {
+        const master = `
+generator client { provider = "prisma-client-js" }
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model AutomationEventSourceCatalogStatus {
+    accountId                 String
+    eventPluginId             String
+    reporterMaterializationId String
+    scopeKey                  String
+
+    @@id([accountId, eventPluginId, reporterMaterializationId, scopeKey])
+}
+`;
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toContain("reporterMaterializationId String @db.VarChar(256)");
+    });
+
     it("strips SQLite relation maps while preserving index maps", () => {
         const master = `
 generator client {
@@ -165,6 +207,47 @@ model Record {
         const mysql = generateMySqlSchemaFromPostgres(master);
         expect(mysql).toContain('map: "record_account_fkey"');
         expect(mysql).toContain('@@index([accountId], map: "record_account_idx")');
+    });
+
+    it("strips composite primary-key constraint names, which SQLite and MySQL cannot name", () => {
+        const master = `
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Account {
+    id     String  @id
+    fences Fence[]
+}
+
+model Fence {
+    accountId            String @map("account_id")
+    qualifiedGroupDigest String @map("qualified_group_digest")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+    @@id([accountId, qualifiedGroupDigest], map: "fence_pkey")
+    @@unique([qualifiedGroupDigest], map: "fence_digest_key")
+    @@index([accountId], map: "fence_account_idx")
+    @@map("fence")
+}
+`;
+
+        for (const generated of [
+            generateSqliteSchemaFromPostgres(master),
+            generateMySqlSchemaFromPostgres(master),
+        ]) {
+            expect(generated).toContain("@@id([accountId, qualifiedGroupDigest])");
+            expect(generated).not.toContain('map: "fence_pkey"');
+            // Unique/index constraint names remain nameable on both providers.
+            expect(generated).toContain('@@unique([qualifiedGroupDigest], map: "fence_digest_key")');
+            expect(generated).toContain('@@index([accountId], map: "fence_account_idx")');
+        }
     });
 
     it("uses LongText for large encrypted state blobs in MySQL", () => {
@@ -341,6 +424,25 @@ model SessionOrganizationLabel {
         expect(mysql).toContain("scopeHash String @db.VarChar(71)");
     });
 
+    it("projects nullable materialization archive evidence to its bounded MySQL width", () => {
+        const master = `
+generator client { provider = "prisma-client-js" }
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model PluginMachineMaterialization {
+    id                  String @id
+    archiveDigestSha256 String?
+}
+`;
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toContain("archiveDigestSha256 String? @db.VarChar(71)");
+    });
+
     it("generates portable qualified-account digests and unbounded MySQL source values on canonical rows", () => {
         const master = `
 generator client { provider = "prisma-client-js" }
@@ -408,6 +510,12 @@ model ConnectedServiceAuthGroup {
             expect(generated).not.toContain("providerRollbackOrdinal");
             expect(generated).not.toContain("rollbackProviderOrdinal");
             expect(generated).not.toContain("primaryTurnProjectionStateJson");
+            expect(generated).toMatch(/^\s*transcriptAnchorProjectionVersion\s+Int\s+@default\(0\)\s*$/m);
+            expect(generated).toMatch(/^\s*transcriptAnchorMinSeq\s+Int\?\s*$/m);
+            expect(generated).toMatch(/^\s*transcriptAnchorMaxSeq\s+Int\?\s*$/m);
+            expect(generated).toContain(
+                '@@index([sessionId, transcriptAnchorProjectionVersion, transcriptAnchorMaxSeq, transcriptAnchorMinSeq], map: "SessionTurn_transcript_anchor_range_idx")',
+            );
         }
     });
 });

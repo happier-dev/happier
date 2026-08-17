@@ -10,7 +10,7 @@ import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYa
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 describe('server runtime TypeScript inputs', () => {
-    it('generates provider clients before invoking the runtime TypeScript compiler', () => {
+    it('checks provider clients without entering the shared build lifecycle before runtime typecheck', () => {
         const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
         const packageJson = JSON.parse(readFileSync(join(serverDir, 'package.json'), 'utf8')) as {
             scripts?: Record<string, string>;
@@ -24,23 +24,17 @@ describe('server runtime TypeScript inputs', () => {
             writeFileSync(join(fixtureDir, 'package.json'), JSON.stringify({
                 private: true,
                 scripts: {
-                    'build:shared': packageJson.scripts?.['build:shared'],
-                    'generate:providers': packageJson.scripts?.['generate:providers'],
                     'typecheck:runtime': packageJson.scripts?.['typecheck:runtime'],
                 },
             }), 'utf8');
             writeFileSync(
-                join(scriptsDir, 'buildSharedDeps.mjs'),
-                `import { appendFileSync } from 'node:fs';\nappendFileSync(process.env.EVENT_LOG_PATH, 'workspace-build\\n');\n`,
-                'utf8',
-            );
-            writeFileSync(
                 join(scriptsDir, 'runTsx.mjs'),
                 [
-                    "import { appendFileSync, writeFileSync } from 'node:fs';",
-                    "appendFileSync(process.env.EVENT_LOG_PATH, 'generate:start\\n');",
-                    "writeFileSync(process.env.GENERATED_MARKER_PATH, 'ready\\n', 'utf8');",
-                    "appendFileSync(process.env.EVENT_LOG_PATH, 'generate:done\\n');",
+                    "import { appendFileSync, existsSync } from 'node:fs';",
+                    "appendFileSync(process.env.EVENT_LOG_PATH, 'provider-check:start\\n');",
+                    "if (!process.argv.includes('--check')) process.exit(43);",
+                    "if (!existsSync(process.env.GENERATED_MARKER_PATH)) process.exit(42);",
+                    "appendFileSync(process.env.EVENT_LOG_PATH, 'provider-check:done\\n');",
                 ].join('\n'),
                 'utf8',
             );
@@ -54,6 +48,7 @@ describe('server runtime TypeScript inputs', () => {
                 ].join('\n'),
                 'utf8',
             );
+            writeFileSync(generatedMarkerPath, 'ready\n', 'utf8');
 
             const invocation = resolveYarnCommandInvocation(
                 ['-s', 'typecheck:runtime'],
@@ -75,9 +70,8 @@ describe('server runtime TypeScript inputs', () => {
             expect(result.status, result.stderr || result.stdout).toBe(0);
             expect(existsSync(generatedMarkerPath)).toBe(true);
             expect(readFileSync(eventLogPath, 'utf8').trim().split('\n')).toEqual([
-                'workspace-build',
-                'generate:start',
-                'generate:done',
+                'provider-check:start',
+                'provider-check:done',
                 'ts7',
             ]);
         } finally {
@@ -92,7 +86,7 @@ describe('server runtime TypeScript inputs', () => {
             scripts?: Record<string, string>;
         };
         expect(packageJson.scripts?.['typecheck:runtime']).toBe(
-            'yarn -s build:shared && yarn -s generate:providers && node ./scripts/runTypeScriptCli.mjs -p tsconfig.runtime.json --noEmit',
+            'node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./scripts/generateClients.ts --check && node ./scripts/runTypeScriptCli.mjs -p tsconfig.runtime.json --noEmit',
         );
         expect(packageJson.devDependencies?.['@types/node']).toBe('^22.15.3');
 

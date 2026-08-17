@@ -1,10 +1,22 @@
 import type { Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 
+export class AccountSessionOwnerMetadataFenceAccountNotFoundError extends Error {
+    constructor(accountId: string) {
+        super(
+            `Account Session owner-metadata fence requires exactly one Account row for ${accountId}`,
+        );
+        this.name = "AccountSessionOwnerMetadataFenceAccountNotFoundError";
+    }
+}
+
 function assertExactlyOneAccountRow(
     rowCount: number,
     accountId: string,
 ): void {
+    if (rowCount === 0) {
+        throw new AccountSessionOwnerMetadataFenceAccountNotFoundError(accountId);
+    }
     if (rowCount !== 1) {
         throw new Error(
             `Account Session owner-metadata fence requires exactly one Account row for ${accountId}`,

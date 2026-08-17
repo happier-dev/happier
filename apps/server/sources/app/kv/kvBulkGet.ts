@@ -1,6 +1,8 @@
 import { db } from "@/storage/db";
 import * as privacyKit from "privacy-kit";
 
+import { assertPublicGenericKvKey } from "./accountScopedKv";
+
 export interface KVBulkGetResult {
     values: Array<{
         key: string;
@@ -17,6 +19,10 @@ export async function kvBulkGet(
     ctx: { uid: string },
     keys: string[]
 ): Promise<KVBulkGetResult> {
+    for (const key of keys) {
+        assertPublicGenericKvKey(key);
+    }
+
     const results = await db.userKVStore.findMany({
         where: {
             accountId: ctx.uid,

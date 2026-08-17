@@ -9,7 +9,7 @@ import { createHostedElevenLabsService } from "@/voice/providers/elevenLabs";
 import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isResolvedServerFeatureEnabledForGating, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { pruneExpiredVoiceSessionLeases } from "@/app/voice/pruneExpiredVoiceSessionLeases";
-import { resolveVoiceMintRateLimit, resolveVoiceMintRouteRateLimit } from "./voiceMintRateLimit";
+import type { VoiceMintRateLimitHandler } from "./voiceMintRateLimit";
 import { createVoiceRouteAbortScope } from "./voiceRouteAbortScope";
 import { voiceSessionCorrelationIdSchema } from "./voiceSessionLifecycleSchemas";
 import { type Fastify } from "../../types";
@@ -63,11 +63,33 @@ function hasRevenueCatVoiceEntitlement(payload: any): boolean {
     return Boolean((active as any).voice) || Boolean((active as any).pro);
 }
 
-export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "/v1/voice/lease/mint"): void {
+type RevenueCatDiagnosticCode = "http_4xx" | "http_5xx" | "timeout" | "aborted" | "network_error";
+
+function revenueCatHttpDiagnosticCode(status: number): RevenueCatDiagnosticCode {
+    return status >= 500 ? "http_5xx" : "http_4xx";
+}
+
+function revenueCatExceptionDiagnosticCode(error: unknown, didTimeout: boolean): RevenueCatDiagnosticCode {
+    if (didTimeout) return "timeout";
+    if (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError") {
+        return "aborted";
+    }
+    return "network_error";
+}
+
+export function registerVoiceMintRoute(
+    app: Fastify,
+    path: "/v1/voice/token" | "/v1/voice/lease/mint",
+    mintRateLimit: VoiceMintRateLimitHandler | undefined,
+): void {
     app.post(path, {
+        ...(mintRateLimit ? { onRequest: mintRateLimit } : null),
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveVoiceMintRouteRateLimit(process.env),
+            // The shared handler is installed explicitly by `voiceRoutes`.
+            // Disable Fastify's automatic per-route limiter so these aliases
+            // cannot acquire separate child stores.
+            rateLimit: false,
         },
         schema: {
             body: z
@@ -132,11 +154,6 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
         const freeMinutesPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_MINUTES_PER_MONTH, 0));
         const maxConcurrentSessions = Math.max(1, parseIntEnv(env.VOICE_MAX_CONCURRENT_SESSIONS, 1));
         const maxSessionSeconds = Math.max(30, parseIntEnv(env.VOICE_MAX_SESSION_SECONDS, 20 * 60));
-        // Shared per-user mint budget. Both alias routes (`/v1/voice/token` and
-        // `/v1/voice/lease/mint`) mint the same resource, but @fastify/rate-limit
-        // keeps a per-route counter store, so the middleware budgets are not
-        // shared across endpoints. We enforce one budget at the lease chokepoint.
-        const mintRateLimit = resolveVoiceMintRateLimit(env);
 
         const now = new Date();
         const expiresAt = new Date(now.getTime() + maxSessionSeconds * 1000);
@@ -169,9 +186,13 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             }
 
             let subscribed = false;
+            let revenueCatRequestTimedOut = false;
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10_000);
+                const timeoutId = setTimeout(() => {
+                    revenueCatRequestTimedOut = true;
+                    controller.abort();
+                }, 10_000);
                 let rcRes: Response;
                 try {
                     rcRes = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`, {
@@ -190,14 +211,24 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
                     const rcData = (await rcRes.json()) as any;
                     subscribed = hasRevenueCatVoiceEntitlement(rcData);
                 } else {
-                    log({ module: "voice" }, `RevenueCat check failed for user ${userId}: ${rcRes.status}`);
+                    log(
+                        { module: "voice", provider: "revenuecat", diagnosticCode: revenueCatHttpDiagnosticCode(rcRes.status) },
+                        "RevenueCat check failed",
+                    );
                     if (rcRes.status >= 500 || rcRes.status === 401 || rcRes.status === 403) {
                         return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
                     }
                     // 404 (subscriber not found) falls through as not subscribed.
                 }
-            } catch (e) {
-                log({ module: "voice" }, "RevenueCat check threw", e);
+            } catch (error) {
+                log(
+                    {
+                        module: "voice",
+                        provider: "revenuecat",
+                        diagnosticCode: revenueCatExceptionDiagnosticCode(error, revenueCatRequestTimedOut),
+                    },
+                    "RevenueCat check failed",
+                );
                 return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
             }
 
@@ -220,26 +251,13 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
 
         let leaseId: string | null = null;
         let bindingNonce: string | null = null;
-        // Persist the session lease + enforce mint budget / concurrency / quota within one
+        // Persist the session lease + enforce concurrency / quota within one
         // serializable transaction so the read-then-decide checks cannot race under Postgres
         // READ COMMITTED. A per-account advisory lock orders concurrent mints for the same
         // account; `inTx` adds Serializable isolation + retry on serialization failures.
         try {
             const result = await inTx(async (tx) => {
                 await lockAccountForMint(tx, userId);
-
-                // Shared cross-endpoint mint throttle: count this user's mints in the
-                // current window. Counting committed leases under the account lock makes
-                // the budget identical regardless of which alias route was used.
-                if (mintRateLimit) {
-                    const windowStart = new Date(now.getTime() - mintRateLimit.windowMs);
-                    const recentMints = await tx.voiceSessionLease.count({
-                        where: { accountId: userId, createdAt: { gte: windowStart } },
-                    });
-                    if (recentMints >= mintRateLimit.max) {
-                        return { ok: false as const, statusCode: 429 as const, reason: "too_many_sessions" satisfies VoiceDenyReason };
-                    }
-                }
 
                 const lease = await tx.voiceSessionLease.create({
                     data: {
@@ -404,7 +422,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             }
             leaseId = result.leaseId;
             bindingNonce = result.bindingNonce;
-        } catch (e) {
+        } catch {
             log({ module: "voice" }, "Failed to create/enforce voice session lease");
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }

@@ -1,8 +1,14 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeBase64, stringifySerializedJsonValue } from "@happier-dev/protocol";
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    buildAccountStoredContentCompatibilityHttpHeadersV1,
+    encodeBase64,
+    stringifySerializedJsonValue,
+} from "@happier-dev/protocol";
 import { createHash } from "node:crypto";
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { publicShareRoutes } from "./publicShareRoutes";
@@ -56,6 +62,14 @@ const VALID_ENCRYPTED_DATA_KEY = encodeBase64(
     "base64",
 );
 const MALFORMED_ENCRYPTED_DATA_KEY = encodeBase64(Uint8Array.from([0, ...new Array(73).fill(1)]), "base64");
+const CURRENT_ACCOUNT_STORED_CONTENT_HEADERS =
+    buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    );
+const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+});
 
 describe("publicShareRoutes (AccountChange integration)", () => {
     let harness: LightSqliteHarness;
@@ -97,7 +111,10 @@ describe("publicShareRoutes (AccountChange integration)", () => {
         seedCounter += 1;
         const seedId = `${encryptionMode}-${seedCounter}`;
         const owner = await db.account.create({
-            data: { publicKey: `pk-${seedId}` },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
             select: { id: true },
         });
 
@@ -108,7 +125,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 encryptionMode,
                 metadata: JSON.stringify({ v: 1 }),
                 metadataLayoutVersion: 1,
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 agentState: null,
                 dataEncryptionKey: encryptionMode === "plain" ? null : Buffer.from([1, 2, 3]),
             },
@@ -127,7 +144,11 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 const res = await app.inject({
                     method: "POST",
                     url: `/v1/sessions/${session.id}/public-share`,
-                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    headers: {
+                        "x-test-user-id": owner.id,
+                        "content-type": "application/json",
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
                     payload: {
                         token: "tok-invalid-dek",
                         encryptedDataKey: MALFORMED_ENCRYPTED_DATA_KEY,
@@ -145,7 +166,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
         })).resolves.toBeNull();
     });
 
-    it("POST create preserves released public sharing for a layout-zero session", async () => {
+    it("POST create refuses released layout-zero public sharing until owner migration", async () => {
         const { owner, session } = await seedOwnerSession();
         await db.session.update({
             where: { id: session.id },
@@ -161,20 +182,21 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 const res = await app.inject({
                     method: "POST",
                     url: `/v1/sessions/${session.id}/public-share`,
-                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    headers: {
+                        "x-test-user-id": owner.id,
+                        "content-type": "application/json",
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
                     payload: {
                         token: "tok-unsplit",
                         encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
                     },
                 });
 
-                expect(res.statusCode, res.body).toBe(200);
+                expect(res.statusCode, res.body).toBe(409);
                 expect(res.json()).toEqual({
-                    publicShare: expect.objectContaining({
-                        token: "tok-unsplit",
-                        useCount: 0,
-                        isConsentRequired: false,
-                    }),
+                    error: "Session metadata privacy upgrade required",
+                    code: "metadata_privacy_upgrade_required",
                 });
             },
         );
@@ -183,23 +205,9 @@ describe("publicShareRoutes (AccountChange integration)", () => {
             where: { sessionId: session.id },
             select: { sessionId: true, encryptedDataKey: true },
         });
-        expect(stored?.sessionId).toBe(session.id);
-        expect(stored?.encryptedDataKey).toBeInstanceOf(Uint8Array);
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ accountId: owner.id, kind: "share", entityId: session.id }),
-        );
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ accountId: owner.id, kind: "session", entityId: session.id }),
-        );
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            userId: owner.id,
-            payload: expect.objectContaining({
-                seq: 51,
-                body: expect.objectContaining({ t: "public-share-created" }),
-            }),
-        }));
+        expect(stored).toBeNull();
+        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(emitUpdate).not.toHaveBeenCalled();
     });
 
     it("POST create marks share+session and emits created update using latest cursor", async () => {
@@ -211,7 +219,11 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 const res = await app.inject({
                     method: "POST",
                     url: `/v1/sessions/${session.id}/public-share`,
-                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    headers: {
+                        "x-test-user-id": owner.id,
+                        "content-type": "application/json",
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
                     payload: {
                         token: "tok-create",
                         encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
@@ -275,7 +287,11 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                 const res = await app.inject({
                     method: "POST",
                     url: `/v1/sessions/${session.id}/public-share`,
-                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    headers: {
+                        "x-test-user-id": owner.id,
+                        "content-type": "application/json",
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
                     payload: {
                         expiresAt: 1_800_000_000_000,
                         isConsentRequired: true,

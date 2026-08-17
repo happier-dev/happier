@@ -1,11 +1,78 @@
+import {
+    AccountStoredContentUpgradeRequiredV1Schema,
+} from "@happier-dev/protocol";
+import * as privacyKit from "privacy-kit";
 import { z } from "zod";
 import { Fastify } from "../../types";
 import { kvGet } from "@/app/kv/kvGet";
 import { kvList } from "@/app/kv/kvList";
 import { kvBulkGet } from "@/app/kv/kvBulkGet";
 import { kvMutate } from "@/app/kv/kvMutate";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import {
+    assertTodoKvStoredContentMatchesAccountMode,
+    classifyTodoKvStoredContent,
+    isTodoKvKey,
+    TodoKvStoredContentModeMismatchError,
+    TodoKvStoredContentUpgradeRequiredError,
+} from "@/app/kv/todoKvStoredContent";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
+import { AccountScopedKvReservedKeyError } from "@/app/kv/accountScopedKv";
+import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+
+function containsCurrentTodoStoredContent(
+    items: ReadonlyArray<Readonly<{ key: string; value: string }>>,
+): boolean {
+    return items.some((item) => {
+        if (!isTodoKvKey(item.key)) {
+            return false;
+        }
+        const classification = classifyTodoKvStoredContent({
+            key: item.key,
+            value: privacyKit.decodeBase64(item.value),
+        });
+        return classification.domain === "todo"
+            && classification.representation.startsWith("current_");
+    });
+}
+
+async function assertTodoKvReadStoredContentMatchesAccount(
+    accountId: string,
+    items: ReadonlyArray<Readonly<{ key: string; value: string }>>,
+): Promise<void> {
+    const todoItems = items.filter((item) => isTodoKvKey(item.key));
+    if (todoItems.length === 0) return;
+
+    const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: {
+            encryptionMode: true,
+            publicKey: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
+    });
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    if (!currentness || currentness.status !== "ready") {
+        throw new TodoKvStoredContentModeMismatchError();
+    }
+    for (const item of todoItems) {
+        assertTodoKvStoredContentMatchesAccountMode({
+            key: item.key,
+            value: privacyKit.decodeBase64(item.value),
+            accountMode: currentness.currentness.encryptionMode,
+        });
+    }
+}
 
 export function kvRoutes(app: Fastify) {
     // GET /v1/kv/:key - Get single value
@@ -24,6 +91,10 @@ export function kvRoutes(app: Fastify) {
                 404: z.object({
                     error: z.literal('Key not found')
                 }),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to get value')
                 })
@@ -39,9 +110,30 @@ export function kvRoutes(app: Fastify) {
             if (!result) {
                 return reply.code(404).send({ error: 'Key not found' });
             }
+            await assertTodoKvReadStoredContentMatchesAccount(
+                userId,
+                [result],
+            );
+            if (
+                containsCurrentTodoStoredContent([result])
+                && !readAccountStoredContentCompatibilityForHttpRequest(request)
+                    .supportsCurrentProtocol
+            ) {
+                await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                );
+                return;
+            }
 
             return reply.send(result);
         } catch (error) {
+            if (error instanceof AccountScopedKvReservedKeyError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (error instanceof TodoKvStoredContentModeMismatchError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
             log({ module: 'api', level: 'error' }, `Failed to get KV value: ${error}`);
             return reply.code(500).send({ error: 'Failed to get value' });
         }
@@ -66,6 +158,10 @@ export function kvRoutes(app: Fastify) {
                         version: z.number()
                     }))
                 }),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to list items')
                 })
@@ -77,8 +173,29 @@ export function kvRoutes(app: Fastify) {
 
         try {
             const result = await kvList({ uid: userId }, { prefix, limit });
+            await assertTodoKvReadStoredContentMatchesAccount(
+                userId,
+                result.items,
+            );
+            if (
+                containsCurrentTodoStoredContent(result.items)
+                && !readAccountStoredContentCompatibilityForHttpRequest(request)
+                    .supportsCurrentProtocol
+            ) {
+                await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                );
+                return;
+            }
             return reply.send(result);
         } catch (error) {
+            if (error instanceof AccountScopedKvReservedKeyError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (error instanceof TodoKvStoredContentModeMismatchError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
             log({ module: 'api', level: 'error' }, `Failed to list KV items: ${error}`);
             return reply.code(500).send({ error: 'Failed to list items' });
         }
@@ -99,6 +216,10 @@ export function kvRoutes(app: Fastify) {
                         version: z.number()
                     }))
                 }),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to get values')
                 })
@@ -110,8 +231,29 @@ export function kvRoutes(app: Fastify) {
 
         try {
             const result = await kvBulkGet({ uid: userId }, keys);
+            await assertTodoKvReadStoredContentMatchesAccount(
+                userId,
+                result.values,
+            );
+            if (
+                containsCurrentTodoStoredContent(result.values)
+                && !readAccountStoredContentCompatibilityForHttpRequest(request)
+                    .supportsCurrentProtocol
+            ) {
+                await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                );
+                return;
+            }
             return reply.send(result);
         } catch (error) {
+            if (error instanceof AccountScopedKvReservedKeyError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (error instanceof TodoKvStoredContentModeMismatchError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
             log({ module: 'api', level: 'error' }, `Failed to bulk get KV values: ${error}`);
             return reply.code(500).send({ error: 'Failed to get values' });
         }
@@ -145,6 +287,10 @@ export function kvRoutes(app: Fastify) {
                         value: z.string().nullable()
                     }))
                 }),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to mutate values')
                 })
@@ -155,7 +301,16 @@ export function kvRoutes(app: Fastify) {
         const { mutations } = request.body;
 
         try {
-            const result = await kvMutate({ uid: userId }, mutations);
+            const compatibility =
+                readAccountStoredContentCompatibilityForHttpRequest(request);
+            const result = await kvMutate(
+                { uid: userId },
+                mutations,
+                {
+                    supportsCurrentProtocol:
+                        compatibility.supportsCurrentProtocol,
+                },
+            );
 
             if (!result.success) {
                 return reply.code(409).send({
@@ -169,6 +324,19 @@ export function kvRoutes(app: Fastify) {
                 results: result.results!
             });
         } catch (error) {
+            if (error instanceof AccountScopedKvReservedKeyError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (error instanceof TodoKvStoredContentUpgradeRequiredError) {
+                await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                );
+                return;
+            }
+            if (error instanceof TodoKvStoredContentModeMismatchError) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
             log({ module: 'api', level: 'error' }, `Failed to mutate KV values: ${error}`);
             return reply.code(500).send({ error: 'Failed to mutate values' });
         }

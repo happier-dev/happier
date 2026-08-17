@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
@@ -18,6 +19,7 @@ vi.mock("@/app/events/eventRouter", () => ({
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd") }));
 
 const dbMocks = createDbMocks({
+    account: ["findUnique"],
     machine: ["findFirst"],
     accessKey: ["deleteMany"],
 } as const);
@@ -46,6 +48,11 @@ describe("machinesRoutes (machine id conflict)", () => {
         vi.clearAllMocks();
         dbMocks.reset();
         txDbMocks.reset();
+        dbMocks.db.account.findUnique.mockResolvedValue({
+            contentPublicKey: null,
+            publicKey: "account-signing-key",
+            encryptionMode: "e2ee",
+        });
         dbMocks.db.machine.findFirst.mockResolvedValue(null);
         dbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
@@ -130,5 +137,56 @@ describe("machinesRoutes (machine id conflict)", () => {
 
         expect(reply.code).not.toHaveBeenCalledWith(409);
         expect((response as any)?.machine?.id).toBe("m1");
+    });
+
+    it("does not serialize a marked race winner to a legacy caller", async () => {
+        const { machinesRoutes } = await import("./machinesRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
+        const markedWinner = {
+            id: "m1",
+            accountId: "u_new",
+            metadata: "plain-metadata",
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+            dataEncryptionKey: new Uint8Array(
+                Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+            ),
+            seq: 1,
+            active: true,
+            lastActiveAt: new Date(1),
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+            revokedAt: null,
+        };
+        dbMocks.db.machine.findFirst
+            .mockResolvedValueOnce(null as any)
+            .mockResolvedValueOnce(markedWinner as any);
+        txDbMocks.db.machine.create.mockRejectedValueOnce(
+            Object.assign(new Error("P2002"), { code: "P2002" }),
+        );
+
+        const { reply } = await route.invoke({
+            userId: "u_new",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                outcome: "legacy-missing",
+            },
+            body: {
+                id: "m1",
+                metadata: "encrypted-metadata",
+                daemonState: undefined,
+                dataEncryptionKey: null,
+            },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(426);
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 });

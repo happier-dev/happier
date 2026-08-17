@@ -76,6 +76,26 @@ describe("app/monitoring/sentryLogRedaction", () => {
         expect(redacted.request.url).toContain("/v1/public-share/:token/messages");
     });
 
+    it("templates browser Artifact capabilities and drops their correlation query across Sentry event fields", () => {
+        const capability = "SENTINEL_BROWSER_ARTIFACT_CAPABILITY";
+        const correlation = "SENTINEL_BROWSER_ARTIFACT_CORRELATION";
+        const redacted = redactSentryEvent({
+            transaction: `GET /v1/plugins/availability/ui-artifacts/browser/${capability}/assets/app.js?correlation=${correlation}`,
+            request: {
+                url: `https://artifacts.example.test/v1/plugins/availability/ui-artifacts/browser/${capability}/assets/app.js?correlation=${correlation}`,
+            },
+            breadcrumbs: [{
+                message: `fetch /v1/plugins/availability/ui-artifacts/browser/${capability}/assets/app.js?correlation=${correlation}`,
+            }],
+        });
+
+        expect(JSON.stringify(redacted)).not.toContain(capability);
+        expect(JSON.stringify(redacted)).not.toContain(correlation);
+        expect(redacted.request.url).toBe(
+            "https://artifacts.example.test/v1/plugins/availability/ui-artifacts/browser/:token/assets/app.js",
+        );
+    });
+
     it("redacts the public-share messages grant header from Sentry request events", () => {
         const grant = "SENTINEL_PUBLIC_SHARE_MESSAGES_GRANT";
         const event = {

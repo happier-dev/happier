@@ -17,6 +17,7 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     changes: { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     features: { defaultMax: 120, defaultWindow: "1 minute", keyMode: "ip" },
     machines: { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
+    "machines.peerMediation.routeGrant": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
     artifacts: { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     feed: { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     "kv.list": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },

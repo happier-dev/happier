@@ -10,6 +10,23 @@ const buildUpdateSessionUpdate = vi.fn(() => ({ type: "update-session" }));
 const getSessionParticipantUserIds = vi.fn(async () => ["u1"]);
 const markAccountChanged = vi.fn(async () => 10);
 const refreshSessionParticipantBadgePushes = vi.fn(async () => {});
+const sessionFindUnique = vi.fn();
+
+const HOSTED_RECIPIENT_PROJECTION = {
+    currentStorageState: "hosted",
+    acceptedThroughServerSeq: null,
+    materializationPublicationId: null,
+    materializedThroughSourceAt: null,
+    publishedThroughServerSeq: null,
+    seq: 0,
+    lastViewedSessionSeq: null,
+    latestReadyEventSeq: null,
+    latestReadyEventAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    meaningfulActivityAt: null,
+    lastActiveAt: new Date(0),
+} as const;
 
 const materializeNextPendingMessage = vi.fn();
 const blockPendingDelivery = vi.fn();
@@ -32,6 +49,9 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({ refreshSessionParticipantBadgePushes }));
 vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: (tx: unknown) => unknown) => await fn({})),
+}));
+vi.mock("@/storage/db", () => ({
+    db: { session: { findUnique: sessionFindUnique } },
 }));
 
 vi.mock("@/app/session/pending/pendingMessageService", async (importOriginal) => {
@@ -61,6 +81,8 @@ describe("sessionPendingRoutes (materialize-next)", () => {
         markAccountChanged.mockReset();
         markAccountChanged.mockResolvedValue(10);
         refreshSessionParticipantBadgePushes.mockReset();
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(HOSTED_RECIPIENT_PROJECTION);
         materializeNextPendingMessage.mockReset();
         blockPendingDelivery.mockReset();
         dismissPendingDelivery.mockReset();
@@ -167,6 +189,28 @@ describe("sessionPendingRoutes (materialize-next)", () => {
 
         expect(reply.statusCode).toBe(404);
         expect(res).toEqual({ error: "not-found" });
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
+    it("maps a provider-effect-possible pending edit conflict to 409 without publishing", async () => {
+        updatePendingMessage.mockResolvedValueOnce({ ok: false, error: "delivery-settlement-conflict" });
+
+        const { sessionPendingRoutes } = await import("./pendingRoutes");
+        const route = createRouteTestBuilder({
+            method: "PATCH",
+            path: "/v2/sessions/:sessionId/pending/:localId",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
+        const { reply, response } = await route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1", localId: "claimed-local" },
+            body: { ciphertext: "cipher-updated" },
+        });
+
+        expect(reply.statusCode).toBe(409);
+        expect(response).toEqual({ error: "delivery-settlement-conflict" });
         expect(emitUpdate).not.toHaveBeenCalled();
     });
 

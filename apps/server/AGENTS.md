@@ -9,7 +9,7 @@ Use yarn.
 - `yarn build` — build/type-enforcing lane.
 - `yarn start` — start the server.
 - `yarn test` — run server tests.
-- `yarn migrate` — run existing Prisma migrations when intentionally requested.
+- `yarn migrate` — run existing Prisma migrations when intentionally requested; an authorized schema/migration edit itself triggers the required repo-local deploy and reconciliation below.
 - `yarn generate` — generate Prisma client/types when needed.
 - `yarn db` — start local PostgreSQL in Docker.
 
@@ -55,10 +55,13 @@ Prefer existing domain folders and module owners before creating new top-level f
   - migrations that have not shipped in a supported stable or preview artifact may be edited or consolidated before the next supported release; shared development branches and `*-dev.*` artifacts require development-database reconciliation, not permanent product compatibility;
   - stable/preview migration names and bytes are immutable and corrections are append-only;
   - do not keep draft add/rename/contract/drop chains or checksum/name compatibility solely because a retained development database applied an unpublished revision.
-- Reconcile a retained development database separately from product migration history: back it up, inspect its actual schema and migration ledger, prepare a provider-specific procedure, and obtain explicit approval before mutating retained data. See `docs/compatibility.md`.
-- Treat an edited migration and its retained-development reconciliation as one conceptual seam. After the final migration edit—and again before handoff—refresh the procedure against the current bytes and complete physical schema, including index, constraint, and foreign-key names; any later edit makes earlier checksum/ledger reconciliation evidence stale.
+- Reconcile retained development databases separately from product migration history. For the deterministic repo-local development stack bound to the current checkout, reconciliation is a mandatory in-place continuation of editing an applied local-only/development-exposed migration: inspect the actual schema and ledger, apply the provider-specific delta or canonical backfill, and deploy the canonical migration set without requesting separate approval or creating a backup/snapshot/clone.
+- The current checkout's repo-local development database is retained data, not a disposable test database. Never delete, reset, recreate, replace, truncate, clean, or discard it to resolve migration drift. Reset-style commands are forbidden for this target even when they would be faster than reconciliation.
+- Treat an edited migration and its retained-development reconciliation as one conceptual seam. The last editor owns reconciliation after the final migration edit and again before handoff: refresh against the current bytes and complete physical schema, including data backfills plus index, constraint, and foreign-key names; any later edit makes earlier checksum/ledger reconciliation evidence stale. Run the canonical deploy twice and verify current source checksums, the ledger, provider integrity, and foreign keys.
+- If the repo-local stack has active stack-owned writers, quiesce only that stack through `hstack`, reconcile, and restore its prior running state. Do not kill by port or affect another stack. If stack/database ownership is ambiguous, stop without mutating a candidate.
+- Backups and explicit approval remain required for `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases. The repo-local automatic rule never broadens to those targets.
 - Custom migration SQL, backfills, `db push`, or reset-style commands are allowed only when appropriate for the task and target database.
-  - Safe for disposable local/test databases when clearly scoped.
+  - Safe for genuinely disposable local/test databases when clearly scoped; the current checkout's repo-local development database is explicitly not disposable.
   - Requires explicit approval for shared, staging, production, or user-data databases.
 - Do not use migrations as a workaround for unrelated schema drift. Identify and fix the owning schema/migration path.
 - Use `inTx` for database operations that must be transactional.

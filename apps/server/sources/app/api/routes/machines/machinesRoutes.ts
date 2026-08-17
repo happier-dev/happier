@@ -26,6 +26,18 @@ import {
     type VerifiedMachineInstallationIdentity,
 } from "@/app/machines/installationProof";
 import { serializeMachineRow } from "@/app/machines/machineSerialization";
+import {
+    isPlainMachineDataKeyMarker,
+    machineStoredContentMatchesAccountMode,
+    machineUpdateMatchesStoredMode,
+} from "@happier-dev/protocol";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { registerMachineReplacementRoutes } from "./registerMachineReplacementRoutes";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
@@ -125,7 +137,7 @@ export function machinesRoutes(app: Fastify) {
                 daemonState: z.string().optional(), // Encrypted daemon state
                 dataEncryptionKey: z.string().nullish(),
                 /**
-                 * When `dataEncryptionKey` is provided, the client must also provide its account content public key.
+                 * When an E2EE `dataEncryptionKey` is provided, the client must also provide its account content public key.
                  * This allows the server to reject token/key mismatches that would otherwise create "poisoned" machine rows.
                  */
                 contentPublicKey: z.string().optional(),
@@ -157,7 +169,79 @@ export function machinesRoutes(app: Fastify) {
             replacementReason,
             contentPublicKeyFingerprint,
         } = request.body;
-
+        const accountStorageState = await db.account.findUnique({
+            where: { id: userId },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        });
+        if (!accountStorageState) {
+            return reply.code(500).send({ error: "internal" });
+        }
+        const accountCurrentness =
+            deriveAccountEncryptionCurrentnessFromRow(
+            accountStorageState,
+        );
+        if (accountCurrentness.status === "inconsistent") {
+            return reply.code(400).send({
+                error: "invalid-params",
+                reason: "machine_storage_mode_mismatch",
+            });
+        }
+        const accountMode =
+            accountCurrentness.currentness.encryptionMode;
+        const machine = await db.machine.findFirst({
+            where: {
+                accountId: userId,
+                id,
+            },
+        });
+        const proposedDataEncryptionKey = machine && dataEncryptionKey === undefined
+            ? machine.dataEncryptionKey
+            : dataEncryptionKey;
+        const machineContentMatchesMode = machine
+            ? (
+                machineUpdateMatchesStoredMode({
+                    dataEncryptionKey: machine.dataEncryptionKey,
+                    metadata,
+                    ...(typeof daemonState === "string" ? { daemonState } : {}),
+                })
+                && machineUpdateMatchesStoredMode({
+                    dataEncryptionKey: proposedDataEncryptionKey,
+                    metadata,
+                    ...(typeof daemonState === "string" ? { daemonState } : {}),
+                })
+            )
+            : machineStoredContentMatchesAccountMode({
+                mode: accountMode,
+                metadata,
+                ...(typeof daemonState === "string" ? { daemonState } : {}),
+                dataEncryptionKey,
+            });
+        if (!machineContentMatchesMode) {
+            return reply.code(400).send({
+                error: "invalid-params",
+                reason: "machine_storage_mode_mismatch",
+            });
+        }
+        const machineStorageMode = machine
+            ? isPlainMachineDataKeyMarker(machine.dataEncryptionKey) ? "plain" : "e2ee"
+            : accountMode;
+        const storedContentCompatibility =
+            readAccountStoredContentCompatibilityForHttpRequest(request);
+        if (
+            machineStorageMode === "plain"
+            && !storedContentCompatibility.supportsCurrentProtocol
+        ) {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            );
+            return;
+        }
         let resolvedContentPublicKeyFingerprint =
             typeof contentPublicKeyFingerprint === "string" && contentPublicKeyFingerprint.trim()
                 ? contentPublicKeyFingerprint.trim()
@@ -173,7 +257,7 @@ export function machinesRoutes(app: Fastify) {
         // Guardrail: for E2EE accounts, reject machine writes that include a DEK envelope but whose
         // claimed content public key does not match the account. Without this, a token/key mismatch
         // can create machine rows that permanently fail DEK decryption for the actual account key.
-        if (typeof dataEncryptionKey === "string") {
+        if (machineStorageMode === "e2ee" && typeof dataEncryptionKey === "string") {
             const requireContentPublicKeyForDek = parseBooleanEnv(
                 process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK,
                 false,
@@ -278,12 +362,8 @@ export function machinesRoutes(app: Fastify) {
                     accountContentPublicKey =
                         admission.binding.contentPublicKey;
                 } else {
-                    const account = await db.account.findUnique({
-                        where: { id: userId },
-                        select: { contentPublicKey: true },
-                    });
                     accountContentPublicKey =
-                        account?.contentPublicKey ?? null;
+                        accountStorageState.contentPublicKey ?? null;
                 }
 
                 if (!accountContentPublicKey) {
@@ -332,14 +412,6 @@ export function machinesRoutes(app: Fastify) {
         }
         const verifiedInstallationIdentity = installationRegistration.identity;
 
-        // Check if machine exists (like sessions do)
-        const machine = await db.machine.findFirst({
-            where: {
-                accountId: userId,
-                id: id
-            }
-        });
-
         if (machine) {
             if (machine.revokedAt) {
                 return reply.code(410).send({ error: 'machine_revoked' });
@@ -384,7 +456,12 @@ export function machinesRoutes(app: Fastify) {
 
             log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
 
-            type UpdatedMachineRow = Parameters<typeof serializeMachineRow>[0] | null | { error: 'machine_revoked' } | { error: 'invalid_installation_identity'; reason: string };
+            type UpdatedMachineRow =
+                | Parameters<typeof serializeMachineRow>[0]
+                | null
+                | { error: 'machine_revoked' }
+                | { error: 'invalid_installation_identity'; reason: string }
+                | { error: 'machine_storage_mode_mismatch' };
             let machineReplacement: MachineRegistrationReplacementResult | null = null;
             let updated: UpdatedMachineRow;
             try {
@@ -397,6 +474,24 @@ export function machinesRoutes(app: Fastify) {
                     });
                     if (!current) return null;
                     if (current.revokedAt) return { error: 'machine_revoked' as const };
+
+                    const currentProposedDataEncryptionKey = dataEncryptionKey === undefined
+                        ? current.dataEncryptionKey
+                        : dataEncryptionKey;
+                    if (
+                        !machineUpdateMatchesStoredMode({
+                            dataEncryptionKey: current.dataEncryptionKey,
+                            metadata,
+                            ...(typeof daemonState === "string" ? { daemonState } : {}),
+                        })
+                        || !machineUpdateMatchesStoredMode({
+                            dataEncryptionKey: currentProposedDataEncryptionKey,
+                            metadata,
+                            ...(typeof daemonState === "string" ? { daemonState } : {}),
+                        })
+                    ) {
+                        return { error: 'machine_storage_mode_mismatch' as const };
+                    }
 
                     const currentWantsMetadataUpdate = metadata !== current.metadata;
                     const currentWantsDaemonStateUpdate =
@@ -512,6 +607,13 @@ export function machinesRoutes(app: Fastify) {
                 return reply.code(400).send({ error: "invalid-params", reason: updated.reason });
             }
 
+            if (typeof updated === 'object' && updated && 'error' in updated && updated.error === 'machine_storage_mode_mismatch') {
+                return reply.code(400).send({
+                    error: "invalid-params",
+                    reason: "machine_storage_mode_mismatch",
+                });
+            }
+
             return reply.send({
                 machine: {
                     ...serializeMachineRow(updated),
@@ -602,6 +704,16 @@ export function machinesRoutes(app: Fastify) {
                         if (existingSameAccount.revokedAt) {
                             return reply.code(410).send({ error: 'machine_revoked' });
                         }
+                        if (
+                            isPlainMachineDataKeyMarker(existingSameAccount.dataEncryptionKey)
+                            && !storedContentCompatibility.supportsCurrentProtocol
+                        ) {
+                            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                                request,
+                                reply,
+                            );
+                            return;
+                        }
                         let machineReplacement: MachineRegistrationReplacementResult | null = null;
                         if (verifiedInstallationIdentity?.replacesMachineId) {
                             try {
@@ -664,6 +776,9 @@ export function machinesRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { id } = request.params;
+        const supportsCurrentStoredContentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         const result = await inTx(async (tx) => {
             const machine = await tx.machine.findFirst({
@@ -673,6 +788,12 @@ export function machinesRoutes(app: Fastify) {
                 },
             });
             if (!machine) return { kind: 'not_found' as const };
+            if (
+                isPlainMachineDataKeyMarker(machine.dataEncryptionKey)
+                && !supportsCurrentStoredContentProtocol
+            ) {
+                return { kind: 'upgrade_required' as const };
+            }
 
             const now = new Date();
             const revokedAt = machine.revokedAt ?? now;
@@ -723,6 +844,10 @@ export function machinesRoutes(app: Fastify) {
         if (result.kind === 'not_found') {
             return reply.code(404).send({ error: 'machine_not_found' });
         }
+        if (result.kind === 'upgrade_required') {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(request, reply);
+            return;
+        }
 
         return reply.send({ machine: serializeMachineRow(result.machine) });
     });
@@ -741,6 +866,19 @@ export function machinesRoutes(app: Fastify) {
             where: { accountId: userId },
             orderBy: { lastActiveAt: 'desc' }
         });
+        if (
+            machines.some((machine) =>
+                isPlainMachineDataKeyMarker(machine.dataEncryptionKey)
+            )
+            && !readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol
+        ) {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            );
+            return;
+        }
 
         return machines.map(serializeMachineRow);
     });
@@ -769,6 +907,17 @@ export function machinesRoutes(app: Fastify) {
 
         if (!machine) {
             return reply.code(404).send({ error: 'Machine not found' });
+        }
+        if (
+            isPlainMachineDataKeyMarker(machine.dataEncryptionKey)
+            && !readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol
+        ) {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            );
+            return;
         }
 
         return {

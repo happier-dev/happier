@@ -10,7 +10,7 @@ import { readAccountScopedCiphertextKindByte } from "@happier-dev/protocol";
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 
 import { inTx } from "@/storage/inTx";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import {
     createProviderAccountUsageRecord,
     readProviderAccountUsageRecord,
@@ -164,9 +164,23 @@ function isHistoricalPauAliasReseal(params: Readonly<{
 async function writeProviderAccountUsageRecordWithPolicyInClient(
     params: ProviderAccountUsageWritePolicyParams & Readonly<{ client: ProviderAccountUsagePolicyClient }>,
 ): Promise<"written" | "noop" | "stale"> {
-    const account = await params.client.account.findUnique({ where: { id: params.accountId }, select: { publicKey: true, encryptionMode: true } });
+    const account = await params.client.account.findUnique({
+        where: { id: params.accountId },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
+    });
     const expectedMode = params.payloadMode === "plain_json_v1" ? "plain" : "e2ee";
-    if (!account || resolveEffectiveAccountEncryptionModeFromAccountRow(account) !== expectedMode) {
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    if (
+        currentness?.status !== "ready"
+        || currentness.currentness.encryptionMode !== expectedMode
+    ) {
         throw new ProviderAccountUsagePayloadInvariantError("Provider account usage payload mode does not match account storage mode");
     }
     const incomingFingerprint = normalizeFingerprint(params.materialFingerprint);

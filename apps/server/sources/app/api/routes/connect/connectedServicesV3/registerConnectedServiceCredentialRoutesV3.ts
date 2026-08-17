@@ -12,13 +12,9 @@ import {
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
 import { ConnectedServiceProfileIdSchema } from "../connectedServicesV2/profileIdSchema";
-import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { encryptString } from "@/modules/encrypt";
-import { encodeUtf8Bytes } from "./bytesCodec";
 import {
     isConnectedServiceCredentialMetadataV3,
     normalizeConnectedServiceCredentialMetadataV3,
-    type ConnectedServiceCredentialMetadataV3,
 } from "./credentialMetadataV3";
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
@@ -38,35 +34,10 @@ import {
 import {
     resolveLegacyQualifiedConnectedAccountService,
 } from "../qualifiedConnectedAccounts/identity";
-
-const MAX_CREDENTIAL_JSON_CHARS = 220_000;
-
-function resolveAtRestStoragePolicy(env: NodeJS.ProcessEnv): "none" | "server_sealed" {
-    const encryption = readEncryptionFeatureEnv(env);
-    return encryption.plainAccountCredentialsAtRest === "none" ? "none" : "server_sealed";
-}
-
-function buildAtRestKeyPath(params: { accountId: string; serviceId: string; profileId: string }): string[] {
-    return ["storage", "connect_credential", params.accountId, params.serviceId, params.profileId, "v1"];
-}
-
-function toMetadata(record: z.infer<typeof ConnectedServiceCredentialRecordV1Schema>, storage: ConnectedServiceCredentialMetadataV3["storage"]): ConnectedServiceCredentialMetadataV3 {
-    const providerEmail =
-        record.kind === "oauth"
-            ? record.oauth?.providerEmail ?? null
-            : record.token?.providerEmail ?? null;
-    const providerAccountId =
-        record.kind === "oauth"
-            ? record.oauth?.providerAccountId ?? null
-            : record.token?.providerAccountId ?? null;
-    return {
-        v: 3,
-        storage,
-        kind: record.kind,
-        providerEmail,
-        providerAccountId,
-    };
-}
+import {
+    ConnectedServiceCredentialV3PreparationError,
+    prepareConnectedServiceCredentialMutationV3,
+} from "./prepareConnectedServiceCredentialMutationV3";
 
 export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
     app.post("/v3/connect/:serviceId/profiles/:profileId/credential", {
@@ -108,46 +79,45 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         if (content.t !== "plain") {
             return reply.code(400).send({ error: "invalid-params" });
         }
-
-        const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(content.v);
-        if (!parsed.success) {
+        if (request.body.expectedCredentialRevision === undefined) {
             return reply.code(400).send({ error: "invalid-params" });
         }
-        const record = parsed.data;
+
+        let prepared:
+            ReturnType<
+                typeof prepareConnectedServiceCredentialMutationV3
+            >;
         try {
-            assertConnectedServiceCredentialRecordBinding({
-                binding: { serviceId, profileId },
-                record,
+            prepared = prepareConnectedServiceCredentialMutationV3({
+                accountId: userId,
+                serviceId,
+                profileId,
+                record: content.v,
             });
-        } catch {
-            return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.credentialInvalid });
-        }
-
-        const incomingIdentity = record.kind === "oauth"
-            ? { providerEmail: record.oauth.providerEmail, providerAccountId: record.oauth.providerAccountId }
-            : { providerEmail: record.token.providerEmail, providerAccountId: record.token.providerAccountId };
-        const json = JSON.stringify(record);
-        if (json.length > MAX_CREDENTIAL_JSON_CHARS) {
+        } catch (error) {
+            if (
+                error
+                    instanceof
+                    ConnectedServiceCredentialV3PreparationError
+                && error.reason === "invalid_binding"
+            ) {
+                return reply.code(400).send({
+                    error:
+                        CONNECTED_SERVICE_ERROR_CODES.credentialInvalid,
+                });
+            }
             return reply.code(400).send({ error: "invalid-params" });
         }
 
-        const atRest = resolveAtRestStoragePolicy(process.env);
-        const keyPath = buildAtRestKeyPath({ accountId: userId, serviceId, profileId });
-        const tokenBytes = atRest === "server_sealed"
-            ? (encryptString(keyPath, json) as Uint8Array<ArrayBuffer>)
-            : encodeUtf8Bytes(json);
-
-        const metadata = toMetadata(record, atRest === "server_sealed" ? "server_sealed_json_v1" : "plain_json_v1");
-        const expiresAt = typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt) ? new Date(record.expiresAt) : null;
         const result = await mutateConnectedServiceCredential({
             accountId: userId,
             serviceId,
             profileId,
-            token: tokenBytes,
-            metadata,
-            expiresAt,
+            token: prepared.token,
+            metadata: prepared.metadata,
+            expiresAt: prepared.expiresAt,
             storageMode: "plain",
-            incomingIdentity,
+            incomingIdentity: prepared.incomingIdentity,
             allowProviderIdentityChange: request.body.reconnect?.allowProviderIdentityChange === true,
             ...(request.body.expectedCredentialRevision !== undefined
                 ? { expectedCredentialRevision: request.body.expectedCredentialRevision }
@@ -157,7 +127,12 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         if (result.status === "provider_identity_mismatch") {
             return reply.code(409).send({ error: CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch });
         }
-        if (result.status === "storage_mode_mismatch") return reply.code(400).send({ error: "invalid-params" });
+        if (
+            result.status === "storage_mode_mismatch"
+            || result.status === "revision_required"
+        ) {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "superseded") {
             return reply.code(409).send({
                 error: CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
@@ -182,6 +157,7 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
             }).strict(),
             response: {
                 200: z.object({ success: z.literal(true), credentialRevision: z.string() }),
+                400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
                 409: z.union([
                     z.object({ error: z.literal("connect_credential_unsupported_format") }),
@@ -206,6 +182,12 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
             ...(request.body.expectedCredentialRevision ? { expectedCredentialRevision: request.body.expectedCredentialRevision } : {}),
         });
         if (result.status === "not_found") return reply.code(404).send({ error: "connect_credential_not_found" });
+        if (
+            result.status === "storage_mode_mismatch"
+            || result.status === "revision_required"
+        ) {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "unsupported_format") {
             return reply.code(409).send({ error: "connect_credential_unsupported_format" });
         }
@@ -228,7 +210,10 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
                 profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
-                200: z.object({ credentialRevision: z.string(), content: StoredJsonContentEnvelopeSchema }),
+                200: z.object({
+                    credentialRevision: z.string().optional(),
+                    content: StoredJsonContentEnvelopeSchema,
+                }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
                 409: z.object({ error: z.literal("connect_credential_unsupported_format") }),
             },
@@ -283,16 +268,22 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         } catch {
             return reply.code(409).send({ error: "connect_credential_unsupported_format" });
         }
-        return reply.send({
-            credentialRevision: snapshot.credentialRevision,
+        const response = {
             content: {
-                t: "plain",
+                t: "plain" as const,
                 v:
                     projectBuiltInLegacyConnectedServiceCredentialRecordV1(
                         record.data,
                     ),
             },
-        });
+        };
+        return snapshot.revisionSemantics === "revisioned"
+            && snapshot.credentialRevision !== null
+            ? reply.send({
+                ...response,
+                credentialRevision: snapshot.credentialRevision,
+            })
+            : reply.send(response);
     });
 
     app.delete("/v3/connect/:serviceId/profiles/:profileId/credential", {
@@ -305,6 +296,7 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
             querystring: ConnectedServiceCredentialDeleteQuerySchema,
             response: {
                 200: z.object({ success: z.literal(true) }),
+                400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
                 409: z.union([
                     z.object({ error: z.literal("connect_credential_referenced_by_group") }),
@@ -334,6 +326,9 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
                 cleanupGroupReferences: request.query.cleanupGroupReferences === true
                     || !isServerFeatureEnabledForRequest("connectedServices.accountGroups", process.env),
             });
+        if (result.status === "revision_required") {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "storage_mode_mismatch") {
             return reply.code(404).send({ error: "connect_credential_not_found" });
         }

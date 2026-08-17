@@ -122,5 +122,10 @@ describe("voice provider identity backfill operator (pglite db contract)", () =>
             }
             await rm(dataDir, { recursive: true, force: true });
         }
-    }, 120_000);
+    // This contract intentionally crosses four deployed CLI process boundaries:
+    // light migration, pre-run verification, the operator, and stable-zero
+    // verification. A focused one-row run completes in roughly 111 seconds on
+    // the shared development host, so leave headroom for parallel DB-contract
+    // file startup without changing the operator's own 5-second work budget.
+    }, 180_000);
 });

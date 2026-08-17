@@ -4,7 +4,7 @@ import {
     isMainModule,
     prismaGenerateDatabaseUrlForProvider,
     resolveBuildDbProvidersFromEnv,
-    resolveSchemaSyncScript,
+    resolveSchemaSyncInvocation,
 } from "./generateClients";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -86,10 +86,33 @@ describe("prismaGenerateDatabaseUrlForProvider", () => {
     });
 });
 
-describe("resolveSchemaSyncScript", () => {
-    it("checks tracked schema outputs instead of generating them on a one-way remote mirror", () => {
-        expect(resolveSchemaSyncScript({ HAPPIER_DEV_TARGET_EXECUTION: "1" })).toBe("schema:sync:check");
-        expect(resolveSchemaSyncScript({})).toBe("schema:sync");
+describe("resolveSchemaSyncInvocation", () => {
+    it("uses the direct Node script and checks tracked outputs for typechecks and one-way mirrors", () => {
+        expect(resolveSchemaSyncInvocation({
+            env: {},
+            checkOnly: true,
+            processExecPath: "/runtime/node",
+        })).toEqual({
+            command: "/runtime/node",
+            args: [
+                "./scripts/runTsx.mjs",
+                "--tsconfig",
+                "./tsconfig.json",
+                "./scripts/schemaSync.ts",
+                "--check",
+                "--quiet",
+            ],
+        });
+        expect(resolveSchemaSyncInvocation({
+            env: { HAPPIER_DEV_TARGET_EXECUTION: "1" },
+            checkOnly: false,
+            processExecPath: "/runtime/node",
+        }).args).toContain("--check");
+        expect(resolveSchemaSyncInvocation({
+            env: {},
+            checkOnly: false,
+            processExecPath: "/runtime/node",
+        }).args).not.toContain("--check");
     });
 });
 

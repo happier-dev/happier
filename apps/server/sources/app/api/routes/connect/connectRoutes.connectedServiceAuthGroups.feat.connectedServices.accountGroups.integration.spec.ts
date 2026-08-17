@@ -271,6 +271,187 @@ describe("connectRoutes connected service auth groups (integration)", () => {
         });
     });
 
+    it("fences delayed V3 writes after a group is recreated while the current V4 incarnation remains mutable", async () => {
+        const user = await createAccount("pk-groups-v3-incarnation-fence");
+        const app = await createReadyApp();
+        const headers = authHeaders(user.id);
+
+        const created = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/groups",
+            headers,
+            payload: {
+                groupId: "v3-incarnation-fence",
+                displayName: "Original",
+                members: [],
+            },
+        });
+        expect(created.statusCode, created.body).toBe(200);
+
+        const neverExistingMutation = await app.inject({
+            method: "PATCH",
+            url: "/v3/connect/openai-codex/groups/never-existing-v3-incarnation-fence",
+            headers,
+            payload: { displayName: "Never existing" },
+        });
+        expect(
+            neverExistingMutation.statusCode,
+            neverExistingMutation.body,
+        ).toBe(404);
+        expect(neverExistingMutation.json()).toEqual({
+            error: "connect_group_not_found",
+        });
+
+        const legacyWriteBeforeDelete = await app.inject({
+            method: "PATCH",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers,
+            payload: { displayName: "Legacy write" },
+        });
+        expect(legacyWriteBeforeDelete.statusCode, legacyWriteBeforeDelete.body)
+            .toBe(200);
+
+        const eligibleCurrentDuplicateV3Create = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/groups",
+            headers,
+            payload: {
+                groupId: "v3-incarnation-fence",
+                displayName: "Eligible duplicate",
+                members: [],
+            },
+        });
+        expect(
+            eligibleCurrentDuplicateV3Create.statusCode,
+            eligibleCurrentDuplicateV3Create.body,
+        ).toBe(409);
+        expect(eligibleCurrentDuplicateV3Create.json()).toEqual({
+            error: "connect_group_already_exists",
+        });
+
+        const deleted = await app.inject({
+            method: "DELETE",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(deleted.statusCode, deleted.body).toBe(200);
+
+        const delayedV3MutationWhileAbsent = await app.inject({
+            method: "PATCH",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers,
+            payload: { displayName: "Stale absent V3 write" },
+        });
+        expect(
+            delayedV3MutationWhileAbsent.statusCode,
+            delayedV3MutationWhileAbsent.body,
+        ).toBe(409);
+        expect(delayedV3MutationWhileAbsent.json()).toEqual({
+            error: "connect_group_incarnation_conflict",
+        });
+
+        const delayedV3Create = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/groups",
+            headers,
+            payload: {
+                groupId: "v3-incarnation-fence",
+                displayName: "Stale V3 recreation",
+                members: [],
+            },
+        });
+        expect(delayedV3Create.statusCode, delayedV3Create.body).toBe(409);
+        expect(delayedV3Create.json()).toEqual({
+            error: "connect_group_incarnation_conflict",
+        });
+
+        const absentAfterDelayedV3Create = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers,
+        });
+        expect(
+            absentAfterDelayedV3Create.statusCode,
+            absentAfterDelayedV3Create.body,
+        ).toBe(404);
+
+        const recreated = await app.inject({
+            method: "POST",
+            url: "/v4/connect/qualified/groups",
+            headers,
+            payload: {
+                service: {
+                    pluginId: "happier.agent.codex",
+                    localId: "openai-codex",
+                },
+                group: { groupId: "v3-incarnation-fence" },
+            },
+        });
+        expect(recreated.statusCode, recreated.body).toBe(200);
+
+        const delayedV3CreateAgainstV4Recreated = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/groups",
+            headers,
+            payload: {
+                groupId: "v3-incarnation-fence",
+                displayName: "Stale V3 duplicate against V4",
+                members: [],
+            },
+        });
+        expect(
+            delayedV3CreateAgainstV4Recreated.statusCode,
+            delayedV3CreateAgainstV4Recreated.body,
+        ).toBe(409);
+        expect(delayedV3CreateAgainstV4Recreated.json()).toEqual({
+            error: "connect_group_incarnation_conflict",
+        });
+
+        const delayedV3Write = await app.inject({
+            method: "PATCH",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers,
+            payload: { displayName: "Stale V3 write" },
+        });
+        expect(delayedV3Write.statusCode, delayedV3Write.body).toBe(409);
+        expect(delayedV3Write.json()).toEqual({
+            error: "connect_group_incarnation_conflict",
+        });
+
+        const v3Read = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/groups/v3-incarnation-fence",
+            headers,
+        });
+        expect(v3Read.statusCode, v3Read.body).toBe(200);
+        expect(v3Read.json()).toEqual({
+            group: expect.objectContaining({ displayName: null }),
+        });
+
+        const recreatedGroup = recreated.json().group;
+        const currentV4Write = await app.inject({
+            method: "PATCH",
+            url: "/v4/connect/qualified/group",
+            headers,
+            payload: {
+                service: {
+                    pluginId: "happier.agent.codex",
+                    localId: "openai-codex",
+                },
+                groupId: "v3-incarnation-fence",
+                displayName: "Current V4 write",
+                expectedIncarnation: recreatedGroup.incarnation,
+            },
+        });
+        expect(currentV4Write.statusCode, currentV4Write.body).toBe(200);
+        expect(currentV4Write.json()).toEqual({
+            group: expect.objectContaining({
+                displayName: "Current V4 write",
+                incarnation: recreatedGroup.incarnation,
+            }),
+        });
+    });
+
     it("fails closed when the account-groups feature gate is disabled", async () => {
         harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: "0" });
         const user = await createAccount("pk-groups-disabled");

@@ -9,9 +9,13 @@ import {
 import { db } from "@/storage/db";
 import {
     collectSessionTranscriptVisibleRowsBeforeTake,
+    createSessionTranscriptPublicationActivityQueryBranches,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
+import type {
+    SessionMetadataOwnerAccountMode,
+} from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import {
-    createV2SessionListLegacyRowSelect,
     createV2SessionListRowSelect,
     createV2SessionListVisibilityWhere,
     getV2SessionListEffectiveActivityAt,
@@ -40,50 +44,23 @@ export async function findV2SessionListRows(params: Readonly<{
     const select = createV2SessionListRowSelect({ userId });
 
     if (usesEffectiveActivityOrdering(orderBy)) {
-        try {
-            return await findV2SessionListRowsByEffectiveActivity({
-                select,
-                visibilityWhere,
-                where,
-                take,
-                userId,
-            });
-        } catch (error) {
-            if (!isMissingAttentionProjectionColumnError(error)) {
-                throw error;
-            }
-            return await findV2SessionListRowsByEffectiveActivity({
-                select: createV2SessionListLegacyRowSelect({ userId }),
-                visibilityWhere,
-                where,
-                take,
-                userId,
-            });
-        }
-    }
-
-    try {
-        return await findV2SessionListRowsWithSelect({
-            orderBy,
+        return await findV2SessionListRowsByEffectiveActivity({
             select,
             visibilityWhere,
             where,
             take,
             userId,
         });
-    } catch (error) {
-        if (!isMissingAttentionProjectionColumnError(error)) {
-            throw error;
-        }
-        return await findV2SessionListRowsWithSelect({
-            orderBy,
-            select: createV2SessionListLegacyRowSelect({ userId }),
-            visibilityWhere,
-            where,
-            take,
-            userId,
-        });
     }
+
+    return await findV2SessionListRowsWithSelect({
+        orderBy,
+        select,
+        visibilityWhere,
+        where,
+        take,
+        userId,
+    });
 }
 
 async function findV2SessionListRowsWithSelect(params: Readonly<{
@@ -112,8 +89,18 @@ async function findV2SessionListRowsWithSelect(params: Readonly<{
     });
 }
 
-export function mapV2SessionListRows(params: Readonly<{ rows: ReadonlyArray<V2SessionListRowCompat>; userId: string }>) {
-    return params.rows.map((row) => mapV2SessionListRow({ row, userId: params.userId }));
+export function mapV2SessionListRows(params: Readonly<{
+    rows: ReadonlyArray<V2SessionListRowCompat>;
+    userId: string;
+    ownerAccountMode?: SessionMetadataOwnerAccountMode;
+    ownerAccountModes?: ReadonlyMap<string, SessionMetadataOwnerAccountMode>;
+}>) {
+    return params.rows.map((row) => mapV2SessionListRow({
+        row,
+        userId: params.userId,
+        ownerAccountMode: params.ownerAccountMode,
+        ownerAccountModes: params.ownerAccountModes,
+    }));
 }
 
 export const V2_SESSION_LIST_ORDER_BY = [
@@ -129,13 +116,20 @@ export const V2_ACTIVE_SESSION_LIST_ORDER_BY = [
 export function createV2SessionListPage(params: Readonly<{
     rows: ReadonlyArray<V2SessionListRowCompat>;
     userId: string;
+    ownerAccountMode?: SessionMetadataOwnerAccountMode;
+    ownerAccountModes?: ReadonlyMap<string, SessionMetadataOwnerAccountMode>;
     limit: number;
 }>) {
     const { userId } = params;
     const page = createV2SessionListRowPage(params);
 
     return {
-        sessions: mapV2SessionListRows({ rows: page.rows, userId }),
+        sessions: mapV2SessionListRows({
+            rows: page.rows,
+            userId,
+            ownerAccountMode: params.ownerAccountMode,
+            ownerAccountModes: params.ownerAccountModes,
+        }),
         nextCursor: page.nextCursor,
         hasNext: page.hasNext,
     };
@@ -191,7 +185,12 @@ export async function resolveV2SessionListCursorForVisibleRows(params: Readonly<
             ...params.cursorRowWhere,
             id: legacySessionId,
         },
-        select: { id: true, createdAt: true, meaningfulActivityAt: true },
+        select: {
+            id: true,
+            createdAt: true,
+            meaningfulActivityAt: true,
+            ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+        },
     });
     if (!row) return null;
 
@@ -226,56 +225,38 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
     const { select, userId, visibilityWhere, where, take } = params;
     const { baseWhere, cursor } = extractV2SessionListCursor(where);
     const branchTake = typeof take === "number" ? take + 1 : undefined;
-
-    const [meaningfulRows, createdAtFallbackRows] = await Promise.all([
-        collectSessionTranscriptVisibleRowsBeforeTake({
+    const branchRows = await Promise.all(
+        createSessionTranscriptPublicationActivityQueryBranches(
+            cursor
+                ? {
+                    sessionId: cursor.sessionId,
+                    activityAt: cursor.meaningfulActivityAt,
+                }
+                : cursor,
+        ).map((branch) => collectSessionTranscriptVisibleRowsBeforeTake({
             take: branchTake,
             fetchPage: async (page) => await db.session.findMany({
                 where: mergeSessionWhereInputs(
                     {
                         ...visibilityWhere,
                         ...(baseWhere ?? {}),
-                        meaningfulActivityAt: { not: null },
+                        ...branch.where,
                     },
-                    createV2SessionListCursorWhere(cursor),
+                    branch.cursorWhere,
                 ),
-                orderBy: V2_SESSION_LIST_ORDER_BY,
+                orderBy: [...branch.orderBy],
                 ...(page.skip === undefined ? {} : { skip: page.skip }),
                 ...(page.take === undefined ? {} : { take: page.take }),
                 select,
             }),
             isOwner: (row) => row.accountId === userId,
             readPublication: (row) => row,
-        }),
-        collectSessionTranscriptVisibleRowsBeforeTake({
-            take: branchTake,
-            fetchPage: async (page) => await db.session.findMany({
-                where: mergeSessionWhereInputs(
-                    {
-                        ...visibilityWhere,
-                        ...(baseWhere ?? {}),
-                        meaningfulActivityAt: null,
-                    },
-                    createV2SessionListCreatedAtCursorWhere(cursor),
-                ),
-                orderBy: V2_SESSION_LIST_CREATED_AT_FALLBACK_ORDER_BY,
-                ...(page.skip === undefined ? {} : { skip: page.skip }),
-                ...(page.take === undefined ? {} : { take: page.take }),
-                select,
-            }),
-            isOwner: (row) => row.accountId === userId,
-            readPublication: (row) => row,
-        }),
-    ]);
+        })),
+    );
 
-    const merged = mergeV2SessionListRowsByEffectiveActivity(meaningfulRows, createdAtFallbackRows);
+    const merged = mergeV2SessionListRowsByEffectiveActivity(branchRows.flat());
     return typeof take === "number" ? merged.slice(0, take) : merged;
 }
-
-const V2_SESSION_LIST_CREATED_AT_FALLBACK_ORDER_BY = [
-    { createdAt: "desc" as const },
-    { id: "desc" as const },
-] satisfies Prisma.SessionOrderByWithRelationInput[];
 
 function usesEffectiveActivityOrdering(
     orderBy: Prisma.SessionOrderByWithRelationInput | Prisma.SessionOrderByWithRelationInput[],
@@ -286,26 +267,10 @@ function usesEffectiveActivityOrdering(
     return orderBy[0]?.meaningfulActivityAt === "desc" && orderBy[1]?.id === "desc";
 }
 
-function createV2SessionListCreatedAtCursorWhere(
-    cursor: V2SessionListMeaningfulActivityCursor | null | undefined,
-): Prisma.SessionWhereInput {
-    if (!cursor) return {};
-    const cursorActivityAt = new Date(cursor.meaningfulActivityAt);
-    return {
-        AND: [{
-            OR: [
-                { createdAt: { lt: cursorActivityAt } },
-                { createdAt: cursorActivityAt, id: { lt: cursor.sessionId } },
-            ],
-        }],
-    };
-}
-
 function mergeV2SessionListRowsByEffectiveActivity(
-    meaningfulRows: ReadonlyArray<V2SessionListRowCompat>,
-    createdAtFallbackRows: ReadonlyArray<V2SessionListRowCompat>,
+    rows: ReadonlyArray<V2SessionListRowCompat>,
 ): V2SessionListRowCompat[] {
-    const merged = [...meaningfulRows, ...createdAtFallbackRows];
+    const merged = [...rows];
     merged.sort(compareV2SessionListRowsByEffectiveActivity);
     return merged;
 }
@@ -406,7 +371,12 @@ function readObjectProperty(value: unknown, key: string): unknown {
     return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
-function mergeSessionWhereInputs(
+/**
+ * Conjoins two predicates by concatenating their `AND` clause lists rather than nesting one inside
+ * the other. Nesting hides a cursor clause from `extractV2SessionListCursor`, which only inspects
+ * the top-level `AND` entries, so every caller that conjoins a cursor predicate must merge here.
+ */
+export function mergeSessionWhereInputs(
     baseWhere: Prisma.SessionWhereInput,
     extraWhere: Prisma.SessionWhereInput,
 ): Prisma.SessionWhereInput {
@@ -421,6 +391,8 @@ function mergeSessionWhereInputs(
         : { ...baseRest, ...extraRest };
 }
 
+const MISSING_ROLLBACK_TURN_COLUMN_PATTERN = /SessionTurn|rollbackState/i;
+
 export function isMissingAttentionProjectionColumnError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const record = error as Record<string, unknown>;
@@ -429,5 +401,5 @@ export function isMissingAttentionProjectionColumnError(error: unknown): boolean
     if (code !== "P2022" && !/column|field|no such/i.test(message)) {
         return false;
     }
-    return /pendingRequestObservedAt|latestReadyEventSeq|latestReadyEventAt|thinkingAt|thinking|runtimeActivityState|runtimeActivityActiveCount|runtimeActivityObservedAt|runtimeActivityRevision|SessionTurn|rollbackState|turns/i.test(message);
+    return MISSING_ROLLBACK_TURN_COLUMN_PATTERN.test(message);
 }

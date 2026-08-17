@@ -22,12 +22,18 @@ import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publish
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import {
+    isSessionAgentTransitionDividerLocalId,
     PendingDeliveryBlockedReasonSchema,
     PendingLocalIdSchema,
+    PendingMessageMutationFingerprintV1Schema,
     PendingRequestedActionV1Schema,
     SessionStoredMessageContentSchema,
 } from "@happier-dev/protocol";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationPendingProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 
@@ -76,16 +82,30 @@ async function emitPendingChanged(params: {
     participantCursors: Array<{ accountId: string; cursor: number }>;
     activationTarget?: Readonly<{ accountId: string; requestId: string }>;
 }): Promise<void> {
+    const rawProjection = {
+        pendingCount: params.pendingCount,
+        ...(typeof params.pendingBlockedCount === "number" ? { pendingBlockedCount: params.pendingBlockedCount } : {}),
+        pendingVersion: params.pendingVersion,
+        changedByAccountId: params.changedByAccountId,
+        ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
+        ...(params.activationTarget
+            ? { pendingActivationRequestId: params.activationTarget.requestId }
+            : {}),
+    };
+    const session = await loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    if (!session) return;
     const results = await Promise.allSettled(
         params.participantCursors.map(async ({ accountId, cursor }) => {
+            const projection = projectSessionTranscriptPublicationPendingProjection(
+                rawProjection,
+                session,
+                accountId,
+            );
+            if (projection.kind === "suppress") return;
             const payload = buildPendingChangedUpdate(
                 {
                     sessionId: params.sessionId,
-                    pendingCount: params.pendingCount,
-                    ...(typeof params.pendingBlockedCount === "number" ? { pendingBlockedCount: params.pendingBlockedCount } : {}),
-                    pendingVersion: params.pendingVersion,
-                    changedByAccountId: params.changedByAccountId,
-                    ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
+                    ...projection.value,
                 },
                 cursor,
                 randomKeyNaked(12),
@@ -111,17 +131,16 @@ async function emitPendingChanged(params: {
             ({ accountId }) => accountId === params.activationTarget!.accountId,
         )?.cursor;
         if (typeof ownerCursor === "number") {
+            const projection = projectSessionTranscriptPublicationPendingProjection(
+                rawProjection,
+                session,
+                params.activationTarget.accountId,
+            );
+            if (projection.kind === "suppress") return;
             const payload = buildPendingChangedUpdate(
                 {
                     sessionId: params.sessionId,
-                    pendingCount: params.pendingCount,
-                    ...(typeof params.pendingBlockedCount === "number"
-                        ? { pendingBlockedCount: params.pendingBlockedCount }
-                        : {}),
-                    pendingVersion: params.pendingVersion,
-                    changedByAccountId: params.changedByAccountId,
-                    ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
-                    pendingActivationRequestId: params.activationTarget.requestId,
+                    ...projection.value,
                 },
                 ownerCursor,
                 randomKeyNaked(12),
@@ -235,7 +254,7 @@ export function sessionPendingRoutes(app: Fastify) {
                             z.literal("continuation_if_no_queued_user_input"),
                         ]).optional(),
                         requestedAction: PendingRequestedActionV1Schema.optional(),
-                    }),
+                    }).strict(),
                     z.object({
                         content: SessionStoredMessageContentSchema,
                         localId: PendingLocalIdSchema,
@@ -245,7 +264,7 @@ export function sessionPendingRoutes(app: Fastify) {
                             z.literal("continuation_if_no_queued_user_input"),
                         ]).optional(),
                         requestedAction: PendingRequestedActionV1Schema.optional(),
-                    }),
+                    }).strict(),
                 ]),
             },
             config: {
@@ -255,10 +274,27 @@ export function sessionPendingRoutes(app: Fastify) {
         async (request, reply) => {
             const { sessionId } = request.params;
             const body = request.body as unknown;
+            if (
+                body
+                && typeof body === "object"
+                && Object.prototype.hasOwnProperty.call(body, "requestEqualityEvidenceV1")
+            ) {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
             const localId =
                 body && typeof body === "object" && "localId" in body && typeof (body as { localId?: unknown }).localId === "string"
                     ? (body as { localId: string }).localId
                     : "";
+            // The reserved Agent-transition divider namespace is ENFORCED by the
+            // shared Pending admission owner, which every adapter funnels
+            // through. This early refusal is kept only because the account
+            // adapter resolves session edit access before reaching that owner,
+            // so deleting it would turn this 400 into a 403/404 for a caller
+            // without edit access. It cannot disagree with the owner: same
+            // protocol predicate, same `invalid-params` 400.
+            if (isSessionAgentTransitionDividerLocalId(localId)) {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
             const ciphertext =
                 body && typeof body === "object" && "ciphertext" in body && typeof (body as { ciphertext?: unknown }).ciphertext === "string"
                     ? (body as { ciphertext: string }).ciphertext
@@ -282,7 +318,6 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "requestedAction" in body
                     ? PendingRequestedActionV1Schema.parse((body as { requestedAction?: unknown }).requestedAction)
                     : PendingRequestedActionV1Schema.parse({ v: 1, kind: "enqueue" });
-
             const res = await (content
                 ? enqueuePendingMessage({
                       actorUserId: request.userId,
@@ -409,8 +444,18 @@ export function sessionPendingRoutes(app: Fastify) {
             schema: {
                 params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
                 body: z.union([
-                    z.object({ ciphertext: z.string().min(1), messageRole: z.unknown().optional() }),
-                    z.object({ content: SessionStoredMessageContentSchema, messageRole: z.unknown().optional() }),
+                    z.object({
+                        ciphertext: z.string().min(1),
+                        replacementLocalId: PendingLocalIdSchema.optional(),
+                        replacementMutationFingerprint: PendingMessageMutationFingerprintV1Schema.optional(),
+                        messageRole: z.unknown().optional(),
+                    }),
+                    z.object({
+                        content: SessionStoredMessageContentSchema,
+                        replacementLocalId: PendingLocalIdSchema.optional(),
+                        replacementMutationFingerprint: PendingMessageMutationFingerprintV1Schema.optional(),
+                        messageRole: z.unknown().optional(),
+                    }),
                 ]),
             },
             config: {
@@ -432,10 +477,22 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "messageRole" in body
                     ? (body as { messageRole?: unknown }).messageRole
                     : null;
+            const replacementLocalId =
+                body && typeof body === "object"
+                    && "replacementLocalId" in body
+                    && typeof (body as { replacementLocalId?: unknown }).replacementLocalId === "string"
+                    ? (body as { replacementLocalId: string }).replacementLocalId
+                    : undefined;
+            const replacementMutationFingerprint =
+                body && typeof body === "object"
+                    && "replacementMutationFingerprint" in body
+                    && typeof (body as { replacementMutationFingerprint?: unknown }).replacementMutationFingerprint === "string"
+                    ? (body as { replacementMutationFingerprint: string }).replacementMutationFingerprint
+                    : undefined;
 
             const res = await (content
-                ? updatePendingMessage({ actorUserId: request.userId, sessionId, localId, content, messageRole })
-                : updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext: ciphertext ?? "", messageRole }));
+                ? updatePendingMessage({ actorUserId: request.userId, sessionId, localId, content, replacementLocalId, replacementMutationFingerprint, messageRole })
+                : updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext: ciphertext ?? "", replacementLocalId, replacementMutationFingerprint, messageRole }));
             if (!res.ok) {
                 if (res.error === "invalid-params") {
                     const payload: { error: string; code?: string } = { error: res.error };
@@ -446,6 +503,9 @@ export function sessionPendingRoutes(app: Fastify) {
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 if (res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "local-id-conflict") return reply.code(409).send({ error: res.error });
+                if (res.error === "pending-mutation-conflict") return reply.code(409).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 
@@ -462,7 +522,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, ...toPendingStateJson(res) });
+            return reply.send({ ok: true, localId: res.localId, ...toPendingStateJson(res) });
         },
     );
 

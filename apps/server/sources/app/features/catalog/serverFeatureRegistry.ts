@@ -8,7 +8,6 @@ import { resolveFriendsFeature } from '../friendsFeature';
 import { resolveOAuthFeature } from '../oauthFeature';
 import { resolveAuthFeature } from '../authFeature';
 import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
-import { resolveChannelBridgesFeature } from '../channelBridgesFeature';
 import { resolveUpdatesFeature } from '../updatesFeature';
 import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
 import { resolvePetsFeature } from '../petsFeature';
@@ -22,6 +21,7 @@ import { resolveBrowserFeature } from '../browserFeature';
 import { resolvePluginsFeature } from '../pluginsFeature';
 import { resolveDevicesFeature } from '../devicesFeature';
 import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
+import { resolveSessionAgentSwitchingFeature } from '../sessionAgentSwitchingFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
@@ -31,12 +31,14 @@ import { resolveServerUrlCapabilitiesFeature } from '../serverUrlCapabilitiesFea
 import { resolveServerRetentionCapabilitiesFeature } from '../serverRetentionCapabilitiesFeature';
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from '../serverUsageAnalyticsCapabilitiesFeature';
 import { resolveLiveActivityRemoteUpdatesFeature } from '../liveActivityRemoteUpdatesFeature';
-import { resolveClientCompatibilityFeature } from '../clientCompatibilityFeature';
+import { resolveSessionProtocolCapabilitiesFeature } from '../sessionProtocolCapabilitiesFeature';
+import { resolveAccountStoredContentCompatibilityFeature } from '../accountStoredContentCompatibilityFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
 export const serverFeatureRegistry = Object.freeze([
-    () => resolveClientCompatibilityFeature(),
+    () => resolveAccountStoredContentCompatibilityFeature(),
+    () => resolveSessionProtocolCapabilitiesFeature(),
     (env) => resolveServerUrlCapabilitiesFeature(env),
     (env) => resolveServerRetentionCapabilitiesFeature(env),
     () => resolveServerUsageAnalyticsCapabilitiesFeature(),
@@ -46,7 +48,6 @@ export const serverFeatureRegistry = Object.freeze([
     (_env) => resolveSharingFeature(),
     (env) => resolveVoiceFeature(env),
     (env) => resolveConnectedServicesFeature(env),
-    (env) => resolveChannelBridgesFeature(env),
     (env) => resolveUpdatesFeature(env),
     (env) => resolveAttachmentsUploadsFeature(env),
     (env) => resolvePetsFeature(env),
@@ -60,6 +61,7 @@ export const serverFeatureRegistry = Object.freeze([
     (env) => resolveMachineLiveStreamFeature(env),
     (env) => resolveMachineRpcFeature(env),
     (env) => resolveSessionFoldersFeature(env),
+    (env) => resolveSessionAgentSwitchingFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveSessionUsageLimitRecoveryFeature(env),
     (env) => resolveTerminalFeature(env),

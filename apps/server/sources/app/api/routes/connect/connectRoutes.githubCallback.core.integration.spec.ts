@@ -366,4 +366,96 @@ describe("connectRoutes (GitHub callback)", () => {
 
         await app.close();
     });
+
+    it("persists an existing OAuth pending proof bound to the exact Account, identity, and first-key request", async () => {
+        applyGithubConnectCallbackEnv(harness, {
+            AUTH_SIGNUP_PROVIDERS: "github",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.accountIdentity.create({
+            data: {
+                accountId: account.id,
+                provider: "github",
+                providerUserId: "123",
+                providerLogin: "octocat",
+                profile: {},
+            },
+        });
+        const proofHash = "d".repeat(64);
+        const requestDigest = `aemrb1_${"A".repeat(43)}`;
+        const app = createTestApp();
+        connectRoutes(app);
+        await app.ready();
+
+        const paramsResponse = await app.inject({
+            method: "GET",
+            url:
+                `/v1/auth/external/github/params?mode=keyless`
+                + `&proofHash=${proofHash}`
+                + `&purpose=account_encryption_first_key`
+                + `&requestDigest=${encodeURIComponent(requestDigest)}`,
+            headers: { "x-test-user-id": account.id },
+        });
+        expect(paramsResponse.statusCode, paramsResponse.body).toBe(200);
+        const state = new URL(paramsResponse.json().url)
+            .searchParams.get("state");
+        expect(state).toBeTruthy();
+
+        vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+            if (url.includes("github.com/login/oauth/access_token")) {
+                return {
+                    ok: true,
+                    json: async () => ({ access_token: "fresh-token" }),
+                };
+            }
+            if (url.includes("api.github.com/user")) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        id: 123,
+                        login: "octocat",
+                        avatar_url: "x",
+                        name: "Octo Cat",
+                    }),
+                };
+            }
+            throw new Error(`unexpected fetch: ${url}`);
+        }));
+
+        const callbackResponse = await app.inject({
+            method: "GET",
+            url:
+                `/v1/oauth/github/callback?code=fresh-code`
+                + `&state=${encodeURIComponent(state!)}`,
+        });
+        expect(callbackResponse.statusCode).toBe(302);
+        const redirect = new URL(callbackResponse.headers.location!);
+        expect(redirect.searchParams.get("purpose"))
+            .toBe("account_encryption_first_key");
+        const pendingKey = redirect.searchParams.get("pending");
+        expect(pendingKey).toBeTruthy();
+        const pending = await db.repeatKey.findUnique({
+            where: { key: pendingKey! },
+        });
+        expect(JSON.parse(pending!.value)).toEqual({
+            v: 3,
+            flow: "auth",
+            purpose: "account_encryption_first_key",
+            provider: "github",
+            userId: account.id,
+            providerUserId: "123",
+            proofHash,
+            requestDigest,
+        });
+
+        await app.close();
+    });
 });

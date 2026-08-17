@@ -188,7 +188,7 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         await app.close();
     });
 
-    it("POST /v1/auth/external/:provider/finalize-keyless returns 409 restore-required when the external identity is linked to a keyed account", async () => {
+    it("POST /v1/auth/external/:provider/finalize-keyless returns 409 restore-required for an e2ee account missing its signing key", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
             HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
@@ -197,7 +197,7 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         });
 
         const keyedAccount = await db.account.create({
-            data: { publicKey: "pk_hex_1", encryptionMode: "e2ee" },
+            data: { publicKey: null, encryptionMode: "e2ee" },
             select: { id: true },
         });
         await db.accountIdentity.create({

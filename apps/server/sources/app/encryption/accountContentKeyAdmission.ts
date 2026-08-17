@@ -38,6 +38,22 @@ export type AccountEncryptionCurrentness = Readonly<{
     contentPublicKeyFingerprint: ContentPublicKeyFingerprint | null;
 }>;
 
+export type AccountEncryptionInconsistencyReason =
+    | "invalid_encryption_mode"
+    | "missing_or_invalid_signing_key"
+    | "missing_content_key_binding"
+    | "invalid_content_key_binding";
+
+export type AccountEncryptionCurrentnessResult =
+    | Readonly<{
+        status: "ready";
+        currentness: Readonly<AccountEncryptionCurrentness>;
+    }>
+    | Readonly<{
+        status: "inconsistent";
+        reason: AccountEncryptionInconsistencyReason;
+    }>;
+
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
@@ -241,7 +257,12 @@ export function deriveAccountEncryptionCurrentnessFromRow(
         contentPublicKey: Uint8Array | null;
         contentPublicKeySig: Uint8Array | null;
     }>,
-): Readonly<AccountEncryptionCurrentness> {
+): AccountEncryptionCurrentnessResult {
+    const mode =
+        resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    if (mode.status === "inconsistent") {
+        return mode;
+    }
     const contentPublicKey = account.contentPublicKey
         ? copyBytes(account.contentPublicKey)
         : null;
@@ -257,12 +278,38 @@ export function deriveAccountEncryptionCurrentnessFromRow(
             })
             : null;
 
+    if (mode.mode === "e2ee") {
+        if (!decodeAccountSigningPublicKey(account.publicKey)) {
+            return {
+                status: "inconsistent",
+                reason: "missing_or_invalid_signing_key",
+            };
+        }
+        if (
+            contentPublicKey === null
+            || contentPublicKeySignature === null
+        ) {
+            return {
+                status: "inconsistent",
+                reason: "missing_content_key_binding",
+            };
+        }
+        if (!verifiedBinding) {
+            return {
+                status: "inconsistent",
+                reason: "invalid_content_key_binding",
+            };
+        }
+    }
+
     return {
-        encryptionMode:
-            resolveEffectiveAccountEncryptionModeFromAccountRow(account),
-        contentPublicKey,
-        contentPublicKeySignature,
-        contentPublicKeyFingerprint:
-            verifiedBinding?.contentPublicKeyFingerprint ?? null,
+        status: "ready",
+        currentness: {
+            encryptionMode: mode.mode,
+            contentPublicKey,
+            contentPublicKeySignature,
+            contentPublicKeyFingerprint:
+                verifiedBinding?.contentPublicKeyFingerprint ?? null,
+        },
     };
 }

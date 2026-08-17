@@ -9,10 +9,18 @@ import { mintPeerTcpTunnelRelayAuthorizationV2 } from "@/app/machines/peer/media
 import { registerPeerTcpTunnelRelaySocketHandler } from "./registerRelay";
 import { createPeerTcpTunnelRelayBridge } from "./relayBridge";
 
-type EmitCall = Readonly<{ room: string; event: string; payload: unknown }>;
+type EmitCall = Readonly<{
+    room: string;
+    event: string;
+    payload: unknown;
+    scope: "cluster" | "local";
+}>;
 
 function createRecordingIo(): Readonly<{
-    io: { to: (room: string) => { emit: (event: string, payload: unknown) => void } };
+    io: {
+        to: (room: string) => { emit: (event: string, payload: unknown) => void };
+        local: { to: (room: string) => { emit: (event: string, payload: unknown) => void } };
+    };
     calls: EmitCall[];
 }> {
     const calls: EmitCall[] = [];
@@ -21,9 +29,16 @@ function createRecordingIo(): Readonly<{
         io: {
             to: (room: string) => ({
                 emit: (event: string, payload: unknown) => {
-                    calls.push({ room, event, payload });
+                    calls.push({ room, event, payload, scope: "cluster" });
                 },
             }),
+            local: {
+                to: (room: string) => ({
+                    emit: (event: string, payload: unknown) => {
+                        calls.push({ room, event, payload, scope: "local" });
+                    },
+                }),
+            },
         },
     };
 }
@@ -42,6 +57,31 @@ function tunnelOpenFrame() {
         },
     };
 }
+
+describe("createPeerTcpTunnelRelayBridge.io", () => {
+    it("preserves local-only delivery while notifying an in-process pseudo socket", () => {
+        const { io, calls } = createRecordingIo();
+        const bridge = createPeerTcpTunnelRelayBridge(io);
+        const transport = bridge.createTransport({ accountId: "user-1" });
+        const received = vi.fn();
+        transport.subscribe(received);
+
+        bridge.io.local.to(transport.relaySocketId).emit(
+            PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+            { local: true },
+        );
+
+        expect(calls).toEqual([{
+            room: transport.relaySocketId,
+            event: PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+            payload: { local: true },
+            scope: "local",
+        }]);
+        expect(received).toHaveBeenCalledWith({ local: true });
+
+        transport.close();
+    });
+});
 
 describe("createPeerTcpTunnelRelayBridge.createTransport.send", () => {
     it("does not bypass exact relay attachment ownership for machine-recipient frames", () => {

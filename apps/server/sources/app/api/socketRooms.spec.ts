@@ -22,6 +22,24 @@ describe("getSocketRooms", () => {
         ]);
     });
 
+    it("joins the AccountChange wake room only for AccountStoredContent V3 sockets", () => {
+        const v3Rooms = getSocketRooms({
+            userId: "u1",
+            clientType: "machine-scoped",
+            machineId: "m1",
+            includeAccountStoredContentV3Room: true,
+        } as any);
+        const v2Rooms = getSocketRooms({
+            userId: "u1",
+            clientType: "machine-scoped",
+            machineId: "m1",
+            includeAccountStoredContentV3Room: false,
+        } as any);
+
+        expect(v3Rooms).toContain("account-stored-content-v3:u1");
+        expect(v2Rooms).not.toContain("account-stored-content-v3:u1");
+    });
+
     it("throws on missing required IDs", () => {
         expect(() => getSocketRooms({ userId: "u1", clientType: "session-scoped" })).toThrow(/sessionId/i);
         expect(() => getSocketRooms({ userId: "u1", clientType: "machine-scoped" })).toThrow(/machineId/i);

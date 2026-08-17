@@ -144,6 +144,22 @@ describe("eventRouter (rooms)", () => {
         expect(emit).toHaveBeenCalledWith("update", expect.anything());
     });
 
+    it("routes AccountChange wakes only to V3 stored-content sockets", () => {
+        const ioTo = vi.fn();
+        const emit = vi.fn();
+        ioTo.mockReturnValue({ emit });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitUpdate({
+            userId: "u1",
+            payload: { id: "x", seq: 1, body: { t: "account-change" }, createdAt: 0 } as any,
+            recipientFilter: { type: "account-stored-content-v3" } as any,
+        });
+
+        expect(ioTo).toHaveBeenCalledWith("account-stored-content-v3:u1");
+        expect(emit).toHaveBeenCalledWith("update", expect.anything());
+    });
+
     it("never emits per-account update containers to shared session/machine rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();

@@ -7,6 +7,13 @@ import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
 import { applyPostgresMigrations } from './prismaMigrations';
 import { resolveServerWorkspaceRoot } from './prismaCli';
 import { join } from 'node:path';
+import {
+    hasSessionSystemRecordContractMigration,
+    runSessionSystemRecordFinalContractBackfill,
+} from '../sources/app/session/systemRecords/sessionSystemRecordBackfillExecution';
+import {
+    runSessionSystemRecordMigrationDeployment,
+} from '../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment';
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -44,9 +51,23 @@ async function main() {
         url.searchParams.set('connection_limit', '1');
         env.DATABASE_URL = url.toString();
 
-        await applyPostgresMigrations({
-            db: pglite,
-            migrationsDir: join(serverRoot, 'prisma', 'migrations'),
+        const migrationsDir = join(serverRoot, 'prisma', 'migrations');
+        await runSessionSystemRecordMigrationDeployment({
+            migrationsDir,
+            isContractApplied: async () => await hasSessionSystemRecordContractMigration({
+                provider: 'pglite',
+                databaseUrl: env.DATABASE_URL,
+            }),
+            deploy: async (stage) => await applyPostgresMigrations({
+                db: pglite!,
+                migrationsDir: stage.migrationsDir,
+            }),
+            runFinalContractBackfill: async () => {
+                await runSessionSystemRecordFinalContractBackfill({
+                    provider: 'pglite',
+                    databaseUrl: env.DATABASE_URL,
+                });
+            },
         });
     } finally {
         await server?.stop().catch(() => {});

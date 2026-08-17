@@ -105,7 +105,12 @@ export function registerConnectedServiceCredentialRoutesV2(
     if (result.status === "provider_identity_mismatch") {
       return reply.code(409).send({ error: CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch });
     }
-    if (result.status === "storage_mode_mismatch") return reply.code(400).send({ error: "connect_credential_invalid" });
+    if (
+      result.status === "storage_mode_mismatch"
+      || result.status === "revision_required"
+    ) {
+      return reply.code(400).send({ error: "connect_credential_invalid" });
+    }
     if (result.status === "superseded") {
       return reply.code(409).send({
         error: CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
@@ -126,7 +131,7 @@ export function registerConnectedServiceCredentialRoutesV2(
       }),
       response: {
         200: z.object({
-          credentialRevision: z.string(),
+          credentialRevision: z.string().optional(),
           sealed: SealedConnectedServiceCredentialV1Schema,
           metadata: z.object({
             kind: z.enum(["oauth", "token"]),
@@ -183,10 +188,9 @@ export function registerConnectedServiceCredentialRoutesV2(
         error: "connect_credential_unsupported_format",
       });
     }
-    return reply.send({
-      credentialRevision: snapshot.credentialRevision,
+    const response = {
       sealed: {
-        format: "account_scoped_v1",
+        format: "account_scoped_v1" as const,
         ciphertext: snapshot.content.c,
       },
       metadata: {
@@ -197,7 +201,11 @@ export function registerConnectedServiceCredentialRoutesV2(
           snapshot.metadata.providerIdentity?.accountId ?? null,
         expiresAt: snapshot.expiresAt,
       },
-    });
+    };
+    return snapshot.revisionSemantics === "revisioned"
+      && snapshot.credentialRevision !== null
+      ? reply.send({ ...response, credentialRevision: snapshot.credentialRevision })
+      : reply.send(response);
   });
 
   app.delete("/v2/connect/:serviceId/profiles/:profileId/credential", {
@@ -238,7 +246,10 @@ export function registerConnectedServiceCredentialRoutesV2(
         cleanupGroupReferences: request.query.cleanupGroupReferences === true
           || !isServerFeatureEnabledForRequest("connectedServices.accountGroups", process.env),
       });
-    if (result.status === "storage_mode_mismatch") {
+    if (
+      result.status === "storage_mode_mismatch"
+      || result.status === "revision_required"
+    ) {
       return reply.code(400).send({ error: "connect_credential_invalid" });
     }
     if (result.status === "not_found") return reply.code(404).send({ error: "connect_credential_not_found" });

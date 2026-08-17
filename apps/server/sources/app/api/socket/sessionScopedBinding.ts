@@ -1,6 +1,7 @@
 import type { Socket } from "socket.io";
 
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessionBindingMetrics";
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
@@ -58,8 +59,7 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
     });
     return accessKey !== null
         && accessKey.session.accountId === params.accountId
-        && accessKey.machine.revokedAt === null
-        && accessKey.machine.replacedByMachineId === null;
+        && classifyMachineAvailabilityState(accessKey.machine) === "available";
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -142,7 +142,10 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
                 },
             },
         });
-    if (!accessKey || accessKey.machine.revokedAt || accessKey.machine.replacedByMachineId) {
+    if (
+        !accessKey
+        || classifyMachineAvailabilityState(accessKey.machine) !== "available"
+    ) {
         observeSessionScopedBindingStage({
             stage: "machine_access_key_lookup",
             result: "error",
@@ -215,7 +218,10 @@ async function readMachineAccessKeyAvailability(params: Readonly<{
 }
 
 function isAvailableMachineAccessKey(accessKey: MachineAccessKeyAvailability): boolean {
-    return Boolean(accessKey && !accessKey.machine.revokedAt && !accessKey.machine.replacedByMachineId);
+    return Boolean(
+        accessKey
+        && classifyMachineAvailabilityState(accessKey.machine) === "available",
+    );
 }
 
 function readSessionScopedRpcMethodSessionId(method: string): string | null {

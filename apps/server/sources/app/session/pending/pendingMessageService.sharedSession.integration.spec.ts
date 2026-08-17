@@ -10,6 +10,7 @@ import {
     deletePendingMessage,
     dismissPendingDelivery,
     discardPendingMessage,
+    enqueuePendingMessageByAuthenticatedMachine,
     enqueuePendingMessage as enqueuePendingMessageWithAction,
     listPendingMessages,
     markPendingDeliveryHandled,
@@ -17,6 +18,7 @@ import {
     reorderPendingMessages,
     resolveAcceptedPendingDelivery as resolveAcceptedPendingDeliveryWithAuthority,
     sendPendingDeliveryAsNew,
+    settlePendingInputAdmission,
     restorePendingMessage,
     updatePendingMessage,
     updatePendingRequestedAction,
@@ -285,6 +287,350 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
+    it("admits machine input only for the exact capable target and persists no Machine identity", async () => {
+        const owner = await createAccount("machine-admission-owner");
+        const session = await createSession(owner.id);
+        const sourceMachineId = `machine-source-${randomUUID()}`;
+        const retryMachineId = `machine-retry-${randomUUID()}`;
+        const targetMachineId = `machine-target-${randomUUID()}`;
+        await db.machine.createMany({
+            data: [sourceMachineId, retryMachineId].map((id) => ({
+                id,
+                accountId: owner.id,
+                metadata: "{}",
+            })),
+        });
+        await db.machine.create({
+            data: {
+                id: targetMachineId,
+                accountId: owner.id,
+                metadata: "{}",
+                operationProtocolCapabilities: {
+                    sessionInputAdmission: { protocolVersions: [1] },
+                },
+                operationProtocolCapabilitiesRevision: 1,
+            },
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: owner.id,
+                machineId: targetMachineId,
+                sessionId: session.id,
+                data: "encrypted",
+            },
+        });
+        const localId = `plugin-input-v1:${randomUUID()}`;
+        const request = {
+            accountId: owner.id,
+            sourceMachineId,
+            targetMachineId,
+            sessionId: session.id,
+            localId,
+            content: { t: "encrypted" as const, c: "randomized-ciphertext" },
+            requestedAction: { v: 1 as const, kind: "enqueue" as const },
+            requestEqualityEvidenceV1: { kind: "e2eeTag" as const, tag: "A".repeat(43) },
+        };
+
+        await expect(enqueuePendingMessageByAuthenticatedMachine(request)).resolves.toEqual({
+            status: "accepted",
+            localId,
+        });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { authorAccountId: true, inputAdmissionReceipt: true },
+        })).resolves.toEqual({
+            authorAccountId: null,
+            inputAdmissionReceipt: { v: 1, issuer: "authenticatedMachine" },
+        });
+
+        await expect(enqueuePendingMessageByAuthenticatedMachine({
+            ...request,
+            sourceMachineId: retryMachineId,
+        })).resolves.toEqual({ status: "alreadyAccepted", localId });
+    });
+
+    it("rejects a known incapable exact target before writing Pending custody", async () => {
+        const owner = await createAccount("machine-admission-old-target");
+        const session = await createSession(owner.id);
+        const sourceMachineId = `machine-source-${randomUUID()}`;
+        const targetMachineId = `machine-target-${randomUUID()}`;
+        await db.machine.createMany({
+            data: [sourceMachineId, targetMachineId].map((id) => ({
+                id,
+                accountId: owner.id,
+                metadata: "{}",
+            })),
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: owner.id,
+                machineId: targetMachineId,
+                sessionId: session.id,
+                data: "encrypted",
+            },
+        });
+        const localId = `plugin-input-v1:${randomUUID()}`;
+
+        await expect(enqueuePendingMessageByAuthenticatedMachine({
+            accountId: owner.id,
+            sourceMachineId,
+            targetMachineId,
+            sessionId: session.id,
+            localId,
+            content: { t: "encrypted", c: "randomized-ciphertext" },
+            requestedAction: { v: 1, kind: "enqueue" },
+            requestEqualityEvidenceV1: { kind: "e2eeTag", tag: "B".repeat(43) },
+        })).resolves.toEqual({
+            status: "rejected",
+            code: "session_input_target_update_required",
+        });
+        await expect(db.sessionPendingMessage.count({
+            where: { sessionId: session.id, localId },
+        })).resolves.toBe(0);
+    });
+
+    it("settles protected machine input exactly once before transcript visibility", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        const owner = await createAccount("machine-settlement-owner");
+        const session = await createSession(owner.id);
+        await db.session.update({
+            where: { id: session.id },
+            data: { encryptionMode: "plain" },
+        });
+        const publisher = await createCurrentPendingPublisher({
+            accountId: owner.id,
+            sessionId: session.id,
+        });
+        await db.machine.update({
+            where: { id: publisher.machineId },
+            data: {
+                operationProtocolCapabilities: {
+                    sessionInputAdmission: { protocolVersions: [1] },
+                },
+                operationProtocolCapabilitiesRevision: 1,
+            },
+        });
+        const sourceMachineId = `machine-source-${randomUUID()}`;
+        await db.machine.create({
+            data: { id: sourceMachineId, accountId: owner.id, metadata: "{}" },
+        });
+        const requestMeta = {
+            sentFrom: "cli",
+            happierInputRequestV1: {
+                v: 1,
+                producer: "pluginSession",
+                caller: {
+                    kind: "plugin",
+                    pluginId: "example.channels",
+                    contributionLocalId: "inbound",
+                },
+                permission: { requestedPermissionCeiling: "safe-yolo" },
+            },
+        } as const;
+        const finalMeta = {
+            sentFrom: "cli",
+            happierInputAuthorityV1: {
+                v: 1,
+                producer: "pluginSession",
+                caller: {
+                    kind: "plugin",
+                    pluginId: "example.channels",
+                    contributionLocalId: "inbound",
+                },
+                permission: {
+                    requestedPermissionCeiling: "safe-yolo",
+                    admittedPermissionCeiling: "read-only",
+                },
+            },
+        } as const;
+        const authority = {
+            accountId: publisher.accountId,
+            machineId: publisher.machineId,
+            sessionId: publisher.sessionId,
+            committedFence: publisher.committedFence,
+        };
+
+        const acceptedLocalId = `plugin-input-v1:${randomUUID()}`;
+        await expect(enqueuePendingMessageByAuthenticatedMachine({
+            accountId: owner.id,
+            sourceMachineId,
+            targetMachineId: publisher.machineId,
+            sessionId: session.id,
+            localId: acceptedLocalId,
+            content: {
+                t: "plain",
+                v: { role: "user", content: { type: "text", text: "admit" }, meta: requestMeta },
+            },
+            requestedAction: { v: 1, kind: "enqueue" },
+        })).resolves.toEqual({ status: "accepted", localId: acceptedLocalId });
+        await markPendingProviderDeliveryClaimed({ sessionId: session.id, localId: acceptedLocalId });
+
+        await expect(settlePendingInputAdmission({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: acceptedLocalId,
+            publisherAuthority: authority,
+            decision: {
+                kind: "admit",
+                finalContent: {
+                    t: "plain",
+                    v: { role: "user", content: { type: "text", text: "admit" }, meta: finalMeta },
+                },
+            },
+        })).resolves.toMatchObject({
+            ok: true,
+            result: { status: "accepted", localId: acceptedLocalId },
+            message: {
+                localId: acceptedLocalId,
+                content: {
+                    t: "plain",
+                    v: { meta: finalMeta },
+                },
+            },
+        });
+        await expect(db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: acceptedLocalId } },
+            select: { inputAdmissionReceipt: true, requestEqualityEvidenceV1: true },
+        })).resolves.toEqual({
+            inputAdmissionReceipt: { v: 1, issuer: "authenticatedMachine" },
+            requestEqualityEvidenceV1: {
+                kind: "plainDigest",
+                digest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+            },
+        });
+
+        const rejectedLocalId = `plugin-input-v1:${randomUUID()}`;
+        await expect(enqueuePendingMessageByAuthenticatedMachine({
+            accountId: owner.id,
+            sourceMachineId,
+            targetMachineId: publisher.machineId,
+            sessionId: session.id,
+            localId: rejectedLocalId,
+            content: {
+                t: "plain",
+                v: { role: "user", content: { type: "text", text: "reject" }, meta: requestMeta },
+            },
+            requestedAction: { v: 1, kind: "enqueue" },
+        })).resolves.toEqual({ status: "accepted", localId: rejectedLocalId });
+        await markPendingProviderDeliveryClaimed({ sessionId: session.id, localId: rejectedLocalId });
+        const rejection = {
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: rejectedLocalId,
+            publisherAuthority: authority,
+            decision: { kind: "reject" as const, code: "session_input_invalid" as const },
+        };
+        await expect(settlePendingInputAdmission(rejection)).resolves.toMatchObject({
+            ok: true,
+            result: { status: "rejected", code: "session_input_invalid" },
+        });
+        await expect(settlePendingInputAdmission(rejection)).resolves.toMatchObject({
+            ok: true,
+            result: { status: "rejected", code: "session_input_invalid" },
+        });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: rejectedLocalId } },
+            select: { status: true, discardedReason: true, discardedAt: true, requestEqualityEvidenceV1: true },
+        })).resolves.toEqual({
+            status: "discarded",
+            discardedReason: "session_input_invalid",
+            discardedAt: expect.any(Date),
+            requestEqualityEvidenceV1: {
+                kind: "plainDigest",
+                digest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+            },
+        });
+
+        const automation = await db.automation.create({
+            data: {
+                accountId: owner.id,
+                name: "cancelled Session input settlement",
+                enabled: true,
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                targetType: "existing_session",
+                templateCiphertext: "opaque-template",
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const cancelledRun = await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                accountId: owner.id,
+                state: "cancelled",
+                scheduledAt: new Date(),
+                dueAt: new Date(),
+                finishedAt: new Date(),
+            },
+            select: { id: true },
+        });
+        const cancelledLocalId = `automation:run:${cancelledRun.id}`;
+        const automationRequestMeta = {
+            sentFrom: "cli",
+            happierInputRequestV1: {
+                v: 1,
+                producer: "automation",
+                caller: { kind: "host" },
+                automation: { automationId: automation.id, runId: cancelledRun.id },
+                permission: {},
+            },
+        } as const;
+        const automationFinalMeta = {
+            sentFrom: "cli",
+            happierInputAuthorityV1: {
+                v: 1,
+                producer: "automation",
+                caller: { kind: "host" },
+                automation: { automationId: automation.id, runId: cancelledRun.id },
+                permission: { admittedPermissionCeiling: "default" },
+            },
+        } as const;
+        await expect(enqueuePendingMessageByAuthenticatedMachine({
+            accountId: owner.id,
+            sourceMachineId,
+            targetMachineId: publisher.machineId,
+            sessionId: session.id,
+            localId: cancelledLocalId,
+            content: {
+                t: "plain",
+                v: { role: "user", content: { type: "text", text: "cancelled" }, meta: automationRequestMeta },
+            },
+            requestedAction: { v: 1, kind: "enqueue" },
+        })).resolves.toEqual({ status: "accepted", localId: cancelledLocalId });
+        await markPendingProviderDeliveryClaimed({ sessionId: session.id, localId: cancelledLocalId });
+
+        await expect(settlePendingInputAdmission({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: cancelledLocalId,
+            publisherAuthority: authority,
+            decision: {
+                kind: "admit",
+                finalContent: {
+                    t: "plain",
+                    v: { role: "user", content: { type: "text", text: "cancelled" }, meta: automationFinalMeta },
+                },
+                validation: {
+                    automation: { automationId: automation.id, runId: cancelledRun.id },
+                },
+            },
+        })).resolves.toMatchObject({
+            ok: true,
+            result: { status: "rejected", code: "session_input_cancelled" },
+        });
+        await expect(db.sessionMessage.findUnique({
+            where: { sessionId_localId: { sessionId: session.id, localId: cancelledLocalId } },
+        })).resolves.toBeNull();
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: cancelledLocalId } },
+            select: { status: true, discardedReason: true },
+        })).resolves.toEqual({
+            status: "discarded",
+            discardedReason: "session_input_cancelled",
+        });
+    });
+
     it("rejects a whitespace-only localId at every Pending service boundary without mutation", async () => {
         const owner = await createAccount("pending-local-id-owner");
         const session = await createSession(owner.id, { id: true, pendingCount: true, pendingBlockedCount: true, pendingVersion: true });
@@ -380,7 +726,85 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toEqual({ ok: false, error: "action-conflict" });
     });
 
-    it("does not reopen a runtime-disposed-before-delivery row through an action update", async () => {
+    it.each([
+        "provider_rejected_before_acceptance",
+        "provider_unavailable_before_acceptance",
+    ] as const)("retries the same pending row after a reversible pre-acceptance block (%s)", async (blockedReason) => {
+        const owner = await createAccount("pending-action-provider-rejected");
+        const session = await createSession(owner.id);
+        const localId = `pending-action-provider-rejected-${randomUUID()}`;
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-pending-action-provider-rejected",
+            requestedAction: { v: 1, kind: "send_now" },
+        });
+        await blockPendingDelivery({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            reason: blockedReason,
+        });
+        await db.sessionPendingMessage.update({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            data: { providerAction: "interrupt_and_send" },
+        });
+
+        await expect(updatePendingRequestedAction({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            requestedAction: { v: 1, kind: "send_now" },
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: true,
+            pendingBlockedCount: 0,
+        });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { requestedAction: true, providerAction: true, deliveryState: true, deliveryBlockedReason: true },
+        })).resolves.toEqual({
+            requestedAction: { v: 1, kind: "send_now" },
+            providerAction: null,
+            deliveryState: null,
+            deliveryBlockedReason: null,
+        });
+    });
+
+    it("repairs an orphaned provider claim when the user explicitly retries the row", async () => {
+        const owner = await createAccount("pending-action-orphaned-claim");
+        const session = await createSession(owner.id);
+        const localId = `pending-action-orphaned-claim-${randomUUID()}`;
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-pending-action-orphaned-claim",
+            requestedAction: { v: 1, kind: "send_now" },
+        });
+        await db.sessionPendingMessage.update({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            data: { providerAction: "interrupt_and_send" },
+        });
+
+        await expect(updatePendingRequestedAction({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            requestedAction: { v: 1, kind: "send_now" },
+        })).resolves.toMatchObject({ ok: true, didUpdate: true });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { requestedAction: true, providerAction: true, deliveryState: true },
+        })).resolves.toEqual({
+            requestedAction: { v: 1, kind: "send_now" },
+            providerAction: null,
+            deliveryState: null,
+        });
+    });
+
+    it("reopens a runtime-disposed-before-delivery row through an explicit action retry", async () => {
         const owner = await createAccount("pending-action-runtime-disposed");
         const session = await createSession(owner.id);
         const localId = `pending-action-runtime-disposed-${randomUUID()}`;
@@ -403,14 +827,18 @@ describe("pendingMessageService (shared sessions)", () => {
             sessionId: session.id,
             localId,
             requestedAction: { v: 1, kind: "send_now" },
-        })).resolves.toEqual({ ok: false, error: "action-conflict" });
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: true,
+            pendingBlockedCount: 0,
+        });
         await expect(db.sessionPendingMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
             select: { requestedAction: true, deliveryState: true, deliveryBlockedReason: true },
         })).resolves.toEqual({
             requestedAction: { v: 1, kind: "send_now" },
-            deliveryState: "blocked",
-            deliveryBlockedReason: "runtime_disposed_before_delivery",
+            deliveryState: null,
+            deliveryBlockedReason: null,
         });
     });
 
@@ -497,7 +925,7 @@ describe("pendingMessageService (shared sessions)", () => {
     });
 
     it.each(["enqueue", "send_now"] as const)(
-        "does not release steering-unavailable from an inconsistent %s origin",
+        "releases a proven pre-effect steering block regardless of stale %s origin intent",
         async (originKind) => {
             const owner = await createAccount(`pending-action-origin-${originKind}`);
             const session = await createSession(owner.id);
@@ -519,14 +947,14 @@ describe("pendingMessageService (shared sessions)", () => {
                 sessionId: session.id,
                 localId,
                 requestedAction: { v: 1, kind: "send_now" },
-            })).resolves.toEqual({ ok: false, error: "action-conflict" });
+            })).resolves.toMatchObject({ ok: true, didUpdate: true });
             await expect(db.sessionPendingMessage.findUniqueOrThrow({
                 where: { sessionId_localId: { sessionId: session.id, localId } },
                 select: { requestedAction: true, deliveryState: true, deliveryBlockedReason: true },
             })).resolves.toEqual({
-                requestedAction: { v: 1, kind: originKind },
-                deliveryState: "blocked",
-                deliveryBlockedReason: "steering_unavailable",
+                requestedAction: { v: 1, kind: "send_now" },
+                deliveryState: null,
+                deliveryBlockedReason: null,
             });
         },
     );
@@ -577,6 +1005,45 @@ describe("pendingMessageService (shared sessions)", () => {
         }
     });
 
+    it.each([
+        ["delivering", { deliveryState: "delivering", deliveryBlockedReason: null }],
+        ["external handoff", { deliveryState: "external_handoff", deliveryBlockedReason: null }],
+        ["ambiguous terminal delivery", { deliveryState: "blocked", deliveryBlockedReason: "ambiguous_terminal_delivery" }],
+        ["uncertain delivery", { deliveryState: "blocked", deliveryBlockedReason: "delivery_outcome_uncertain" }],
+        ["unknown delivery", { deliveryState: "blocked", deliveryBlockedReason: "unknown" }],
+    ] as const)("keeps a provider-effect-possible %s row unchanged when an ordinary edit is attempted", async (_label, delivery) => {
+        const owner = await createAccount(`pending-edit-fence-${_label}`);
+        const session = await createSession(owner.id);
+        const localId = `pending-edit-fence-${randomUUID()}`;
+        const originalContent = { t: "encrypted" as const, c: `cipher-original-${localId}` };
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            content: originalContent,
+        });
+        await db.sessionPendingMessage.update({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            data: delivery,
+        });
+        const before = await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { content: true, status: true, deliveryState: true, deliveryBlockedReason: true },
+        });
+
+        await expect(updatePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: `cipher-mutated-${localId}`,
+        })).resolves.toEqual({ ok: false, error: "delivery-settlement-conflict" });
+
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { content: true, status: true, deliveryState: true, deliveryBlockedReason: true },
+        })).resolves.toEqual(before);
+    });
+
     it("atomically fences external handoff rows from the ordinary materializer and retains them", async () => {
         const owner = await createAccount("external-handoff-owner");
         const session = await createSession(owner.id);
@@ -601,14 +1068,14 @@ describe("pendingMessageService (shared sessions)", () => {
             select: { status: true, deliveryState: true },
         })).resolves.toEqual({ status: "queued", deliveryState: "external_handoff" });
         await expect(deletePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId }))
-            .resolves.toMatchObject({ ok: true });
+            .resolves.toEqual({ ok: false, error: "delivery-settlement-conflict" });
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
         await expect(updatePendingMessage({
             actorUserId: owner.id,
             sessionId: session.id,
             localId,
             ciphertext: "mutated-external-handoff",
-        })).resolves.toEqual({ ok: false, error: "not-found" });
+        })).resolves.toEqual({ ok: false, error: "delivery-settlement-conflict" });
         await expect(markPendingDeliveryHandled({ actorUserId: owner.id, sessionId: session.id, localId }))
             .resolves.toMatchObject({ ok: true, didResolve: true, pendingCount: 0 });
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
@@ -827,6 +1294,273 @@ describe("pendingMessageService (shared sessions)", () => {
             .resolves.toEqual({ ok: false, error: "invalid-params" });
         await expect(enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, ciphertext: "cipher-terminal", messageRole: "agent" }))
             .resolves.toEqual({ ok: false, error: "invalid-params" });
+    });
+
+    it("stores the client PATCH structured-input envelope when a pending attachment edit removes one selection", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        const owner = await createAccount("pending-structured-edit-owner");
+        const session = await createSession(owner.id);
+        const localId = `pending-structured-edit-${randomUUID()}`;
+        const removedAttachment = {
+            v: 1,
+            instanceId: "issue-42",
+            attachment: { pluginId: "acme.issues", localId: "issue" },
+            key: "42",
+            value: { issueId: 42 },
+            presentation: { label: "Issue #42", typeLabel: "Issue" },
+        };
+        const retainedAttachment = {
+            v: 1,
+            instanceId: "issue-43",
+            attachment: { pluginId: "acme.issues", localId: "issue" },
+            key: "43",
+            value: { issueId: 43 },
+            presentation: { label: "Issue #43", typeLabel: "Issue" },
+        };
+        const originalContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "old text" },
+                meta: {
+                    otherMetadata: "preserved",
+                    happierStructuredInputV1: {
+                        v: 1,
+                        composerAttachments: [removedAttachment, retainedAttachment],
+                    },
+                },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+        const editedContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "edited text" },
+                meta: {
+                    otherMetadata: "preserved",
+                    happierStructuredInputV1: {
+                        v: 1,
+                        composerAttachments: [retainedAttachment],
+                    },
+                },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        await expect(enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            content: originalContent,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true });
+
+        await expect(updatePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            content: editedContent,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true });
+
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { content: true, messageRole: true },
+        })).resolves.toEqual({
+            content: editedContent,
+            messageRole: "user",
+        });
+    });
+
+    it("atomically rotates a queued pending localId while preserving its row and queue position", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        const owner = await createAccount("pending-local-id-rotation-owner");
+        const session = await createSession(owner.id);
+        const localId = `pending-local-id-rotation-${randomUUID()}`;
+        const replacementLocalId = `pending-local-id-replacement-${randomUUID()}`;
+        const replacementMutationFingerprint = "A".repeat(43);
+        const originalContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "old text" },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+        const editedContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "prepared text" },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        await expect(enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            content: originalContent,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true });
+        const before = await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { id: true, position: true },
+        });
+
+        const result = await updatePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            replacementLocalId,
+            replacementMutationFingerprint,
+            content: editedContent,
+            messageRole: "user",
+        } as Parameters<typeof updatePendingMessage>[0] & {
+            replacementLocalId: string;
+            replacementMutationFingerprint: string;
+        });
+
+        expect(result).toMatchObject({ ok: true, localId: replacementLocalId });
+        await expect(db.sessionPendingMessage.findUnique({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { id: true },
+        })).resolves.toBeNull();
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: replacementLocalId } },
+            select: {
+                id: true,
+                position: true,
+                content: true,
+                messageRole: true,
+                predecessorLocalId: true,
+                replacementMutationFingerprint: true,
+            },
+        })).resolves.toEqual({
+            id: before.id,
+            position: before.position,
+            content: editedContent,
+            messageRole: "user",
+            predecessorLocalId: localId,
+            replacementMutationFingerprint,
+        });
+    });
+
+    it("rejoins only the exact response-lost same-row localId rotation", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        const owner = await createAccount("pending-local-id-rejoin-owner");
+        const session = await createSession(owner.id);
+        const predecessorLocalId = `pending-local-id-predecessor-${randomUUID()}`;
+        const successorLocalId = `pending-local-id-successor-${randomUUID()}`;
+        const fingerprint = "A".repeat(43);
+        const differentFingerprint = "B".repeat(43);
+        const content = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "prepared text" },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        await expect(enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: predecessorLocalId,
+            content,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true });
+
+        const rotate = {
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: predecessorLocalId,
+            replacementLocalId: successorLocalId,
+            replacementMutationFingerprint: fingerprint,
+            content,
+            messageRole: "user",
+        } as Parameters<typeof updatePendingMessage>[0] & {
+            replacementLocalId: string;
+            replacementMutationFingerprint: string;
+        };
+        await expect(updatePendingMessage(rotate)).resolves.toMatchObject({ ok: true, localId: successorLocalId });
+
+        await expect(updatePendingMessage(rotate)).resolves.toMatchObject({ ok: true, localId: successorLocalId });
+        await expect(updatePendingMessage({
+            ...rotate,
+            replacementMutationFingerprint: differentFingerprint,
+        })).resolves.toEqual({ ok: false, error: "pending-mutation-conflict" });
+        await expect(db.sessionPendingMessage.findMany({
+            where: { sessionId: session.id },
+            select: { localId: true, content: true },
+        })).resolves.toEqual([{ localId: successorLocalId, content }]);
+    });
+
+    it("does not let an old response-loss proof rejoin after the successor has changed", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
+        const owner = await createAccount("pending-local-id-stale-rejoin-owner");
+        const session = await createSession(owner.id);
+        const predecessorLocalId = `pending-local-id-stale-predecessor-${randomUUID()}`;
+        const successorLocalId = `pending-local-id-stale-successor-${randomUUID()}`;
+        const fingerprint = "A".repeat(43);
+        const preparedContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "prepared text" },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+        const laterContent = {
+            t: "plain",
+            v: {
+                role: "user",
+                content: { type: "text", text: "later edit" },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        await expect(enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: predecessorLocalId,
+            content: preparedContent,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true });
+
+        const rotate = {
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: predecessorLocalId,
+            replacementLocalId: successorLocalId,
+            replacementMutationFingerprint: fingerprint,
+            content: preparedContent,
+            messageRole: "user",
+        } as Parameters<typeof updatePendingMessage>[0] & {
+            replacementLocalId: string;
+            replacementMutationFingerprint: string;
+        };
+        await expect(updatePendingMessage(rotate)).resolves.toMatchObject({ ok: true, localId: successorLocalId });
+
+        await expect(updatePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: successorLocalId,
+            content: laterContent,
+            messageRole: "user",
+        })).resolves.toMatchObject({ ok: true, localId: successorLocalId });
+
+        await expect(updatePendingMessage(rotate)).resolves.toEqual({ ok: false, error: "pending-mutation-conflict" });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: successorLocalId } },
+            select: {
+                content: true,
+                predecessorLocalId: true,
+                replacementMutationFingerprint: true,
+            },
+        })).resolves.toEqual({
+            content: laterContent,
+            predecessorLocalId: null,
+            replacementMutationFingerprint: null,
+        });
     });
 
     it("allows shared edit participants to edit/reorder/discard/restore pending (queue is session-global)", async () => {
@@ -2123,6 +2857,14 @@ describe("pendingMessageService (shared sessions)", () => {
                 requestedAction: { v: 1, kind: "enqueue" },
             }),
         ]));
+        await expect(listPendingMessages({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            includeDiscarded: true,
+        })).resolves.toMatchObject({
+            ok: true,
+            pending: [expect.objectContaining({ localId: newLocalId, status: "queued" })],
+        });
         await expect(restorePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId }))
             .resolves.toEqual({ ok: false, error: "delivery-settlement-conflict" });
 

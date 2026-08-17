@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fastify from 'fastify';
+import { ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER } from '@happier-dev/protocol';
 
 import {
   API_CORS_ALLOWED_HEADERS,
@@ -40,10 +41,12 @@ describe('resolveApiCorsMaxAgeSeconds', () => {
 });
 
 describe('API_CORS_ALLOWED_HEADERS', () => {
-  it('allows the opt-in session-list timing diagnostic request header for browser profiling', () => {
+  it('allows canonical browser request headers, including account stored-content compatibility', () => {
     expect(API_CORS_ALLOWED_HEADERS).toEqual(expect.arrayContaining([
       'authorization',
       'content-type',
+      ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
+      'idempotency-key',
       'x-happier-session-list-timing',
     ]));
   });
@@ -58,7 +61,7 @@ describe('API_CORS_EXPOSED_HEADERS', () => {
 });
 
 describe('createApiCorsOptions', () => {
-  it('lets browser profiling preflight the timing header and read Server-Timing', async () => {
+  it('lets browser clients preflight canonical request headers and read Server-Timing', async () => {
     const app = fastify();
     app.register(import('@fastify/cors'), createApiCorsOptions({}));
     app.get('/probe', async (_request, reply) => {
@@ -72,7 +75,13 @@ describe('createApiCorsOptions', () => {
       headers: {
         origin: 'http://example.test',
         'access-control-request-method': 'GET',
-        'access-control-request-headers': 'x-happier-session-list-timing',
+        'access-control-request-headers': [
+          'authorization',
+          'content-type',
+          ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
+          'idempotency-key',
+          'x-happier-session-list-timing',
+        ].join(','),
       },
     });
     const response = await app.inject({
@@ -83,6 +92,12 @@ describe('createApiCorsOptions', () => {
     await app.close();
 
     expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe('*');
+    expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(preflight.headers['access-control-allow-headers']).toContain(
+      ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
+    );
+    expect(preflight.headers['access-control-allow-headers']).toContain('idempotency-key');
     expect(preflight.headers['access-control-allow-headers']).toContain('x-happier-session-list-timing');
     expect(response.headers['server-timing']).toBe('happier_v2_sessions_total;dur=1.000');
     expect(response.headers['access-control-expose-headers']).toContain('server-timing');

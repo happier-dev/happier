@@ -34,6 +34,7 @@ function registerConnectedServiceRefreshLeaseRoute(
           ownerId: z.string(),
           credentialRevision: z.string(),
         }),
+        400: z.object({ error: z.literal("connect_credential_invalid") }),
         404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
       },
     },
@@ -62,6 +63,9 @@ function registerConnectedServiceRefreshLeaseRoute(
     });
     if (result.status === "not_found") {
       return reply.code(404).send({ error: "connect_credential_not_found" });
+    }
+    if (result.status === "revision_required") {
+      return reply.code(400).send({ error: "connect_credential_invalid" });
     }
     return reply.send({
       acquired: result.acquired,

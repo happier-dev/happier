@@ -1,7 +1,12 @@
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter } from "@/app/events/eventRouter";
 
-import type { AutomationListItem, AutomationRunItem, AutomationRunWithAutomation } from "./automationTypes";
+import type {
+    AutomationListItem,
+    AutomationRunItem,
+    AutomationRunState,
+    AutomationRunWithAutomation,
+} from "./automationTypes";
 
 export function emitAutomationUpsert(params: {
     accountId: string;
@@ -68,11 +73,70 @@ export function emitAutomationRunUpdated(params: {
                 finishedAt: params.run.finishedAt ? params.run.finishedAt.getTime() : null,
                 updatedAt: params.run.updatedAt.getTime(),
                 machineId: params.run.claimedByMachineId,
+                attempt: params.run.attempt,
             },
             createdAt: Date.now(),
         },
         recipientFilter: { type: "user-scoped-only" },
     });
+}
+
+/**
+ * Publishes the two post-commit views of one persisted Run transition. The
+ * existing update remains the worker/UI invalidation path; the separate
+ * lifecycle carrier is daemon-only and observational.
+ */
+export function emitAutomationRunTransition(params: {
+    accountId: string;
+    run: AutomationRunItem | AutomationRunWithAutomation;
+    previousState: AutomationRunState | null;
+    cursor: number;
+}): void {
+    let legacyFailed = false;
+    let legacyError: unknown;
+    try {
+        emitAutomationRunUpdated(params);
+    } catch (error) {
+        legacyFailed = true;
+        legacyError = error;
+    }
+    // Some post-settlement updates retain canonical Run metadata without
+    // changing its lifecycle state. Keep their incumbent invalidation, but do
+    // not manufacture a public lifecycle edge from identical states.
+    if (params.previousState === params.run.state) {
+        if (legacyFailed) throw legacyError;
+        return;
+    }
+    // New Runs are born queued. A null predecessor is never a valid later
+    // transition, and this lossy observer must not manufacture that history.
+    if (params.previousState === null && params.run.state !== "queued") {
+        if (legacyFailed) throw legacyError;
+        return;
+    }
+    try {
+        eventRouter.emitUpdate({
+            userId: params.accountId,
+            payload: {
+                id: randomKeyNaked(12),
+                seq: params.cursor,
+                body: {
+                    t: "automation-run-state-changed",
+                    runId: params.run.id,
+                    automationId: params.run.automationId,
+                    originKind: params.run.originKind,
+                    previousState: params.previousState,
+                    currentState: params.run.state,
+                    transitionedAt: params.run.updatedAt.getTime(),
+                    claimedByMachineId: params.run.claimedByMachineId,
+                },
+                createdAt: Date.now(),
+            },
+            recipientFilter: { type: "user-machine-scoped-only" },
+        });
+    } catch (error) {
+        if (!legacyFailed) throw error;
+    }
+    if (legacyFailed) throw legacyError;
 }
 
 export function emitAutomationRunUpdatedToMachineOnly(params: {
@@ -96,6 +160,7 @@ export function emitAutomationRunUpdatedToMachineOnly(params: {
                 finishedAt: params.run.finishedAt ? params.run.finishedAt.getTime() : null,
                 updatedAt: params.run.updatedAt.getTime(),
                 machineId: params.run.claimedByMachineId,
+                attempt: params.run.attempt,
                 targetMachineId: params.machineId,
             },
             createdAt: Date.now(),
@@ -127,5 +192,29 @@ export function emitAutomationAssignmentUpdated(params: {
             createdAt: Date.now(),
         },
         recipientFilter: { type: "machine-scoped-only", machineId: params.machineId },
+    });
+}
+
+/**
+ * Invalidate the built-in Automation projection after a committed source-status
+ * or watcher-catalog status write. The payload intentionally carries no source,
+ * provider, or definition facts; the authenticated Automation query remains the
+ * sole reader for those fields.
+ */
+export function emitAutomationSourceStatusUpdated(params: {
+    accountId: string;
+    cursor: number;
+}): void {
+    eventRouter.emitUpdate({
+        userId: params.accountId,
+        payload: {
+            id: randomKeyNaked(12),
+            seq: params.cursor,
+            body: {
+                t: "automation-source-status-updated",
+            },
+            createdAt: Date.now(),
+        },
+        recipientFilter: { type: "user-scoped-only" },
     });
 }

@@ -50,6 +50,7 @@ vi.mock("expo-server-sdk", () => {
 });
 
 const sessionUpdateMany = vi.hoisted(() => vi.fn(async () => ({ count: 1 })));
+const sessionMessageFindMany = vi.hoisted(() => vi.fn(async () => []));
 const markSessionInactive = vi.hoisted(() => vi.fn());
 const { db, reset: resetDbMocks } = createDbMocks({
     session: ["findMany", "findUnique", "update"],
@@ -139,10 +140,13 @@ installDbModuleMock(() => ({
 
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({
-            session: {
-                findUnique: sessionFindUnique,
-                updateMany: sessionUpdateMany,
-            },
+        session: {
+            findUnique: sessionFindUnique,
+            updateMany: sessionUpdateMany,
+        },
+        sessionMessage: {
+            findMany: sessionMessageFindMany,
+        },
     }));
 
     return { afterTx, inTx };
@@ -157,6 +161,7 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         markAccountChanged.mockClear();
         markSessionInactive.mockClear();
         sessionUpdateMany.mockClear();
+        sessionMessageFindMany.mockClear();
         resetDbMocks();
         sessionFindMany.mockResolvedValue([]);
         directSessionFindUnique.mockResolvedValue(null);
@@ -165,50 +170,58 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
     });
 
     it("sends a silent badge refresh push when a read-cursor change clears badge attention", async () => {
-        sessionFindUnique.mockClear();
-        sessionFindMany.mockResolvedValue([
-            {
-                accountId: "owner",
-                seq: 7,
-                pendingCount: 0,
-                lastViewedSessionSeq: 7,
-                pendingPermissionRequestCount: 0,
-                pendingUserActionRequestCount: 0,
-                active: true,
-                archivedAt: null,
-            },
-        ]);
-        accountPushTokenFindMany.mockResolvedValue([
-            { accountId: "owner", token: "ExponentPushToken[owner]" },
-        ]);
+        vi.useFakeTimers();
+        try {
+            sessionFindUnique.mockClear();
+            sessionFindMany.mockResolvedValue([
+                {
+                    accountId: "owner",
+                    seq: 7,
+                    pendingCount: 0,
+                    lastViewedSessionSeq: 7,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                },
+            ]);
+            accountPushTokenFindMany.mockResolvedValue([
+                { accountId: "owner", token: "ExponentPushToken[owner]" },
+            ]);
 
-        randomKeyNaked.mockReset().mockReturnValueOnce("upd-g").mockReturnValueOnce("upd-h");
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+            randomKeyNaked.mockReset().mockReturnValueOnce("upd-g").mockReturnValueOnce("upd-h");
+            const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = createFakeSocket();
-        sessionUpdateHandler(
-            "owner",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
-        );
+            const socket = createFakeSocket();
+            sessionUpdateHandler(
+                "owner",
+                socket as any,
+                { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+            );
 
-        const handler = getSocketHandler(socket, "update-read-cursor");
+            const handler = getSocketHandler(socket, "update-read-cursor");
 
-        const callback = vi.fn();
-        await handler({ sid: "s1", lastViewedSessionSeq: 9 }, callback);
+            const callback = vi.fn();
+            await handler({ sid: "s1", lastViewedSessionSeq: 9 }, callback);
 
-        const [chunk] = sendPushNotificationsAsyncSpy.mock.calls[0] ?? [];
-        expect(Array.isArray(chunk)).toBe(true);
-        expect(chunk).toEqual([
-            expect.objectContaining({
-                to: "ExponentPushToken[owner]",
-                badge: 0,
-                data: { type: "badge_refresh" },
-            }),
-        ]);
+            expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(25);
+
+            const [chunk] = sendPushNotificationsAsyncSpy.mock.calls[0] ?? [];
+            expect(Array.isArray(chunk)).toBe(true);
+            expect(chunk).toEqual([
+                expect.objectContaining({
+                    to: "ExponentPushToken[owner]",
+                    badge: 0,
+                    data: { type: "badge_refresh" },
+                }),
+            ]);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
-    it("marks session metadata updates for all participants and emits updates using those cursors", async () => {
+    it("marks session metadata updates for all participants but emits legacy raw metadata only to the owner", async () => {
         sessionFindUnique.mockClear();
         sessionUpdateMany.mockClear();
         randomKeyNaked.mockReset().mockReturnValueOnce("upd-a").mockReturnValueOnce("upd-b");
@@ -240,9 +253,10 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u2", kind: "session", entityId: "s1" }));
 
         expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(1, "s1", 201, "upd-a", { value: "m2", version: 2 }, undefined, undefined);
-        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(2, "s1", 202, "upd-b", { value: "m2", version: 2 }, undefined, undefined);
 
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner" }));
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, metadata: "m2" });
     });
 
@@ -282,7 +296,7 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         }));
     });
 
-    it("marks released layout-zero agentState updates and preserves legacy participant publication", async () => {
+    it("marks released layout-zero agentState updates but emits raw Agent state only to the owner", async () => {
         sessionFindUnique.mockClear();
         emitUpdate.mockClear();
         buildUpdateSessionUpdate.mockClear();
@@ -334,12 +348,10 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
             pendingPermissionRequestCount: 2,
             pendingUserActionRequestCount: 1,
         }));
-        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(2, "s1", 202, "upd-d", undefined, { value: "a2", version: 2 }, expect.objectContaining({
-            pendingPermissionRequestCount: 2,
-            pendingUserActionRequestCount: 1,
-        }));
 
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner" }));
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, agentState: "a2" });
     });
 

@@ -3,6 +3,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyLightDefaultEnv, resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
 import {
+    hasSessionSystemRecordContractMigration,
+    runSessionSystemRecordFinalContractBackfill,
+} from "../sources/app/session/systemRecords/sessionSystemRecordBackfillExecution";
+import {
+    runSessionSystemRecordMigrationDeployment,
+} from "../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment";
+import {
     resolveSqliteDatabaseFilePath,
     resolveSqliteMigrationBusyTimeoutMs,
     resolveSqliteMigrationsDir,
@@ -60,11 +67,29 @@ export async function runSqliteMigrationDeploy(
         String(env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? env.HAPPY_SQLITE_MIGRATIONS_DIR ?? "").trim()
         || join(serverRoot, "prisma", "sqlite", "migrations");
 
-    return await applySqliteMigrations({
-        databasePath,
-        busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
-        migrationsDir: resolveSqliteMigrationsDir(env, dataDir),
+    const migrationsDir = resolveSqliteMigrationsDir(env, dataDir);
+    const result = await runSessionSystemRecordMigrationDeployment({
+        migrationsDir,
+        isContractApplied: async () => await hasSessionSystemRecordContractMigration({
+            provider: "sqlite",
+            databaseUrl,
+        }),
+        deploy: async (stage) => await applySqliteMigrations({
+            databasePath,
+            busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
+            migrationsDir: stage.migrationsDir,
+        }),
+        runFinalContractBackfill: async () => {
+            await runSessionSystemRecordFinalContractBackfill({ provider: "sqlite", databaseUrl });
+        },
     });
+    return {
+        applied: [
+            ...(result.expand?.applied ?? []),
+            ...(result.contract?.applied ?? []),
+            ...result.final.applied,
+        ],
+    };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

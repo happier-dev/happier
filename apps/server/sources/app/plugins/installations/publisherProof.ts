@@ -31,6 +31,16 @@ export type VerifiedPluginInstallationPublisher = Readonly<{
     installationId: string;
 }>;
 
+/**
+ * Authority established from the signed publisher header before a route
+ * allocates or parses its body. The expected body hash stays coupled to that
+ * exact verified header until the route binds the parsed body.
+ */
+export type VerifiedPluginInstallationPublisherPreBody = Readonly<{
+    publisher: VerifiedPluginInstallationPublisher;
+    expectedBodySha256Base64Url: string;
+}>;
+
 export function readPluginInstallationPublisherHeaderValue(
     headers: Record<string, string | string[] | undefined> | undefined,
 ): string | null {
@@ -89,16 +99,15 @@ function assertPublisherProofFresh(proof: PluginInstallationManifestPublisherHea
     }
 }
 
-export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
+export async function verifyPluginInstallationPublisherHeaderBeforeBody(params: Readonly<{
     accountId: string;
     request: Readonly<{
         method?: string;
         headers?: Record<string, string | string[] | undefined>;
-        body?: unknown;
     }>;
     path: string;
     required?: boolean;
-}>): Promise<VerifiedPluginInstallationPublisher | null> {
+}>): Promise<VerifiedPluginInstallationPublisherPreBody | null> {
     const header = readPluginInstallationPublisherHeader(params.request.headers);
     if (!header) {
         if (params.required) {
@@ -115,12 +124,6 @@ export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
         throw new PluginInstallationPublisherProofError(
             "invalid",
             "Plugin installation publisher proof request binding is invalid",
-        );
-    }
-    if (proof.bodySha256Base64Url !== createPublisherBodyHash(params.request.body ?? null)) {
-        throw new PluginInstallationPublisherProofError(
-            "invalid",
-            "Plugin installation publisher proof body binding is invalid",
         );
     }
     const machine = await db.machine.findFirst({
@@ -182,7 +185,53 @@ export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
         );
     }
     return {
-        machineId: proof.machineId,
-        installationId: proof.installationId,
+        publisher: {
+            machineId: proof.machineId,
+            installationId: proof.installationId,
+        },
+        expectedBodySha256Base64Url: proof.bodySha256Base64Url,
     };
+}
+
+/**
+ * Binds one already-authorized publisher header to the canonical parsed body.
+ * It intentionally performs no second authority decision: callers that need
+ * pre-body admission carry the prepared proof from their onRequest hook.
+ */
+export function verifyPluginInstallationPublisherBodyBinding(params: Readonly<{
+    proof: VerifiedPluginInstallationPublisherPreBody;
+    body?: unknown;
+}>): VerifiedPluginInstallationPublisher {
+    if (
+        params.proof.expectedBodySha256Base64Url
+        !== createPublisherBodyHash(params.body ?? null)
+    ) {
+        throw new PluginInstallationPublisherProofError(
+            "invalid",
+            "Plugin installation publisher proof body binding is invalid",
+        );
+    }
+    return params.proof.publisher;
+}
+
+/**
+ * Legacy one-call consumers retain the same behavior while delegating both
+ * proof phases to the one canonical owner.
+ */
+export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
+    accountId: string;
+    request: Readonly<{
+        method?: string;
+        headers?: Record<string, string | string[] | undefined>;
+        body?: unknown;
+    }>;
+    path: string;
+    required?: boolean;
+}>): Promise<VerifiedPluginInstallationPublisher | null> {
+    const preBodyProof = await verifyPluginInstallationPublisherHeaderBeforeBody(params);
+    if (!preBodyProof) return null;
+    return verifyPluginInstallationPublisherBodyBinding({
+        proof: preBodyProof,
+        body: params.request.body,
+    });
 }

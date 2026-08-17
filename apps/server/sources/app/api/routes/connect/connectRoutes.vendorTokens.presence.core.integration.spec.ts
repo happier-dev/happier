@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -34,6 +35,16 @@ function createTestApp() {
     });
 
     return trackApp(typed);
+}
+
+async function createReadyE2eeAccount() {
+    return await db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
+        },
+        select: { id: true },
+    });
 }
 
 describe("connectRoutes (vendor tokens) presence-only reads (integration)", () => {
@@ -76,21 +87,23 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
 
     it("does not return decrypted tokens from GET endpoints", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u1" }, select: { id: true } });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai",
+                profileId: "default",
+                ...resolveLegacyServiceAccountTokenIdentityFields({
+                    serviceId: "openai",
+                    profileId: "default",
+                }),
+                token: Buffer.from("sk-test", "utf8"),
+                metadata: null,
+            },
+        });
 
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
-
-        const register = await app.inject({
-            method: "POST",
-            url: "/v1/connect/openai/register",
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
-            payload: { token: "sk-test" },
-        });
-        if (register.statusCode !== 200) {
-            throw new Error(`register failed: ${register.statusCode} ${register.body}`);
-        }
-        expect(register.statusCode).toBe(200);
 
         const getOne = await app.inject({
             method: "GET",
@@ -164,9 +177,9 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             },
             payload: { token: "must-not-replace-anthropic" },
         });
-        expect(legacyTupleWrite.statusCode).toBe(409);
+        expect(legacyTupleWrite.statusCode).toBe(400);
         expect(legacyTupleWrite.json()).toEqual({
-            error: "connect_credential_conflict",
+            error: "connect_credential_invalid",
         });
 
         const legacyTupleDelete = await app.inject({
@@ -174,16 +187,30 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             url: "/v1/connect/openai",
             headers: { "x-test-user-id": user.id },
         });
-        expect(legacyTupleDelete.statusCode).toBe(200);
+        expect(legacyTupleDelete.statusCode).toBe(400);
+        expect(legacyTupleDelete.json()).toEqual({
+            error: "connect_credential_invalid",
+        });
         expect(await db.serviceAccountToken.count({
             where: { accountId: user.id },
         })).toBe(1);
     });
 
-    it("writes the released v1 service/profile through the canonical qualified identity", async () => {
-        const user = await db.account.create({
-            data: { publicKey: "pk-vendor-tokens-qualified-identity" },
-            select: { id: true },
+    it("keeps an existing legacy row readable while refusing raw V1 overwrite and delete", async () => {
+        const user = await createReadyE2eeAccount();
+        const identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai",
+            profileId: "default",
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai",
+                profileId: "default",
+                ...identity,
+                token: Buffer.from("legacy-token-a", "utf8"),
+                metadata: null,
+            },
         });
         const app = createTestApp();
         connectRoutes(app as any);
@@ -198,11 +225,9 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             },
             payload: { token: "sk-test" },
         });
-        expect(register.statusCode).toBe(200);
-
-        const identity = resolveLegacyServiceAccountTokenIdentityFields({
-            serviceId: "openai",
-            profileId: "default",
+        expect(register.statusCode).toBe(400);
+        expect(register.json()).toEqual({
+            error: "connect_credential_invalid",
         });
         const row = await db.serviceAccountToken.findUniqueOrThrow({
             where: {
@@ -219,9 +244,23 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                 connectedAccountId: true,
                 qualifiedIdentityDigest: true,
                 authenticationModeId: true,
+                token: true,
             },
         });
-        expect(row).toEqual(identity);
+        expect(row).toMatchObject(identity);
+        expect(Buffer.from(row.token).toString("utf8")).toBe("legacy-token-a");
+        const legacyDelete = await app.inject({
+            method: "DELETE",
+            url: "/v1/connect/openai",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(legacyDelete.statusCode).toBe(400);
+        expect(legacyDelete.json()).toEqual({
+            error: "connect_credential_invalid",
+        });
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: user.id },
+        })).resolves.toBe(1);
         await expect(listQualifiedConnectedAccounts({
             accountId: user.id,
             service: {
@@ -265,10 +304,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
     });
 
     it("settles Claude v2/v3 credentials to the historical mode for each credential kind", async () => {
-        const oauthUser = await db.account.create({
-            data: { publicKey: "pk-claude-v2-oauth" },
-            select: { id: true },
-        });
+        const oauthUser = await createReadyE2eeAccount();
         const tokenUser = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -295,6 +331,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                     ciphertext: "Y2xhdWRlLW9hdXRo",
                 },
                 metadata: { kind: "oauth" },
+                expectedCredentialRevision: null,
             },
         });
         expect(oauthRegister.statusCode).toBe(200);
@@ -308,6 +345,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                 "x-test-user-id": tokenUser.id,
             },
             payload: {
+                expectedCredentialRevision: null,
                 content: {
                     t: "plain",
                     v: {
@@ -352,14 +390,8 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
     });
 
     it("preserves historical Gemini OAuth through v1/v2/v3 while marking its mode unsupported", async () => {
-        const v1User = await db.account.create({
-            data: { publicKey: "pk-gemini-old-oauth-v1" },
-            select: { id: true },
-        });
-        const v2User = await db.account.create({
-            data: { publicKey: "pk-gemini-old-oauth-v2" },
-            select: { id: true },
-        });
+        const v1User = await createReadyE2eeAccount();
+        const v2User = await createReadyE2eeAccount();
         const v3User = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -388,6 +420,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                     kind: "oauth",
                     providerEmail: "old-v1@example.com",
                 },
+                expectedCredentialRevision: null,
             },
         });
         expect(v1Write.statusCode).toBe(200);
@@ -428,6 +461,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                     kind: "oauth",
                     providerEmail: "old-v2@example.com",
                 },
+                expectedCredentialRevision: null,
             },
         });
         expect(v2Write.statusCode).toBe(200);
@@ -480,7 +514,10 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
                 "content-type": "application/json",
                 "x-test-user-id": v3User.id,
             },
-            payload: { content: { t: "plain", v: v3Record } },
+            payload: {
+                expectedCredentialRevision: null,
+                content: { t: "plain", v: v3Record },
+            },
         });
         expect(v3Write.statusCode).toBe(200);
         const v3CredentialRevision =
@@ -510,7 +547,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
     });
 
     it("rejects v1 vendor token registration when a v2 connected service credential already exists", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u2" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -523,6 +560,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "token", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
         expect(registerV2.statusCode).toBe(200);
@@ -533,8 +571,8 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: { token: "legacy-token" },
         });
-        expect(legacyRegister.statusCode).toBe(409);
-        expect(legacyRegister.json()).toEqual({ error: "connect_credential_conflict" });
+        expect(legacyRegister.statusCode).toBe(400);
+        expect(legacyRegister.json()).toEqual({ error: "connect_credential_invalid" });
 
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "anthropic", profileId: "default" } },
@@ -574,6 +612,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             url: "/v3/connect/anthropic/profiles/default/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
+                expectedCredentialRevision: null,
                 content: {
                     t: "plain",
                     v: {
@@ -621,8 +660,8 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: { token: "legacy-token" },
         });
-        expect(legacyRegister.statusCode).toBe(409);
-        expect(legacyRegister.json()).toEqual({ error: "connect_credential_conflict" });
+        expect(legacyRegister.statusCode).toBe(400);
+        expect(legacyRegister.json()).toEqual({ error: "connect_credential_invalid" });
         const after = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "anthropic", profileId: "default" } },
             select: {
@@ -639,7 +678,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
         expect(after).toEqual(before);
     });
 
-    it("treats v1 vendor token deletion as idempotent when the token is already missing", async () => {
+    it("refuses raw V1 vendor token deletion when the token is missing", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u-missing" }, select: { id: true } });
 
         const app = createTestApp();
@@ -652,8 +691,8 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             headers: { "x-test-user-id": user.id },
         });
 
-        expect(legacyDelete.statusCode).toBe(200);
-        expect(legacyDelete.json()).toEqual({ success: true });
+        expect(legacyDelete.statusCode).toBe(400);
+        expect(legacyDelete.json()).toEqual({ error: "connect_credential_invalid" });
 
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai", profileId: "default" } },
@@ -662,7 +701,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
     });
 
     it("rejects v1 vendor token deletion when a v2 connected service credential already exists", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u3" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -675,6 +714,7 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "token", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
         expect(registerV2.statusCode).toBe(200);
@@ -684,8 +724,8 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             url: "/v1/connect/anthropic",
             headers: { "x-test-user-id": user.id },
         });
-        expect(legacyDelete.statusCode).toBe(409);
-        expect(legacyDelete.json()).toEqual({ error: "connect_credential_conflict" });
+        expect(legacyDelete.statusCode).toBe(400);
+        expect(legacyDelete.json()).toEqual({ error: "connect_credential_invalid" });
 
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "anthropic", profileId: "default" } },

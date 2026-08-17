@@ -22,7 +22,13 @@ import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
     projectSessionMetadataForRecipient,
+    readSessionMetadataOwnerAccountMode,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
 
 export function registerPublicShareOwnerRoutes(app: Fastify): void {
     /**
@@ -49,6 +55,9 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
         const userId = request.userId;
         const { sessionId } = request.params;
         const { token, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = request.body;
+        const supportsCurrentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         // Only owner can create public shares
         if (!await isSessionOwner(userId, sessionId)) {
@@ -59,7 +68,6 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
                 select: {
-                    accountId: true,
                     encryptionMode: true,
                     metadata: true,
                     metadataVersion: true,
@@ -73,6 +81,13 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             if (!session) {
                 return { type: 'error' as const, error: 'session not found' as const };
             }
+            if (
+                session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                && !supportsCurrentProtocol
+            ) {
+                return { type: "client-upgrade-required" as const };
+            }
             if (!isSessionTranscriptShareable(session)) {
                 return {
                     type: 'publication-error' as const,
@@ -81,9 +96,20 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 };
             }
             try {
+                const ownerAccountMode = session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                    ? await readSessionMetadataOwnerAccountMode(
+                        tx,
+                        session.accountId,
+                    )
+                    : undefined;
                 projectSessionMetadataForRecipient({
                     session,
-                    recipientAccountId: null,
+                    recipient: {
+                        type: "shared",
+                        accountId: null,
+                        ownerAccountMode,
+                    },
                 });
             } catch (error) {
                 if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -179,6 +205,13 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
 
         if (result.type === 'publication-error') {
             return reply.code(409).send({ error: result.error, code: result.code });
+        }
+        if (result.type === "client-upgrade-required") {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            );
+            return;
         }
         if (result.type === "privacy-error") {
             return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());

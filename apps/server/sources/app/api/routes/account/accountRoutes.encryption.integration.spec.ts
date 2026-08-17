@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import * as privacyKit from "privacy-kit";
-import tweetnacl from "tweetnacl";
+import {
+    computeAccountEncryptionMigrateKeyFingerprintV1,
+} from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -8,29 +9,18 @@ import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { registerConnectedServiceCredentialRoutesV2 } from "../connect/connectedServicesV2/registerConnectedServiceCredentialRoutesV2";
 import { registerConnectedServiceCredentialRoutesV3 } from "../connect/connectedServicesV3/registerConnectedServiceCredentialRoutesV3";
 import { registerAutomationCrudRoutes } from "../automations/registerAutomationCrudRoutes";
+import {
+    createUsageSnapshot,
+} from "../connect/providerAccountUsageTestkit";
+import {
+    writeProviderAccountUsageRecord,
+} from "../connect/providerAccountUsage/recordStorage";
 import { accountRoutes } from "./accountRoutes";
-
-function createSignedAccountContentBinding(): Readonly<{
-    publicKey: string;
-    contentPublicKey: Uint8Array<ArrayBuffer>;
-    contentPublicKeySig: Uint8Array<ArrayBuffer>;
-}> {
-    const signing = tweetnacl.sign.keyPair();
-    const content = tweetnacl.box.keyPair();
-    const payload = Buffer.concat([
-        Buffer.from("Happy content key v1\u0000", "utf8"),
-        Buffer.from(content.publicKey),
-    ]);
-    return {
-        publicKey: privacyKit.encodeHex(
-            new Uint8Array(signing.publicKey),
-        ),
-        contentPublicKey: new Uint8Array(content.publicKey),
-        contentPublicKeySig: new Uint8Array(
-            tweetnacl.sign.detached(payload, signing.secretKey),
-        ),
-    };
-}
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import {
+    PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX,
+    PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX,
+} from "@/app/kv/accountScopedKv";
 
 function deferred(): Readonly<{ promise: Promise<void>; resolve: () => void }> {
     let resolve!: () => void;
@@ -139,6 +129,50 @@ function installAccountModeReadBarrier(accountId: string): Readonly<{
     };
 }
 
+function installReviewCommentInventoryFailure(): Readonly<{
+    restore: () => void;
+}> {
+    // Test-only fault injection wraps the genuine Prisma boundary; production logic remains real.
+    const mutableDb = db as any;
+    const originalTransaction = mutableDb.$transaction;
+
+    mutableDb.$transaction = async (operation: unknown, options: unknown) => {
+        if (typeof operation !== "function") {
+            return await originalTransaction.call(mutableDb, operation, options);
+        }
+        return await originalTransaction.call(mutableDb, async (tx: any) => {
+            const originalQueryRaw = tx.$queryRaw.bind(tx);
+            const wrappedTx = new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property === "$queryRaw") {
+                        return async (query: unknown) => {
+                            const sql = (
+                                query as {
+                                    strings?: readonly string[];
+                                }
+                            ).strings?.join(" ") ?? "";
+                            if (sql.includes("FROM review_comments")) {
+                                throw new Error(
+                                    "review-comment-storage-unavailable",
+                                );
+                            }
+                            return await originalQueryRaw(query);
+                        };
+                    }
+                    return Reflect.get(target, property, receiver);
+                },
+            });
+            return await operation(wrappedTx);
+        }, options);
+    };
+
+    return {
+        restore: () => {
+            mutableDb.$transaction = originalTransaction;
+        },
+    };
+}
+
 describe("accountRoutes (encryption mode integration)", () => {
     let harness: LightSqliteHarness;
 
@@ -162,6 +196,25 @@ describe("accountRoutes (encryption mode integration)", () => {
     afterEach(async () => {
         harness.resetEnv();
         await harness.resetDbTables([
+            () => db.pluginWebhookDelivery.deleteMany(),
+            () => db.pluginWebhookEndpointOperation.deleteMany(),
+            () => db.pluginWebhookEndpoint.deleteMany(),
+            () => db.pluginWebhookCredential.deleteMany(),
+            () => db.pluginWebhookRoute.deleteMany(),
+            () => db.accountPetAsset.deleteMany(),
+            () => db.accountPetPackage.deleteMany(),
+            () => db.reviewCommentEvent.deleteMany(),
+            () => db.reviewComment.deleteMany(),
+            () => db.sessionOrganizationFolder.deleteMany(),
+            () => db.artifact.deleteMany(),
+            () => db.pluginCollectionRow.deleteMany({
+                where: { pluginId: "acme.patch-transition-blocker" },
+            }),
+            () => db.pluginCollectionContract.deleteMany({
+                where: { pluginId: "acme.patch-transition-blocker" },
+            }),
+            () => db.userKVStore.deleteMany(),
+            () => db.machine.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.serviceAccountToken.deleteMany(),
@@ -172,9 +225,10 @@ describe("accountRoutes (encryption mode integration)", () => {
     });
 
     it("GET /v1/account/encryption returns account encryption mode", async () => {
+        const binding = createSignedAccountContentBinding();
         const account = await db.account.create({
             data: {
-                publicKey: "pk-account-encryption-get",
+                ...binding,
                 encryptionMode: "e2ee",
                 encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
             },
@@ -196,6 +250,90 @@ describe("accountRoutes (encryption mode integration)", () => {
         );
     });
 
+    it("GET Account encryption endpoints reject inconsistent E2EE binding before disclosure", async () => {
+        const account = await db.account.create({
+            data: {
+                publicKey: null,
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                for (const url of [
+                    "/v1/account/encryption",
+                    "/v1/account/encryption/currentness",
+                ]) {
+                    const response = await app.inject({
+                        method: "GET",
+                        url,
+                        headers: {
+                            "x-test-user-id": account.id,
+                        },
+                    });
+
+                    expect(response.statusCode).toBe(400);
+                    expect(response.json()).toEqual({
+                        error: "migration-required",
+                    });
+                }
+            },
+        );
+    });
+
+    it("GET /v1/account/encryption/currentness returns the Account sequence and retained key fingerprints", async () => {
+        const binding = createSignedAccountContentBinding();
+        const account = await db.account.create({
+            data: {
+                publicKey: binding.publicKey,
+                contentPublicKey: binding.contentPublicKey,
+                contentPublicKeySig:
+                    binding.contentPublicKeySig,
+                encryptionMode: "plain",
+                encryptionModeUpdatedAt:
+                    new Date("2026-02-17T10:00:00.000Z"),
+                seq: 7,
+            },
+            select: { id: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v1/account/encryption/currentness",
+                    headers: {
+                        "x-test-user-id": account.id,
+                    },
+                });
+
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({
+                    mode: "plain",
+                    version: 7,
+                    signingKeyFingerprint:
+                        computeAccountEncryptionMigrateKeyFingerprintV1(
+                            new Uint8Array(
+                                Buffer.from(
+                                    binding.publicKey,
+                                    "hex",
+                                ),
+                            ),
+                        ),
+                    contentKeyFingerprint:
+                        computeAccountEncryptionMigrateKeyFingerprintV1(
+                            binding.contentPublicKey,
+                        ),
+                    updatedAt: 1771322400000,
+                });
+            },
+        );
+    });
+
     it("PATCH /v1/account/encryption returns 404 when account opt-out is disabled", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -203,7 +341,10 @@ describe("accountRoutes (encryption mode integration)", () => {
         });
 
         const account = await db.account.create({
-            data: { publicKey: "pk-account-encryption-optout-disabled", encryptionMode: "e2ee" },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
             select: { id: true },
         });
 
@@ -237,11 +378,11 @@ describe("accountRoutes (encryption mode integration)", () => {
 
         const account = await db.account.create({
             data: {
-                publicKey: "pk-account-encryption-update",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
             },
-            select: { id: true },
+            select: { id: true, seq: true },
         });
 
         await withAuthenticatedTestApp(
@@ -261,10 +402,84 @@ describe("accountRoutes (encryption mode integration)", () => {
 
         const stored = await db.account.findUnique({
             where: { id: account.id },
-            select: { encryptionMode: true, encryptionModeUpdatedAt: true },
+            select: {
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                seq: true,
+            },
         });
         expect(stored?.encryptionMode).toBe("plain");
         expect(stored?.encryptionModeUpdatedAt?.getTime()).toBeGreaterThan(1771322400000);
+        expect(stored?.seq).toBe(account.seq + 1);
+        await expect(db.accountChange.findUnique({
+            where: {
+                accountId_kind_entityId: {
+                    accountId: account.id,
+                    kind: "account",
+                    entityId: "self",
+                },
+            },
+            select: { cursor: true },
+        })).resolves.toEqual({ cursor: account.seq + 1 });
+    });
+
+    it("PATCH /v1/account/encryption clears orphaned source-mode usage through the Connected Services owner", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const snapshot = createUsageSnapshot({
+            fetchedAt: Date.now(),
+        });
+        await writeProviderAccountUsageRecord({
+            accountId: account.id,
+            recordId: snapshot.recordId,
+            recordKey: snapshot.recordKey,
+            payloadMode: "sealed_account_scoped_v1",
+            sealedPayload: {
+                format: "account_scoped_v1",
+                ciphertext: "sealed-orphan-usage",
+            },
+            status: "ok",
+            fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs,
+        });
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: { mode: "plain" },
+                });
+
+                expect(response.statusCode, response.body).toBe(200);
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { encryptionMode: true },
+        })).resolves.toEqual({ encryptionMode: "plain" });
+        await expect(db.providerAccountUsageRecord.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
     });
 
     it("PATCH /v1/account/encryption preserves the internal response for a missing account", async () => {
@@ -289,22 +504,17 @@ describe("accountRoutes (encryption mode integration)", () => {
         );
     });
 
-    it("PATCH /v1/account/encryption refuses e2ee when the stored content-key signature is invalid", async () => {
+    it("PATCH /v1/account/encryption refuses proofless e2ee before inspecting stored content-key material", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
         });
-        const signing = tweetnacl.sign.keyPair();
-        const content = tweetnacl.box.keyPair();
+        const binding = createSignedAccountContentBinding();
         const account = await db.account.create({
             data: {
-                publicKey: privacyKit.encodeHex(
-                    new Uint8Array(signing.publicKey),
-                ),
-                contentPublicKey:
-                    new Uint8Array(content.publicKey),
+                ...binding,
                 contentPublicKeySig: new Uint8Array(
-                    tweetnacl.sign.signatureLength,
+                    binding.contentPublicKeySig.byteLength,
                 ),
                 encryptionMode: "plain",
             },
@@ -326,7 +536,7 @@ describe("accountRoutes (encryption mode integration)", () => {
 
                 expect(response.statusCode).toBe(400);
                 expect(response.json()).toEqual({
-                    error: "invalid-params",
+                    error: "migration-required",
                 });
             },
         );
@@ -343,6 +553,59 @@ describe("accountRoutes (encryption mode integration)", () => {
         });
     });
 
+    it("PATCH /v1/account/encryption refuses plain-to-e2ee without a fresh possession proof", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+        const binding = createSignedAccountContentBinding();
+        const account = await db.account.create({
+            data: {
+                ...binding,
+                encryptionMode: "plain",
+            },
+            select: {
+                id: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: { mode: "e2ee" },
+                });
+
+                expect(response.statusCode).toBe(400);
+                expect(response.json()).toEqual({
+                    error: "migration-required",
+                });
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual({
+            encryptionMode: "plain",
+            encryptionModeUpdatedAt:
+                account.encryptionModeUpdatedAt,
+            updatedAt: account.updatedAt,
+        });
+    });
+
     it("PATCH /v1/account/encryption rejects mode flips that require migration", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -351,7 +614,7 @@ describe("accountRoutes (encryption mode integration)", () => {
 
         const account = await db.account.create({
             data: {
-                publicKey: "pk-account-encryption-migration-required",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
                 settings: "cipher",
@@ -382,6 +645,480 @@ describe("accountRoutes (encryption mode integration)", () => {
         expect(stored?.settings).toBe("cipher");
     });
 
+    it.each([
+        "machine",
+        "todo",
+        "artifact",
+    ] as const)("PATCH /v1/account/encryption refuses a non-empty %s inventory before Account mutation", async (domain) => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const encryptionModeUpdatedAt =
+            new Date("2026-02-17T10:00:00.000Z");
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+                encryptionModeUpdatedAt,
+            },
+            select: {
+                id: true,
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+            },
+        });
+        if (domain === "machine") {
+            await db.machine.create({
+                data: {
+                    id: "machine-account-encryption-migration-required",
+                    accountId: account.id,
+                    metadata: "machine-bytes-before",
+                    metadataVersion: 7,
+                    daemonState: "daemon-bytes-before",
+                    daemonStateVersion: 8,
+                    dataEncryptionKey: new Uint8Array([1, 2, 3]),
+                },
+            });
+        } else if (domain === "todo") {
+            await db.userKVStore.create({
+                data: {
+                    accountId: account.id,
+                    key: "todo.index",
+                    value: new Uint8Array([4, 5, 6]),
+                    version: 9,
+                },
+            });
+        } else {
+            await db.artifact.create({
+                data: {
+                    id: "00000000-0000-4000-8000-000000000007",
+                    accountId: account.id,
+                    header: new Uint8Array([7, 8]),
+                    headerVersion: 10,
+                    body: new Uint8Array([9, 10]),
+                    bodyVersion: 11,
+                    dataEncryptionKey: new Uint8Array([11, 12]),
+                },
+            });
+        }
+
+        const domainBefore =
+            domain === "machine"
+                ? await db.machine.findUniqueOrThrow({
+                    where: {
+                        id:
+                            "machine-account-encryption-migration-required",
+                    },
+                })
+                : domain === "todo"
+                    ? await db.userKVStore.findUniqueOrThrow({
+                        where: {
+                            accountId_key: {
+                                accountId: account.id,
+                                key: "todo.index",
+                            },
+                        },
+                    })
+                    : await db.artifact.findUniqueOrThrow({
+                        where: {
+                            id:
+                                "00000000-0000-4000-8000-000000000007",
+                        },
+                    });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: { mode: "plain" },
+                });
+
+                expect(response.statusCode).toBe(400);
+                expect(response.json()).toEqual({
+                    error: "migration-required",
+                });
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual({
+            encryptionMode: account.encryptionMode,
+            encryptionModeUpdatedAt: account.encryptionModeUpdatedAt,
+            updatedAt: account.updatedAt,
+        });
+        const domainAfter =
+            domain === "machine"
+                ? await db.machine.findUniqueOrThrow({
+                    where: {
+                        id:
+                            "machine-account-encryption-migration-required",
+                    },
+                })
+                : domain === "todo"
+                    ? await db.userKVStore.findUniqueOrThrow({
+                        where: {
+                            accountId_key: {
+                                accountId: account.id,
+                                key: "todo.index",
+                            },
+                        },
+                    })
+                    : await db.artifact.findUniqueOrThrow({
+                        where: {
+                            id:
+                                "00000000-0000-4000-8000-000000000007",
+                        },
+                    });
+        expect(domainAfter).toEqual(domainBefore);
+    });
+
+    it.each([
+        {
+            domain: "Plugin Account KV",
+            populate: async (accountId: string) => {
+                await db.userKVStore.create({
+                    data: {
+                        accountId,
+                        key:
+                            `${PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX}acme.patch-transition-blocker`,
+                        value: new TextEncoder().encode(
+                            "mode-bound-plugin-account-data",
+                        ),
+                    },
+                });
+            },
+        },
+        {
+            domain: "Plugin Collection",
+            populate: async (accountId: string) => {
+                const pluginId = "acme.patch-transition-blocker";
+                const collectionId = "private-items";
+                const contract = await db.pluginCollectionContract.create({
+                    data: {
+                        pluginId,
+                        collectionId,
+                        schemaVersion: 1,
+                        contractDigest: "a".repeat(43),
+                        normalizedSchema: {},
+                        indexes: [],
+                        relations: [],
+                        privacyProjection: {},
+                    },
+                    select: {
+                        id: true,
+                        contractDigest: true,
+                    },
+                });
+                await db.pluginCollectionRow.create({
+                    data: {
+                        accountId,
+                        pluginId,
+                        collectionId,
+                        rowId: "private-row",
+                        schemaVersion: 1,
+                        revision: 1,
+                        contractId: contract.id,
+                        contractDigest: contract.contractDigest,
+                        contentEnvelope: {
+                            t: "encrypted",
+                            c: "mode-bound-plugin-collection",
+                        },
+                    },
+                });
+            },
+        },
+        {
+            domain: "Plugin Declarative Settings",
+            populate: async (accountId: string) => {
+                await db.userKVStore.create({
+                    data: {
+                        accountId,
+                        key:
+                            `${PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX}acme.patch-transition-blocker`,
+                        value: new TextEncoder().encode(
+                            "mode-bound-plugin-declarative-settings",
+                        ),
+                    },
+                });
+            },
+        },
+        {
+            domain: "Account Settings History",
+            populate: async (accountId: string) => {
+                await db.accountSettingsSnapshot.create({
+                    data: {
+                        accountId,
+                        version: 1,
+                        settingsDbValue: "retained-settings-history",
+                        encryptionMode: "e2ee",
+                        contentKind: "encrypted",
+                    },
+                });
+            },
+        },
+        {
+            domain: "Review Comments",
+            populate: async (accountId: string) => {
+                await db.reviewComment.create({
+                    data: {
+                        id: "review-comment-patch-transition-blocker",
+                        accountId,
+                        projectId: "project-patch-transition-blocker",
+                        threadId: "thread-patch-transition-blocker",
+                        state: "open",
+                        flagsJson: "{}",
+                        anchorJson: JSON.stringify({
+                            kind: "file",
+                            filePath: "src/example.ts",
+                        }),
+                        anchorFilePath: "src/example.ts",
+                        snapshotEnvelopeJson: JSON.stringify({
+                            t: "encrypted",
+                            c: "snapshot-source",
+                        }),
+                        bodyEnvelopeJson: JSON.stringify({
+                            t: "encrypted",
+                            c: "body-source",
+                        }),
+                        bodyVersion: 1,
+                        authorJson: JSON.stringify({
+                            kind: "user",
+                            userId: "user-patch-transition-blocker",
+                        }),
+                        editsJson: "[]",
+                        dispositionsJson: "{}",
+                        transitionsJson: "[]",
+                        serverRevision: 1,
+                        createdAt: 1n,
+                        updatedAt: 1n,
+                    },
+                });
+            },
+        },
+        {
+            domain: "Session Organization",
+            populate: async (accountId: string) => {
+                await db.sessionOrganizationFolder.create({
+                    data: {
+                        id: "folder-patch-transition-blocker",
+                        accountId,
+                        folderKey: "folder-patch-transition-blocker",
+                        folderHash: "folder-patch-transition-blocker-hash",
+                        displayDbValue: JSON.stringify({
+                            t: "encrypted",
+                            c: "folder-source",
+                        }),
+                    },
+                });
+            },
+        },
+        {
+            domain: "Account Pets",
+            populate: async (accountId: string) => {
+                await db.accountPetPackage.create({
+                    data: {
+                        id: "pet-patch-transition-blocker",
+                        accountId,
+                        packageFormat: "codexAtlasV1",
+                        contentMode: "plain",
+                        manifest: { id: "pet-patch-transition-blocker" },
+                        digest: "sha256:pet-patch-transition-blocker",
+                        sizeBytes: 1,
+                        origin: { kind: "manualImport" },
+                    },
+                });
+            },
+        },
+        {
+            domain: "Plugin Webhooks",
+            populate: async (accountId: string) => {
+                const route = await db.pluginWebhookRoute.create({
+                    data: {
+                        id: "route-patch-transition-blocker",
+                        opaqueRouteId: "opaque-patch-transition-blocker",
+                        verifierKind: "github_hmac_sha256_v1",
+                        routingKind: "accountEndpoint",
+                    },
+                });
+                const endpoint = await db.pluginWebhookEndpoint.create({
+                    data: {
+                        id: "endpoint-patch-transition-blocker",
+                        accountId,
+                        routeId: route.id,
+                        routingKind: "accountEndpoint",
+                    },
+                });
+                await db.pluginWebhookDelivery.create({
+                    data: {
+                        id: "delivery-patch-transition-blocker",
+                        endpointId: endpoint.id,
+                        accountId,
+                        routeId: route.id,
+                        deliveryIdentityDigest:
+                            "a".repeat(64),
+                        verifierKind: "github_hmac_sha256_v1",
+                        targetMachineId: "machine-patch-transition-blocker",
+                        targetMachineInstallationId:
+                            "installation-patch-transition-blocker",
+                        targetMaterializationId:
+                            "materialization-patch-transition-blocker",
+                        targetPluginId: "acme.github",
+                        targetPluginVersion: "1.0.0",
+                        endpointRevision: endpoint.revision,
+                        endpointWebhookContributionId: "github-events",
+                        endpointHandlerActionId: "handle-webhook",
+                        endpointSourceInstanceId:
+                            "source-patch-transition-blocker",
+                        payloadKind: "plain",
+                        payload: { t: "plain", v: { marker: "payload-bearing" } },
+                        payloadBytes: 1n,
+                        wireVersion: 1,
+                        payloadVersion: 1,
+                        state: "dead_letter",
+                        nextAttemptAt: new Date("2026-08-10T00:00:00.000Z"),
+                        metadataDeleteAt:
+                            new Date("2026-11-10T00:00:00.000Z"),
+                        receivedAt: new Date("2026-08-10T00:00:00.000Z"),
+                    },
+                });
+            },
+        },
+    ])("PATCH /v1/account/encryption refuses non-empty $domain through the canonical transition owner", async ({
+        populate,
+    }) => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const encryptionModeUpdatedAt =
+            new Date("2026-02-17T10:00:00.000Z");
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+                encryptionModeUpdatedAt,
+            },
+            select: {
+                id: true,
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+                seq: true,
+            },
+        });
+        await populate(account.id);
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: { mode: "plain" },
+                });
+
+                expect(response.statusCode).toBe(400);
+                expect(response.json()).toEqual({
+                    error: "migration-required",
+                });
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+                seq: true,
+            },
+        })).resolves.toEqual({
+            encryptionMode: account.encryptionMode,
+            encryptionModeUpdatedAt: account.encryptionModeUpdatedAt,
+            updatedAt: account.updatedAt,
+            seq: account.seq,
+        });
+    });
+
+    it("PATCH /v1/account/encryption preserves an unexpected Review Comment storage failure", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: {
+                id: true,
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+                seq: true,
+            },
+        });
+        const failure = installReviewCommentInventoryFailure();
+
+        try {
+            await withAuthenticatedTestApp(
+                (app) => accountRoutes(app as any),
+                async (app) => {
+                    const response = await app.inject({
+                        method: "PATCH",
+                        url: "/v1/account/encryption",
+                        headers: {
+                            "content-type": "application/json",
+                            "x-test-user-id": account.id,
+                        },
+                        payload: { mode: "plain" },
+                    });
+
+                    expect(response.statusCode).toBe(500);
+                    expect(response.json()).toEqual({ error: "internal" });
+                },
+            );
+        } finally {
+            failure.restore();
+        }
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                encryptionMode: true,
+                encryptionModeUpdatedAt: true,
+                updatedAt: true,
+                seq: true,
+            },
+        })).resolves.toEqual({
+            encryptionMode: account.encryptionMode,
+            encryptionModeUpdatedAt: account.encryptionModeUpdatedAt,
+            updatedAt: account.updatedAt,
+            seq: account.seq,
+        });
+    });
+
     it("PATCH /v1/account/encryption refuses an archived owner-metadata Session with zero Account mutation", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -391,7 +1128,7 @@ describe("accountRoutes (encryption mode integration)", () => {
         const encryptionModeUpdatedAt = new Date("2026-02-17T10:00:00.000Z");
         const account = await db.account.create({
             data: {
-                publicKey: "pk-account-encryption-archived-owner-metadata",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 encryptionModeUpdatedAt,
             },
@@ -449,7 +1186,10 @@ describe("accountRoutes (encryption mode integration)", () => {
         });
 
         const account = await db.account.create({
-            data: { publicKey: "pk-account-encryption-race", encryptionMode: "e2ee" },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
             select: { id: true },
         });
 
@@ -518,7 +1258,7 @@ describe("accountRoutes (encryption mode integration)", () => {
         }
     });
 
-    it("serializes a plain automation create against a plain-to-e2ee mode PATCH", async () => {
+    it("keeps a concurrent plain automation create valid when the proofless e2ee PATCH is refused", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -565,14 +1305,14 @@ describe("accountRoutes (encryption mode integration)", () => {
                         headers: { "content-type": "application/json", "x-test-user-id": account.id },
                         payload: { mode: "e2ee" },
                     });
-                    expect(modePatch.statusCode).toBe(200);
+                    expect(modePatch.statusCode).toBe(400);
+                    expect(modePatch.json()).toEqual({
+                        error: "migration-required",
+                    });
 
                     barrier.release();
                     const automationResult = await automationCreate;
-                    expect(automationResult.statusCode).toBe(400);
-                    expect(automationResult.json()).toEqual({
-                        error: "templateCiphertext: expected encrypted template envelope",
-                    });
+                    expect(automationResult.statusCode).toBe(200);
                 } finally {
                     barrier.restore();
                 }
@@ -582,8 +1322,8 @@ describe("accountRoutes (encryption mode integration)", () => {
         await expect(db.account.findUniqueOrThrow({
             where: { id: account.id },
             select: { encryptionMode: true },
-        })).resolves.toEqual({ encryptionMode: "e2ee" });
-        await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(0);
+        })).resolves.toEqual({ encryptionMode: "plain" });
+        await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(1);
     });
 
     it("rejects a mode PATCH after a first V3 credential write wins", async () => {
@@ -610,6 +1350,7 @@ describe("accountRoutes (encryption mode integration)", () => {
                     url: "/v3/connect/openai-codex/profiles/work/credential",
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: {
+                        expectedCredentialRevision: null,
                         content: {
                             t: "plain",
                             v: {

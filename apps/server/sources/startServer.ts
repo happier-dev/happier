@@ -5,7 +5,6 @@ import { auth } from '@/app/auth/auth';
 import { activityCache } from '@/app/presence/sessionCache';
 import { startTimeout } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
-import { initGithub } from '@/app/auth/providers/github/webhooks';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
 import {
     applySqliteRuntimePragmas,
@@ -18,6 +17,8 @@ import {
     initDbSqlite,
     shutdownDbPglite,
 } from '@/storage/db';
+import { initializeSessionSystemRecordsProtocolV1Activation } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
+import { initializeSessionTurnTranscriptAnchorProjectionProtocolActivation } from '@/app/session/turns/sessionTurnTranscriptAnchorProjectionProtocolContract';
 import {
     resolveSqliteIncrementalVacuumIntervalMsFromEnv,
     resolveSqliteIncrementalVacuumPagesFromEnv,
@@ -49,11 +50,14 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveCachedCanonicalPublicServerUrl } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
+import { startPluginWebhookCredentialRetirementWorker } from '@/app/plugins/webhooks/credentialRetirementWorker';
 import { startVoiceProviderIdentityBackfillWorker } from '@/app/voice/providerIdentityBackfill/worker';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { readPresenceRedisWorkerConfigFromEnv } from '@/config/presence';
 import { initializeServerIdentityCache } from '@/app/serverIdentity/serverIdentity';
 import { stat } from 'node:fs/promises';
+import { writeStartupReceiptFromEnvironment } from '@/app/runtime/startupReceipt';
+import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
@@ -150,6 +154,12 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         applyPackagedLightRuntimeSqliteDefaults(process.env);
         await ensureHandyMasterSecret(process.env);
     }
+
+    // Parse the one Collection deployment policy before opening external
+    // resources. Feature projection, activation, and mutation all consume
+    // this same reader; startup must not defer a malformed policy until a
+    // later write path.
+    readPluginsFeatureEnv(process.env);
 
     if (dbProvider === 'postgres') {
         // initDbPostgres is synchronous (unlike other provider initializers).
@@ -258,6 +268,8 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         // Storage
         await db.$connect();
         dbConnected = true;
+        await initializeSessionSystemRecordsProtocolV1Activation(db);
+        await initializeSessionTurnTranscriptAnchorProjectionProtocolActivation(db);
         if (shouldStartSqliteMaintenanceClient) {
             sqliteWalCheckpointClient = await createDbSqliteMaintenanceClient();
             await sqliteWalCheckpointClient.$connect();
@@ -334,7 +346,6 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
 
         // Initialize auth module
         await initEncrypt();
-        await initGithub();
         await loadFiles();
         await auth.init();
 
@@ -387,6 +398,12 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
                     retentionWorker.stop();
                 });
             }
+            const webhookCredentialRetirementWorker = startPluginWebhookCredentialRetirementWorker();
+            if (webhookCredentialRetirementWorker) {
+                onShutdown('plugin-webhook-credential-retirement-worker', async () => {
+                    webhookCredentialRetirementWorker.stop();
+                });
+            }
             // Exact record counts can monopolize the intentionally single-connection
             // SQLite runtime. They are operational metrics, so only collect them when
             // the metrics endpoint is enabled and the database can serve concurrent work.
@@ -400,6 +417,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         // Ready
         //
 
+        await writeStartupReceiptFromEnvironment(process.env);
         log('Ready');
         startupCompleted = true;
         await awaitShutdown();

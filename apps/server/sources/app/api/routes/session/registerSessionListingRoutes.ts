@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import {
+  SESSION_METADATA_LAYOUT_VERSION_V1,
   V2SessionByIdNotFoundSchema,
   V2SessionByIdResponseSchema,
   V2SessionListResponseSchema,
@@ -35,10 +36,13 @@ import {
 } from "./v2SessionListInitialPage";
 import { createV2SessionListServerTiming } from "./v2SessionListServerTiming";
 import {
-    applySessionTranscriptPublicationCeilingToProjection,
     collectSessionTranscriptVisibleRowsBeforeTake,
+    createSessionTranscriptPublicationLiveFactsWhere,
+    createSessionTranscriptPublicationRecencyQueryBranches,
     createSessionTranscriptShareableRecencyQueryBranches,
+    filterSessionTranscriptPublicationSequenceFacts,
     isSessionTranscriptShareable,
+    projectSessionTranscriptPublicationPreview,
     resolveSessionTranscriptNonOwnerRecencyMs,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -46,7 +50,14 @@ import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
     projectSessionMetadataForRecipient,
+    readSessionMetadataOwnerAccountMode,
+    readSessionMetadataOwnerAccountModes,
+    requiresSessionMetadataOwnerAccountMode,
+    type SessionMetadataOwnerAccountMode,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
 const SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA = z.object({
     error: z.literal("Session metadata privacy upgrade required"),
@@ -80,6 +91,23 @@ const V2_SESSION_LIST_QUERYSTRING_SCHEMA = z.object({
 
 const ACTIVE_SESSION_WINDOW_MS = 1000 * 60 * 15;
 
+async function readSessionOwnerAccountModesForRows(
+    rows: readonly Readonly<{
+        accountId: string;
+        metadataLayoutVersion?: number | null;
+    }>[],
+): Promise<ReadonlyMap<string, SessionMetadataOwnerAccountMode>> {
+    return await readSessionMetadataOwnerAccountModes(
+        db,
+        rows
+            .filter((session) =>
+                requiresSessionMetadataOwnerAccountMode({
+                    session,
+                }))
+            .map((session) => session.accountId),
+    );
+}
+
 function parseInitialIncludeAttention(value: unknown): boolean {
     return value === true || value === "true" || value === "1";
 }
@@ -89,12 +117,28 @@ function readLatestTurnStatusObservedAt(value: bigint | number | null | undefine
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function projectSessionListingPublicationPreview<T extends Readonly<{
+    seq: number;
+    lastViewedSessionSeq?: number | null;
+    createdAt: Date;
+    updatedAt: Date;
+    meaningfulActivityAt?: Date | null;
+    lastActiveAt: Date;
+}>>(session: T) {
+    return projectSessionTranscriptPublicationPreview({
+        seq: session.seq,
+        lastViewedSessionSeq: session.lastViewedSessionSeq,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        meaningfulActivityAt: session.meaningfulActivityAt,
+        lastActiveAt: session.lastActiveAt,
+    }, session);
+}
+
 const SESSION_ROLLBACK_ELIGIBLE_TURNS_SELECT = createSessionRollbackEligibleTurnsSelect();
 
 const V1_SESSION_ROW_SELECT = {
     id: true,
-    seq: true,
-    accountId: true,
     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     createdAt: true,
     updatedAt: true,
@@ -123,16 +167,7 @@ const V1_SESSION_ROW_SELECT = {
     lastActiveAt: true,
 } as const satisfies Prisma.SessionSelect;
 
-const {
-    turns: _v1SessionRowLegacyTurns,
-    ...V1_SESSION_ROW_LEGACY_SELECT
-} = V1_SESSION_ROW_SELECT;
-
-function createV1SessionRowSelect(params: Readonly<{ includeRollbackTurns: boolean }>): Prisma.SessionSelect {
-    return params.includeRollbackTurns ? V1_SESSION_ROW_SELECT : V1_SESSION_ROW_LEGACY_SELECT;
-}
-
-function createV1SessionShareSelect(params: Readonly<{ includeRollbackTurns: boolean }>): Prisma.SessionShareSelect {
+function createV1SessionShareSelect(): Prisma.SessionShareSelect {
     return {
         accessLevel: true,
         canApprovePermissions: true,
@@ -140,21 +175,33 @@ function createV1SessionShareSelect(params: Readonly<{ includeRollbackTurns: boo
         sharedByUserId: true,
         sharedByUser: { select: PROFILE_SELECT },
         session: {
-            select: createV1SessionRowSelect(params),
+            select: V1_SESSION_ROW_SELECT,
         },
     };
 }
 
 async function findV1SessionListRows(userId: string) {
-    const query = async (includeRollbackTurns: boolean) => {
-        const [ownedSessions, ...shareBranches] = await Promise.all([
-            db.session.findMany({
-                where: { accountId: userId, archivedAt: null },
-                orderBy: { updatedAt: 'desc' },
-                take: 150,
-                select: createV1SessionRowSelect({ includeRollbackTurns }),
-            }),
-            ...createSessionTranscriptShareableRecencyQueryBranches().map((branch) =>
+    const [ownedBranches, shareBranches] = await Promise.all([
+            Promise.all(createSessionTranscriptPublicationRecencyQueryBranches().map((branch) =>
+                collectSessionTranscriptVisibleRowsBeforeTake({
+                    take: 150,
+                    fetchPage: async (page) =>
+                        await db.session.findMany({
+                            where: {
+                                accountId: userId,
+                                archivedAt: null,
+                                AND: [branch.where],
+                            },
+                            orderBy: [...branch.orderBy],
+                            ...(page.skip === undefined ? {} : { skip: page.skip }),
+                            ...(page.take === undefined ? {} : { take: page.take }),
+                            select: V1_SESSION_ROW_SELECT,
+                        }),
+                    isOwner: () => true,
+                    readPublication: (session) => session,
+                }),
+            )),
+            Promise.all(createSessionTranscriptShareableRecencyQueryBranches().map((branch) =>
                 collectSessionTranscriptVisibleRowsBeforeTake({
                     take: 150,
                     fetchPage: async (page) =>
@@ -169,34 +216,28 @@ async function findV1SessionListRows(userId: string) {
                             orderBy: branch.orderBy.map((orderBy) => ({ session: orderBy })),
                             ...(page.skip === undefined ? {} : { skip: page.skip }),
                             ...(page.take === undefined ? {} : { take: page.take }),
-                            select: createV1SessionShareSelect({ includeRollbackTurns }),
+                            select: createV1SessionShareSelect(),
                         }),
                     isOwner: () => false,
                     readPublication: (share) => share.session,
                 }),
-            ),
+            )),
         ]);
+        const ownedBySessionId = new Map(
+            ownedBranches
+                .flat()
+                .map((session) => [session.id, session] as const),
+        );
         const sharesBySessionId = new Map(
             shareBranches
                 .flat()
                 .map((share) => [share.session.id, share] as const),
         );
-        return [ownedSessions, [...sharesBySessionId.values()]] as const;
-    };
-
-    try {
-        return await query(true);
-    } catch (error) {
-        if (!isMissingAttentionProjectionColumnError(error)) {
-            throw error;
-        }
-        return await query(false);
-    }
+    return [[...ownedBySessionId.values()], [...sharesBySessionId.values()]] as const;
 }
 
 const V2_SESSION_BY_ID_SELECT = {
     id: true,
-    seq: true,
     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     accountId: true,
     createdAt: true,
@@ -294,77 +335,138 @@ export function registerSessionListingRoutes(app: Fastify) {
         const userId = request.userId;
 
         const [ownedSessions, shares] = await findV1SessionListRows(userId);
+        const emittedRows = [
+            ...ownedSessions.map((session) => ({
+                recipient: "owner" as const,
+                session,
+                updatedAt: projectSessionListingPublicationPreview(session).updatedAt,
+            })),
+            ...shares
+                .filter((share) =>
+                    isSessionTranscriptShareable(share.session))
+                .map((share) => ({
+                    recipient: "shared" as const,
+                    session: share.session,
+                    share,
+                    updatedAt: resolveSessionTranscriptNonOwnerRecencyMs(
+                        share.session,
+                        share.session.updatedAt,
+                    ),
+                })),
+        ]
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .slice(0, 150);
+        if (
+            emittedRows.some((row) =>
+                row.session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1)
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
 
         let sessions;
         try {
-            sessions = [
-            ...ownedSessions.map((v) => {
-                const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
-                    seq: v.seq,
-                    lastViewedSessionSeq: v.lastViewedSessionSeq,
-                }, v);
+            const ownerAccountModes =
+                await readSessionOwnerAccountModesForRows(
+                    emittedRows.map((row) => row.session),
+                );
+            sessions = emittedRows.map((row) => {
+                const v = row.session;
+                if (row.recipient === "owner") {
+                    const publicationProjection = projectSessionListingPublicationPreview(v);
+                    const hasLiveFacts = publicationProjection.hasLiveFacts;
+                    return {
+                        id: v.id,
+                        seq: publicationProjection.seq,
+                        createdAt: v.createdAt.getTime(),
+                        updatedAt: publicationProjection.updatedAt,
+                        meaningfulActivityAt: publicationProjection.meaningfulActivityAt,
+                        active: hasLiveFacts && v.active,
+                        activeAt: publicationProjection.activeAt,
+                        archivedAt: v.archivedAt?.getTime() ?? null,
+                        encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
+                        ...projectSessionMetadataForRecipient({
+                            session: v,
+                            recipient:
+                                requiresSessionMetadataOwnerAccountMode({
+                                    session: v,
+                                }) && ownerAccountModes.has(v.accountId)
+                                    ? {
+                                        type: "owner",
+                                        accountId: userId,
+                                        accountMode: ownerAccountModes.get(v.accountId)!,
+                                      }
+                                    : {
+                                        type: "legacy_owner",
+                                        accountId: userId,
+                                      },
+                        }),
+                        lastViewedSessionSeq: publicationProjection.lastViewedSessionSeq ?? null,
+                        pendingPermissionRequestCount: hasLiveFacts ? v.pendingPermissionRequestCount : 0,
+                        pendingUserActionRequestCount: hasLiveFacts ? v.pendingUserActionRequestCount : 0,
+                        latestTurnId: hasLiveFacts ? v.latestTurnId ?? null : null,
+                        latestTurnStatus: hasLiveFacts ? parseStoredSessionLatestTurnStatus(v.latestTurnStatus) : null,
+                        latestTurnStatusObservedAt: hasLiveFacts
+                            ? readLatestTurnStatusObservedAt(v.latestTurnStatusObservedAt)
+                            : null,
+                        lastRuntimeIssue: hasLiveFacts ? parseStoredSessionRuntimeIssue(v.lastRuntimeIssue) : null,
+                        rollbackEligibleTurnStarts: filterSessionTranscriptPublicationSequenceFacts(
+                            readSessionTurnRollbackEligibleStarts(v),
+                            v,
+                        ),
+                        ...readSessionTranscriptAuthorityFields(v),
+                        acceptedThroughServerSeq: publicationProjection.acceptedThroughServerSeq,
+                        pendingCount: hasLiveFacts ? v.pendingCount : 0,
+                        pendingBlockedCount: hasLiveFacts ? v.pendingBlockedCount : 0,
+                        pendingVersion: hasLiveFacts ? v.pendingVersion : 0,
+                        dataEncryptionKey: encodeSessionDataEncryptionKey(v.dataEncryptionKey),
+                        lastMessage: null,
+                    };
+                }
+
+                const share = row.share;
+                const publicationProjection = projectSessionListingPublicationPreview(v);
+                const hasLiveFacts = publicationProjection.hasLiveFacts;
                 return {
                     id: v.id,
                     seq: publicationProjection.seq,
                     createdAt: v.createdAt.getTime(),
-                    updatedAt: v.updatedAt.getTime(),
-                    meaningfulActivityAt: (v.meaningfulActivityAt ?? v.createdAt).getTime(),
-                    active: v.active,
-                    activeAt: v.lastActiveAt.getTime(),
+                    updatedAt: publicationProjection.updatedAt,
+                    meaningfulActivityAt: publicationProjection.meaningfulActivityAt,
+                    active: hasLiveFacts && v.active,
+                    activeAt: publicationProjection.activeAt,
                     archivedAt: v.archivedAt?.getTime() ?? null,
                     encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
                     ...projectSessionMetadataForRecipient({
                         session: v,
-                        recipientAccountId: userId,
+                        recipient: {
+                            type: "shared",
+                            accountId: userId,
+                            ownerAccountMode: ownerAccountModes.get(v.accountId),
+                        },
                     }),
                     lastViewedSessionSeq: publicationProjection.lastViewedSessionSeq ?? null,
-                    pendingPermissionRequestCount: v.pendingPermissionRequestCount,
-                    pendingUserActionRequestCount: v.pendingUserActionRequestCount,
-                    latestTurnId: v.latestTurnId ?? null,
-                    latestTurnStatus: parseStoredSessionLatestTurnStatus(v.latestTurnStatus),
-                    latestTurnStatusObservedAt: readLatestTurnStatusObservedAt(v.latestTurnStatusObservedAt),
-                    lastRuntimeIssue: parseStoredSessionRuntimeIssue(v.lastRuntimeIssue),
-                    rollbackEligibleTurnStarts: readSessionTurnRollbackEligibleStarts(v),
+                    pendingPermissionRequestCount: hasLiveFacts ? v.pendingPermissionRequestCount : 0,
+                    pendingUserActionRequestCount: hasLiveFacts ? v.pendingUserActionRequestCount : 0,
+                    latestTurnId: hasLiveFacts ? v.latestTurnId ?? null : null,
+                    latestTurnStatus: hasLiveFacts ? parseStoredSessionLatestTurnStatus(v.latestTurnStatus) : null,
+                    latestTurnStatusObservedAt: hasLiveFacts
+                        ? readLatestTurnStatusObservedAt(v.latestTurnStatusObservedAt)
+                        : null,
+                    lastRuntimeIssue: hasLiveFacts ? parseStoredSessionRuntimeIssue(v.lastRuntimeIssue) : null,
+                    rollbackEligibleTurnStarts: filterSessionTranscriptPublicationSequenceFacts(
+                        readSessionTurnRollbackEligibleStarts(v),
+                        v,
+                    ),
                     ...readSessionTranscriptAuthorityFields(v),
-                    pendingCount: v.pendingCount,
-                    pendingBlockedCount: v.pendingBlockedCount,
-                    pendingVersion: v.pendingVersion,
-                    dataEncryptionKey: encodeSessionDataEncryptionKey(v.dataEncryptionKey),
-                    lastMessage: null,
-                };
-            }),
-            ...shares.filter((share) => isSessionTranscriptShareable(share.session)).map((share) => {
-                const v = share.session;
-                const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
-                    seq: v.seq,
-                    lastViewedSessionSeq: v.lastViewedSessionSeq,
-                }, v);
-                return {
-                    id: v.id,
-                    seq: publicationProjection.seq,
-                    createdAt: v.createdAt.getTime(),
-                    updatedAt: resolveSessionTranscriptNonOwnerRecencyMs(v, v.updatedAt),
-                    meaningfulActivityAt: (v.meaningfulActivityAt ?? v.createdAt).getTime(),
-                    active: v.active,
-                    activeAt: v.lastActiveAt.getTime(),
-                    archivedAt: v.archivedAt?.getTime() ?? null,
-                    encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
-                    ...projectSessionMetadataForRecipient({
-                        session: v,
-                        recipientAccountId: userId,
-                    }),
-                    lastViewedSessionSeq: publicationProjection.lastViewedSessionSeq ?? null,
-                    pendingPermissionRequestCount: v.pendingPermissionRequestCount,
-                    pendingUserActionRequestCount: v.pendingUserActionRequestCount,
-                    latestTurnId: v.latestTurnId ?? null,
-                    latestTurnStatus: parseStoredSessionLatestTurnStatus(v.latestTurnStatus),
-                    latestTurnStatusObservedAt: readLatestTurnStatusObservedAt(v.latestTurnStatusObservedAt),
-                    lastRuntimeIssue: parseStoredSessionRuntimeIssue(v.lastRuntimeIssue),
-                    rollbackEligibleTurnStarts: readSessionTurnRollbackEligibleStarts(v),
-                    ...readSessionTranscriptAuthorityFields(v),
-                    pendingCount: v.pendingCount,
-                    pendingBlockedCount: v.pendingBlockedCount,
-                    pendingVersion: v.pendingVersion,
+                    acceptedThroughServerSeq: publicationProjection.acceptedThroughServerSeq,
+                    pendingCount: hasLiveFacts ? v.pendingCount : 0,
+                    pendingBlockedCount: hasLiveFacts ? v.pendingBlockedCount : 0,
+                    pendingVersion: hasLiveFacts ? v.pendingVersion : 0,
                     dataEncryptionKey:
                         v.encryptionMode === "plain"
                             ? null
@@ -375,10 +477,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                     accessLevel: share.accessLevel,
                     canApprovePermissions: share.canApprovePermissions,
                 };
-            }),
-        ]
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .slice(0, 150);
+            });
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
                 return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
@@ -395,6 +494,7 @@ export function registerSessionListingRoutes(app: Fastify) {
             response: {
                 200: V2SessionListResponseSchema,
                 409: SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA,
+                426: z.unknown(),
             },
             querystring: V2_ACTIVE_SESSION_LIST_QUERYSTRING_SCHEMA,
         },
@@ -406,6 +506,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         const sessions = await timing.measureAsync("query", async () => findV2SessionListRows({
             userId,
             where: {
+                ...createSessionTranscriptPublicationLiveFactsWhere(),
                 active: true,
                 archivedAt: null,
                 lastActiveAt: { gt: new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS) },
@@ -413,11 +514,30 @@ export function registerSessionListingRoutes(app: Fastify) {
             orderBy: V2_ACTIVE_SESSION_LIST_ORDER_BY,
             take: limit,
         }));
+        if (
+            sessions.some((session) =>
+                session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1)
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
 
         let payload;
         try {
+            const ownerAccountModes =
+                await readSessionOwnerAccountModesForRows(
+                    sessions,
+                );
             payload = timing.measure("page", () => ({
-                sessions: mapV2SessionListRows({ rows: sessions, userId }),
+                sessions: mapV2SessionListRows({
+                    rows: sessions,
+                    userId,
+                    ownerAccountModes,
+                }),
             }));
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -436,6 +556,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 200: V2SessionListResponseSchema,
                 400: z.object({ error: z.literal('Invalid cursor format') }),
                 409: SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA,
+                426: z.unknown(),
             },
             querystring: V2_SESSION_LIST_QUERYSTRING_SCHEMA,
         },
@@ -471,9 +592,28 @@ export function registerSessionListingRoutes(app: Fastify) {
                     cursor: decodedAttentionCursor,
                     timing: timing.initialPageTiming(),
                 });
+                if (
+                    attentionPage.rows.some((session) =>
+                        session.metadataLayoutVersion
+                            === SESSION_METADATA_LAYOUT_VERSION_V1)
+                    && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                        request,
+                        reply,
+                    )
+                ) {
+                    return;
+                }
+                const ownerAccountModes =
+                    await readSessionOwnerAccountModesForRows(
+                        attentionPage.rows,
+                    );
                 timing.apply(reply);
                 return reply.send({
-                    sessions: mapV2SessionListRows({ rows: attentionPage.rows, userId }),
+                    sessions: mapV2SessionListRows({
+                        rows: attentionPage.rows,
+                        userId,
+                        ownerAccountModes,
+                    }),
                     nextCursor: null,
                     hasNext: false,
                     attentionNextCursor: attentionPage.attentionNextCursor,
@@ -522,14 +662,51 @@ export function registerSessionListingRoutes(app: Fastify) {
             if (!cursor && (serverPinnedSessionIds.length > 0 || includeInitialAttention)) {
                 payload = await createV2SessionListInitialPage({
                     userId,
+                    admitFinalRows: async (rows) =>
+                        !rows.some((session) =>
+                            session.metadataLayoutVersion
+                                === SESSION_METADATA_LAYOUT_VERSION_V1)
+                        || await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                            request,
+                            reply,
+                        ),
+                    readOwnerAccountModes: async (accountIds) =>
+                        await readSessionMetadataOwnerAccountModes(
+                            db,
+                            accountIds,
+                        ),
                     pageRows: sessions,
                     limit,
                     pinnedSessionIds: serverPinnedSessionIds,
                     includeAttentionRows: includeInitialAttention,
                     timing: timing.initialPageTiming(),
                 });
+                if (!payload) {
+                    return;
+                }
             } else {
-                payload = timing.measure("page", () => createV2SessionListPage({ rows: sessions, userId, limit }));
+                const emittedRows = sessions.slice(0, limit);
+                if (
+                    emittedRows.some((session) =>
+                        session.metadataLayoutVersion
+                            === SESSION_METADATA_LAYOUT_VERSION_V1)
+                    && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                        request,
+                        reply,
+                    )
+                ) {
+                    return;
+                }
+                const ownerAccountModes =
+                    await readSessionOwnerAccountModesForRows(
+                        emittedRows,
+                    );
+                payload = timing.measure("page", () => createV2SessionListPage({
+                    rows: sessions,
+                    userId,
+                    ownerAccountModes,
+                    limit,
+                }));
             }
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -549,6 +726,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 200: V2SessionListResponseSchema,
                 400: z.object({ error: z.literal('Invalid cursor format') }),
                 409: SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA,
+                426: z.unknown(),
             },
             querystring: V2_PAGED_SESSION_LIST_QUERYSTRING_SCHEMA,
         },
@@ -581,10 +759,31 @@ export function registerSessionListingRoutes(app: Fastify) {
             orderBy: V2_SESSION_LIST_ORDER_BY,
             take: limit + 1,
         }));
+        const emittedRows = sessions.slice(0, limit);
+        if (
+            emittedRows.some((session) =>
+                session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1)
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
 
         let payload;
         try {
-            payload = timing.measure("page", () => createV2SessionListPage({ rows: sessions, userId, limit }));
+            const ownerAccountModes =
+                await readSessionOwnerAccountModesForRows(
+                    emittedRows,
+                );
+            payload = timing.measure("page", () => createV2SessionListPage({
+                rows: sessions,
+                userId,
+                ownerAccountModes,
+                limit,
+            }));
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
                 return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
@@ -608,6 +807,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 200: V2SessionByIdResponseSchema,
                 404: V2SessionByIdNotFoundSchema,
                 409: SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA,
+                426: z.unknown(),
             },
         },
     }, async (request, reply) => {
@@ -619,15 +819,50 @@ export function registerSessionListingRoutes(app: Fastify) {
         if (!session) {
             return reply.code(404).send({ error: 'Session not found' });
         }
-        const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
-            seq: session.seq,
-            lastViewedSessionSeq: session.lastViewedSessionSeq,
-        }, session);
+        if (
+            session.metadataLayoutVersion
+                === SESSION_METADATA_LAYOUT_VERSION_V1
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
+        const publicationProjection = projectSessionListingPublicationPreview(session);
+        const hasLiveFacts = publicationProjection.hasLiveFacts;
         let metadataProjection;
         try {
+            const ownerAccountMode =
+                requiresSessionMetadataOwnerAccountMode({
+                    session,
+                })
+                    ? await readSessionMetadataOwnerAccountMode(
+                        db,
+                        session.accountId,
+                    )
+                    : undefined;
+            const recipient = session.accountId !== userId
+                ? {
+                    type: "shared" as const,
+                    accountId: userId,
+                    ownerAccountMode,
+                  }
+                : requiresSessionMetadataOwnerAccountMode({
+                    session,
+                  })
+                    ? {
+                        type: "owner" as const,
+                        accountId: userId,
+                        accountMode: ownerAccountMode!,
+                      }
+                    : {
+                        type: "legacy_owner" as const,
+                        accountId: userId,
+                      };
             metadataProjection = projectSessionMetadataForRecipient({
                 session,
-                recipientAccountId: userId,
+                recipient,
             });
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -641,27 +876,33 @@ export function registerSessionListingRoutes(app: Fastify) {
                 id: session.id,
                 seq: publicationProjection.seq,
                 createdAt: session.createdAt.getTime(),
-                updatedAt: session.accountId === userId
-                    ? session.updatedAt.getTime()
-                    : resolveSessionTranscriptNonOwnerRecencyMs(session, session.updatedAt),
-                meaningfulActivityAt: (session.meaningfulActivityAt ?? session.createdAt).getTime(),
-                active: session.active,
-                activeAt: session.lastActiveAt.getTime(),
+                updatedAt: publicationProjection.updatedAt,
+                meaningfulActivityAt: publicationProjection.meaningfulActivityAt,
+                active: hasLiveFacts && session.active,
+                activeAt: publicationProjection.activeAt,
                 archivedAt: session.archivedAt?.getTime() ?? null,
                 encryptionMode: session.encryptionMode === "plain" ? "plain" : "e2ee",
                 ...metadataProjection,
                 lastViewedSessionSeq: publicationProjection.lastViewedSessionSeq ?? null,
-                pendingPermissionRequestCount: session.pendingPermissionRequestCount,
-                pendingUserActionRequestCount: session.pendingUserActionRequestCount,
-                latestTurnId: session.latestTurnId ?? null,
-                latestTurnStatus: parseStoredSessionLatestTurnStatus(session.latestTurnStatus),
-                latestTurnStatusObservedAt: readLatestTurnStatusObservedAt(session.latestTurnStatusObservedAt),
-                lastRuntimeIssue: parseStoredSessionRuntimeIssue(session.lastRuntimeIssue),
-                rollbackEligibleTurnStarts: readSessionTurnRollbackEligibleStarts(session),
+                pendingPermissionRequestCount: hasLiveFacts ? session.pendingPermissionRequestCount : 0,
+                pendingUserActionRequestCount: hasLiveFacts ? session.pendingUserActionRequestCount : 0,
+                latestTurnId: hasLiveFacts ? session.latestTurnId ?? null : null,
+                latestTurnStatus: hasLiveFacts
+                    ? parseStoredSessionLatestTurnStatus(session.latestTurnStatus)
+                    : null,
+                latestTurnStatusObservedAt: hasLiveFacts
+                    ? readLatestTurnStatusObservedAt(session.latestTurnStatusObservedAt)
+                    : null,
+                lastRuntimeIssue: hasLiveFacts ? parseStoredSessionRuntimeIssue(session.lastRuntimeIssue) : null,
+                rollbackEligibleTurnStarts: filterSessionTranscriptPublicationSequenceFacts(
+                    readSessionTurnRollbackEligibleStarts(session),
+                    session,
+                ),
                 ...readSessionTranscriptAuthorityFields(session),
-                pendingCount: session.pendingCount,
-                pendingBlockedCount: session.pendingBlockedCount,
-                pendingVersion: session.pendingVersion,
+                acceptedThroughServerSeq: publicationProjection.acceptedThroughServerSeq,
+                pendingCount: hasLiveFacts ? session.pendingCount : 0,
+                pendingBlockedCount: hasLiveFacts ? session.pendingBlockedCount : 0,
+                pendingVersion: hasLiveFacts ? session.pendingVersion : 0,
                 dataEncryptionKey: session.accountId === userId
                     ? encodeSessionDataEncryptionKey(session.dataEncryptionKey)
                     : (session.shares[0]?.encryptedDataKey ? Buffer.from(session.shares[0].encryptedDataKey).toString('base64') : null),

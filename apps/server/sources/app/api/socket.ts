@@ -44,9 +44,18 @@ import {
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
+import { createAutomationReplyHandoffDaemonDispatcher } from "./socket/automationReplyHandoffDispatcher";
+import {
+    createSessionServerStartAutomationIngress,
+    createSessionServerStartDaemonDispatcher,
+} from "./socket/sessionServerStartDispatcher";
+import { resolveVerifiedMachineSocketInstallationId } from "./socket/machineSocketInstallationProof";
 import { getSocketRooms, type SocketClientType } from "./socketRooms";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
-import { getRedisClient } from "@/storage/redis/redis";
+import {
+    closeRedisSocketClusterClient,
+    getRedisSocketClusterClient,
+} from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
 import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
 import { db, isPrismaErrorCode } from "@/storage/db";
@@ -68,10 +77,14 @@ import {
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import {
-    buildSessionSyncSocketUpgradeError,
-    evaluateSessionSyncSocketCompatibility,
-    writeSessionSyncSocketCompatibility,
-} from "@/app/clientCompatibility/socketEnforcement";
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    evaluateAccountStoredContentSocketCompatibility,
+    readAccountStoredContentCompatibilityForSocket,
+    writeAccountStoredContentCompatibilityForSocket,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
@@ -213,7 +226,9 @@ export function startSocket(app: Fastify) {
             credentials: false,
             allowedHeaders: ["authorization", "content-type"]
         },
-        ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient(), socketAdapterConfig.redisStreamsOptions) } : {}),
+        ...(shouldEnableRedisAdapter ? {
+            adapter: createAdapter(getRedisSocketClusterClient(), socketAdapterConfig.redisStreamsOptions),
+        } : {}),
         transports: ['websocket', 'polling'],
         pingTimeout: 45000,
         pingInterval: 15000,
@@ -233,7 +248,7 @@ export function startSocket(app: Fastify) {
     const tunnelRelayCoordinator = createPeerTcpTunnelRelayCoordinator({
         io,
         config: shouldEnableRedisAdapter
-            ? { mode: "redis", redis: getRedisClient() }
+            ? { mode: "redis", redis: getRedisSocketClusterClient() }
             : { mode: "memory" },
     });
 
@@ -254,6 +269,13 @@ export function startSocket(app: Fastify) {
     });
     app.forwardRpcForUser = createServerRpcForwarder({
         io,
+    });
+    app.forwardAutomationReplyHandoffToMachine =
+        createAutomationReplyHandoffDaemonDispatcher({ io });
+    app.forwardSessionServerStartToMachine =
+        createSessionServerStartDaemonDispatcher({ io });
+    const sessionServerStartAutomationIngress = createSessionServerStartAutomationIngress({
+        forward: app.forwardSessionServerStartToMachine,
     });
     const verifyPeerMediationViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier(io);
     app.verifyPeerMediationViewerSocketOwnership = verifyPeerMediationViewerSocketOwnership;
@@ -396,28 +418,28 @@ export function startSocket(app: Fastify) {
             }
             observeHandshakeStage("ok");
 
-            const compatibility = evaluateSessionSyncSocketCompatibility(
-                socket.handshake.auth,
-                process.env,
-                clientType,
+            const accountStoredContentCompatibility =
+                evaluateAccountStoredContentSocketCompatibility(
+                    socket.handshake.auth,
+                );
+            writeAccountStoredContentCompatibilityForSocket(
+                socket,
+                accountStoredContentCompatibility,
             );
-            writeSessionSyncSocketCompatibility(socket, compatibility);
-            if (!compatibility.evaluation.accepted) {
-                recordSocketAuthHandshake({
-                    clientType,
-                    transport: handshakeTransport,
-                    durationMs: Date.now() - handshakeStartedAt,
-                    result: "error",
-                    failure: "client-upgrade-required",
-                });
-                return next(buildSessionSyncSocketUpgradeError(compatibility.evaluation));
-            }
-
+            let verifiedMachineInstallationId: string | null = null;
             if (clientType === 'machine-scoped') {
                 setHandshakeStage("machine-lookup");
                 const machine = await db.machine.findFirst({
                     where: { accountId: verified.userId, id: machineId },
-                    select: { id: true, active: true, lastActiveAt: true, revokedAt: true, replacedByMachineId: true },
+                    select: {
+                        id: true,
+                        active: true,
+                        lastActiveAt: true,
+                        revokedAt: true,
+                        replacedByMachineId: true,
+                        installationId: true,
+                        installationPublicKey: true,
+                    },
                 });
                 if (!machine) {
                     observeHandshakeStage("error");
@@ -427,6 +449,12 @@ export function startSocket(app: Fastify) {
                     observeHandshakeStage("error");
                     return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
                 }
+                verifiedMachineInstallationId = resolveVerifiedMachineSocketInstallationId({
+                    accountId: verified.userId,
+                    machineId: machine.id,
+                    machine,
+                    socketAuth: socket.handshake.auth,
+                });
                 observeHandshakeStage("ok");
 
                 setHandshakeStage("machine-ownership");
@@ -493,6 +521,9 @@ export function startSocket(app: Fastify) {
             socket.data.clientPurpose = clientPurpose;
             socket.data.sessionId = sessionId;
             socket.data.machineId = machineId;
+            if (verifiedMachineInstallationId) {
+                socket.data.verifiedMachineInstallationId = verifiedMachineInstallationId;
+            }
             recordSocketAuthHandshake({
                 clientType,
                 transport: handshakeTransport,
@@ -660,20 +691,29 @@ export function startSocket(app: Fastify) {
             if (connection.connectionType === "session-scoped") {
                 void sessionPublisherPresence.forgetDisconnectedPublisher({ socket }).then(async (disconnected) => {
                     if (disconnected.status !== "applied") return;
-                    await Promise.all(disconnected.participantCursors.map(async ({ accountId, cursor }) => {
-                        eventRouter.emitUpdate({
-                            userId: accountId,
-                            payload: buildUpdateSessionUpdate(
-                                connection.sessionId,
-                                cursor,
-                                randomKeyNaked(12),
-                                undefined,
-                                undefined,
+                    const session = await loadSessionTranscriptPublicationRecipientProjection(connection.sessionId);
+                    if (session) {
+                        await Promise.all(disconnected.participantCursors.map(async ({ accountId, cursor }) => {
+                            const projection = projectSessionTranscriptPublicationRealtimeProjection(
                                 disconnected.projection,
-                            ),
-                            recipientFilter: { type: "all-interested-in-session", sessionId: connection.sessionId },
-                        });
-                    }));
+                                session,
+                                accountId,
+                            );
+                            if (projection.kind === "suppress") return;
+                            eventRouter.emitUpdate({
+                                userId: accountId,
+                                payload: buildUpdateSessionUpdate(
+                                    connection.sessionId,
+                                    cursor,
+                                    randomKeyNaked(12),
+                                    undefined,
+                                    undefined,
+                                    projection.value,
+                                ),
+                                recipientFilter: { type: "all-interested-in-session", sessionId: connection.sessionId },
+                            });
+                        }));
+                    }
                 }).catch((error) => {
                     log({ module: "session-publisher-presence", sessionId: connection.sessionId, error }, "Failed to forget disconnected session publisher");
                 });
@@ -733,6 +773,8 @@ export function startSocket(app: Fastify) {
             clientType: metadata.clientType,
             sessionId,
             machineId,
+            includeAccountStoredContentV3Room:
+                readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol,
         }));
 
         rpcHandler(userId, socket, {
@@ -784,6 +826,7 @@ export function startSocket(app: Fastify) {
         machineUpdateHandler(userId, socket, {
             operationSocketBatchLimits: externalSessionOperationSocketBatchLimits,
             sessionPublisherPresence,
+            sessionServerStartIngress: sessionServerStartAutomationIngress,
         });
         externalSessionStatusDemandHandler(userId, socket, { io });
         machineTransferHandler(userId, socket, {
@@ -853,5 +896,8 @@ export function startSocket(app: Fastify) {
         }
         await io.close();
         await tunnelRelayCoordinator.close();
+        if (shouldEnableRedisAdapter) {
+            closeRedisSocketClusterClient();
+        }
     });
 }

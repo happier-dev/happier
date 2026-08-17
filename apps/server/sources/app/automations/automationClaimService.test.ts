@@ -32,6 +32,20 @@ describe("automationClaimService helpers", () => {
         expect(isRunClaimableState({ state: "running", leaseExpiresAt: null, now: new Date() })).toBe(false);
     });
 
+    it("requires the first millisecond after lease expiry before reclaim", () => {
+        const leaseExpiresAt = new Date("2026-02-12T10:05:00.000Z");
+        expect(isRunClaimableState({
+            state: "claimed",
+            leaseExpiresAt,
+            now: leaseExpiresAt,
+        })).toBe(false);
+        expect(isRunClaimableState({
+            state: "claimed",
+            leaseExpiresAt,
+            now: new Date("2026-02-12T10:05:00.001Z"),
+        })).toBe(true);
+    });
+
     it("builds a future lease expiry using the requested duration", () => {
         const lease = resolveClaimLeaseExpiresAt({
             now: new Date("2026-02-12T10:00:00.000Z"),

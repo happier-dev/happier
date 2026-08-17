@@ -13,6 +13,13 @@ const DbPlainSettingsWrapperSchema = z.discriminatedUnion("t", [
     z.object({ t: z.literal("sealed_v1"), c: z.string().min(1) }).strict(),
 ]);
 
+export class PlainAccountSettingsStorageUnavailableError extends Error {
+    constructor() {
+        super("Plain account settings could not be opened");
+        this.name = "PlainAccountSettingsStorageUnavailableError";
+    }
+}
+
 export function openPlainAccountSettingsDbValue(params: {
     accountId: string;
     dbValue: string | null;
@@ -24,15 +31,15 @@ export function openPlainAccountSettingsDbValue(params: {
     try {
         raw = JSON.parse(dbValue);
     } catch {
-        // Legacy fallback: if plaintext mode was enabled without migration, the DB may still contain ciphertext.
-        return null;
+        throw new PlainAccountSettingsStorageUnavailableError();
     }
 
     const wrapper = DbPlainSettingsWrapperSchema.safeParse(raw);
     if (wrapper.success) {
         if (wrapper.data.t === "plain") {
             const envelope = AccountSettingsStoredContentEnvelopeSchema.safeParse({ t: "plain", v: wrapper.data.v });
-            return envelope.success ? envelope.data : null;
+            if (!envelope.success) throw new PlainAccountSettingsStorageUnavailableError();
+            return envelope.data;
         }
 
         // sealed_v1
@@ -41,19 +48,23 @@ export function openPlainAccountSettingsDbValue(params: {
             const opened = decryptString(["storage", "account_settings", accountId, "v1"], bytes);
             const parsed = AccountSettingsStoredContentEnvelopeSchema.safeParse(JSON.parse(opened));
             if (parsed.success && parsed.data.t === "plain") return parsed.data;
-            return null;
+            throw new PlainAccountSettingsStorageUnavailableError();
         } catch {
-            return null;
+            throw new PlainAccountSettingsStorageUnavailableError();
         }
     }
 
     // If the DB stored a plain envelope directly, accept it.
     const envelope = AccountSettingsStoredContentEnvelopeSchema.safeParse(raw);
-    if (envelope.success && envelope.data.t === "plain") return envelope.data;
+    if (envelope.success) {
+        if (envelope.data.t === "plain") return envelope.data;
+        throw new PlainAccountSettingsStorageUnavailableError();
+    }
 
     // If the DB stored raw settings JSON, wrap it.
     const wrapped = AccountSettingsStoredContentEnvelopeSchema.safeParse({ t: "plain", v: raw });
-    return wrapped.success ? wrapped.data : null;
+    if (!wrapped.success) throw new PlainAccountSettingsStorageUnavailableError();
+    return wrapped.data;
 }
 
 export function storePlainAccountSettingsDbValue(params: {
@@ -72,9 +83,12 @@ export function storePlainAccountSettingsDbValue(params: {
         return plaintext;
     }
 
-    const sealed = privacyKit.encodeBase64(
-        encryptString(["storage", "account_settings", accountId, "v1"], plaintext),
-    );
-    return JSON.stringify({ t: "sealed_v1", c: sealed });
+    try {
+        const sealed = privacyKit.encodeBase64(
+            encryptString(["storage", "account_settings", accountId, "v1"], plaintext),
+        );
+        return JSON.stringify({ t: "sealed_v1", c: sealed });
+    } catch {
+        throw new PlainAccountSettingsStorageUnavailableError();
+    }
 }
-

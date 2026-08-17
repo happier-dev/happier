@@ -1,6 +1,9 @@
 import type { TransactionClient } from "@/storage/prisma";
 
-import { resolveAccountSettingsHistoryLimitFromEnv } from "./accountSettingsHistoryConfig";
+import {
+    ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES,
+    resolveAccountSettingsHistoryLimitFromEnv,
+} from "./accountSettingsHistoryConfig";
 import {
     resolveAccountSettingsSnapshotContentKind,
     type AccountSettingsSnapshotEncryptionMode,
@@ -61,20 +64,42 @@ async function pruneAccountSettingsSnapshots(
     tx: TransactionClient,
     params: Readonly<{ accountId: string; limit: number }>,
 ): Promise<void> {
-    const stale = await tx.accountSettingsSnapshot.findMany({
+    const snapshots = await tx.accountSettingsSnapshot.findMany({
         where: { accountId: params.accountId },
         orderBy: [
             { version: "desc" },
             { createdAt: "desc" },
         ],
-        skip: params.limit,
-        select: { id: true },
+        select: {
+            id: true,
+            settingsDbValue: true,
+        },
     });
+    const stale: string[] = [];
+    let retainedCount = 0;
+    let retainedBytes = 0;
+    let pruningOlderSnapshots = false;
+    for (const snapshot of snapshots) {
+        const snapshotBytes = Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8");
+        if (
+            // Snapshots are newest first: once one cannot stay, retaining an older
+            // row would create a hole instead of one contiguous newest suffix.
+            pruningOlderSnapshots
+            || retainedCount >= params.limit
+            || retainedBytes + snapshotBytes > ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES
+        ) {
+            stale.push(snapshot.id);
+            pruningOlderSnapshots = true;
+            continue;
+        }
+        retainedCount += 1;
+        retainedBytes += snapshotBytes;
+    }
     if (stale.length === 0) return;
 
     await tx.accountSettingsSnapshot.deleteMany({
         where: {
-            id: { in: stale.map((snapshot) => snapshot.id) },
+            id: { in: stale },
         },
     });
 }

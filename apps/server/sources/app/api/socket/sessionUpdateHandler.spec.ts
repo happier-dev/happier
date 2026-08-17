@@ -2,8 +2,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const createSessionMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
+const enqueuePendingMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
 const materializeNextPendingMessage = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
 const resolveAcceptedPendingDelivery = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
+const settlePendingInputAdmission = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
 const readSessionPendingState = vi.fn(async (): Promise<unknown> => ({ ok: true, pendingCount: 0, pendingVersion: 0 }));
 const applySessionTurnMutation = vi.fn(async (): Promise<unknown> => ({ ok: false, error: "internal" }));
 const clearSessionRuntimeActivityProjectionInTx = vi.fn(async () => ({
@@ -35,6 +37,21 @@ const buildUpdateSessionUpdate = vi.fn(
         body: { t: "update-session", ...(projection && typeof projection === "object" ? projection : {}) },
     }),
 );
+const HOSTED_RECIPIENT_PROJECTION = {
+    currentStorageState: "hosted",
+    acceptedThroughServerSeq: null,
+    materializationPublicationId: null,
+    materializedThroughSourceAt: null,
+    publishedThroughServerSeq: null,
+    seq: 0,
+    lastViewedSessionSeq: null,
+    latestReadyEventSeq: null,
+    latestReadyEventAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    meaningfulActivityAt: null,
+    lastActiveAt: new Date(0),
+} as const;
 vi.mock("@/app/session/sessionWriteService", () => ({
     createSessionMessage,
     updateSessionMetadata,
@@ -54,8 +71,12 @@ vi.mock("@/app/presence/presenceRecorder", () => ({
     recordSessionAlive,
 }));
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
+    enqueuePendingMessage,
     materializeNextPendingMessage,
+    materializeNextPendingMessageInTx: materializeNextPendingMessage,
+    mapPendingMaterializationError: () => ({ ok: false, error: "internal" }),
     resolveAcceptedPendingDelivery,
+    settlePendingInputAdmission,
     readSessionPendingState,
 }));
 vi.mock("@/storage/db", () => ({
@@ -102,6 +123,8 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
 }));
 vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: (tx: unknown) => unknown) => await fn({})),
+    isTransactionAcquisitionUnavailableError: () => false,
+    isTransactionDeadlineExceededError: () => false,
 }));
 const refreshSessionParticipantBadgePushes = vi.fn(async () => {});
 vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
@@ -109,7 +132,8 @@ vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
 }));
 const logInfo = vi.fn();
 const logDebug = vi.fn();
-vi.mock("@/utils/logging/log", () => ({ log: logInfo, debug: logDebug }));
+const logError = vi.fn();
+vi.mock("@/utils/logging/log", () => ({ log: logInfo, debug: logDebug, error: logError }));
 
 describe("sessionUpdateHandler", () => {
     let registerSessionUpdateHandler: (userId: string, socket: any, connection: any, publisher?: any) => void;
@@ -125,10 +149,14 @@ describe("sessionUpdateHandler", () => {
 
     beforeEach(() => {
         createSessionMessage.mockClear();
+        enqueuePendingMessage.mockReset();
+        enqueuePendingMessage.mockResolvedValue({ ok: false, error: "invalid-params" });
         materializeNextPendingMessage.mockReset();
         materializeNextPendingMessage.mockResolvedValue({ ok: false, error: "internal" });
         resolveAcceptedPendingDelivery.mockReset();
         resolveAcceptedPendingDelivery.mockResolvedValue({ ok: false, error: "internal" });
+        settlePendingInputAdmission.mockReset();
+        settlePendingInputAdmission.mockResolvedValue({ ok: false, error: "internal" });
         readSessionPendingState.mockReset();
         readSessionPendingState.mockResolvedValue({ ok: true, pendingCount: 0, pendingVersion: 0 });
         applySessionTurnMutation.mockClear();
@@ -146,6 +174,7 @@ describe("sessionUpdateHandler", () => {
         closePublisher.mockReset();
         closePublisher.mockResolvedValue({ status: "superseded" });
         sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(HOSTED_RECIPIENT_PROJECTION);
         sessionUpdate.mockReset();
         emitEphemeral.mockClear();
         emitUpdate.mockClear();
@@ -165,6 +194,7 @@ describe("sessionUpdateHandler", () => {
         refreshSessionParticipantBadgePushes.mockClear();
         logInfo.mockClear();
         logDebug.mockClear();
+        logError.mockClear();
         delete process.env.HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS;
         delete process.env.HAPPY_SOCKET_MESSAGE_DIAGNOSTIC_LOGS;
     });
@@ -204,7 +234,11 @@ describe("sessionUpdateHandler", () => {
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
             {
-                presence: { runAsCurrentPublisher },
+                presence: {
+                    runAsCurrentPublisher,
+                    runAsCurrentPublisherInTx: async (params: { operation: (value: typeof authority, tx: unknown) => Promise<unknown> }) =>
+                        await params.operation(authority, {}),
+                },
                 binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
             } as any,
         );
@@ -229,6 +263,139 @@ describe("sessionUpdateHandler", () => {
             pendingVersion: 9,
             message: expect.objectContaining({ localId: "pending-1" }),
         }));
+    });
+
+    it("settles protected input authority only through the exact current target publisher", async () => {
+        settlePendingInputAdmission.mockResolvedValueOnce({
+            ok: true,
+            result: { status: "accepted", localId: "pending-1" },
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+            pendingVersion: 9,
+            participantCursors: [],
+            participantCursorsPending: [],
+            participantCursorsMessage: [],
+            badgeAttentionChanged: false,
+            message: {
+                id: "message-1",
+                seq: 43,
+                localId: "pending-1",
+                messageRole: "user",
+                content: { t: "plain", v: { role: "user", content: { type: "text", text: "accepted" } } },
+                createdAt: new Date(1_000),
+                updatedAt: new Date(1_000),
+            },
+        });
+        const socket = createFakeSocket();
+        const authority = {
+            accountId: "user-1",
+            machineId: "machine-1",
+            sessionId: "s-1",
+            committedFence: new Date(1_000),
+        };
+        const runAsCurrentPublisher = vi.fn(async (params: { operation: (value: typeof authority) => Promise<unknown> }) =>
+            await params.operation(authority));
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+            {
+                presence: { runAsCurrentPublisher },
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+            } as any,
+        );
+        const callback = vi.fn();
+        const decision = {
+            kind: "admit" as const,
+            finalContent: { t: "plain" as const, v: { role: "user", content: { type: "text", text: "accepted" } } },
+        };
+
+        await getSocketHandler(socket, "session-pending-admission-settlement-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "pending-1",
+            decision,
+        }, callback);
+
+        expect(settlePendingInputAdmission).toHaveBeenCalledWith({
+            actorUserId: "user-1",
+            sessionId: "s-1",
+            localId: "pending-1",
+            publisherAuthority: authority,
+            decision,
+        });
+        expect(callback).toHaveBeenCalledWith({
+            v: 1,
+            result: { status: "accepted", localId: "pending-1" },
+        });
+    });
+
+    it("rejects protected input settlement from a stale target publisher before service disclosure", async () => {
+        const socket = createFakeSocket();
+        const runAsCurrentPublisher = vi.fn(async () => null);
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+            {
+                presence: { runAsCurrentPublisher },
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+            } as any,
+        );
+        const callback = vi.fn();
+
+        await getSocketHandler(socket, "session-pending-admission-settlement-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "pending-1",
+            decision: { kind: "reject", code: "session_input_permission_ceiling_rejected" },
+        }, callback);
+
+        expect(settlePendingInputAdmission).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith({
+            v: 1,
+            result: { status: "rejected", code: "session_input_unauthorized" },
+        });
+    });
+
+    it("checks current publisher authority only from the authenticated bound session socket", async () => {
+        const socket = createFakeSocket();
+        const readCurrentPublisherPrecondition = vi.fn(async () => null);
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            {
+                connectionType: "session-scoped",
+                socket: socket as any,
+                userId: "user-1",
+                sessionId: "s-1",
+            } as any,
+            {
+                presence: {
+                    runAsCurrentPublisher: vi.fn(),
+                    readCurrentPublisherPrecondition,
+                },
+                binding: {
+                    accountId: "user-1",
+                    machineId: "machine-1",
+                    sessionId: "s-1",
+                },
+            } as any,
+        );
+        const callback = vi.fn();
+
+        await getSocketHandler(
+            socket,
+            "session-publisher-authority-check",
+        )({ sessionId: "s-1" }, callback);
+
+        expect(readCurrentPublisherPrecondition).toHaveBeenCalledWith({
+            socket,
+        });
+        expect(callback).toHaveBeenCalledWith({
+            status: "superseded",
+            sessionId: "s-1",
+        });
     });
 
     it("forwards only typed transaction-unavailable settlement retry fields", async () => {
@@ -273,6 +440,47 @@ describe("sessionUpdateHandler", () => {
             retryAfterMs: 1_000,
             correlationId: "accepted-settlement-1",
         });
+    });
+
+    it("contains unexpected provider acceptance errors with one internal ACK and an observable error log", async () => {
+        const unexpectedError = new Error("unexpected settlement failure");
+        resolveAcceptedPendingDelivery.mockRejectedValueOnce(unexpectedError);
+        const socket = createFakeSocket();
+        const authority = {
+            accountId: "user-1",
+            machineId: "machine-1",
+            sessionId: "s-1",
+            committedFence: new Date(1_000),
+        };
+        const runAsCurrentPublisher = vi.fn(async (params: { operation: (value: typeof authority) => Promise<unknown> }) =>
+            await params.operation(authority));
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+            {
+                presence: { runAsCurrentPublisher },
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+            } as any,
+        );
+        const callback = vi.fn();
+
+        await expect(getSocketHandler(socket, "pending-delivery-accepted-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "pending-1",
+        }, callback)).resolves.toBeUndefined();
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith({ ok: false, error: "internal" });
+        expect(logError).toHaveBeenCalledWith(
+            {
+                module: "websocket",
+                event: "pending-delivery-accepted-v1",
+                err: unexpectedError,
+            },
+            "Error settling accepted pending delivery",
+        );
     });
 
     it("rejects provider acceptance from a stale or replaced publisher socket", async () => {
@@ -403,7 +611,7 @@ describe("sessionUpdateHandler", () => {
         });
     });
 
-    it("publishes a successful released layout-zero metadata update", async () => {
+    it("publishes a successful released layout-zero metadata update only to its owner", async () => {
         updateSessionMetadata.mockResolvedValueOnce({
             ok: true,
             version: 6,
@@ -433,8 +641,12 @@ describe("sessionUpdateHandler", () => {
             expectedVersion: 5,
         }, callback);
 
-        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(2);
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(buildUpdateSessionUpdate.mock.calls[0]?.[1]).toBe(10);
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: "owner" }),
+        );
         expect(callback).toHaveBeenCalledWith({
             result: "success",
             version: 6,
@@ -626,6 +838,84 @@ describe("sessionUpdateHandler", () => {
         expect(touchPublisher).toHaveBeenCalledTimes(2);
     });
 
+    it("backs off repeated session-alive persistence failures instead of retrying every heartbeat", async () => {
+        const observedAt = Date.parse("2026-07-22T09:00:00.000Z");
+        const now = vi.spyOn(Date, "now").mockReturnValue(observedAt);
+        const socket = createFakeSocket();
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+            trustedPublisher,
+        );
+        touchPublisher.mockResolvedValue({ status: "rejected", reason: "unauthorized" });
+        const alive = getSocketHandler(socket, "session-alive");
+
+        try {
+            await alive({ sid: "s-1", time: observedAt, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(1);
+
+            // First failure must still retry on the very next heartbeat.
+            now.mockReturnValue(observedAt + 2_000);
+            await alive({ sid: "s-1", time: observedAt + 2_000, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(2);
+
+            // The second consecutive failure arms a backoff, so the next heartbeat is not an attempt.
+            now.mockReturnValue(observedAt + 3_000);
+            await alive({ sid: "s-1", time: observedAt + 3_000, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(2);
+
+            now.mockReturnValue(observedAt + 4_001);
+            await alive({ sid: "s-1", time: observedAt + 4_001, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(3);
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    it("returns to the ordinary persistence interval once a session-alive attempt succeeds", async () => {
+        const observedAt = Date.parse("2026-07-22T10:00:00.000Z");
+        const now = vi.spyOn(Date, "now").mockReturnValue(observedAt);
+        const socket = createFakeSocket();
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+            trustedPublisher,
+        );
+        touchPublisher.mockResolvedValue({ status: "rejected", reason: "unauthorized" });
+        const alive = getSocketHandler(socket, "session-alive");
+
+        try {
+            await alive({ sid: "s-1", time: observedAt, thinking: true });
+            now.mockReturnValue(observedAt + 2_000);
+            await alive({ sid: "s-1", time: observedAt + 2_000, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(2);
+
+            touchPublisher.mockResolvedValue({
+                status: "touched",
+                committedFence: new Date(observedAt + 4_001),
+                activeAt: new Date(observedAt + 4_001),
+                participantCursors: [],
+                badgeAttentionChanged: false,
+            });
+            now.mockReturnValue(observedAt + 4_001);
+            await alive({ sid: "s-1", time: observedAt + 4_001, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(3);
+
+            // A success re-arms the full persistence interval, not the failure backoff.
+            now.mockReturnValue(observedAt + 20_000);
+            await alive({ sid: "s-1", time: observedAt + 20_000, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(3);
+
+            now.mockReturnValue(observedAt + 64_002);
+            await alive({ sid: "s-1", time: observedAt + 64_002, thinking: true });
+            expect(touchPublisher).toHaveBeenCalledTimes(4);
+        } finally {
+            now.mockRestore();
+        }
+    });
+
     it("coalesces successful released alive reconciliation while its committed presence fence is fresh", async () => {
         const observedAt = Date.parse("2026-07-22T08:00:00.000Z");
         const now = vi.spyOn(Date, "now").mockReturnValue(observedAt);
@@ -729,14 +1019,17 @@ describe("sessionUpdateHandler", () => {
         registerSessionUpdateHandler("user-1", socket as any, { ...connectionShape, socket } as any);
 
         const callback = vi.fn();
-        await getSocketHandler(socket, "runtime-activity-snapshot")({
-            sid: "s-1",
-            state: "active",
-            runtimeActivityActiveCount: 1,
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: "s-1",
+            mutationId: "runtime-activity-snapshot:s-1",
+            snapshot: { state: "active", activeCount: 1 },
         }, callback);
         await getSocketHandler(socket, "session-alive")({ sid: "s-1", time: Date.now(), thinking: true });
 
-        expect(callback).toHaveBeenCalledWith({ result: "forbidden" });
+        expect(callback).toHaveBeenCalledWith({
+            status: "rejected",
+            reason: "invalid_request",
+        });
         expect(publishSnapshot).not.toHaveBeenCalled();
         expect(touchPublisher).not.toHaveBeenCalled();
         expect(recordSessionAlive).not.toHaveBeenCalled();
@@ -762,13 +1055,10 @@ describe("sessionUpdateHandler", () => {
         registerSessionUpdateHandler("user-1", socket as any, connection, trustedPublisher);
 
         const callback = vi.fn();
-        await getSocketHandler(socket, "runtime-activity-snapshot")({
-            sid: "s-1",
-            state: "active",
-            runtimeActivityActiveCount: 1,
-            taskId: "private-task-id",
-            label: "private label",
-            diagnostic: { raw: true },
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: "s-1",
+            mutationId: "runtime-activity-snapshot:s-1",
+            snapshot: { state: "active", activeCount: 1 },
         }, callback);
 
         expect(publishSnapshot).toHaveBeenCalledWith({
@@ -792,12 +1082,15 @@ describe("sessionUpdateHandler", () => {
             runtimeActivityRevision: 2,
         });
         expect(callback).toHaveBeenCalledWith({
-            result: "success",
-            didWrite: true,
-            runtimeActivityState: "active",
-            runtimeActivityActiveCount: 1,
-            runtimeActivityObservedAt: 1_000,
-            runtimeActivityRevision: 2,
+            status: "applied",
+            sessionId: "s-1",
+            mutationId: "runtime-activity-snapshot:s-1",
+            projection: {
+                state: "active",
+                activeCount: 1,
+                observedAt: 1_000,
+                revision: 2,
+            },
         });
         expect(updateSessionMetadata).not.toHaveBeenCalled();
         expect(updateSessionAgentState).not.toHaveBeenCalled();
@@ -830,14 +1123,18 @@ describe("sessionUpdateHandler", () => {
         });
 
         const callback = vi.fn();
-        await getSocketHandler(socket, "runtime-activity-snapshot")({
-            sid: "s-idle",
-            state: "idle",
-            runtimeActivityActiveCount: 0,
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: "s-idle",
+            mutationId: "runtime-activity-snapshot:s-idle",
+            snapshot: { state: "idle", activeCount: 0 },
         }, callback);
 
         expect(publishSnapshot).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "success", didWrite: true }));
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            status: "applied",
+            sessionId: "s-idle",
+            mutationId: "runtime-activity-snapshot:s-idle",
+        }));
         expect(readSessionPendingState).toHaveBeenCalledWith({ actorUserId: "user-1", sessionId: "s-idle" });
         expect(buildPendingChangedUpdate).toHaveBeenCalledWith({
             sessionId: "s-idle",
@@ -858,13 +1155,16 @@ describe("sessionUpdateHandler", () => {
         );
 
         const callback = vi.fn();
-        await getSocketHandler(socket, "runtime-activity-snapshot")({
-            sid: "s-other",
-            state: "active",
-            runtimeActivityActiveCount: 1,
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: "s-other",
+            mutationId: "runtime-activity-snapshot:s-other",
+            snapshot: { state: "active", activeCount: 1 },
         }, callback);
 
-        expect(callback).toHaveBeenCalledWith({ result: "forbidden" });
+        expect(callback).toHaveBeenCalledWith({
+            status: "rejected",
+            reason: "invalid_request",
+        });
         expect(updateSessionRuntimeActivityProjection).not.toHaveBeenCalled();
     });
 
@@ -877,16 +1177,19 @@ describe("sessionUpdateHandler", () => {
             trustedPublisher,
         );
         const callback = vi.fn();
-        await getSocketHandler(socket, "runtime-activity-snapshot")({
-            state: "active",
-            runtimeActivityActiveCount: 1,
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            mutationId: "runtime-activity-snapshot:s-1",
+            snapshot: { state: "active", activeCount: 1 },
         }, callback);
 
-        expect(callback).toHaveBeenCalledWith({ result: "invalid-params" });
+        expect(callback).toHaveBeenCalledWith({
+            status: "rejected",
+            reason: "invalid_request",
+        });
         expect(updateSessionRuntimeActivityProjection).not.toHaveBeenCalled();
     });
 
-    it("publishes a successful released layout-zero Agent-state update", async () => {
+    it("publishes a successful released layout-zero Agent-state update only to its owner", async () => {
         updateSessionAgentState.mockResolvedValueOnce({
             ok: true,
             version: 2,
@@ -932,8 +1235,12 @@ describe("sessionUpdateHandler", () => {
             expectedVersion: 1,
             agentStateCiphertext: "encrypted-state",
         });
-        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(2);
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(buildUpdateSessionUpdate.mock.calls[0]?.[1]).toBe(10);
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: "user-1" }),
+        );
         expect(callback).toHaveBeenCalledWith({
             result: "success",
             version: 2,
@@ -978,9 +1285,8 @@ describe("sessionUpdateHandler", () => {
         await expect(handler({ sid: "s-1" })).resolves.toBeUndefined();
     });
 
-    it("accepts plain message envelopes and forwards them to createSessionMessage", async () => {
+    it("rejects a reserved Agent-transition divider localId on the generic socket ingress", async () => {
         const socket = createFakeSocket();
-
         registerSessionUpdateHandler(
             "user-1",
             socket as any,
@@ -989,16 +1295,44 @@ describe("sessionUpdateHandler", () => {
 
         const handler = getSocketHandler(socket, "message");
         const callback = vi.fn();
-        await handler({ sid: "s-1", message: { t: "plain", v: { type: "user", text: "hi" } } }, callback);
+        await handler({
+            sid: "s-1",
+            message: { t: "plain", v: { type: "user", text: "hi" } },
+            localId: "agent-transition:submitted-1",
+        }, callback);
 
-        expect(createSessionMessage).toHaveBeenCalledWith({
+        expect(callback).toHaveBeenCalledWith(
+            expect.objectContaining({ ok: false, error: "invalid-params" }),
+        );
+        // Only the owner-only transition service may reach the message owner with
+        // a reserved divider localId.
+        expect(createSessionMessage).not.toHaveBeenCalled();
+    });
+
+    it("keeps role-less predecessor socket payloads on the transcript mutation path", async () => {
+        const socket = createFakeSocket();
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "message");
+        await handler({
+            sid: "s-1",
+            message: { t: "plain", v: { type: "user", text: "hi" } },
+            localId: "socket-user-1",
+        }, vi.fn());
+
+        expect(createSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
             actorUserId: "user-1",
             sessionId: "s-1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
-            localId: null,
+            localId: "socket-user-1",
+            messageRole: undefined,
             sidechainId: null,
-        });
-        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: "invalid-params" }));
+        }));
+        expect(enqueuePendingMessage).not.toHaveBeenCalled();
     });
 
     it("does not emit per-message socket diagnostics by default", async () => {
@@ -1543,25 +1877,24 @@ describe("sessionUpdateHandler", () => {
             deliveryState: { mode: "provider", unresolved: false },
         });
         const socket = createFakeSocket();
-        const runAsCurrentPublisher = vi.fn(async (params: {
-            operation: (authority: {
-                accountId: string;
-                machineId: string;
-                sessionId: string;
-                committedFence: Date;
-            }) => Promise<unknown>;
-        }) => await params.operation({
+        const authority = {
             accountId: "user-1",
             machineId: "machine-stale-provider",
             sessionId: "s-stale-provider",
             committedFence: new Date(0),
-        }));
+        };
+        const runAsCurrentPublisher = vi.fn(async (params: {
+            operation: (value: typeof authority) => Promise<unknown>;
+        }) => await params.operation(authority));
+        const runAsCurrentPublisherInTx = vi.fn(async (params: {
+            operation: (value: typeof authority, tx: unknown) => Promise<unknown>;
+        }) => await params.operation(authority, {}));
         registerSessionUpdateHandler(
             "user-1",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-stale-provider" } as any,
             {
-                presence: { runAsCurrentPublisher },
+                presence: { runAsCurrentPublisher, runAsCurrentPublisherInTx },
                 binding: {
                     accountId: "user-1",
                     machineId: "machine-stale-provider",
@@ -1579,7 +1912,7 @@ describe("sessionUpdateHandler", () => {
             foregroundState: "ready",
         }, callback);
 
-        expect(runAsCurrentPublisher).toHaveBeenCalledTimes(1);
+        expect(runAsCurrentPublisherInTx).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith({
             ok: true,
             didMaterialize: false,
@@ -1602,28 +1935,92 @@ describe("sessionUpdateHandler", () => {
         expect(emitUpdate).toHaveBeenCalledTimes(1);
     });
 
+    it("returns typed transaction unavailability before the ACK deadline when the socket mutation queue is held", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            let releaseMessage!: () => void;
+            createSessionMessage.mockImplementationOnce(async () => await new Promise((resolve) => {
+                releaseMessage = () => resolve({ ok: false, error: "invalid-params" });
+            }));
+            const socket = createFakeSocket();
+            const authority = {
+                accountId: "user-1",
+                machineId: "machine-budget",
+                sessionId: "s-budget",
+                committedFence: new Date(0),
+            };
+            const runAsCurrentPublisher = vi.fn(async (params: { operation: (value: typeof authority) => Promise<unknown> }) =>
+                await params.operation(authority));
+            registerSessionUpdateHandler(
+                "user-1",
+                socket as any,
+                { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-budget" } as any,
+                {
+                    presence: {
+                        runAsCurrentPublisher,
+                        runAsCurrentPublisherInTx: async (params: { operation: (value: typeof authority, tx: unknown) => Promise<unknown> }) =>
+                            await params.operation(authority, {}),
+                    },
+                    binding: { accountId: "user-1", machineId: "machine-budget", sessionId: "s-budget" },
+                } as any,
+            );
+
+            const heldMessage = getSocketHandler(socket, "message")({
+                sid: "s-budget",
+                message: { t: "plain", v: { role: "user", content: { type: "text", text: "held" } } },
+            }, vi.fn());
+            await vi.advanceTimersByTimeAsync(0);
+
+            const callback = vi.fn();
+            const materialization = getSocketHandler(socket, "pending-materialize-next")({
+                sid: "s-budget",
+                deliveryState: "provider",
+                deliveryTiming: "after_foreground_ready",
+                foregroundState: "ready",
+            }, callback);
+            await vi.advanceTimersByTimeAsync(9_500);
+
+            expect(callback).toHaveBeenCalledWith({
+                ok: false,
+                error: "transaction-unavailable",
+                retryAfterMs: expect.any(Number),
+            });
+            expect(materializeNextPendingMessage).not.toHaveBeenCalled();
+
+            releaseMessage();
+            await vi.runAllTimersAsync();
+            await Promise.all([heldMessage, materialization]);
+            expect(materializeNextPendingMessage).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("defers missing Activity-revision classification to the canonical provider materializer", async () => {
         materializeNextPendingMessage.mockResolvedValueOnce({ ok: false, error: "invalid-params" });
-        const runAsCurrentPublisher = vi.fn(async (params: {
-            operation: (authority: {
-                accountId: string;
-                machineId: string;
-                sessionId: string;
-                committedFence: Date;
-            }) => Promise<unknown>;
-        }) => await params.operation({
+        const authority = {
             accountId: "user-1",
             machineId: "machine-provider-idle",
             sessionId: "s-provider-idle",
             committedFence: new Date(0),
-        }));
+        };
+        const runAsCurrentPublisher = vi.fn(async (params: {
+            operation: (value: typeof authority) => Promise<unknown>;
+        }) => await params.operation(authority));
+        const runAsCurrentPublisherInTx = vi.fn(async (params: {
+            operation: (value: typeof authority, tx: unknown) => Promise<unknown>;
+        }) => await params.operation(authority, {}));
         const socket = createFakeSocket();
         registerSessionUpdateHandler(
             "user-1",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-provider-idle" } as any,
             {
-                presence: { runAsCurrentPublisher },
+                presence: {
+                    runAsCurrentPublisher,
+                    runAsCurrentPublisherInTx,
+                },
                 binding: {
                     accountId: "user-1",
                     machineId: "machine-provider-idle",
@@ -1641,13 +2038,14 @@ describe("sessionUpdateHandler", () => {
             foregroundState: "ready",
         }, callback);
 
-        expect(runAsCurrentPublisher).toHaveBeenCalledTimes(1);
+        expect(runAsCurrentPublisherInTx).toHaveBeenCalledTimes(1);
         expect(materializeNextPendingMessage).toHaveBeenCalledWith({
             actorUserId: "user-1",
             sessionId: "s-provider-idle",
             deliveryState: "provider",
             deliveryTiming: "after_runtime_idle",
             foregroundState: "ready",
+            tx: {},
             publisherAuthority: {
                 accountId: "user-1",
                 machineId: "machine-provider-idle",
@@ -1790,7 +2188,6 @@ describe("sessionUpdateHandler", () => {
 
         expect(applySessionTurnMutation).not.toHaveBeenCalled();
         expect(clearSessionRuntimeActivityProjectionInTx).not.toHaveBeenCalled();
-        expect(sessionFindUnique).not.toHaveBeenCalled();
         expect(sessionUpdate).not.toHaveBeenCalled();
         expect(buildUpdateSessionUpdate).toHaveBeenCalledWith("s-1", 101, expect.any(String), undefined, undefined, {
             active: false,
@@ -1880,7 +2277,6 @@ describe("sessionUpdateHandler", () => {
         await handler({ sid: "s-other", time: 200 }, callback);
 
         expect(callback).toHaveBeenCalledWith({ ok: false, error: "forbidden" });
-        expect(sessionFindUnique).not.toHaveBeenCalled();
         expect(sessionUpdate).not.toHaveBeenCalled();
     });
 

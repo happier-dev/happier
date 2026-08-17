@@ -6,6 +6,39 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
+import { artifactOrdinaryWhere } from "@/app/artifacts/artifactClassification";
+import {
+    isPlainArtifactDataKeyBytes,
+    openArtifactStoredContentPair,
+} from "@/app/artifacts/artifactStoredContent";
+import {
+    buildAccountStoredContentSocketUpgradeError,
+    readAccountStoredContentCompatibilityForSocket,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+
+function readMarkedArtifactSocketUpgradeRequired(
+    socket: Socket,
+    dataEncryptionKey: Uint8Array,
+) {
+    if (!isPlainArtifactDataKeyBytes(dataEncryptionKey)) {
+        return null;
+    }
+    const compatibility =
+        readAccountStoredContentCompatibilityForSocket(socket);
+    return compatibility.supportsCurrentProtocol
+        ? null
+        : buildAccountStoredContentSocketUpgradeError(compatibility).data;
+}
+
+function readArtifactSocketCompatibility(socket: Socket) {
+    return readAccountStoredContentCompatibilityForSocket(socket);
+}
+
+function buildArtifactSocketUpgradeRequired(socket: Socket) {
+    return buildAccountStoredContentSocketUpgradeError(
+        readArtifactSocketCompatibility(socket),
+    ).data;
+}
 
 export function artifactUpdateHandler(userId: string, socket: Socket) {
     // Read artifact with full body
@@ -29,8 +62,9 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             const artifact = await db.artifact.findFirst({
                 where: {
                     id: artifactId,
-                    accountId: userId
-                }
+                    accountId: userId,
+                    ...artifactOrdinaryWhere,
+                },
             });
 
             if (!artifact) {
@@ -39,15 +73,34 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 }
                 return;
             }
+            const upgradeRequired = readMarkedArtifactSocketUpgradeRequired(
+                socket,
+                artifact.dataEncryptionKey,
+            );
+            if (upgradeRequired) {
+                callback?.(upgradeRequired);
+                return;
+            }
+            const opened = openArtifactStoredContentPair({
+                accountId: userId,
+                artifactId: artifact.id,
+                dataEncryptionKey: artifact.dataEncryptionKey,
+                header: artifact.header,
+                body: artifact.body,
+            });
+            if (!opened) {
+                callback({ result: 'error', message: 'Internal error' });
+                return;
+            }
 
             // Return artifact data
             callback({
                 result: 'success',
                 artifact: {
                     id: artifact.id,
-                    header: privacyKit.encodeBase64(artifact.header),
+                    header: privacyKit.encodeBase64(opened.header),
                     headerVersion: artifact.headerVersion,
-                    body: privacyKit.encodeBase64(artifact.body),
+                    body: privacyKit.encodeBase64(opened.body),
                     bodyVersion: artifact.bodyVersion,
                     seq: artifact.seq,
                     createdAt: artifact.createdAt.getTime(),
@@ -103,14 +156,25 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
+            const compatibility = readArtifactSocketCompatibility(socket);
             const result = await updateArtifact({
                 actorUserId: userId,
                 artifactId,
                 header: header ? { bytes: privacyKit.decodeBase64(header.data), expectedVersion: header.expectedVersion } : undefined,
                 body: body ? { bytes: privacyKit.decodeBase64(body.data), expectedVersion: body.expectedVersion } : undefined,
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
             });
 
             if (!result.ok) {
+                if (result.error === 'client-upgrade-required') {
+                    callback?.(buildArtifactSocketUpgradeRequired(socket));
+                    return;
+                }
+                if (result.error === 'invalid-params') {
+                    callback?.({ result: 'error', message: 'Invalid parameters' });
+                    return;
+                }
                 if (result.error === 'not-found') {
                     callback?.({ result: 'error', message: 'Artifact not found' });
                     return;
@@ -189,15 +253,26 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             }
 
             // Check if artifact already exists
+            const compatibility = readArtifactSocketCompatibility(socket);
             const result = await createArtifact({
                 actorUserId: userId,
                 artifactId: id,
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
             });
 
             if (!result.ok) {
+                if (result.error === 'client-upgrade-required') {
+                    callback?.(buildArtifactSocketUpgradeRequired(socket));
+                    return;
+                }
+                if (result.error === 'invalid-params') {
+                    callback?.({ result: 'error', message: 'Invalid parameters' });
+                    return;
+                }
                 if (result.error === 'conflict') {
                     // Avoid revealing whether an artifact ID is already owned by another account.
                     callback?.({ result: 'error', message: 'Artifact already exists' });
@@ -254,8 +329,18 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
-            const result = await deleteArtifact({ actorUserId: userId, artifactId });
+            const compatibility = readArtifactSocketCompatibility(socket);
+            const result = await deleteArtifact({
+                actorUserId: userId,
+                artifactId,
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
+            });
             if (!result.ok) {
+                if (result.error === 'client-upgrade-required') {
+                    callback?.(buildArtifactSocketUpgradeRequired(socket));
+                    return;
+                }
                 if (result.error === 'not-found') {
                     callback?.({ result: 'error', message: 'Artifact not found' });
                     return;

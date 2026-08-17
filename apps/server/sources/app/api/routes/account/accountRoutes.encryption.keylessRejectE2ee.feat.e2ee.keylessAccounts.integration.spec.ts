@@ -64,7 +64,7 @@ describe("registerAccountEncryptionRoutes (keyless accounts) (integration)", () 
         });
 
         expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "invalid-params" });
+        expect(res.json()).toEqual({ error: "migration-required" });
 
         const stored = await db.account.findUnique({
             where: { id: account.id },
@@ -75,7 +75,7 @@ describe("registerAccountEncryptionRoutes (keyless accounts) (integration)", () 
         await app.close();
     });
 
-    it("treats keyless accounts as plain on GET even if legacy rows store encryptionMode=e2ee", async () => {
+    it("reports persisted e2ee mode on GET even when required signing material is missing", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "e2ee" },
             select: { id: true, encryptionModeUpdatedAt: true },
@@ -93,7 +93,7 @@ describe("registerAccountEncryptionRoutes (keyless accounts) (integration)", () 
 
         expect(res.statusCode).toBe(200);
         expect(res.json()).toEqual({
-            mode: "plain",
+            mode: "e2ee",
             updatedAt: account.encryptionModeUpdatedAt.getTime(),
         });
 

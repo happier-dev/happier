@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import type {
+    AccountEncryptionMigrateExternalAuthBindingDigestV1,
+} from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
 import { isOAuthStateUnavailableError } from "@/app/auth/oauthStateErrors";
@@ -16,6 +19,10 @@ type ExternalAuthorizeFlowParams =
           env: NodeJS.ProcessEnv;
           publicKeyHex: string | null;
           proofHash: string | null;
+          purpose?: "account_encryption_first_key";
+          userId?: string;
+          requestDigest?:
+              AccountEncryptionMigrateExternalAuthBindingDigestV1;
           webAppOAuthReturnUrl?: string | null;
       }>
     | Readonly<{
@@ -66,6 +73,11 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
                   sid,
                   publicKey: params.publicKeyHex,
                   proofHash: params.proofHash,
+                  ...(params.purpose ? {
+                      purpose: params.purpose,
+                      userId: params.userId,
+                      requestDigest: params.requestDigest,
+                  } : {}),
               })
             : await auth.createOauthStateToken({
                   flow: "connect",

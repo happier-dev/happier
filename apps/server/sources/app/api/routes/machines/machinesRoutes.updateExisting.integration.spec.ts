@@ -64,7 +64,11 @@ describe("machinesRoutes (update existing machine)", () => {
         txDbMocks.reset();
         dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
-        dbMocks.db.account.findUnique.mockResolvedValue({ contentPublicKey: new Uint8Array(32).fill(7) });
+        dbMocks.db.account.findUnique.mockResolvedValue({
+            contentPublicKey: new Uint8Array(32).fill(7),
+            publicKey: "account-signing-key",
+            encryptionMode: "e2ee",
+        });
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
         txDbMocks.db.machine.create.mockImplementation(async () => { throw new Error("unexpected create"); });
         txDbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);

@@ -2,6 +2,7 @@ import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCoun
 import {
     buildMessageUpdatedUpdate,
     buildNewMessageUpdate,
+    buildPendingResolvedMessageUpdate,
     buildPendingChangedUpdate,
     buildSessionActivityEphemeral,
     buildUpdateSessionUpdate,
@@ -9,8 +10,8 @@ import {
     eventRouter,
 } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
-import { AsyncLock } from "@/utils/runtime/lock";
-import { debug, log } from "@/utils/logging/log";
+import { AsyncLock, isLockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
+import { debug, error as logError, log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import {
@@ -25,10 +26,13 @@ import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSes
 import { publishSessionReadCursorUpdate } from "@/app/session/readCursor/publishSessionReadCursorUpdate";
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
 import {
-    materializeNextPendingMessage,
+    mapPendingMaterializationError,
+    materializeNextPendingMessageInTx,
     readSessionPendingState,
     resolveAcceptedPendingDelivery,
+    settlePendingInputAdmission,
     type ResolveAcceptedPendingDeliveryResult,
+    type SettlePendingInputAdmissionResult,
 } from "@/app/session/pending/pendingMessageService";
 import { serializePendingMaterializedMessage } from "@/app/session/pending/serializePendingMaterializedMessage";
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
@@ -40,12 +44,18 @@ import {
     AcceptedPendingSettlementRequestV1Schema,
     AcceptedPendingSettlementResponseV1Schema,
     ExecutionRunPublicStateSchema,
+    isRecoveredHistoryTranscriptObservationProvenance,
     PrimaryTurnStatusV1Schema,
     parseSessionRuntimeActivityProjectionFields,
+    isSessionAgentTransitionDividerLocalId,
     readPendingLocalId,
     SessionMessageRoleSchema,
+    SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
     SessionTurnMutationV1Schema,
+    SessionPublisherAuthorityCheckAckSchema,
+    SessionPublisherAuthorityCheckRequestSchema,
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
+    SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
     SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
     SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
@@ -58,6 +68,8 @@ import {
     SessionRuntimeActivityCloseRequestSchema,
     SessionRuntimeActivitySnapshotAckSchema,
     SessionRuntimeActivitySnapshotRequestSchema,
+    SessionPendingAdmissionSettlementRequestV1Schema,
+    SessionPendingAdmissionSettlementResponseV1Schema,
 } from "@happier-dev/protocol";
 import { TranscriptStreamSegmentDeltaEphemeralMessageSchema, TranscriptStreamSegmentEphemeralMessageSchema } from "@happier-dev/protocol/updates";
 import type { SessionEndAckResponse } from "@happier-dev/protocol/updates";
@@ -66,6 +78,16 @@ import { didSessionActivityBadgeContributionChange } from "@/app/activity/accoun
 import { canPublishFromSessionScopedSocket, canTargetSessionFromSocket } from "./sessionScopedBinding";
 import type { createSessionPublisherPresence, SessionPublisherBinding } from "@/app/presence/sessionPublisherPresence";
 import { publishSessionPublisherClose } from "@/app/presence/publishSessionPublisherClose";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationPendingProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+    projectSessionTranscriptPublicationUnanchoredProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    isTransactionAcquisitionUnavailableError,
+    isTransactionDeadlineExceededError,
+} from "@/storage/inTx";
 
 function scheduleSessionParticipantBadgeRefresh(params: Parameters<typeof refreshSessionParticipantBadgePushes>[0]): void {
     void refreshSessionParticipantBadgePushes(params).catch((error) => {
@@ -74,6 +96,8 @@ function scheduleSessionParticipantBadgeRefresh(params: Parameters<typeof refres
 }
 
 const RELEASED_UI_V0_2_0_DIRECT_USER_MESSAGE_SENT_FROM = new Set(["web", "ios", "android", "mac", "pending_send_now", "retry"]);
+const PENDING_MATERIALIZATION_REQUEST_BUDGET_MS = 9_000;
+const PENDING_MATERIALIZATION_RETRY_AFTER_MS = 1_000;
 const ExecutionRunPublicStateSocketSchema = ExecutionRunPublicStateSchema.strip();
 const TranscriptStreamSegmentEphemeralSocketMessageSchema = TranscriptStreamSegmentEphemeralMessageSchema.strip();
 const TranscriptStreamSegmentDeltaEphemeralSocketMessageSchema = TranscriptStreamSegmentDeltaEphemeralMessageSchema.strip();
@@ -150,6 +174,32 @@ function toPendingSocketState(value: { pendingCount: number; pendingBlockedCount
     };
 }
 
+async function emitPublicationSafePendingChanged(params: Readonly<{
+    data: Parameters<typeof buildPendingChangedUpdate>[0];
+    participantCursors: readonly Readonly<{ accountId: string; cursor: number }>[];
+}>): Promise<void> {
+    const { sessionId, ...rawProjection } = params.data;
+    const session = await loadSessionTranscriptPublicationRecipientProjection(sessionId);
+    if (!session) return;
+    await Promise.all(params.participantCursors.map(async ({ accountId, cursor }) => {
+        const projection = projectSessionTranscriptPublicationPendingProjection(
+            rawProjection,
+            session,
+            accountId,
+        );
+        if (projection.kind === "suppress") return;
+        eventRouter.emitUpdate({
+            userId: accountId,
+            payload: buildPendingChangedUpdate(
+                { sessionId, ...projection.value },
+                cursor,
+                randomKeyNaked(12),
+            ),
+            recipientFilter: { type: "all-interested-in-session", sessionId },
+        });
+    }));
+}
+
 async function publishAcceptedPendingSettlement(params: Readonly<{
     actorUserId: string;
     sessionId: string;
@@ -159,19 +209,16 @@ async function publishAcceptedPendingSettlement(params: Readonly<{
     if (!result.ok) {
         if (result.error !== "transcript-conflict" || result.pendingStateChanged !== true) return;
         const participantCursors = result.participantCursors ?? [];
-        await Promise.all(participantCursors.map(async ({ accountId, cursor }) => {
-            eventRouter.emitUpdate({
-                userId: accountId,
-                payload: buildPendingChangedUpdate({
-                    sessionId: params.sessionId,
-                    pendingCount: result.pendingCount ?? 0,
-                    ...(typeof result.pendingBlockedCount === "number" ? { pendingBlockedCount: result.pendingBlockedCount } : {}),
-                    pendingVersion: result.pendingVersion ?? 0,
-                    changedByAccountId: params.actorUserId,
-                }, cursor, randomKeyNaked(12)),
-                recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
-            });
-        }));
+        await emitPublicationSafePendingChanged({
+            data: {
+                sessionId: params.sessionId,
+                pendingCount: result.pendingCount ?? 0,
+                ...(typeof result.pendingBlockedCount === "number" ? { pendingBlockedCount: result.pendingBlockedCount } : {}),
+                pendingVersion: result.pendingVersion ?? 0,
+                changedByAccountId: params.actorUserId,
+            },
+            participantCursors,
+        });
         await refreshSessionParticipantBadgePushes({
             badgeAttentionChanged: result.badgeAttentionChanged ?? false,
             participantCursors,
@@ -182,13 +229,18 @@ async function publishAcceptedPendingSettlement(params: Readonly<{
 
     const participantCursorsMessage = result.participantCursorsMessage ?? [];
     const participantCursorsPending = result.participantCursorsPending ?? result.participantCursors;
-    const buildMessageUpdate = result.didUpdate === true && result.didWrite !== true
-        ? buildMessageUpdatedUpdate
-        : buildNewMessageUpdate;
     await Promise.all(participantCursorsMessage.map(async ({ accountId, cursor }) => {
         eventRouter.emitUpdate({
             userId: accountId,
-            payload: buildMessageUpdate(result.message!, params.sessionId, cursor, randomKeyNaked(12)),
+            payload: buildPendingResolvedMessageUpdate(
+                result.message!,
+                params.sessionId,
+                cursor,
+                randomKeyNaked(12),
+                result.didUpdate === true && result.didWrite !== true
+                    ? "message-updated"
+                    : "new-message",
+            ),
             recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
         });
     }));
@@ -196,22 +248,59 @@ async function publishAcceptedPendingSettlement(params: Readonly<{
         sessionId: params.sessionId,
         readyProjection: result.readyProjection,
     });
-    await Promise.all(participantCursorsPending.map(async ({ accountId, cursor }) => {
-        eventRouter.emitUpdate({
-            userId: accountId,
-            payload: buildPendingChangedUpdate({
-                sessionId: params.sessionId,
-                pendingCount: result.pendingCount,
-                pendingBlockedCount: result.pendingBlockedCount,
-                pendingVersion: result.pendingVersion,
-                changedByAccountId: params.actorUserId,
-            }, cursor, randomKeyNaked(12)),
-            recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
-        });
-    }));
+    await emitPublicationSafePendingChanged({
+        data: {
+            sessionId: params.sessionId,
+            pendingCount: result.pendingCount,
+            pendingBlockedCount: result.pendingBlockedCount,
+            pendingVersion: result.pendingVersion,
+            changedByAccountId: params.actorUserId,
+        },
+        participantCursors: participantCursorsPending,
+    });
     await refreshSessionParticipantBadgePushes({
         badgeAttentionChanged: result.badgeAttentionChanged,
         participantCursors: [...participantCursorsMessage, ...participantCursorsPending],
+    });
+}
+
+async function publishPendingInputAdmissionSettlement(params: Readonly<{
+    actorUserId: string;
+    sessionId: string;
+    result: SettlePendingInputAdmissionResult;
+}>): Promise<void> {
+    const { result } = params;
+    if (!result.ok) return;
+    await Promise.all(result.participantCursorsMessage.map(async ({ accountId, cursor }) => {
+        if (!result.message) return;
+        eventRouter.emitUpdate({
+            userId: accountId,
+            payload: buildPendingResolvedMessageUpdate(
+                result.message,
+                params.sessionId,
+                cursor,
+                randomKeyNaked(12),
+            ),
+            recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
+        });
+    }));
+    await publishSessionReadyProjectionUpdate({
+        sessionId: params.sessionId,
+        readyProjection: result.readyProjection,
+    });
+    await emitPublicationSafePendingChanged({
+        data: {
+            sessionId: params.sessionId,
+            pendingCount: result.pendingCount,
+            pendingBlockedCount: result.pendingBlockedCount,
+            pendingVersion: result.pendingVersion,
+            changedByAccountId: params.actorUserId,
+        },
+        participantCursors: result.participantCursorsPending,
+    });
+    await refreshSessionParticipantBadgePushes({
+        badgeAttentionChanged: result.badgeAttentionChanged,
+        participantCursors: [...result.participantCursorsMessage, ...result.participantCursorsPending],
     });
 }
 
@@ -222,6 +311,21 @@ type TrustedSessionPublisher = Readonly<{
 
 const releasedAliveOperationTails = new WeakMap<object, Promise<void>>();
 const RELEASED_ALIVE_PERSISTENCE_INTERVAL_MS = 60_000;
+const RELEASED_ALIVE_FAILURE_BACKOFF_BASE_MS = 2_000;
+
+/**
+ * How long the alive persistence throttle holds after a settled failure. The first failure holds
+ * for nothing, so a one-off contention is still retried on the very next heartbeat; consecutive
+ * failures back off exponentially up to the ordinary persistence interval, so a saturated database
+ * stops being answered with more write pressure (heartbeats arrive every 2s while thinking).
+ */
+function resolveReleasedAliveFailureHoldMs(failureStreak: number): number {
+    if (failureStreak <= 1) return 0;
+    return Math.min(
+        RELEASED_ALIVE_PERSISTENCE_INTERVAL_MS,
+        RELEASED_ALIVE_FAILURE_BACKOFF_BASE_MS * 2 ** (failureStreak - 2),
+    );
+}
 
 async function serializeReleasedAlivePersistence<T>(
     presence: TrustedSessionPublisher["presence"],
@@ -240,7 +344,63 @@ export function sessionUpdateHandler(
     trustedSessionPublisher?: TrustedSessionPublisher,
 ) {
     let legacyAliveInFlight = false;
-    let lastLegacyAlivePersistedAtMs: number | null = null;
+    // The alive persistence throttle is armed on every settled attempt, not only on success, so a
+    // failing session cannot fall back to attempting a write on every heartbeat.
+    let legacyAliveThrottledAtMs: number | null = null;
+    let legacyAliveThrottleHoldMs = 0;
+    let legacyAliveFailureStreak = 0;
+
+    const armLegacyAliveThrottle = (holdMs: number): void => {
+        legacyAliveThrottledAtMs = Date.now();
+        legacyAliveThrottleHoldMs = holdMs;
+    };
+
+    socket.on(
+        SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
+        async (data: unknown, callback?: (response: unknown) => void) => {
+            const respond = (response: unknown) =>
+                callback?.(SessionPublisherAuthorityCheckAckSchema.parse(response));
+            const request =
+                SessionPublisherAuthorityCheckRequestSchema.safeParse(data);
+            if (
+                !request.success
+                || !trustedSessionPublisher
+                || trustedSessionPublisher.binding.sessionId
+                    !== request.data.sessionId
+                || !canTargetSessionFromSocket({
+                    socket,
+                    connection,
+                    sessionId: request.data.sessionId,
+                })
+            ) {
+                respond({ status: "rejected", reason: "invalid_request" });
+                return;
+            }
+            try {
+                const publisherPrecondition =
+                    await trustedSessionPublisher.presence
+                        .readCurrentPublisherPrecondition({
+                        socket,
+                    });
+                respond(publisherPrecondition
+                    ? {
+                        status: "current",
+                        sessionId: request.data.sessionId,
+                        publisherPrecondition,
+                    }
+                    : {
+                        status: "superseded",
+                        sessionId: request.data.sessionId,
+                    });
+            } catch {
+                respond({
+                    status: "retryable",
+                    sessionId: request.data.sessionId,
+                    reason: "internal",
+                });
+            }
+        },
+    );
 
     const publishRuntimeActivitySnapshotResult = async (
         sid: string,
@@ -249,17 +409,24 @@ export function sessionUpdateHandler(
         const didWrite = result.status === "applied";
         const registrationActiveAt = "activeAt" in result ? result.activeAt.getTime() : null;
         if (didWrite || registrationActiveAt !== null) {
-            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+            const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
+            if (session) await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const projection = projectSessionTranscriptPublicationRealtimeProjection(
+                    {
+                        ...(didWrite ? result.projection : {}),
+                        ...(registrationActiveAt !== null ? { active: true, activeAt: registrationActiveAt } : {}),
+                    },
+                    session,
+                    accountId,
+                );
+                if (projection.kind === "suppress") return;
                 const payload = buildUpdateSessionUpdate(
                     sid,
                     cursor,
                     randomKeyNaked(12),
                     undefined,
                     undefined,
-                    {
-                        ...(didWrite ? result.projection : {}),
-                        ...(registrationActiveAt !== null ? { active: true, activeAt: registrationActiveAt } : {}),
-                    },
+                    projection.value,
                 );
                 eventRouter.emitUpdate({
                     userId: accountId,
@@ -272,14 +439,23 @@ export function sessionUpdateHandler(
         if (result.status === "applied" && result.becameIdle === true) {
             const pendingState = await readSessionPendingState({ actorUserId: userId, sessionId: sid });
             if (pendingState.ok) {
-                await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-                    const payload = buildPendingChangedUpdate(
+                const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
+                if (session) await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                    const pendingProjection = projectSessionTranscriptPublicationPendingProjection(
                         {
-                            sessionId: sid,
                             pendingCount: pendingState.pendingCount,
                             pendingBlockedCount: pendingState.pendingBlockedCount,
                             pendingVersion: pendingState.pendingVersion,
                             changedByAccountId: userId,
+                        },
+                        session,
+                        accountId,
+                    );
+                    if (pendingProjection.kind === "suppress") return;
+                    const payload = buildPendingChangedUpdate(
+                        {
+                            sessionId: sid,
+                            ...pendingProjection.value,
                         },
                         cursor,
                         randomKeyNaked(12),
@@ -316,13 +492,10 @@ export function sessionUpdateHandler(
                 respond({ ok: false, error: "forbidden" });
                 return;
             }
-            const current = await trustedSessionPublisher.presence.runAsCurrentPublisher({
-                socket,
-                operation: async () => true,
+            respond({
+                ok: true,
+                capability: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
             });
-            respond(current === true
-                ? { ok: true, capability: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1 }
-                : { ok: false, error: "forbidden" });
         } catch (error) {
             log({ module: "websocket", level: "warn" }, `Transcript observation capability negotiation failed: ${error}`);
             respond({ ok: false, error: "internal" });
@@ -338,6 +511,16 @@ export function sessionUpdateHandler(
                 return;
             }
             const observation = parsed.data;
+            // Reserved Agent-transition divider namespace. Even a trusted session
+            // publisher may not mint or overwrite a divider row: the owner-only
+            // transition service is its sole writer.
+            if (isSessionAgentTransitionDividerLocalId(observation.localId)) {
+                respond({ ok: false, error: "invalid_observation" });
+                return;
+            }
+            const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+                observation.provenance,
+            );
             if (
                 !canTargetSessionFromSocket({ socket, connection, sessionId: observation.sessionId })
                 || !trustedSessionPublisher
@@ -360,10 +543,10 @@ export function sessionUpdateHandler(
                     publisherAuthority,
                     trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
                     trustedTranscriptObservationProvenance: observation.provenance,
-                    ...(observation.provenance.source === "history"
+                    ...(isRecoveredHistory
                         ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
                         : {}),
-                    ...(observation.sessionEventType && observation.provenance.source !== "history"
+                    ...(observation.sessionEventType && !isRecoveredHistory
                         ? { trustedSessionEventType: observation.sessionEventType }
                         : {}),
                 }),
@@ -440,7 +623,9 @@ export function sessionUpdateHandler(
                 return;
             }
 
-            const result = await updateSessionMetadata({
+            const updateMetadata = async (
+                publisherAuthority?: Parameters<typeof updateSessionMetadata>[0]["publisherAuthority"],
+            ) => await updateSessionMetadata({
                 actorUserId: userId,
                 sessionId: sid,
                 expectedVersion,
@@ -448,11 +633,29 @@ export function sessionUpdateHandler(
                 ...(typeof lastViewedSessionSeqHint === "number"
                     ? { readCursorHintV1: { lastViewedSessionSeq: lastViewedSessionSeqHint } }
                     : {}),
+                ...(publisherAuthority ? { publisherAuthority } : {}),
             });
+            const result = (
+                trustedSessionPublisher
+                && trustedSessionPublisher.binding.sessionId === sid
+            )
+                ? await trustedSessionPublisher.presence.runAsCurrentPublisher({
+                    socket,
+                    operation: updateMetadata,
+                })
+                : await updateMetadata();
+            if (result === null) {
+                callback?.({ result: "publisher-superseded" });
+                return;
+            }
 
             if (!result.ok) {
                 if (result.error === 'forbidden') {
                     callback?.({ result: 'forbidden' });
+                    return;
+                }
+                if (result.error === "publisher-superseded") {
+                    callback?.({ result: "publisher-superseded" });
                     return;
                 }
                 if (result.error === 'version-mismatch') {
@@ -476,7 +679,9 @@ export function sessionUpdateHandler(
                 value: result.metadata,
                 version: result.version,
             };
-            await Promise.all(result.participantCursors.map(async ({
+            await Promise.all(result.participantCursors
+                .filter(({ accountId }) => accountId === userId)
+                .map(async ({
                 accountId,
                 cursor,
             }) => {
@@ -584,7 +789,35 @@ export function sessionUpdateHandler(
                 value: result.agentState,
                 version: result.version,
             };
-            await Promise.all(result.participantCursors.map(async ({
+            const rawRealtimeProjection = (
+                typeof result.pendingPermissionRequestCount === "number"
+                || typeof result.pendingUserActionRequestCount === "number"
+                || result.pendingRequestObservedAt !== undefined
+            )
+                ? {
+                    ...(typeof result.pendingPermissionRequestCount === "number"
+                        ? {
+                            pendingPermissionRequestCount:
+                                result.pendingPermissionRequestCount,
+                        }
+                        : {}),
+                    ...(typeof result.pendingUserActionRequestCount === "number"
+                        ? {
+                            pendingUserActionRequestCount:
+                                result.pendingUserActionRequestCount,
+                        }
+                        : {}),
+                    ...(result.pendingRequestObservedAt !== undefined
+                        ? {
+                            pendingRequestObservedAt:
+                                result.pendingRequestObservedAt,
+                        }
+                        : {}),
+                }
+                : undefined;
+            await Promise.all(result.participantCursors
+                .filter(({ accountId }) => accountId === userId)
+                .map(async ({
                 accountId,
                 cursor,
             }) => {
@@ -594,32 +827,7 @@ export function sessionUpdateHandler(
                     randomKeyNaked(12),
                     undefined,
                     agentStateUpdate,
-                    (
-                        typeof result.pendingPermissionRequestCount === "number"
-                        || typeof result.pendingUserActionRequestCount === "number"
-                        || result.pendingRequestObservedAt !== undefined
-                    )
-                        ? {
-                            ...(typeof result.pendingPermissionRequestCount === "number"
-                                ? {
-                                    pendingPermissionRequestCount:
-                                        result.pendingPermissionRequestCount,
-                                }
-                                : {}),
-                            ...(typeof result.pendingUserActionRequestCount === "number"
-                                ? {
-                                    pendingUserActionRequestCount:
-                                        result.pendingUserActionRequestCount,
-                                }
-                                : {}),
-                            ...(result.pendingRequestObservedAt !== undefined
-                                ? {
-                                    pendingRequestObservedAt:
-                                        result.pendingRequestObservedAt,
-                                }
-                                : {}),
-                        }
-                        : undefined,
+                    rawRealtimeProjection,
                 );
                 eventRouter.emitUpdate({
                     userId: accountId,
@@ -646,57 +854,6 @@ export function sessionUpdateHandler(
             if (callback) {
                 callback({ result: 'error' });
             }
-        }
-    });
-
-    socket.on("runtime-activity-snapshot", async (data: any, callback: (response: any) => void) => {
-        try {
-            const sid = typeof data?.sid === "string" ? data.sid : "";
-            if (!sid) {
-                callback?.({ result: "invalid-params" });
-                return;
-            }
-            if (!trustedSessionPublisher || trustedSessionPublisher.binding.sessionId !== sid) {
-                callback?.({ result: "forbidden" });
-                return;
-            }
-
-            const result = await trustedSessionPublisher.presence.publishSnapshot({
-                socket,
-                binding: trustedSessionPublisher.binding,
-                completeSnapshot: {
-                    state: data?.state,
-                    activeCount: data?.runtimeActivityActiveCount,
-                },
-            });
-
-            if (result.status === "rejected") {
-                if (result.reason === "unauthorized" || result.reason === "archived" || result.reason === "superseded") {
-                    callback?.({ result: "forbidden" });
-                    return;
-                }
-                if (result.reason === "not_found") {
-                    callback?.({ result: "session-not-found" });
-                    return;
-                }
-                if (result.reason === "invalid-params") {
-                    callback?.({ result: "invalid-params" });
-                    return;
-                }
-                callback?.({ result: "error" });
-                return;
-            }
-
-            const { didWrite } = await publishRuntimeActivitySnapshotResult(sid, result);
-
-            callback?.({
-                result: "success",
-                didWrite,
-                ...result.projection,
-            });
-        } catch (error) {
-            log({ module: "websocket", level: "error" }, `Error in runtime-activity-snapshot: ${error}`);
-            callback?.({ result: "error" });
         }
     });
 
@@ -897,6 +1054,7 @@ export function sessionUpdateHandler(
         latestTurnStatusObservedAt?: unknown;
     }) => {
         let ownsLegacyAliveAttempt = false;
+        let legacyAlivePersisted = false;
         try {
             // Track metrics
             websocketEventsCounter.inc({ event_type: 'session-alive' });
@@ -929,9 +1087,9 @@ export function sessionUpdateHandler(
             if (legacyAliveInFlight) return;
             const nowMs = Date.now();
             if (
-                lastLegacyAlivePersistedAtMs !== null
-                && nowMs >= lastLegacyAlivePersistedAtMs
-                && nowMs - lastLegacyAlivePersistedAtMs < RELEASED_ALIVE_PERSISTENCE_INTERVAL_MS
+                legacyAliveThrottledAtMs !== null
+                && nowMs >= legacyAliveThrottledAtMs
+                && nowMs - legacyAliveThrottledAtMs < legacyAliveThrottleHoldMs
             ) return;
             legacyAliveInFlight = true;
             ownsLegacyAliveAttempt = true;
@@ -952,7 +1110,9 @@ export function sessionUpdateHandler(
             if (presenceResult.status !== "touched" && presenceResult.status !== "registered") {
                 return;
             }
-            lastLegacyAlivePersistedAtMs = Date.now();
+            legacyAlivePersisted = true;
+            legacyAliveFailureStreak = 0;
+            armLegacyAliveThrottle(RELEASED_ALIVE_PERSISTENCE_INTERVAL_MS);
 
             await recordSessionAlive({
                 accountId: userId,
@@ -966,15 +1126,10 @@ export function sessionUpdateHandler(
                     : {}),
             });
 
-            await Promise.all(presenceResult.participantCursors.map(async ({ accountId, cursor }) => {
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload: buildUpdateSessionUpdate(
-                        sid,
-                        cursor,
-                        randomKeyNaked(12),
-                        undefined,
-                        undefined,
+            const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
+            if (session) await Promise.all(
+                presenceResult.participantCursors.map(async ({ accountId, cursor }) => {
+                    const realtimeProjection = projectSessionTranscriptPublicationRealtimeProjection(
                         {
                             active: true,
                             activeAt: presenceResult.activeAt.getTime(),
@@ -982,26 +1137,43 @@ export function sessionUpdateHandler(
                                 ? presenceResult.activity.projection
                                 : {}),
                         },
-                    ),
-                    recipientFilter: { type: "all-interested-in-session", sessionId: sid },
-                    skipSenderConnection: accountId === userId ? connection : undefined,
-                });
-                if (presenceResult.status === "registered" && presenceResult.pendingState) {
-                    eventRouter.emitUpdate({
-                        userId: accountId,
-                        payload: buildPendingChangedUpdate(
-                            {
-                                sessionId: sid,
-                                ...presenceResult.pendingState,
-                                changedByAccountId: userId,
-                            },
-                            cursor,
-                            randomKeyNaked(12),
-                        ),
-                        recipientFilter: { type: "all-interested-in-session", sessionId: sid },
-                    });
-                }
-            }));
+                        session,
+                        accountId,
+                    );
+                    const pendingProjection = presenceResult.status === "registered" && presenceResult.pendingState
+                        ? projectSessionTranscriptPublicationPendingProjection({
+                            ...presenceResult.pendingState,
+                            changedByAccountId: userId,
+                        }, session, accountId)
+                        : null;
+                    if (realtimeProjection.kind === "publish") {
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload: buildUpdateSessionUpdate(
+                                sid,
+                                cursor,
+                                randomKeyNaked(12),
+                                undefined,
+                                undefined,
+                                realtimeProjection.value,
+                            ),
+                            recipientFilter: { type: "all-interested-in-session", sessionId: sid },
+                            skipSenderConnection: accountId === userId ? connection : undefined,
+                        });
+                    }
+                    if (pendingProjection?.kind === "publish") {
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload: buildPendingChangedUpdate(
+                                { sessionId: sid, ...pendingProjection.value },
+                                cursor,
+                                randomKeyNaked(12),
+                            ),
+                            recipientFilter: { type: "all-interested-in-session", sessionId: sid },
+                        });
+                    }
+                }),
+            );
             if (presenceResult.badgeAttentionChanged) {
                 scheduleSessionParticipantBadgeRefresh({
                     badgeAttentionChanged: true,
@@ -1017,7 +1189,13 @@ export function sessionUpdateHandler(
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in session-alive: ${error}`);
         } finally {
-            if (ownsLegacyAliveAttempt) legacyAliveInFlight = false;
+            if (ownsLegacyAliveAttempt) {
+                if (!legacyAlivePersisted) {
+                    legacyAliveFailureStreak += 1;
+                    armLegacyAliveThrottle(resolveReleasedAliveFailureHoldMs(legacyAliveFailureStreak));
+                }
+                legacyAliveInFlight = false;
+            }
         }
     });
 
@@ -1108,6 +1286,8 @@ export function sessionUpdateHandler(
 
             const participantUserIds = await getSessionParticipantUserIds({ sessionId: sid });
             if (!participantUserIds || participantUserIds.length === 0) return;
+            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
+            if (!publication) return;
 
             const payload = {
                 type: 'transcript-stream-segment' as const,
@@ -1116,9 +1296,15 @@ export function sessionUpdateHandler(
             };
 
             for (const participantUserId of participantUserIds) {
+                const recipientPayload = projectSessionTranscriptPublicationUnanchoredProjection(
+                    payload,
+                    publication,
+                    participantUserId,
+                );
+                if (recipientPayload.kind === "suppress") continue;
                 eventRouter.emitEphemeral({
                     userId: participantUserId,
-                    payload,
+                    payload: recipientPayload.value,
                     recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
                     skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });
@@ -1163,6 +1349,8 @@ export function sessionUpdateHandler(
 
             const participantUserIds = await getSessionParticipantUserIds({ sessionId: sid });
             if (!participantUserIds || participantUserIds.length === 0) return;
+            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
+            if (!publication) return;
 
             const payload = {
                 type: 'transcript-stream-segment-delta' as const,
@@ -1171,9 +1359,15 @@ export function sessionUpdateHandler(
             };
 
             for (const participantUserId of participantUserIds) {
+                const recipientPayload = projectSessionTranscriptPublicationUnanchoredProjection(
+                    payload,
+                    publication,
+                    participantUserId,
+                );
+                if (recipientPayload.kind === "suppress") continue;
                 eventRouter.emitEphemeral({
                     userId: participantUserId,
-                    payload,
+                    payload: recipientPayload.value,
                     recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
                     skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });
@@ -1219,6 +1413,13 @@ export function sessionUpdateHandler(
                 if (isReleasedUiV020DirectUserMessagePayload(data)) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'client-upgrade-required' });
                     respond({ ok: false, error: 'client-upgrade-required' });
+                    return;
+                }
+                // Reserved Agent-transition divider namespace: only the owner-only
+                // transition service may write one.
+                if (isSessionAgentTransitionDividerLocalId(localId)) {
+                    socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
+                    respond({ ok: false, error: 'invalid-params' });
                     return;
                 }
 
@@ -1320,6 +1521,106 @@ export function sessionUpdateHandler(
         });
     });
 
+    socket.on(
+        SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
+        async (data: unknown, callback?: (response: unknown) => void) => {
+            await receiveMessageLock.inLock(async () => {
+                const respond = (response: unknown) => callback?.(
+                    SessionPendingAdmissionSettlementResponseV1Schema.parse(response),
+                );
+                const parsed = SessionPendingAdmissionSettlementRequestV1Schema.safeParse(data);
+                if (!parsed.success) {
+                    respond({
+                        v: 1,
+                        result: { status: "rejected", code: "session_input_invalid" },
+                    });
+                    return;
+                }
+                const { sessionId, localId, decision } = parsed.data;
+                if (
+                    !canTargetSessionFromSocket({ socket, connection, sessionId })
+                    || !trustedSessionPublisher
+                    || trustedSessionPublisher.binding.sessionId !== sessionId
+                ) {
+                    respond({
+                        v: 1,
+                        result: { status: "rejected", code: "session_input_unauthorized" },
+                    });
+                    return;
+                }
+                try {
+                    const result = await trustedSessionPublisher.presence.runAsCurrentPublisher({
+                        socket,
+                        operation: async (publisherAuthority) => await settlePendingInputAdmission({
+                            actorUserId: userId,
+                            sessionId,
+                            localId,
+                            publisherAuthority,
+                            decision,
+                        }),
+                    });
+                    if (result === null) {
+                        respond({
+                            v: 1,
+                            result: { status: "rejected", code: "session_input_unauthorized" },
+                        });
+                        return;
+                    }
+                    try {
+                        await publishPendingInputAdmissionSettlement({
+                            actorUserId: userId,
+                            sessionId,
+                            result,
+                        });
+                    } catch (error) {
+                        log(
+                            { module: "session-input-admission-settlement", level: "warn", sessionId, localId },
+                            "Session input settlement committed but publication failed",
+                            error,
+                        );
+                    }
+                    if (result.ok) {
+                        respond({ v: 1, result: result.result });
+                        return;
+                    }
+                    if (result.error === "internal") {
+                        respond({
+                            v: 1,
+                            result: {
+                                status: "outcomeUnknown",
+                                localId,
+                                code: "session_input_settlement_outcome_unknown",
+                            },
+                        });
+                        return;
+                    }
+                    const code = result.error === "forbidden"
+                        ? "session_input_unauthorized"
+                        : result.error === "not-found"
+                            ? "session_input_target_unavailable"
+                            : result.error === "conflict"
+                                ? "session_input_source_authority_mismatch"
+                                : "session_input_invalid";
+                    respond({ v: 1, result: { status: "rejected", code } });
+                } catch (error) {
+                    log(
+                        { module: "session-input-admission-settlement", level: "error", sessionId, localId },
+                        "Error settling Session input admission",
+                        error,
+                    );
+                    respond({
+                        v: 1,
+                        result: {
+                            status: "outcomeUnknown",
+                            localId,
+                            code: "session_input_settlement_outcome_unknown",
+                        },
+                    });
+                }
+            });
+        },
+    );
+
     socket.on(ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
         await receiveMessageLock.inLock(async () => {
             const respond = (response: unknown) => callback?.(AcceptedPendingSettlementResponseV1Schema.parse(response));
@@ -1383,20 +1684,22 @@ export function sessionUpdateHandler(
                     ...(result.message ? { message: serializePendingMaterializedMessage(result.message) } : {}),
                 });
             } catch (error) {
-                log({ module: "websocket", level: "error" }, `Error settling accepted pending delivery: ${error}`);
+                logError(
+                    { module: "websocket", event: ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, err: error },
+                    "Error settling accepted pending delivery",
+                );
                 respond({ ok: false, error: "internal" });
             }
         });
     });
 
     socket.on('pending-materialize-next', async (data: any, callback?: (response: any) => void) => {
-        await receiveMessageLock.inLock(async () => {
-            const respond = (response: any) => {
-                if (typeof callback === 'function') {
-                    callback(response);
-                }
-            };
-
+        const respond = (response: any) => {
+            if (typeof callback === 'function') callback(response);
+        };
+        const deadlineAtMs = Date.now() + PENDING_MATERIALIZATION_REQUEST_BUDGET_MS;
+        try {
+            await receiveMessageLock.inLock(async () => {
             try {
                 const sid = typeof data?.sid === 'string' ? data.sid : null;
                 if (!sid) {
@@ -1429,8 +1732,10 @@ export function sessionUpdateHandler(
                     return;
                 }
                 const expectedRuntimeActivityRevision = readExpectedRuntimeActivityRevision(data);
-                const materialize = (publisherAuthority: import("@/app/presence/sessionPublisherPresence").CurrentSessionPublisherAuthority) =>
-                    materializeNextPendingMessage({
+                const materialize = (
+                    publisherAuthority: import("@/app/presence/sessionPublisherPresence").CurrentSessionPublisherAuthority,
+                    tx: import("@/storage/inTx").Tx,
+                ) => materializeNextPendingMessageInTx({
                         actorUserId: userId,
                         sessionId: sid,
                         deliveryState,
@@ -1438,12 +1743,14 @@ export function sessionUpdateHandler(
                         foregroundState,
                         ...(expectedRuntimeActivityRevision !== null ? { expectedRuntimeActivityRevision } : {}),
                         publisherAuthority,
+                        tx,
                     });
                 const publisher = trustedSessionPublisher;
                 const result = !publisher || publisher.binding.sessionId !== sid
                     ? null
-                    : await publisher.presence.runAsCurrentPublisher({
+                    : await publisher.presence.runAsCurrentPublisherInTx({
                         socket,
+                        deadlineAtMs,
                         operation: materialize,
                     });
 
@@ -1453,7 +1760,11 @@ export function sessionUpdateHandler(
                 }
 
                 if (!result.ok) {
-                    respond({ ok: false, error: result.error });
+                    respond({
+                        ok: false,
+                        error: result.error,
+                        ...(result.error === "transaction-unavailable" ? { retryAfterMs: result.retryAfterMs } : {}),
+                    });
                     return;
                 }
 
@@ -1469,26 +1780,16 @@ export function sessionUpdateHandler(
                     respond(response);
                     if (result.pendingStateChanged === true) {
                         const participantCursorsPending = result.participantCursorsPending ?? [];
-                        await Promise.all(
-                            participantCursorsPending.map(async ({ accountId, cursor }) => {
-                                const payload = buildPendingChangedUpdate(
-                                    {
-                                        sessionId: sid,
-                                        pendingCount: result.pendingCount,
-                                        pendingBlockedCount: result.pendingBlockedCount,
-                                        pendingVersion: result.pendingVersion,
-                                        changedByAccountId: userId,
-                                    },
-                                    cursor,
-                                    randomKeyNaked(12),
-                                );
-                                eventRouter.emitUpdate({
-                                    userId: accountId,
-                                    payload,
-                                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
-                                });
-                            }),
-                        );
+                        await emitPublicationSafePendingChanged({
+                            data: {
+                                sessionId: sid,
+                                pendingCount: result.pendingCount,
+                                pendingBlockedCount: result.pendingBlockedCount,
+                                pendingVersion: result.pendingVersion,
+                                changedByAccountId: userId,
+                            },
+                            participantCursors: participantCursorsPending,
+                        });
                         await refreshSessionParticipantBadgePushes({
                             badgeAttentionChanged: result.badgeAttentionChanged ?? false,
                             participantCursors: participantCursorsPending,
@@ -1512,7 +1813,12 @@ export function sessionUpdateHandler(
                 if (result.didWriteMessage && committedMessage) {
                     await Promise.all(
                         result.participantCursorsMessage.map(async ({ accountId, cursor }) => {
-                            const payload = buildNewMessageUpdate(committedMessage, sid, cursor, randomKeyNaked(12));
+                            const payload = buildPendingResolvedMessageUpdate(
+                                committedMessage,
+                                sid,
+                                cursor,
+                                randomKeyNaked(12),
+                            );
                             eventRouter.emitUpdate({
                                 userId: accountId,
                                 payload,
@@ -1526,36 +1832,54 @@ export function sessionUpdateHandler(
                     });
                 }
 
-                await Promise.all(
-                    result.participantCursorsPending.map(async ({ accountId, cursor }) => {
-                        const payload = buildPendingChangedUpdate(
-                            {
-                                sessionId: sid,
-                                pendingCount: result.pendingCount,
-                                pendingBlockedCount: result.pendingBlockedCount,
-                                pendingVersion: result.pendingVersion,
-                                changedByAccountId: userId,
-                                meaningfulActivityAt: result.meaningfulActivityAt,
-                            },
-                            cursor,
-                            randomKeyNaked(12),
-                        );
-                        eventRouter.emitUpdate({
-                            userId: accountId,
-                            payload,
-                            recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
-                        });
-                    }),
-                );
+                await emitPublicationSafePendingChanged({
+                    data: {
+                        sessionId: sid,
+                        pendingCount: result.pendingCount,
+                        pendingBlockedCount: result.pendingBlockedCount,
+                        pendingVersion: result.pendingVersion,
+                        changedByAccountId: userId,
+                        meaningfulActivityAt: result.meaningfulActivityAt,
+                    },
+                    participantCursors: result.participantCursorsPending,
+                });
                 scheduleSessionParticipantBadgeRefresh({
                     badgeAttentionChanged: result.badgeAttentionChanged,
                     participantCursors: [...result.participantCursorsMessage, ...result.participantCursorsPending],
                 });
             } catch (error) {
+                if (
+                    isLockAdmissionDeadlineExceededError(error)
+                    || isTransactionDeadlineExceededError(error)
+                    || isTransactionAcquisitionUnavailableError(error)
+                ) throw error;
                 log({ module: 'websocket', level: 'error' }, `Error in pending-materialize-next: ${error}`);
-                respond({ ok: false, error: 'internal' });
+                const failure = mapPendingMaterializationError(error);
+                respond({
+                    ok: false,
+                    error: failure.ok ? "internal" : failure.error,
+                    ...(!failure.ok && failure.error === "transaction-unavailable"
+                        ? { retryAfterMs: failure.retryAfterMs }
+                        : {}),
+                });
             }
-        });
+            }, { deadlineAtMs });
+        } catch (error) {
+            if (
+                isLockAdmissionDeadlineExceededError(error)
+                || isTransactionDeadlineExceededError(error)
+                || isTransactionAcquisitionUnavailableError(error)
+            ) {
+                respond({
+                    ok: false,
+                    error: "transaction-unavailable",
+                    retryAfterMs: PENDING_MATERIALIZATION_RETRY_AFTER_MS,
+                });
+                return;
+            }
+            log({ module: 'websocket', level: 'error' }, `Error admitting pending-materialize-next: ${error}`);
+            respond({ ok: false, error: 'internal' });
+        }
     });
 
     if (connection.connectionType !== "user-scoped") {

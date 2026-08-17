@@ -75,7 +75,7 @@ async function recordSuccess(
     targetId: string,
     now: Date,
     hash: string,
-    diagnostics: unknown,
+    diagnostics: Prisma.InputJsonValue,
 ): Promise<void> {
     await db.accountLiveActivityTarget.update({
         where: { id: targetId },

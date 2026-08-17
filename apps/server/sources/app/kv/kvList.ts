@@ -1,6 +1,11 @@
 import { db } from "@/storage/db";
 import * as privacyKit from "privacy-kit";
 
+import {
+    ACCOUNT_SCOPED_KV_RESERVED_PREFIX,
+    assertPublicGenericKvPrefix,
+} from "./accountScopedKv";
+
 export interface KVListOptions {
     prefix?: string;
     limit?: number;
@@ -22,11 +27,18 @@ export async function kvList(
     ctx: { uid: string },
     options?: KVListOptions
 ): Promise<KVListResult> {
+    assertPublicGenericKvPrefix(options?.prefix);
+
     const where: any = {
         accountId: ctx.uid,
         value: {
             not: null  // Exclude deleted entries (null values)
-        }
+        },
+        NOT: {
+            key: {
+                startsWith: ACCOUNT_SCOPED_KV_RESERVED_PREFIX,
+            },
+        },
     };
 
     // Add prefix filter if specified

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
@@ -136,5 +137,47 @@ describe("machinesRoutes (revoke machine)", () => {
                 }),
             }),
         );
+    });
+
+    it("does not revoke a marked Machine for a legacy caller", async () => {
+        const { machinesRoutes } = await import("./machinesRoutes");
+        markAccountChanged.mockClear();
+        dbMocks.reset();
+        txDbMocks.reset();
+        const markedMachine = {
+            ...existingMachine,
+            dataEncryptionKey: new Uint8Array(
+                Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+            ),
+        };
+        txDbMocks.db.machine.findFirst.mockResolvedValue(markedMachine);
+        txDbMocks.db.machine.update.mockResolvedValue({
+            ...markedMachine,
+            active: false,
+            revokedAt: new Date(),
+        });
+        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.automationAssignment.deleteMany.mockResolvedValue({ count: 0 });
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines/:id/revoke",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                outcome: "legacy-missing",
+            },
+            params: { id: "m1" },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(426);
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
+        expect(txDbMocks.db.accessKey.deleteMany).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 });

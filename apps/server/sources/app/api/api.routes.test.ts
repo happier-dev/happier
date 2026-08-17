@@ -33,6 +33,16 @@ describe("registerApiRoutes", () => {
         expect(app.routes.has("POST /v1/local-services/preview")).toBe(true);
         expect(app.routes.has("GET /v1/local-services/public/:exposureId")).toBe(true);
         expect(app.routes.has("GET /v1/local-services/public/:exposureId/*")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/account-erase")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/get")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/query")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/mutate")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/candidate-preparation/source-page")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/candidate-preparation/stage")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/candidate-preparation/retire")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/data/ui-query")).toBe(true);
+        expect(app.routes.has("POST /v1/daemon/plugins/webhooks/claim")).toBe(true);
+        expect(app.routes.has("POST /v1/plugins/webhooks/:opaqueRouteId")).toBe(true);
         expect(app.routes.has("GET /v2/session-organization")).toBe(true);
         expect(app.routes.has("PUT /v2/session-organization/pins/:sessionId")).toBe(true);
     });

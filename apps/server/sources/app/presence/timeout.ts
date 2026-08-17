@@ -13,6 +13,10 @@ import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 import { warn } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import { expireSessionPublisherCandidates } from "./sessionPublisherPresence";
 
 export interface PresenceTimeoutConfig {
@@ -98,19 +102,28 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
         });
         for (const result of expiryResults) {
             if (result.status !== "expired") continue;
-            for (const { accountId, cursor } of result.participantCursors) {
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload: buildUpdateSessionUpdate(
-                        result.sessionId,
-                        cursor,
-                        randomKeyNaked(12),
-                        undefined,
-                        undefined,
+            const session = await loadSessionTranscriptPublicationRecipientProjection(result.sessionId);
+            if (session) {
+                for (const { accountId, cursor } of result.participantCursors) {
+                    const projection = projectSessionTranscriptPublicationRealtimeProjection(
                         { active: false, activeAt: result.activeAt.getTime() },
-                    ),
-                    recipientFilter: { type: "all-interested-in-session", sessionId: result.sessionId },
-                });
+                        session,
+                        accountId,
+                    );
+                    if (projection.kind === "suppress") continue;
+                    eventRouter.emitUpdate({
+                        userId: accountId,
+                        payload: buildUpdateSessionUpdate(
+                            result.sessionId,
+                            cursor,
+                            randomKeyNaked(12),
+                            undefined,
+                            undefined,
+                            projection.value,
+                        ),
+                        recipientFilter: { type: "all-interested-in-session", sessionId: result.sessionId },
+                    });
+                }
             }
             await refreshSessionParticipantBadgePushes({
                 badgeAttentionChanged: result.badgeAttentionChanged,

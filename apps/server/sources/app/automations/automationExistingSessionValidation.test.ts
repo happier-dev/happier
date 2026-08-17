@@ -3,7 +3,44 @@ import { describe, expect, it, vi } from "vitest";
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
 
 describe("validateExistingSessionAutomationTargetTx", () => {
-    it("fails typed when only a split owner envelope can prove resumability", async () => {
+    it("rejects a non-canonical existing-session envelope before reading Session state", async () => {
+        const sessionFindFirst = vi.fn();
+
+        await expect(validateExistingSessionAutomationTargetTx({
+            tx: {
+                session: { findFirst: sessionFindFirst },
+            } as any,
+            accountId: "owner",
+            targetType: "existing_session",
+            templateCiphertext: JSON.stringify({
+                kind: "unknown_template_envelope",
+                existingSessionId: "session-1",
+            }),
+        })).rejects.toThrow("existing_session automation template envelope is invalid");
+
+        expect(sessionFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("does not disclose encrypted existing-session target contents to the server", async () => {
+        const sessionFindFirst = vi.fn();
+
+        await expect(validateExistingSessionAutomationTargetTx({
+            tx: {
+                session: { findFirst: sessionFindFirst },
+            } as any,
+            accountId: "owner",
+            targetType: "existing_session",
+            accountMode: "e2ee",
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_encrypted_v1",
+                payloadCiphertext: "ciphertext",
+            }),
+        })).resolves.toBeUndefined();
+
+        expect(sessionFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("fails typed when layout one stores a non-canonical split owner envelope", async () => {
         const sessionFindFirst = vi.fn(async () => ({
             id: "session-1",
             encryptionMode: "plain",
@@ -24,8 +61,11 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             tx: tx as any,
             accountId: "owner",
             targetType: "existing_session",
-            templateCiphertext: JSON.stringify({ existingSessionId: "session-1" }),
-        })).rejects.toThrow("existing session target owner metadata is unavailable");
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_plain_v1",
+                payload: { existingSessionId: "session-1" },
+            }),
+        })).rejects.toThrow("existing session target metadata privacy upgrade required");
 
         expect(sessionFindFirst).toHaveBeenCalledWith({
             where: {
@@ -63,7 +103,10 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             } as any,
             accountId: "owner",
             targetType: "existing_session",
-            templateCiphertext: JSON.stringify({ existingSessionId: "session-1" }),
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_plain_v1",
+                payload: { existingSessionId: "session-1" },
+            }),
         })).rejects.toThrow("existing session target metadata privacy upgrade required");
 
         expect(accountFindUnique).not.toHaveBeenCalled();

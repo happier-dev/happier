@@ -7,6 +7,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
+import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import {
     buildSessionMessagePublicationWhere,
     isSessionTranscriptShareable,
@@ -14,6 +15,7 @@ import {
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { createSessionMessageFromPending } from "@/app/session/pending/pendingMessageTranscriptCommit";
 import {
+    HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
     writeHistoricalSessionMessageBatch,
     writeHistoricalSessionMessageBatchInTx,
 } from "@/app/session/sessionTranscriptWrite";
@@ -30,6 +32,156 @@ function resolveContractProvider(): "postgres" | "mysql" {
     if (raw === "postgres" || raw === "postgresql") return "postgres";
     if (raw === "mysql") return "mysql";
     throw new Error(`Unsupported contract provider: ${raw}`);
+}
+
+function deferred(): Readonly<{
+    promise: Promise<void>;
+    resolve: () => void;
+}> {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
+
+/**
+ * Uses the real provider transaction, but pauses each of the first two
+ * transaction-local winner reads after the database has returned its row.
+ * This gives a deterministic stale-read interleaving without replacing the
+ * writer or the backing database under test.
+ */
+function installSessionMessageWinnerReadBarrier(params: Readonly<{
+    sessionId: string;
+    localId: string;
+}>): Readonly<{
+    transactionEntered: Promise<void>;
+    firstRead: Promise<void>;
+    secondRead: Promise<void>;
+    releaseFirst: () => void;
+    releaseSecond: () => void;
+    restore: () => void;
+}> {
+    const transactionEntered = deferred();
+    const firstRead = deferred();
+    const secondRead = deferred();
+    const releaseFirst = deferred();
+    const releaseSecond = deferred();
+    const originalTransaction = db.$transaction;
+    let matchingReadCount = 0;
+    let restored = false;
+
+    const pauseAfterMatchingRead = async (): Promise<void> => {
+        matchingReadCount += 1;
+        if (matchingReadCount === 1) {
+            firstRead.resolve();
+            await releaseFirst.promise;
+        } else if (matchingReadCount === 2) {
+            secondRead.resolve();
+            await releaseSecond.promise;
+        }
+    };
+
+    // `db` forwards assignment to its active client; defining an own property
+    // on the forwarding Proxy would not affect its get trap.
+    db.$transaction = (async (...args: unknown[]) => {
+        const operation = args[0];
+        if (typeof operation !== "function") {
+            return await Reflect.apply(originalTransaction, undefined, args);
+        }
+        return await Reflect.apply(originalTransaction, undefined, [
+            async (tx: object) => {
+                transactionEntered.resolve();
+                const transactionDelegate = Reflect.get(tx, "sessionMessage") as object;
+                const originalFindUnique = Reflect.get(transactionDelegate, "findUnique");
+                if (typeof originalFindUnique !== "function") {
+                    throw new Error("SessionMessage.findUnique is unavailable in transaction");
+                }
+                const wrappedDelegate = new Proxy(transactionDelegate, {
+                    get(target, property, receiver) {
+                        if (property !== "findUnique") return Reflect.get(target, property, receiver);
+                        return async (...findUniqueArgs: unknown[]) => {
+                            const result = await Reflect.apply(originalFindUnique, target, findUniqueArgs);
+                            const candidate = findUniqueArgs[0] as {
+                                where?: {
+                                    sessionId_localId?: { sessionId?: unknown; localId?: unknown };
+                                };
+                            } | undefined;
+                            const localIdWhere = candidate?.where?.sessionId_localId;
+                            if (
+                                localIdWhere
+                                && localIdWhere.sessionId === params.sessionId
+                                && localIdWhere.localId === params.localId
+                            ) {
+                                await pauseAfterMatchingRead();
+                            }
+                            return result;
+                        };
+                    },
+                });
+                const wrappedTx = new Proxy(tx, {
+                    get(target, property, receiver) {
+                        if (property === "sessionMessage") return wrappedDelegate;
+                        return Reflect.get(target, property, receiver);
+                    },
+                });
+                return await Reflect.apply(operation, undefined, [wrappedTx]);
+            },
+            ...args.slice(1),
+        ]);
+    }) as typeof db.$transaction;
+
+    return {
+        transactionEntered: transactionEntered.promise,
+        firstRead: firstRead.promise,
+        secondRead: secondRead.promise,
+        releaseFirst: () => {
+            releaseFirst.resolve();
+        },
+        releaseSecond: () => {
+            releaseSecond.resolve();
+        },
+        restore: () => {
+            if (restored) return;
+            restored = true;
+            releaseFirst.resolve();
+            releaseSecond.resolve();
+            db.$transaction = originalTransaction;
+        },
+    };
+}
+
+async function createCurrentTranscriptPublisher(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+}>) {
+    const machineId = `message-writer-machine-${randomUUID()}`;
+    await db.machine.create({
+        data: { id: machineId, accountId: params.accountId, metadata: "{}" },
+    });
+    await db.accessKey.create({
+        data: {
+            accountId: params.accountId,
+            machineId,
+            sessionId: params.sessionId,
+            data: "encrypted",
+        },
+    });
+    const presence = createSessionPublisherPresence();
+    const registered = await presence.registerPublisher({
+        socket: {},
+        binding: { accountId: params.accountId, machineId, sessionId: params.sessionId },
+        completeActivitySnapshot: { state: "unknown", activeCount: 0 },
+    });
+    if (registered.status !== "registered") {
+        throw new Error(`Expected current transcript publisher, got ${registered.status}`);
+    }
+    return {
+        accountId: params.accountId,
+        machineId,
+        sessionId: params.sessionId,
+        committedFence: registered.committedFence,
+    };
 }
 
 describe("historical transcript writer database contract", () => {
@@ -150,7 +302,7 @@ describe("historical transcript writer database contract", () => {
         const rows = await db.sessionMessage.findMany({
             where: { sessionId: session.id },
             orderBy: { seq: "asc" },
-            select: { seq: true, localId: true },
+            select: { seq: true, localId: true, rowRevision: true },
         });
         expect(rows.map((row) => row.seq)).toEqual(
             Array.from({ length: items.length + 2 }, (_, index) => index + 1),
@@ -160,8 +312,215 @@ describe("historical transcript writer database contract", () => {
             "pending:item",
             "ordinary:item",
         ]));
+        expect(rows.every((row) => row.rowRevision === BigInt(0))).toBe(true);
         expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { seq: true } }))
             .toEqual({ seq: items.length + 2 });
+    });
+
+    it("retains private Message row revisions across concurrent commits and rollback", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-db-message-row-revision-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-db-message-row-revision-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+            },
+            select: { id: true },
+        });
+        const message = await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                localId: "message-row-revision",
+                content: { t: "plain", v: { text: "initial" } },
+            },
+            select: { id: true, rowRevision: true },
+        });
+        expect(message.rowRevision).toBe(BigInt(0));
+
+        await Promise.all([
+            db.sessionMessage.update({
+                where: { id: message.id },
+                data: { rowRevision: { increment: BigInt(1) } },
+            }),
+            db.sessionMessage.update({
+                where: { id: message.id },
+                data: { rowRevision: { increment: BigInt(1) } },
+            }),
+        ]);
+        await expect(db.sessionMessage.findUniqueOrThrow({
+            where: { id: message.id },
+            select: { rowRevision: true },
+        })).resolves.toEqual({ rowRevision: BigInt(2) });
+
+        await expect(inTx(async (tx) => {
+            await tx.sessionMessage.update({
+                where: { id: message.id },
+                data: { rowRevision: { increment: BigInt(1) } },
+            });
+            throw new Error("rollback db-contract message row revision");
+        })).rejects.toThrow("rollback db-contract message row revision");
+        await expect(db.sessionMessage.findUniqueOrThrow({
+            where: { id: message.id },
+            select: { rowRevision: true },
+        })).resolves.toEqual({ rowRevision: BigInt(2) });
+    });
+
+    it(`does not commit a mixed role-backfill/content-correction winner on ${provider}`, async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-db-message-reconcile-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-db-message-reconcile-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+                seq: 1,
+            },
+            select: { id: true },
+        });
+        const localId = `message-reconcile-${randomUUID()}`;
+        const initialContent = { t: "plain" as const, v: { text: "initial" } };
+        const correctedContent = { t: "plain" as const, v: { text: "corrected" } };
+        await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                localId,
+                messageRole: null,
+                content: initialContent,
+            },
+        });
+
+        const barrier = installSessionMessageWinnerReadBarrier({
+            sessionId: session.id,
+            localId,
+        });
+        try {
+            const backfill = createSessionMessage({
+                actorUserId: account.id,
+                sessionId: session.id,
+                localId,
+                messageRole: "agent",
+                content: initialContent,
+            });
+            await barrier.transactionEntered;
+            await barrier.firstRead;
+
+            const correction = createSessionMessage({
+                actorUserId: account.id,
+                sessionId: session.id,
+                localId,
+                messageRole: "user",
+                content: correctedContent,
+            });
+            await barrier.secondRead;
+
+            // Commit the full correction first. A stale partial role backfill
+            // must then re-evaluate rather than attach its role to this content.
+            barrier.releaseSecond();
+            await expect(correction).resolves.toMatchObject({ ok: true, didUpdate: true });
+            barrier.releaseFirst();
+            await expect(backfill).resolves.toMatchObject({ ok: true, didUpdate: true });
+        } finally {
+            barrier.restore();
+        }
+
+        const winner = await db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { content: true, messageRole: true },
+        });
+        expect([
+            { content: initialContent, messageRole: "agent" },
+            { content: correctedContent, messageRole: "user" },
+        ]).toContainEqual(winner);
+    });
+
+    it(`keeps overlapping trusted duplicate watermarks monotonic on ${provider}`, async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-db-trusted-watermark-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-db-trusted-watermark-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+                seq: 1,
+            },
+            select: { id: true },
+        });
+        const authority = await createCurrentTranscriptPublisher({
+            accountId: account.id,
+            sessionId: session.id,
+        });
+        const localId = `trusted-watermark-${randomUUID()}`;
+        const content = { t: "plain" as const, v: { text: "trusted" } };
+        await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                localId,
+                messageRole: "agent",
+                content,
+                sourceCreatedAt: new Date(100),
+                sourceUpdatedAt: new Date(100),
+                transcriptObservationProvenance: HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
+            },
+        });
+
+        const barrier = installSessionMessageWinnerReadBarrier({
+            sessionId: session.id,
+            localId,
+        });
+        try {
+            const lowerWatermark = createSessionMessage({
+                actorUserId: account.id,
+                sessionId: session.id,
+                localId,
+                messageRole: "agent",
+                content,
+                publisherAuthority: authority,
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
+            });
+            await barrier.transactionEntered;
+            await barrier.firstRead;
+
+            const higherWatermark = createSessionMessage({
+                actorUserId: account.id,
+                sessionId: session.id,
+                localId,
+                messageRole: "agent",
+                content,
+                publisherAuthority: authority,
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 300 },
+                trustedTranscriptObservationProvenance: HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
+            });
+
+            barrier.releaseFirst();
+            await expect(lowerWatermark).resolves.toMatchObject({ ok: true, didUpdate: false });
+            await barrier.secondRead;
+            barrier.releaseSecond();
+            await expect(higherWatermark).resolves.toMatchObject({ ok: true, didUpdate: false });
+        } finally {
+            barrier.restore();
+        }
+
+        await expect(db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { sourceUpdatedAt: true },
+        })).resolves.toEqual({ sourceUpdatedAt: new Date(300) });
     });
 
     it.each(["machine_only", "server_partial", "snapshot_complete"] as const)(

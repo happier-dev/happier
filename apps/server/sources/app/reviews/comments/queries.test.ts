@@ -197,7 +197,10 @@ describe("review comment list queries", () => {
             accountId: "account-1",
             actor: userActor,
             input: {
+                projectId: "project-1",
                 commentId: history.comment.id,
+                expectedState: "open",
+                expectedServerRevision: 1,
                 toState: "resolved",
                 evidence: [{ kind: "reasoning", message: "Fixed." }],
                 clientMutationId: "mutation-resolve",

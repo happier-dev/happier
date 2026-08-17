@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
+import { serverWorkspacePackageSourcesPlugin } from './vitestWorkspacePackageResolution';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,5 +35,17 @@ export default defineConfig({
       S3_BUCKET: 'test'
     }
   },
-  plugins: [tsconfigPaths({ projects: [resolve(__dirname, './tsconfig.json')] })]
+  // The Data direct-client integration test imports the UI-owned adapter through
+  // its real source boundary. `vite-tsconfig-paths` selects the nearest project
+  // for each importer, so server, UI, and CLI `@/` aliases remain separate owners.
+  plugins: [
+    serverWorkspacePackageSourcesPlugin,
+    tsconfigPaths({
+      projects: [
+        resolve(__dirname, './tsconfig.json'),
+        resolve(__dirname, '../ui/tsconfig.json'),
+        resolve(__dirname, '../cli/tsconfig.json'),
+      ],
+    }),
+  ]
 });

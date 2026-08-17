@@ -6,7 +6,22 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
+import { artifactOrdinaryWhere } from "@/app/artifacts/artifactClassification";
+import {
+    isPlainArtifactDataKeyBytes,
+    openArtifactStoredContentBytes,
+    openArtifactStoredContentPair,
+} from "@/app/artifacts/artifactStoredContent";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import {
+    buildAccountStoredContentUpgradeRequired,
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import {
+    AccountStoredContentUpgradeRequiredV1Schema,
+    CLIENT_UPGRADE_REQUIRED_HTTP_STATUS,
+} from "@happier-dev/protocol";
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = 500;
 
@@ -31,6 +46,7 @@ export function artifactsRoutes(app: Fastify) {
                     createdAt: z.number(),
                     updatedAt: z.number()
                 })),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to get artifacts')
                 })
@@ -43,7 +59,10 @@ export function artifactsRoutes(app: Fastify) {
 
         try {
             const artifacts = await db.artifact.findMany({
-                where: { accountId: userId },
+                where: {
+                    accountId: userId,
+                    ...artifactOrdinaryWhere,
+                },
                 orderBy: { updatedAt: 'desc' },
                 take: listLimit,
                 select: {
@@ -56,16 +75,41 @@ export function artifactsRoutes(app: Fastify) {
                     updatedAt: true
                 }
             });
+            if (
+                artifacts.some((artifact) =>
+                    isPlainArtifactDataKeyBytes(
+                        artifact.dataEncryptionKey,
+                    ))
+                && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                )
+            ) {
+                return;
+            }
 
-            return reply.send(artifacts.map(a => ({
-                id: a.id,
-                header: privacyKit.encodeBase64(a.header),
-                headerVersion: a.headerVersion,
-                dataEncryptionKey: privacyKit.encodeBase64(a.dataEncryptionKey),
-                seq: a.seq,
-                createdAt: a.createdAt.getTime(),
-                updatedAt: a.updatedAt.getTime()
-            })));
+            const projected = artifacts.map((artifact) => {
+                const header = openArtifactStoredContentBytes({
+                    accountId: userId,
+                    artifactId: artifact.id,
+                    field: "header",
+                    dataEncryptionKey: artifact.dataEncryptionKey,
+                    content: artifact.header,
+                });
+                if (!header) {
+                    throw new Error("Artifact header could not be opened");
+                }
+                return {
+                    id: artifact.id,
+                    header: privacyKit.encodeBase64(header),
+                    headerVersion: artifact.headerVersion,
+                    dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
+                    seq: artifact.seq,
+                    createdAt: artifact.createdAt.getTime(),
+                    updatedAt: artifact.updatedAt.getTime(),
+                };
+            });
+            return reply.send(projected);
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to get artifacts: ${error}`);
             return reply.code(500).send({ error: 'Failed to get artifacts' });
@@ -110,19 +154,41 @@ export function artifactsRoutes(app: Fastify) {
             const artifact = await db.artifact.findFirst({
                 where: {
                     id,
-                    accountId: userId
+                    accountId: userId,
+                    ...artifactOrdinaryWhere,
                 }
             });
 
             if (!artifact) {
                 return reply.code(404).send({ error: 'Artifact not found' });
             }
+            if (
+                isPlainArtifactDataKeyBytes(
+                    artifact.dataEncryptionKey,
+                )
+                && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                )
+            ) {
+                return;
+            }
+            const opened = openArtifactStoredContentPair({
+                accountId: userId,
+                artifactId: artifact.id,
+                dataEncryptionKey: artifact.dataEncryptionKey,
+                header: artifact.header,
+                body: artifact.body,
+            });
+            if (!opened) {
+                throw new Error("Artifact content could not be opened");
+            }
 
             return reply.send({
                 id: artifact.id,
-                header: privacyKit.encodeBase64(artifact.header),
+                header: privacyKit.encodeBase64(opened.header),
                 headerVersion: artifact.headerVersion,
-                body: privacyKit.encodeBase64(artifact.body),
+                body: privacyKit.encodeBase64(opened.body),
                 bodyVersion: artifact.bodyVersion,
                 dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
                 seq: artifact.seq,
@@ -160,6 +226,10 @@ export function artifactsRoutes(app: Fastify) {
                 409: z.object({
                     error: z.literal('Artifact with this ID already exists for another account')
                 }),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to create artifact')
                 })
@@ -168,6 +238,10 @@ export function artifactsRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { id, header, body, dataEncryptionKey } = request.body;
+        const compatibility =
+            readAccountStoredContentCompatibilityForHttpRequest(
+                request,
+            );
 
         try {
             log({ module: 'api', artifactId: id, userId }, 'Creating artifact');
@@ -177,13 +251,38 @@ export function artifactsRoutes(app: Fastify) {
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
             });
 
             if (!result.ok) {
+                if (result.error === 'invalid-params') {
+                    return reply.code(400).send({ error: 'Invalid parameters' });
+                }
                 if (result.error === 'conflict') {
                     return reply.code(409).send({
                         error: 'Artifact with this ID already exists for another account'
                     });
+                }
+                if (
+                    result.error
+                    === 'client-upgrade-required'
+                ) {
+                    if (
+                        !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                            request,
+                            reply,
+                        )
+                    ) {
+                        return;
+                    }
+                    return reply
+                        .code(
+                            CLIENT_UPGRADE_REQUIRED_HTTP_STATUS,
+                        )
+                        .send(
+                            buildAccountStoredContentUpgradeRequired(),
+                        );
                 }
                 return reply.code(500).send({ error: 'Failed to create artifact' });
             }
@@ -251,6 +350,7 @@ export function artifactsRoutes(app: Fastify) {
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to update artifact')
                 })
@@ -260,6 +360,10 @@ export function artifactsRoutes(app: Fastify) {
         const userId = request.userId;
         const { id } = request.params;
         const { header, expectedHeaderVersion, body, expectedBodyVersion } = request.body;
+        const compatibility =
+            readAccountStoredContentCompatibilityForHttpRequest(
+                request,
+            );
 
         try {
             if (header !== undefined && expectedHeaderVersion === undefined) {
@@ -285,11 +389,36 @@ export function artifactsRoutes(app: Fastify) {
                 artifactId: id,
                 header: headerParam,
                 body: bodyParam,
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
             });
 
             if (!result.ok) {
+                if (result.error === 'invalid-params') {
+                    return reply.code(400).send({ error: 'Invalid parameters' });
+                }
                 if (result.error === 'not-found') {
                     return reply.code(404).send({ error: 'Artifact not found' });
+                }
+                if (
+                    result.error
+                    === 'client-upgrade-required'
+                ) {
+                    if (
+                        !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                            request,
+                            reply,
+                        )
+                    ) {
+                        return;
+                    }
+                    return reply
+                        .code(
+                            CLIENT_UPGRADE_REQUIRED_HTTP_STATUS,
+                        )
+                        .send(
+                            buildAccountStoredContentUpgradeRequired(),
+                        );
                 }
                 if (result.error === 'version-mismatch') {
                     return reply.send({
@@ -347,6 +476,7 @@ export function artifactsRoutes(app: Fastify) {
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
+                426: AccountStoredContentUpgradeRequiredV1Schema,
                 500: z.object({
                     error: z.literal('Failed to delete artifact')
                 })
@@ -355,12 +485,41 @@ export function artifactsRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { id } = request.params;
+        const compatibility =
+            readAccountStoredContentCompatibilityForHttpRequest(
+                request,
+            );
 
         try {
-            const result = await deleteArtifact({ actorUserId: userId, artifactId: id });
+            const result = await deleteArtifact({
+                actorUserId: userId,
+                artifactId: id,
+                supportsCurrentStoredContentProtocol:
+                    compatibility.supportsCurrentProtocol,
+            });
             if (!result.ok) {
                 if (result.error === 'not-found') {
                     return reply.code(404).send({ error: 'Artifact not found' });
+                }
+                if (
+                    result.error
+                    === 'client-upgrade-required'
+                ) {
+                    if (
+                        !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                            request,
+                            reply,
+                        )
+                    ) {
+                        return;
+                    }
+                    return reply
+                        .code(
+                            CLIENT_UPGRADE_REQUIRED_HTTP_STATUS,
+                        )
+                        .send(
+                            buildAccountStoredContentUpgradeRequired(),
+                        );
                 }
                 return reply.code(500).send({ error: 'Failed to delete artifact' });
             }

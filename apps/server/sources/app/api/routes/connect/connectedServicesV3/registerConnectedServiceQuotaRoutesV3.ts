@@ -2,10 +2,11 @@ import { z } from "zod";
 
 import type { Fastify } from "../../../types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
 import {
     ConnectedServiceIdSchema,
+    parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
     StoredJsonContentEnvelopeSchema,
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
@@ -15,26 +16,108 @@ import {
     readProviderAccountUsageRecord,
 } from "../providerAccountUsage";
 import {
-    readExactQualifiedConnectedServiceUsageSource,
-    requestQualifiedConnectedAccountQuotaRefresh,
-    unlinkQualifiedConnectedAccountQuota,
+    readLegacyConnectedServiceQuotaCompatibilitySource,
+    requestLegacyConnectedServiceQuotaCompatibilityRefresh,
+    unlinkLegacyConnectedServiceQuotaCompatibilitySource,
+    writeLegacyConnectedServiceQuotaCompatibilityRecord,
 } from "../qualifiedConnectedAccounts/usageRepository";
 import { resolveLegacyQualifiedConnectedAccountService } from "../qualifiedConnectedAccounts/identity";
 import { projectProviderAccountUsageSnapshotToLegacyQuota } from "../qualifiedConnectedAccounts/legacyUsageTranslation";
+import {
+    ConnectedServiceUsageSourceBindingError,
+    ConnectedServiceUsageSourceOwnershipError,
+    ProviderAccountUsagePayloadInvariantError,
+} from "../providerAccountUsage/types";
 
 async function readPlainAccount(accountId: string) {
     const account = await db.account.findUnique({
         where: { id: accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
-    return account && resolveEffectiveAccountEncryptionModeFromAccountRow(account) === "plain" ? account : null;
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    return currentness?.status === "ready"
+        && currentness.currentness.encryptionMode === "plain"
+        ? account
+        : null;
 }
 
 export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
-    // SD-1: the quota V3 POST route was retired when quota reads became a projection over
-    // provider-account usage — its handler returned 400 unconditionally and no first-party client
-    // POSTs here (CLI + UI quota V3 surfaces are GET-only). Removed rather than kept as a dead
-    // registered write surface.
+    app.post("/v3/connect/:serviceId/profiles/:profileId/quotas", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.write") },
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                serviceId: ConnectedServiceIdSchema,
+                profileId: ConnectedServiceProfileIdSchema,
+            }),
+            body: z.object({
+                content: StoredJsonContentEnvelopeSchema,
+                metadata: z.object({
+                    fetchedAt: z.number().int().nonnegative(),
+                    staleAfterMs: z.number().int().min(1),
+                    status: z.enum(["ok", "unavailable", "estimated", "error"]),
+                }),
+            }).strict(),
+            response: {
+                200: z.object({ success: z.literal(true) }),
+                400: z.object({ error: z.literal("invalid-params") }),
+            },
+        },
+    }, async (request, reply) => {
+        const account = await readPlainAccount(request.userId);
+        if (!account) return reply.code(400).send({ error: "invalid-params" });
+        if (request.body.content.t !== "plain") {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
+
+        let snapshot;
+        try {
+            snapshot = parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(
+                request.body.content.v,
+            );
+        } catch {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
+        const serviceId = request.params.serviceId satisfies ConnectedServiceId;
+        if (
+            snapshot.serviceId !== serviceId
+            || snapshot.profileId !== request.params.profileId
+            || snapshot.fetchedAt !== request.body.metadata.fetchedAt
+            || snapshot.staleAfterMs !== request.body.metadata.staleAfterMs
+        ) {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
+
+        try {
+            await writeLegacyConnectedServiceQuotaCompatibilityRecord({
+                accountId: request.userId,
+                serviceId,
+                profileId: request.params.profileId,
+                payloadMode: "plain_json_v1",
+                snapshot,
+                status: request.body.metadata.status,
+                fetchedAt: request.body.metadata.fetchedAt,
+                staleAfterMs: request.body.metadata.staleAfterMs,
+            });
+        } catch (error) {
+            if (
+                error instanceof ConnectedServiceUsageSourceBindingError
+                || error instanceof ConnectedServiceUsageSourceOwnershipError
+                || error instanceof ProviderAccountUsagePayloadInvariantError
+            ) {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
+            throw error;
+        }
+        return reply.send({ success: true });
+    });
 
     app.get("/v3/connect/:serviceId/profiles/:profileId/quotas", {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.read") },
@@ -73,7 +156,7 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
             accountId: profileId,
         };
         const source =
-            await readExactQualifiedConnectedServiceUsageSource({
+            await readLegacyConnectedServiceQuotaCompatibilitySource({
                 accountId: userId,
                 source: { ref, bindingKind: "account" },
             });
@@ -150,7 +233,7 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
         if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
         const result =
-            await requestQualifiedConnectedAccountQuotaRefresh({
+            await requestLegacyConnectedServiceQuotaCompatibilityRefresh({
                 accountId: userId,
                 ref: {
                     service:
@@ -188,7 +271,7 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
         if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
         const result =
-            await unlinkQualifiedConnectedAccountQuota({
+            await unlinkLegacyConnectedServiceQuotaCompatibilitySource({
                 accountId: userId,
                 ref: {
                     service:

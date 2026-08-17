@@ -8,6 +8,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
     createPluginInstallationManifestPublisherSigningInputV1,
+    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     stringifyPluginInstallationManifestCanonicalJsonV1,
@@ -170,6 +171,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project" as const, projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID, sessionId: "session-1" },
         };
@@ -249,6 +251,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
         };
@@ -301,6 +304,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project" as const, projectId: "project-concurrent" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: {
                 kind: "plugin" as const,
@@ -377,6 +381,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project" as const, projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
         };
@@ -416,7 +421,7 @@ describe("plugin permission grant durable storage", () => {
         expect(projectList.grants).toEqual([]);
     });
 
-    it("rejects non-project scopes for the domain-specific direct-write capability", async () => {
+    it("accepts account scopes through the generic permission authority", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-plugin-permission-exact-scope",
@@ -431,17 +436,18 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "account" as const },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
         };
         const reply = createReplyStub();
-        const rejected = await requestGrant(await createPublisherRouteRequest({
+        const accepted = await requestGrant(await createPublisherRouteRequest({
             accountId: account.id,
             path: "/v1/plugins/permissions/grants/request",
             body,
         }), reply);
-        expect(reply.statusCode).toBe(400);
-        expect(rejected).toMatchObject({ error: "plugin_permission_grant_plugin_not_trusted" });
+        expect(reply.statusCode).toBe(200);
+        expect(accepted).toMatchObject({ pendingRequest: { targetScope: { kind: "account" } } });
     });
 
     it("rejects pending requests with mismatched plugin requester identity", async () => {
@@ -466,6 +472,7 @@ describe("plugin permission grant durable storage", () => {
                 pluginId: CODERABBIT_PLUGIN_ID,
                 capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
                 targetScope: { kind: "project", projectId: "project-1" },
+                subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
                 reason: "Publish approved review comments directly.",
                 requester: { kind: "plugin", pluginId: "review-deepsec" },
             },
@@ -497,6 +504,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: UNKNOWN_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: UNKNOWN_PLUGIN_ID },
         };
@@ -539,6 +547,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
         };
@@ -616,6 +625,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope,
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             authoritySource: { kind: "bundled" },
             requester,
             reason: "Publish approved review comments directly.",
@@ -631,6 +641,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: pendingRequest.pluginId,
             capability: pendingRequest.capability,
             targetScope: pendingRequest.targetScope,
+            subject: pendingRequest.subject,
             authoritySource: pendingRequest.authoritySource,
             eventKind: "requested",
             actor: requester,
@@ -650,6 +661,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: pendingRequest.pluginId,
             capability: pendingRequest.capability,
             targetScope: pendingRequest.targetScope,
+            subject: pendingRequest.subject,
             authoritySource: pendingRequest.authoritySource,
             status: "active",
             requestId: pendingRequest.id,
@@ -669,6 +681,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: grant.pluginId,
             capability: grant.capability,
             targetScope: grant.targetScope,
+            subject: grant.subject,
             authoritySource: grant.authoritySource,
             eventKind: "granted",
             actor: { kind: "user", userId: account.id },
@@ -733,6 +746,7 @@ describe("plugin permission grant durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             authoritySource,
             requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
             reason: "Publish approved review comments directly.",
@@ -750,6 +764,7 @@ describe("plugin permission grant durable storage", () => {
                 pluginId: pendingRequest.pluginId,
                 capability: pendingRequest.capability,
                 targetScope: pendingRequest.targetScope,
+                subject: pendingRequest.subject,
                 authoritySource,
                 eventKind: "requested",
                 actor: pendingRequest.requester,
@@ -783,7 +798,7 @@ describe("plugin permission grant durable storage", () => {
             },
             (request) => request.machineId === authoritySource.machineId
                 && request.installationId === authoritySource.installationId
-                ? { pluginId: CODERABBIT_PLUGIN_ID, source: authoritySource }
+                ? { source: authoritySource }
                 : null,
         );
 
@@ -820,6 +835,7 @@ describe("plugin permission grant durable storage", () => {
                 pluginId: pendingRequest.pluginId,
                 capability: pendingRequest.capability,
                 targetScope: pendingRequest.targetScope,
+                subject: pendingRequest.subject,
                 authoritySource,
                 includeRevoked: false,
                 includeResolvedRequests: false,

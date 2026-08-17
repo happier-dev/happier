@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
 
 import {
+    buildProviderAccountUsageRecordId,
+    ProviderAccountUsageSnapshotV1Schema,
     QualifiedConnectedAccountRefSchema,
     projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
     QualifiedConnectedServiceUsageSourceV4Schema,
+    readAccountScopedCiphertextKindByte,
+    type ConnectedServiceId,
+    type ConnectedServiceQuotaSnapshotV1,
     type QualifiedConnectedAccountRef,
     type QualifiedConnectedServiceUsageSourceResolutionV4,
     type QualifiedConnectedServiceUsageSourceV4,
+    type SealedConnectedServiceQuotaSnapshotV1,
 } from "@happier-dev/protocol";
 import { AGENTS_CORE } from "@happier-dev/agents";
 
@@ -25,6 +31,7 @@ import {
 import {
     ConnectedServiceUsageSourceBindingError,
     ConnectedServiceUsageSourceOwnershipError,
+    ProviderAccountUsagePayloadInvariantError,
     type ProviderAccountUsageSourceLinkOutcome,
     type StoredProviderAccountUsageRecord,
 } from "../providerAccountUsage/types";
@@ -34,7 +41,9 @@ import {
 import {
     createQualifiedConnectedAccountGroupDigest,
     createQualifiedConnectedAccountIdentityDigest,
-    createQualifiedConnectedAccountServiceDigest,
+    parseStoredQualifiedConnectedAccountGroupRef,
+    parseStoredQualifiedConnectedAccountRef,
+    resolveLegacyQualifiedConnectedAccountService,
     resolveLegacyServiceIdForQualifiedConnectedAccountService,
 } from "./identity";
 
@@ -94,11 +103,70 @@ function buildQualifiedUsageSourceKey(
         .digest("base64url")}`;
 }
 
+function qualifiedConnectedAccountRefsEqual(
+    left: QualifiedConnectedAccountRef,
+    right: QualifiedConnectedAccountRef,
+): boolean {
+    return left.service.pluginId === right.service.pluginId
+        && left.service.localId === right.service.localId
+        && left.accountId === right.accountId;
+}
+
+function parseStoredQualifiedUsageAccountRef(
+    row: Readonly<{
+        accountId: string;
+        servicePluginId: string;
+        serviceLocalId: string;
+        qualifiedServiceDigest: string;
+        connectedAccountId: string;
+        qualifiedIdentityDigest: string;
+        credentialId: string;
+        credential: Readonly<{
+            id: string;
+            accountId: string;
+            servicePluginId: string;
+            serviceLocalId: string;
+            qualifiedServiceDigest: string;
+            connectedAccountId: string;
+            qualifiedIdentityDigest: string;
+        }>;
+    }>,
+): QualifiedConnectedAccountRef {
+    try {
+        const sourceRef =
+            parseStoredQualifiedConnectedAccountRef(row);
+        const credentialRef =
+            parseStoredQualifiedConnectedAccountRef(
+                row.credential,
+            );
+        if (
+            row.accountId !== row.credential.accountId
+            || row.credentialId !== row.credential.id
+            || row.qualifiedServiceDigest
+                !== row.credential.qualifiedServiceDigest
+            || row.qualifiedIdentityDigest
+                !== row.credential.qualifiedIdentityDigest
+            || !qualifiedConnectedAccountRefsEqual(
+                sourceRef,
+                credentialRef,
+            )
+        ) {
+            throw new Error("usage source credential mismatch");
+        }
+        return sourceRef;
+    } catch {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Stored qualified Connected Account usage identity mismatch",
+        );
+    }
+}
+
 async function resolveQualifiedCredential(
     tx: QualifiedUsageStorage,
     params: Readonly<{
         accountId: string;
         ref: QualifiedConnectedAccountRef;
+        allowLegacyUnfencedCredential?: boolean;
     }>,
 ) {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -118,13 +186,19 @@ async function resolveQualifiedCredential(
             "unavailable",
         );
     }
+    let storedRef: QualifiedConnectedAccountRef;
+    try {
+        storedRef =
+            parseStoredQualifiedConnectedAccountRef(credential);
+    } catch {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Qualified Connected Account binding identity mismatch",
+        );
+    }
     if (
-        credential.servicePluginId !== ref.service.pluginId
-        || credential.serviceLocalId !== ref.service.localId
-        || credential.connectedAccountId !== ref.accountId
-        || credential.qualifiedServiceDigest
-            !== createQualifiedConnectedAccountServiceDigest(ref.service)
-        || credential.qualifiedIdentityDigest !== qualifiedIdentityDigest
+        !qualifiedConnectedAccountRefsEqual(storedRef, ref)
+        || credential.qualifiedIdentityDigest
+            !== qualifiedIdentityDigest
     ) {
         throw new ConnectedServiceUsageSourceBindingError(
             "Qualified Connected Account binding identity mismatch",
@@ -134,6 +208,15 @@ async function resolveQualifiedCredential(
         rowId: credential.id,
         metadata: credential.metadata,
     });
+    if (
+        metadata.revisionSemantics === "legacy_unfenced"
+        && !params.allowLegacyUnfencedCredential
+    ) {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Qualified Connected Account usage requires a revisioned credential",
+            "unavailable",
+        );
+    }
     return {
         credential,
         providerAccountId:
@@ -146,6 +229,7 @@ async function resolveQualifiedUsageBinding(
     params: Readonly<{
         accountId: string;
         source: QualifiedConnectedServiceUsageSourceV4;
+        allowLegacyUnfencedCredential?: boolean;
     }>,
 ) {
     const source =
@@ -153,6 +237,8 @@ async function resolveQualifiedUsageBinding(
     const binding = await resolveQualifiedCredential(tx, {
         accountId: params.accountId,
         ref: source.ref,
+        allowLegacyUnfencedCredential:
+            params.allowLegacyUnfencedCredential,
     });
     let groupGeneration: number | null = null;
     if (source.bindingKind === "group_member") {
@@ -170,18 +256,41 @@ async function resolveQualifiedUsageBinding(
             },
             select: {
                 id: true,
+                accountId: true,
+                servicePluginId: true,
+                serviceLocalId: true,
                 generation: true,
                 qualifiedServiceDigest: true,
+                qualifiedGroupDigest: true,
+                groupId: true,
             },
         });
-        if (
-            !group
-            || group.qualifiedServiceDigest
-                !== binding.credential.qualifiedServiceDigest
-        ) {
+        if (!group) {
             throw new ConnectedServiceUsageSourceBindingError(
                 "Qualified Connected Account group binding does not exist",
                 "unavailable",
+            );
+        }
+        try {
+            const storedGroupRef =
+                parseStoredQualifiedConnectedAccountGroupRef(group);
+            if (
+                group.accountId !== params.accountId
+                || storedGroupRef.service.pluginId
+                    !== source.ref.service.pluginId
+                || storedGroupRef.service.localId
+                    !== source.ref.service.localId
+                || storedGroupRef.groupId !== source.groupId
+                || group.qualifiedServiceDigest
+                    !== binding.credential.qualifiedServiceDigest
+                || group.qualifiedGroupDigest
+                    !== qualifiedGroupDigest
+            ) {
+                throw new Error("group binding mismatch");
+            }
+        } catch {
+            throw new ConnectedServiceUsageSourceBindingError(
+                "Qualified Connected Account group binding identity mismatch",
             );
         }
         const member =
@@ -192,9 +301,37 @@ async function resolveQualifiedUsageBinding(
                         credentialId: binding.credential.id,
                     },
                 },
-                select: { enabled: true },
+                select: {
+                    accountId: true,
+                    credentialId: true,
+                    qualifiedServiceDigest: true,
+                    qualifiedGroupDigest: true,
+                    qualifiedIdentityDigest: true,
+                    enabled: true,
+                },
             });
-        if (!member?.enabled) {
+        if (!member) {
+            throw new ConnectedServiceUsageSourceBindingError(
+                "Qualified Connected Account group member is unavailable",
+                "unavailable",
+            );
+        }
+        if (
+            member.accountId !== params.accountId
+            || member.credentialId
+                !== binding.credential.id
+            || member.qualifiedServiceDigest
+                !== group.qualifiedServiceDigest
+            || member.qualifiedGroupDigest
+                !== group.qualifiedGroupDigest
+            || member.qualifiedIdentityDigest
+                !== binding.credential.qualifiedIdentityDigest
+        ) {
+            throw new ConnectedServiceUsageSourceBindingError(
+                "Qualified Connected Account group member identity mismatch",
+            );
+        }
+        if (!member.enabled) {
             throw new ConnectedServiceUsageSourceBindingError(
                 "Qualified Connected Account group member is unavailable",
                 "unavailable",
@@ -254,13 +391,24 @@ function assertQualifiedUsageOwnership(params: Readonly<{
 }
 
 function mapQualifiedSourceRow(row: Readonly<{
+    accountId: string;
+    servicePluginId: string;
+    serviceLocalId: string;
+    qualifiedServiceDigest: string;
+    connectedAccountId: string;
+    qualifiedIdentityDigest: string;
+    credentialId: string;
     bindingKind: string;
     groupId: string | null;
     groupGeneration: number | null;
     credential: Readonly<{
+        id: string;
+        accountId: string;
         servicePluginId: string;
         serviceLocalId: string;
+        qualifiedServiceDigest: string;
         connectedAccountId: string;
+        qualifiedIdentityDigest: string;
     }>;
 }>): QualifiedConnectedServiceUsageSourceV4 {
     if (
@@ -272,27 +420,52 @@ function mapQualifiedSourceRow(row: Readonly<{
             "Stored qualified Connected Account usage source has an invalid binding kind",
         );
     }
-    return QualifiedConnectedServiceUsageSourceV4Schema.parse({
-        ref: {
-            service: {
-                pluginId: row.credential.servicePluginId,
-                localId: row.credential.serviceLocalId,
-            },
-            accountId: row.credential.connectedAccountId,
-        },
-        bindingKind:
-            row.bindingKind === "group_member"
-                ? "group_member"
-                : "account",
-        ...(row.bindingKind === "group_member" && row.groupId
-            ? {
-                groupId: row.groupId,
-                ...(row.groupGeneration !== null
-                    ? { groupGeneration: row.groupGeneration }
-                    : {}),
-            }
-            : {}),
-    });
+    const ref = parseStoredQualifiedUsageAccountRef(row);
+    try {
+        return QualifiedConnectedServiceUsageSourceV4Schema.parse({
+            ref,
+            bindingKind:
+                row.bindingKind === "group_member"
+                    ? "group_member"
+                    : "account",
+            ...(row.bindingKind === "group_member" && row.groupId
+                ? {
+                    groupId: row.groupId,
+                    ...(row.groupGeneration !== null
+                        ? { groupGeneration: row.groupGeneration }
+                        : {}),
+                }
+                : {}),
+        });
+    } catch {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Stored qualified Connected Account usage source identity is invalid",
+        );
+    }
+}
+
+function qualifiedUsageSourcesEqual(
+    left: QualifiedConnectedServiceUsageSourceV4,
+    right: QualifiedConnectedServiceUsageSourceV4,
+): boolean {
+    if (
+        !qualifiedConnectedAccountRefsEqual(
+            left.ref,
+            right.ref,
+        )
+        || left.bindingKind !== right.bindingKind
+    ) {
+        return false;
+    }
+    if (
+        left.bindingKind === "group_member"
+        && right.bindingKind === "group_member"
+    ) {
+        return left.groupId === right.groupId
+            && left.groupGeneration
+                === right.groupGeneration;
+    }
+    return true;
 }
 
 async function findQualifiedSourceRows(
@@ -325,9 +498,13 @@ async function findQualifiedSourceRows(
         include: {
             credential: {
                 select: {
+                    id: true,
+                    accountId: true,
                     servicePluginId: true,
                     serviceLocalId: true,
+                    qualifiedServiceDigest: true,
                     connectedAccountId: true,
+                    qualifiedIdentityDigest: true,
                 },
             },
         },
@@ -339,22 +516,31 @@ async function findQualifiedSourceRows(
     });
 }
 
-export async function readExactQualifiedConnectedServiceUsageSource(
-    params: Readonly<{
-        accountId: string;
-        source: QualifiedConnectedServiceUsageSourceV4;
-    }>,
-): Promise<Readonly<{
+type ExactQualifiedConnectedServiceUsageSource = Readonly<{
     source: QualifiedConnectedServiceUsageSourceV4;
     recordId: string;
     providerAccountId: string;
     fetchedAt: number | null;
     staleAfterMs: number | null;
-}> | null> {
+}>;
+
+async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmission(
+    params: Readonly<{
+        accountId: string;
+        source: QualifiedConnectedServiceUsageSourceV4;
+    }>,
+    options: Readonly<{
+        allowLegacyUnfencedCredential?: boolean;
+    }> = {},
+): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
     try {
         return await inTx(async (tx) => {
             const binding =
-                await resolveQualifiedUsageBinding(tx, params);
+                await resolveQualifiedUsageBinding(tx, {
+                    ...params,
+                    allowLegacyUnfencedCredential:
+                        options.allowLegacyUnfencedCredential,
+                });
             const rows = await findQualifiedSourceRows(tx, {
                 accountId: params.accountId,
                 source: binding.source,
@@ -413,12 +599,36 @@ export async function readExactQualifiedConnectedServiceUsageSource(
     }
 }
 
+export async function readExactQualifiedConnectedServiceUsageSource(
+    params: Readonly<{
+        accountId: string;
+        source: QualifiedConnectedServiceUsageSourceV4;
+    }>,
+): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
+    return await readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmission(
+        params,
+    );
+}
+
+export async function readLegacyConnectedServiceQuotaCompatibilitySource(
+    params: Readonly<{
+        accountId: string;
+        source: QualifiedConnectedServiceUsageSourceV4;
+    }>,
+): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
+    return await readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmission(
+        params,
+        { allowLegacyUnfencedCredential: true },
+    );
+}
+
 async function upsertQualifiedSourceInTx(
     tx: QualifiedUsageStorage,
     params: Readonly<{
         accountId: string;
         providerAccountUsageRecordId: string;
         source: QualifiedConnectedServiceUsageSourceV4;
+        allowLegacyUnfencedCredential?: boolean;
     }>,
 ) {
     const binding = await resolveQualifiedUsageBinding(tx, params);
@@ -446,6 +656,39 @@ async function upsertQualifiedSourceInTx(
     });
     const sourceKey = buildQualifiedUsageSourceKey(binding.source);
     const source = binding.source;
+    const existing =
+        await tx.connectedServiceUsageSource.findUnique({
+            where: {
+                accountId_sourceKey: {
+                    accountId: params.accountId,
+                    sourceKey,
+                },
+            },
+            include: {
+                credential: {
+                    select: {
+                        id: true,
+                        accountId: true,
+                        servicePluginId: true,
+                        serviceLocalId: true,
+                        qualifiedServiceDigest: true,
+                        connectedAccountId: true,
+                        qualifiedIdentityDigest: true,
+                    },
+                },
+            },
+        });
+    if (
+        existing
+        && !qualifiedUsageSourcesEqual(
+            mapQualifiedSourceRow(existing),
+            source,
+        )
+    ) {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Stored qualified Connected Account usage source does not match its lookup identity",
+        );
+    }
     await tx.connectedServiceUsageSource.upsert({
         where: {
             accountId_sourceKey: {
@@ -525,14 +768,30 @@ type QualifiedProviderAccountUsageWriteParams =
         source: QualifiedConnectedServiceUsageSourceV4;
     }>;
 
+type QualifiedProviderAccountUsageWriteInTxParams =
+    QualifiedProviderAccountUsageWriteParams & Readonly<{
+        allowLegacyUnfencedCredential?: boolean;
+    }>;
+
 async function writeQualifiedProviderAccountUsageRecordInTx(
     tx: Tx,
-    params: QualifiedProviderAccountUsageWriteParams,
+    params: QualifiedProviderAccountUsageWriteInTxParams,
 ): Promise<Readonly<{
     record: StoredProviderAccountUsageRecord;
     sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
 }>> {
-    const { source, ...write } = params;
+    const {
+        source,
+        allowLegacyUnfencedCredential,
+        ...write
+    } = params;
+    // Source resolution owns revision/currentness admission. Run it before the
+    // PAU write so an unfenced credential cannot create usage history.
+    await resolveQualifiedUsageBinding(tx, {
+        accountId: params.accountId,
+        source,
+        allowLegacyUnfencedCredential,
+    });
     await writeProviderAccountUsageRecordWithPolicy({
         ...write,
         client: tx,
@@ -543,6 +802,7 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
             accountId: params.accountId,
             providerAccountUsageRecordId: params.recordId,
             source,
+            allowLegacyUnfencedCredential,
         });
         sourceOutcome = { status: "linked" };
     } catch (error) {
@@ -699,6 +959,237 @@ export async function writeQualifiedProviderAccountUsageRecord(
     });
 }
 
+type LegacyConnectedServiceQuotaCompatibilityWriteParams = Readonly<{
+    accountId: string;
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    status: ProviderAccountUsageWritePolicyParams["status"];
+    fetchedAt: number;
+    staleAfterMs: number;
+}> & (
+    | Readonly<{
+        payloadMode: "plain_json_v1";
+        snapshot: ConnectedServiceQuotaSnapshotV1;
+    }>
+    | Readonly<{
+        payloadMode: "sealed_account_scoped_v1";
+        sealed: SealedConnectedServiceQuotaSnapshotV1;
+    }>
+);
+
+function projectLegacyQuotaSourceToProviderAccountUsage(
+    source: ConnectedServiceQuotaSnapshotV1["source"],
+) {
+    switch (source) {
+        case "in_band_provider_snapshot":
+            return "runtimeSignal" as const;
+        case "provider_api":
+            return "providerHttp" as const;
+        case "background_fetch":
+            return "proxy" as const;
+        case "user_probe":
+            return "connectedServiceProbe" as const;
+        case "cached":
+            return "cached" as const;
+        case "manual_refresh":
+            return "manual" as const;
+        default:
+            return "unknown" as const;
+    }
+}
+
+function projectLegacyQuotaConfidenceToProviderAccountUsage(
+    confidence: ConnectedServiceQuotaSnapshotV1["confidence"],
+) {
+    if (confidence === "exact") return "confirmed" as const;
+    if (confidence === "estimated") return "estimated" as const;
+    return "unknown" as const;
+}
+
+function buildLegacyConnectedServiceQuotaProviderAccountUsageSnapshot(
+    params: Readonly<{
+        serviceId: ConnectedServiceId;
+        providerAccountId: string;
+        snapshot: ConnectedServiceQuotaSnapshotV1;
+    }>,
+) {
+    const recordKey = {
+        providerId: params.serviceId,
+        accountSubjectId: params.providerAccountId,
+        subjectKind: "account",
+        quotaScope: "account",
+    } as const;
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    return {
+        recordId,
+        recordKey,
+        snapshot: ProviderAccountUsageSnapshotV1Schema.parse({
+            v: 1,
+            recordId,
+            recordKey,
+            providerId: params.serviceId,
+            accountSubject: {
+                kind: "providerSubject",
+                id: params.providerAccountId,
+            },
+            observedAtMs: params.snapshot.fetchedAt,
+            fetchedAtMs: params.snapshot.fetchedAt,
+            staleAfterMs: params.snapshot.staleAfterMs,
+            source: projectLegacyQuotaSourceToProviderAccountUsage(
+                params.snapshot.source,
+            ),
+            confidence: projectLegacyQuotaConfidenceToProviderAccountUsage(
+                params.snapshot.confidence,
+            ),
+            planLabel: params.snapshot.planLabel,
+            accountLabel: params.snapshot.accountLabel,
+            ...(params.snapshot.recoveryCredits
+                ? { recoveryCredits: params.snapshot.recoveryCredits }
+                : {}),
+            meters: params.snapshot.meters,
+        }),
+    };
+}
+
+async function assertLegacyConnectedServiceQuotaCredentialCurrentInTx(
+    tx: QualifiedUsageStorage,
+    params: Readonly<{
+        accountId: string;
+        credential: Readonly<{
+            id: string;
+            accountId: string;
+            updatedAt: Date;
+            configurationRevision: string | null;
+        }>;
+    }>,
+): Promise<void> {
+    const locked = await tx.serviceAccountToken.updateMany({
+        where: {
+            id: params.credential.id,
+            accountId: params.accountId,
+            updatedAt: params.credential.updatedAt,
+            configurationRevision: params.credential.configurationRevision,
+        },
+        // This is a compare-and-swap fence only: it preserves the stored
+        // credential bytes and metadata while proving the resolved binding is
+        // still the current row that owns this compatibility write.
+        data: { updatedAt: params.credential.updatedAt },
+    });
+    if (locked.count !== 1) {
+        throw new ConnectedServiceUsageSourceBindingError(
+            "Legacy connected-service quota credential changed before write",
+            "unavailable",
+        );
+    }
+}
+
+export async function writeLegacyConnectedServiceQuotaCompatibilityRecord(
+    params: LegacyConnectedServiceQuotaCompatibilityWriteParams,
+): Promise<void> {
+    const source = {
+        ref: {
+            service: resolveLegacyQualifiedConnectedAccountService(
+                params.serviceId,
+            ),
+            accountId: params.profileId,
+        },
+        bindingKind: "account" as const,
+    };
+    await inTx(async (tx) => {
+        const binding = await resolveQualifiedUsageBinding(tx, {
+            accountId: params.accountId,
+            source,
+            allowLegacyUnfencedCredential: true,
+        });
+        if (binding.providerAccountId === null) {
+            throw new ConnectedServiceUsageSourceOwnershipError(
+                "Legacy connected-service quota lacks a provider account identity",
+                "unproven",
+            );
+        }
+        await assertLegacyConnectedServiceQuotaCredentialCurrentInTx(tx, {
+            accountId: params.accountId,
+            credential: binding.credential,
+        });
+
+        if (params.payloadMode === "plain_json_v1") {
+            if (
+                params.snapshot.fetchedAt !== params.fetchedAt
+                || params.snapshot.staleAfterMs !== params.staleAfterMs
+            ) {
+                throw new ProviderAccountUsagePayloadInvariantError(
+                    "Legacy connected-service quota metadata does not match snapshot timing",
+                );
+            }
+            const providerUsage =
+                buildLegacyConnectedServiceQuotaProviderAccountUsageSnapshot({
+                    serviceId: params.serviceId,
+                    providerAccountId: binding.providerAccountId,
+                    snapshot: params.snapshot,
+                });
+            const result =
+                await writeQualifiedProviderAccountUsageRecordInTx(tx, {
+                    accountId: params.accountId,
+                    recordId: providerUsage.recordId,
+                    recordKey: providerUsage.recordKey,
+                    payloadMode: "plain_json_v1",
+                    status: params.status,
+                    fetchedAt: params.fetchedAt,
+                    staleAfterMs: params.staleAfterMs,
+                    snapshot: providerUsage.snapshot,
+                    source,
+                    allowLegacyUnfencedCredential: true,
+                });
+            if (result.sourceOutcome.status !== "linked") {
+                throw new ConnectedServiceUsageSourceBindingError(
+                    "Legacy connected-service quota source could not be linked",
+                    "unavailable",
+                );
+            }
+            return;
+        }
+
+        if (readAccountScopedCiphertextKindByte(params.sealed.ciphertext) !== 4) {
+            throw new ProviderAccountUsagePayloadInvariantError(
+                "Legacy connected-service quota ciphertext has an unsupported kind",
+            );
+        }
+        const recordKey = {
+            providerId: params.serviceId,
+            accountSubjectId: binding.providerAccountId,
+            subjectKind: "account",
+            quotaScope: "account",
+        } as const;
+        const result =
+            await writeQualifiedProviderAccountUsageRecordInTx(tx, {
+                accountId: params.accountId,
+                recordId: buildProviderAccountUsageRecordId(recordKey),
+                recordKey,
+                payloadMode: "sealed_account_scoped_v1",
+                status: params.status,
+                fetchedAt: params.fetchedAt,
+                staleAfterMs: params.staleAfterMs,
+                sealedPayload: params.sealed,
+                legacyQuotaCompatibility: {
+                    source: {
+                        serviceId: params.serviceId,
+                        profileId: params.profileId,
+                        bindingKind: "profile",
+                    },
+                    sealed: params.sealed,
+                },
+                source,
+                allowLegacyUnfencedCredential: true,
+            });
+        if (result.sourceOutcome.status !== "linked") {
+            throw new ConnectedServiceUsageSourceBindingError(
+                "Legacy connected-service quota source could not be linked",
+                "unavailable",
+            );
+        }
+    });
+}
+
 async function listQualifiedUsageSourcesForRecordInStorage(
     storage: QualifiedUsageStorage,
     params: Readonly<{ accountId: string; recordId: string }>,
@@ -714,9 +1205,13 @@ async function listQualifiedUsageSourcesForRecordInStorage(
         include: {
             credential: {
                 select: {
+                    id: true,
+                    accountId: true,
                     servicePluginId: true,
                     serviceLocalId: true,
+                    qualifiedServiceDigest: true,
                     connectedAccountId: true,
+                    qualifiedIdentityDigest: true,
                 },
             },
         },
@@ -767,6 +1262,22 @@ export async function deleteQualifiedProviderAccountUsageRecord(
             params,
         );
         if (sources.length === 0) return "not_found";
+        for (const source of sources) {
+            try {
+                await resolveQualifiedCredential(tx, {
+                    accountId: params.accountId,
+                    ref: source.ref,
+                });
+            } catch (error) {
+                if (
+                    error instanceof ConnectedServiceUsageSourceBindingError
+                    && error.kind === "unavailable"
+                ) {
+                    return "not_found";
+                }
+                throw error;
+            }
+        }
         return await deleteProviderAccountUsageRecord(params, tx);
     });
 }
@@ -798,6 +1309,22 @@ export async function requestQualifiedProviderAccountUsageRefresh(
             params,
         );
         if (sources.length === 0) return "not_found";
+        for (const source of sources) {
+            try {
+                await resolveQualifiedCredential(tx, {
+                    accountId: params.accountId,
+                    ref: source.ref,
+                });
+            } catch (error) {
+                if (
+                    error instanceof ConnectedServiceUsageSourceBindingError
+                    && error.kind === "unavailable"
+                ) {
+                    return "not_found";
+                }
+                throw error;
+            }
+        }
         return await requestProviderAccountUsageRefresh(params, tx);
     });
 }
@@ -806,6 +1333,7 @@ async function readFirstQualifiedSourceForRef(
     params: Readonly<{
         accountId: string;
         ref: QualifiedConnectedAccountRef;
+        allowLegacyUnfencedCredential?: boolean;
     }>,
 ) {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -816,6 +1344,8 @@ async function readFirstQualifiedSourceForRef(
             const binding = await resolveQualifiedCredential(tx, {
                 accountId: params.accountId,
                 ref,
+                allowLegacyUnfencedCredential:
+                    params.allowLegacyUnfencedCredential,
             });
             // Account-level quota reads remain owned by the current credential
             // and provider subject. A stored group generation is provenance;
@@ -832,9 +1362,13 @@ async function readFirstQualifiedSourceForRef(
                 include: {
                     credential: {
                         select: {
+                            id: true,
+                            accountId: true,
                             servicePluginId: true,
                             serviceLocalId: true,
+                            qualifiedServiceDigest: true,
                             connectedAccountId: true,
+                            qualifiedIdentityDigest: true,
                         },
                     },
                 },
@@ -998,21 +1532,98 @@ export async function readQualifiedConnectedAccountQuota(
     };
 }
 
+async function unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission(
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+        allowLegacyUnfencedCredential?: boolean;
+    }>,
+): Promise<"removed" | "not_found"> {
+    const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
+    const qualifiedIdentityDigest =
+        createQualifiedConnectedAccountIdentityDigest(ref);
+    return await inTx(async (tx) => {
+        try {
+            await resolveQualifiedCredential(tx, {
+                accountId: params.accountId,
+                ref,
+                allowLegacyUnfencedCredential:
+                    params.allowLegacyUnfencedCredential,
+            });
+        } catch (error) {
+            if (
+                error instanceof ConnectedServiceUsageSourceBindingError
+                && error.kind === "unavailable"
+            ) {
+                return "not_found";
+            }
+            throw error;
+        }
+        const rows = await tx.connectedServiceUsageSource.findMany({
+            where: {
+                accountId: params.accountId,
+                qualifiedIdentityDigest,
+            },
+            include: {
+                credential: {
+                    select: {
+                        id: true,
+                        accountId: true,
+                        servicePluginId: true,
+                        serviceLocalId: true,
+                        qualifiedServiceDigest: true,
+                        connectedAccountId: true,
+                        qualifiedIdentityDigest: true,
+                    },
+                },
+            },
+        });
+        if (rows.length === 0) return "not_found";
+        for (const row of rows) {
+            const source = mapQualifiedSourceRow(row);
+            if (!qualifiedConnectedAccountRefsEqual(source.ref, ref)) {
+                throw new ConnectedServiceUsageSourceBindingError(
+                    "Stored qualified Connected Account usage source does not match its unlink identity",
+                );
+            }
+        }
+        const deleted =
+            await tx.connectedServiceUsageSource.deleteMany({
+                where: {
+                    accountId: params.accountId,
+                    id: { in: rows.map((row) => row.id) },
+                },
+            });
+        if (deleted.count !== rows.length) {
+            throw new ConnectedServiceUsageSourceBindingError(
+                "Qualified Connected Account usage sources changed during unlink",
+            );
+        }
+        return "removed";
+    });
+}
+
 export async function unlinkQualifiedConnectedAccountQuota(
     params: Readonly<{
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
 ): Promise<"removed" | "not_found"> {
-    const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
-    const deleted = await db.connectedServiceUsageSource.deleteMany({
-        where: {
-            accountId: params.accountId,
-            qualifiedIdentityDigest:
-                createQualifiedConnectedAccountIdentityDigest(ref),
-        },
+    return await unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission(
+        params,
+    );
+}
+
+export async function unlinkLegacyConnectedServiceQuotaCompatibilitySource(
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+    }>,
+): Promise<"removed" | "not_found"> {
+    return await unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission({
+        ...params,
+        allowLegacyUnfencedCredential: true,
     });
-    return deleted.count > 0 ? "removed" : "not_found";
 }
 
 export async function requestQualifiedConnectedAccountQuotaRefresh(
@@ -1022,6 +1633,23 @@ export async function requestQualifiedConnectedAccountQuotaRefresh(
     }>,
 ): Promise<"written" | "not_found"> {
     const source = await readFirstQualifiedSourceForRef(params);
+    if (!source) return "not_found";
+    return await requestProviderAccountUsageRefresh({
+        accountId: params.accountId,
+        recordId: source.recordId,
+    });
+}
+
+export async function requestLegacyConnectedServiceQuotaCompatibilityRefresh(
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+    }>,
+): Promise<"written" | "not_found"> {
+    const source = await readFirstQualifiedSourceForRef({
+        ...params,
+        allowLegacyUnfencedCredential: true,
+    });
     if (!source) return "not_found";
     return await requestProviderAccountUsageRefresh({
         accountId: params.accountId,

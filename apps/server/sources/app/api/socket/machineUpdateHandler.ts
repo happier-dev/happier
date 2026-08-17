@@ -14,24 +14,63 @@ import {
     ExternalSessionTranscriptInvalidationV1Schema,
     MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
     MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
+    MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+    SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
+    SESSION_SERVER_START_INGRESS_EVENT_V1,
     MachineSessionTerminalCaptureRequestV1Schema,
     MachineSessionTerminalFinalizeRequestV1Schema,
     MachineUpdateMetadataRequestSchema,
-    type MachineUpdateMetadataResponse,
+    MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
+    SessionPendingEnqueueByMachineRequestV1Schema,
+    isPlainMachineDataKeyMarker,
+    machineUpdateMatchesStoredMode,
     type ExternalSessionOperationSocketBatchLimitResolutionV1,
+    type MachineUpdateMetadataResponse,
+    type SessionServerStartIngressResponseV1,
 } from "@happier-dev/protocol";
+import { enqueuePendingMessageByAuthenticatedMachine } from "@/app/session/pending/pendingMessageService";
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { publishSessionPublisherClose } from "@/app/presence/publishSessionPublisherClose";
+import {
+    classifyMachineAvailabilityState,
+    readMachineAvailabilityState,
+} from "@/app/machines/machineStateGuards";
+import {
+    buildAccountStoredContentSocketUpgradeError,
+    readAccountStoredContentCompatibilityForSocket,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+
+function readMarkedMachineSocketUpgradeRequired(
+    socket: Socket,
+    dataEncryptionKey: Uint8Array | null | undefined,
+) {
+    if (!isPlainMachineDataKeyMarker(dataEncryptionKey)) {
+        return null;
+    }
+    const compatibility =
+        readAccountStoredContentCompatibilityForSocket(socket);
+    return compatibility.supportsCurrentProtocol
+        ? null
+        : buildAccountStoredContentSocketUpgradeError(compatibility).data;
+}
+
+function readSocketMachineIdentity(socket: Socket): {
+    clientType: unknown;
+    machineId: string | null;
+} {
+    const data = socket.data as { clientType?: unknown; machineId?: unknown } | undefined;
+    return {
+        clientType: data?.clientType,
+        machineId: typeof data?.machineId === 'string' && data.machineId
+            ? data.machineId
+            : null,
+    };
+}
 
 function readAuthenticatedMachineId(socket: Socket): string | null {
-    const clientType = typeof (socket.data as any)?.clientType === 'string'
-        ? (socket.data as any).clientType
-        : '';
-    const machineId = typeof (socket.data as any)?.machineId === 'string'
-        ? (socket.data as any).machineId
-        : '';
-    return clientType === 'machine-scoped' && machineId ? machineId : null;
+    const { clientType, machineId } = readSocketMachineIdentity(socket);
+    return clientType === 'machine-scoped' ? machineId : null;
 }
 
 function resolveMachineScopedPayloadMachineId(socket: Socket, payloadMachineId: unknown): string | null {
@@ -47,8 +86,7 @@ function resolveMachineMetadataTarget(
     socket: Socket,
     payloadMachineId: string | undefined,
 ): string | null {
-    const socketData = socket.data as { clientType?: unknown } | undefined;
-    const clientType = socketData?.clientType;
+    const { clientType } = readSocketMachineIdentity(socket);
     if (clientType === 'machine-scoped') {
         return resolveMachineScopedPayloadMachineId(socket, payloadMachineId);
     }
@@ -59,11 +97,7 @@ function resolveMachineMetadataTarget(
 }
 
 async function isMachineAvailableForSocket(accountId: string, machineId: string): Promise<boolean> {
-    const machine = await db.machine.findFirst({
-        where: { accountId, id: machineId },
-        select: { revokedAt: true, replacedByMachineId: true },
-    });
-    return Boolean(machine && !machine.revokedAt && !machine.replacedByMachineId);
+    return await readMachineAvailabilityState({ accountId, machineId }) === "available";
 }
 
 export function machineUpdateHandler(
@@ -75,8 +109,113 @@ export function machineUpdateHandler(
             ReturnType<typeof createSessionPublisherPresence>,
             "captureMachineSessionTerminal" | "finalizeMachineSessionTerminal"
         >;
+        sessionServerStartIngress?: (params: Readonly<{
+            accountId: string;
+            sourceMachineId: string;
+            request: unknown;
+            signal?: AbortSignal;
+        }>) => Promise<SessionServerStartIngressResponseV1>;
     }>,
 ) {
+    socket.on(SESSION_SERVER_START_INGRESS_EVENT_V1, async (
+        request: unknown,
+        callback?: (response: unknown) => void,
+    ) => {
+        const sourceMachineId = readAuthenticatedMachineId(socket);
+        if (
+            !sourceMachineId
+            || !(await isMachineAvailableForSocket(userId, sourceMachineId))
+        ) {
+            if (sourceMachineId) activityCache.invalidateMachine(sourceMachineId);
+            callback?.({
+                v: 1,
+                kind: "result",
+                result: { type: "error", code: "permission_denied", retryable: false },
+            });
+            return;
+        }
+        if (!options.sessionServerStartIngress) {
+            callback?.({
+                v: 1,
+                kind: "result",
+                result: { type: "error", code: "target_unavailable", retryable: true },
+            });
+            return;
+        }
+        try {
+            callback?.(await options.sessionServerStartIngress({
+                accountId: userId,
+                sourceMachineId,
+                request,
+            }));
+        } catch {
+            // The server may already have dispatched a cross-machine start. A
+            // response loss must preserve the one canonical creation-key rejoin.
+            callback?.({
+                v: 1,
+                kind: "result",
+                result: { type: "pending", retryWithSameCreationKey: true, outcome: "unknown" },
+            });
+        }
+    });
+
+    socket.on(SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, async (
+        request: unknown,
+        callback?: (response: unknown) => void,
+    ) => {
+        const parsed = SessionPendingEnqueueByMachineRequestV1Schema.safeParse(request);
+        const sourceMachineId = readAuthenticatedMachineId(socket);
+        if (!parsed.success) {
+            callback?.({
+                v: 1,
+                result: { status: "rejected", code: "session_input_invalid" },
+            });
+            return;
+        }
+        if (
+            !sourceMachineId
+            || !(await isMachineAvailableForSocket(userId, sourceMachineId))
+        ) {
+            if (sourceMachineId) activityCache.invalidateMachine(sourceMachineId);
+            callback?.({
+                v: 1,
+                result: { status: "rejected", code: "session_input_unauthorized" },
+            });
+            return;
+        }
+
+        try {
+            const result = await enqueuePendingMessageByAuthenticatedMachine({
+                accountId: userId,
+                sourceMachineId,
+                targetMachineId: parsed.data.targetMachineId,
+                sessionId: parsed.data.sessionId,
+                localId: parsed.data.localId,
+                content: parsed.data.content,
+                requestedAction: parsed.data.requestedAction,
+                ...(parsed.data.requestEqualityEvidenceV1
+                    ? { requestEqualityEvidenceV1: parsed.data.requestEqualityEvidenceV1 }
+                    : {}),
+            });
+            callback?.({ v: 1, result });
+        } catch {
+            log({
+                module: "websocket",
+                level: "error",
+                event: SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
+                errorCode: "internal_error",
+            }, "Machine Session Pending enqueue failed.");
+            callback?.({
+                v: 1,
+                result: {
+                    status: "outcomeUnknown",
+                    localId: parsed.data.localId,
+                    code: "session_input_admission_acknowledgement_lost",
+                },
+            });
+        }
+    });
+
     socket.on(MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, async (
         request: unknown,
         callback?: (response: unknown) => void,
@@ -119,7 +258,15 @@ export function machineUpdateHandler(
                     v: 1,
                     status: "captured",
                     sessionId: parsed.data.sessionId,
-                    committedFenceMs: result.target.committedFence.getTime(),
+                    authority: result.target.authority.kind === "generation"
+                        ? {
+                            kind: "generation",
+                            publisherGeneration: result.target.authority.publisherGeneration.toString(),
+                        }
+                        : {
+                            kind: "legacy-heartbeat",
+                            committedFenceMs: result.target.authority.committedFence.getTime(),
+                        },
                 }
                 : result.status === "rejected"
                     ? {
@@ -186,7 +333,15 @@ export function machineUpdateHandler(
                         machineId,
                         sessionId: parsed.data.sessionId,
                     },
-                    committedFence: new Date(parsed.data.committedFenceMs),
+                    authority: parsed.data.authority.kind === "generation"
+                        ? {
+                            kind: "generation",
+                            publisherGeneration: BigInt(parsed.data.authority.publisherGeneration),
+                        }
+                        : {
+                            kind: "legacy-heartbeat",
+                            committedFence: new Date(parsed.data.authority.committedFenceMs),
+                        },
                 },
             });
             if (result.status === "closed") {
@@ -387,6 +542,97 @@ export function machineUpdateHandler(
         }
     });
 
+    // The authenticated daemon replaces its full content-free operation capability
+    // projection here. This is deliberately separate from encrypted daemonState and
+    // has no merge behavior: omission withdraws an older leaf.
+    socket.on(MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, async (
+        request: unknown,
+        callback?: (response: unknown) => void,
+    ) => {
+        const parsed = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse(request);
+        const machineId = parsed.success
+            ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId)
+            : null;
+        if (!parsed.success || !machineId) {
+            callback?.({ v: 1, result: 'error', code: 'invalid_request' });
+            return;
+        }
+
+        try {
+            await inTx(async (tx) => {
+                const machine = await tx.machine.findFirst({
+                    where: { accountId: userId, id: machineId },
+                    select: {
+                        operationProtocolCapabilitiesRevision: true,
+                        revokedAt: true,
+                        replacedByMachineId: true,
+                    },
+                });
+                if (!machine || classifyMachineAvailabilityState(machine) !== 'available') {
+                    afterTx(tx, () => callback?.({
+                        v: 1,
+                        result: 'error',
+                        code: 'machine_unavailable',
+                    }));
+                    return null;
+                }
+
+                const expectedRevision = machine.operationProtocolCapabilitiesRevision;
+                const nextRevision = (expectedRevision ?? 0) + 1;
+                const { count } = await tx.machine.updateMany({
+                    where: {
+                        accountId: userId,
+                        id: machineId,
+                        revokedAt: null,
+                        replacedByMachineId: null,
+                        operationProtocolCapabilitiesRevision: expectedRevision,
+                    },
+                    data: {
+                        operationProtocolCapabilities: parsed.data.capabilities,
+                        operationProtocolCapabilitiesRevision: nextRevision,
+                    },
+                });
+                if (count !== 1) {
+                    const fresh = await tx.machine.findFirst({
+                        where: { accountId: userId, id: machineId },
+                        select: { revokedAt: true, replacedByMachineId: true },
+                    });
+                    afterTx(tx, () => callback?.({
+                        v: 1,
+                        result: 'error',
+                        code: classifyMachineAvailabilityState(fresh) === 'available'
+                            ? 'internal_error'
+                            : 'machine_unavailable',
+                    }));
+                    return null;
+                }
+
+                await markAccountChanged(tx, {
+                    accountId: userId,
+                    kind: 'machine',
+                    entityId: machineId,
+                });
+                afterTx(tx, () => callback?.({
+                    v: 1,
+                    result: 'success',
+                    revision: nextRevision,
+                }));
+                return null;
+            });
+        } catch {
+            log(
+                {
+                    module: 'websocket',
+                    level: 'error',
+                    event: MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+                    errorCode: 'internal_error',
+                },
+                'Machine operation protocol capability update failed.',
+            );
+            callback?.({ v: 1, result: 'error', code: 'internal_error' });
+        }
+    });
+
     // Machine metadata update with optimistic concurrency control
     socket.on('machine-update-metadata', async (
         data: unknown,
@@ -410,18 +656,41 @@ export function machineUpdateHandler(
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
+                    select: {
+                        metadataVersion: true,
+                        metadata: true,
+                        dataEncryptionKey: true,
+                        revokedAt: true,
+                        replacedByMachineId: true,
+                    },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
                     return null;
                 }
-                if (machine.revokedAt) {
+                const machineState = classifyMachineAvailabilityState(machine);
+                if (machineState === "revoked") {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                     return null;
                 }
-                if (machine.replacedByMachineId) {
+                if (machineState === "replaced") {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
+                    return null;
+                }
+                const upgradeRequired =
+                    readMarkedMachineSocketUpgradeRequired(
+                        socket,
+                        machine.dataEncryptionKey,
+                    );
+                if (upgradeRequired) {
+                    afterTx(tx, () => callback?.(upgradeRequired));
+                    return null;
+                }
+                if (!machineUpdateMatchesStoredMode({
+                    dataEncryptionKey: machine.dataEncryptionKey,
+                    metadata,
+                })) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
                     return null;
                 }
 
@@ -440,11 +709,12 @@ export function machineUpdateHandler(
                         where: { accountId: userId, id: machineId },
                         select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
                     });
-                    if (fresh?.revokedAt) {
+                    const freshState = classifyMachineAvailabilityState(fresh);
+                    if (freshState === "revoked") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                         return null;
                     }
-                    if (fresh?.replacedByMachineId) {
+                    if (freshState === "replaced") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
@@ -502,18 +772,41 @@ export function machineUpdateHandler(
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
+                    select: {
+                        daemonStateVersion: true,
+                        daemonState: true,
+                        dataEncryptionKey: true,
+                        revokedAt: true,
+                        replacedByMachineId: true,
+                    },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
                     return null;
                 }
-                if (machine.revokedAt) {
+                const machineState = classifyMachineAvailabilityState(machine);
+                if (machineState === "revoked") {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                     return null;
                 }
-                if (machine.replacedByMachineId) {
+                if (machineState === "replaced") {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
+                    return null;
+                }
+                const upgradeRequired =
+                    readMarkedMachineSocketUpgradeRequired(
+                        socket,
+                        machine.dataEncryptionKey,
+                    );
+                if (upgradeRequired) {
+                    afterTx(tx, () => callback?.(upgradeRequired));
+                    return null;
+                }
+                if (!machineUpdateMatchesStoredMode({
+                    dataEncryptionKey: machine.dataEncryptionKey,
+                    daemonState,
+                })) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
                     return null;
                 }
 
@@ -538,11 +831,12 @@ export function machineUpdateHandler(
                         where: { accountId: userId, id: machineId },
                         select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
                     });
-                    if (fresh?.revokedAt) {
+                    const freshState = classifyMachineAvailabilityState(fresh);
+                    if (freshState === "revoked") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                         return null;
                     }
-                    if (fresh?.replacedByMachineId) {
+                    if (freshState === "replaced") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }

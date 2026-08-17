@@ -6,20 +6,47 @@ import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@
 import {
     SessionMessageDeliveryResolutionV1Schema,
     SessionMessageRoleSchema,
+    MessageActionDurableResolutionV1Schema,
+    MessageActionReferenceV1Schema,
+    ExternalShareableActorV1Schema,
+    EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1,
+    EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1,
+    EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_SNAPSHOT_TURNS_V1,
+    ExternalShareableTranscriptSnapshotV1Schema,
     SessionStoredMessageContentSchema,
     SessionTranscriptObservationProvenanceV1Schema,
+    deriveExternalShareableActorFromAdmissionReceiptV1,
+    isRecoveredHistoryTranscriptObservationProvenance,
     parseSessionMessageDeliveryResolutionV1,
     type SessionMessageRole,
 } from "@happier-dev/protocol";
+import { isSessionAgentTransitionDividerLocalId } from "@happier-dev/protocol";
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
+import {
+    importHistoricalSessionTranscript,
+    type HistoricalSessionTranscriptImportItem,
+} from "@/app/session/importHistoricalSessionTranscript";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import {
+    issueSessionMessageActionReference,
+    resolveSessionMessageActionLookup,
+} from "@/app/session/sessionMessageActionLookup";
+import {
     buildSessionMessagePublicationWhere,
+    buildShareableSessionMessagePublicationWhere,
+    isExternalShareableSessionTurnVisible,
+    isSessionTranscriptPublicationBlocked,
     loadSessionTranscriptPublication,
+    resolveExternalShareableTranscriptBlockedFromSeq,
+    resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
+import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnState";
+import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
+import { isSessionTurnTranscriptAnchorProjectionProtocolActive } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionProtocolContract";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
-import { checkSessionAccess } from "@/app/share/accessControl";
+import { buildCurrentSessionParticipantWhere, checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -28,6 +55,109 @@ import { inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
+
+const SessionTranscriptStoredContentUnavailableResponseSchema = z.object({
+    error: z.literal("session_transcript_stored_content_unavailable"),
+}).strict();
+
+const SessionTranscriptMessagePageResponseSchema = z.object({
+    messages: z.array(z.object({
+        id: z.string(),
+        seq: z.number().int().min(0),
+        content: SessionStoredMessageContentSchema,
+        localId: z.string().nullable(),
+        sidechainId: z.string().min(1).optional(),
+        messageRole: SessionMessageRoleSchema.optional(),
+        deliveryResolution: SessionMessageDeliveryResolutionV1Schema.optional(),
+        createdAt: z.number().int().min(0),
+        updatedAt: z.number().int().min(0),
+        sourceCreatedAt: z.number().int().min(0).optional(),
+        sourceUpdatedAt: z.number().int().min(0).optional(),
+        transcriptObservationProvenance: SessionTranscriptObservationProvenanceV1Schema.optional(),
+        externalShareableActor: ExternalShareableActorV1Schema.optional(),
+        messageActionReference: MessageActionReferenceV1Schema.optional(),
+    }).strict()),
+    hasMore: z.boolean(),
+    nextBeforeSeq: z.number().int().min(0).nullable(),
+    nextAfterSeq: z.number().int().min(0).nullable(),
+    publicationBlocked: z.boolean().optional(),
+    externalShareableSnapshot: ExternalShareableTranscriptSnapshotV1Schema.optional(),
+}).strict();
+
+function deriveExternalShareableActor(params: Readonly<{
+    inputAdmissionReceipt: unknown;
+    messageRole: unknown;
+    transcriptObservationProvenance: unknown;
+}>) {
+    const admittedActor = deriveExternalShareableActorFromAdmissionReceiptV1(
+        params.inputAdmissionReceipt,
+    );
+    if (admittedActor) return admittedActor;
+    if (parseSessionMessageRole(params.messageRole) !== "user") return null;
+    return isRecoveredHistoryTranscriptObservationProvenance(
+        params.transcriptObservationProvenance,
+    ) ? "machine" : null;
+}
+
+type ExternalShareableReferencedUserSourceRow = Readonly<{
+    id: unknown;
+    seq: unknown;
+    localId: unknown;
+    messageRole: unknown;
+    sidechainId: unknown;
+    content: unknown;
+    createdAt: unknown;
+    updatedAt: unknown;
+    inputAdmissionReceipt: unknown;
+    transcriptObservationProvenance: unknown;
+}>;
+
+function readExternalShareableSequence(value: unknown): number | null {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ? value
+        : null;
+}
+
+/**
+ * The server snapshot is the disclosure boundary for out-of-page consumed
+ * inputs. Keep the database-only receipt behind this projection even though
+ * it is needed briefly to derive the coarse actor.
+ */
+function projectExternalShareableReferencedUserRow(
+    row: ExternalShareableReferencedUserSourceRow,
+) {
+    const seq = readExternalShareableSequence(row.seq);
+    const content = SessionStoredMessageContentSchema.safeParse(row.content);
+    if (
+        typeof row.id !== "string"
+        || !row.id
+        || seq === null
+        || typeof row.localId !== "string"
+        || !row.localId
+        || parseSessionMessageRole(row.messageRole) !== "user"
+        || row.sidechainId !== null
+        || !content.success
+        || !(row.createdAt instanceof Date)
+        || !(row.updatedAt instanceof Date)
+    ) {
+        return null;
+    }
+    const externalShareableActor = deriveExternalShareableActor({
+        inputAdmissionReceipt: row.inputAdmissionReceipt,
+        messageRole: row.messageRole,
+        transcriptObservationProvenance: row.transcriptObservationProvenance,
+    });
+    return {
+        id: row.id,
+        seq,
+        localId: row.localId,
+        messageRole: "user" as const,
+        content: content.data,
+        createdAt: row.createdAt.getTime(),
+        updatedAt: row.updatedAt.getTime(),
+        ...(externalShareableActor ? { externalShareableActor } : {}),
+    };
+}
 
 function parseSessionMessageRoleCsv(value: unknown): { ok: true; roles: string[] } | { ok: false } {
     if (typeof value !== "string") return { ok: false };
@@ -78,6 +208,69 @@ function buildRequestedMessageRoleWhere(roles: readonly SessionMessageRole[]): P
 }
 
 export function registerSessionMessageRoutes(app: Fastify) {
+    app.post('/v1/sessions/:sessionId/messages/action-reference/resolve', {
+        schema: {
+            params: z.object({
+                sessionId: z.string(),
+            }),
+            body: MessageActionReferenceV1Schema,
+            response: {
+                200: MessageActionDurableResolutionV1Schema,
+            },
+        },
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages"),
+        },
+    }, async (request, reply) => {
+        const { sessionId } = request.params;
+        const reference = request.body;
+
+        // The caller supplies one opaque reference only. A mismatched route
+        // segment never becomes a second Message identity or an existence
+        // oracle.
+        if (reference.sessionId !== sessionId) {
+            return reply.send({ status: "unavailable" });
+        }
+
+        const resolution = await inTx(async (tx) => await resolveSessionMessageActionLookup({
+            actorUserId: request.userId,
+            sessionId,
+            messageId: reference.messageId,
+            reference,
+            readAccess: async (actorUserId, ownedSessionId) =>
+                (await checkSessionAccess(actorUserId, ownedSessionId, tx)) !== null,
+            readMessage: async (ownedSessionId, messageId) => await tx.sessionMessage.findFirst({
+                where: {
+                    id: messageId,
+                    sessionId: ownedSessionId,
+                    session: buildCurrentSessionParticipantWhere({
+                        userId: request.userId,
+                        sessionId: ownedSessionId,
+                    }),
+                },
+                select: {
+                    id: true,
+                    sessionId: true,
+                    seq: true,
+                    messageRole: true,
+                    updatedAt: true,
+                },
+            }),
+            readPublication: async (ownedSessionId) => {
+                if (!await checkSessionAccess(request.userId, ownedSessionId, tx)) return null;
+                return await tx.session.findFirst({
+                    where: buildCurrentSessionParticipantWhere({
+                        userId: request.userId,
+                        sessionId: ownedSessionId,
+                    }),
+                    select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                });
+            },
+        }));
+        return reply.send(resolution);
+    });
+
     app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
         schema: {
             params: z.object({
@@ -112,16 +305,15 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const userId = request.userId;
         const { sessionId, localId } = request.params;
 
-        const access = await checkSessionAccess(userId, sessionId);
-        if (!access) {
-            return reply.code(404).send({ error: 'Session not found' });
-        }
-
-        const row = await inTx(async (tx) => {
+        const { row, currentlyAccessible } = await inTx(async (tx) => {
             const publication = await loadSessionTranscriptPublication(tx, sessionId);
-            return await tx.sessionMessage.findFirst({
+            const row = await tx.sessionMessage.findFirst({
                 where: buildSessionMessagePublicationWhere({
-                    where: { sessionId, localId },
+                    where: {
+                        sessionId,
+                        localId,
+                        session: buildCurrentSessionParticipantWhere({ userId, sessionId }),
+                    },
                     publication,
                 }),
                 select: {
@@ -139,7 +331,14 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     transcriptObservationProvenance: true,
                 },
             });
+            return {
+                row,
+                currentlyAccessible: (await checkSessionAccess(userId, sessionId, tx)) !== null,
+            };
         });
+        if (!currentlyAccessible) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
         if (!row) {
             return reply.code(404).send({ error: 'Message not found' });
         }
@@ -177,11 +376,12 @@ export function registerSessionMessageRoutes(app: Fastify) {
             querystring: z.object({
                 scope: z.enum(["main", "sidechain", "all"]).optional(),
                 sidechainId: z.string().min(1).optional(),
-                limit: z.coerce.number().int().min(1).max(500).default(150),
+                limit: z.coerce.number().int().min(1).max(500).optional(),
                 beforeSeq: z.coerce.number().int().min(1).optional(),
                 afterSeq: z.coerce.number().int().min(0).optional(),
                 role: SessionMessageRoleSchema.optional(),
                 roles: z.string().optional(),
+                projection: z.literal("externalShareableV1").optional(),
             }).superRefine((value, ctx) => {
                 if (value.beforeSeq !== undefined && value.afterSeq !== undefined) {
                     ctx.addIssue({
@@ -195,7 +395,27 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         message: "sidechainId is required when scope=sidechain",
                     });
                 }
+                if (
+                    value.projection === "externalShareableV1"
+                    && value.limit !== undefined
+                    && value.limit > EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1
+                ) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        path: ["limit"],
+                        message: `externalShareableV1 pages are limited to ${EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1} rows`,
+                    });
+                }
             }).optional(),
+            response: {
+                200: SessionTranscriptMessagePageResponseSchema,
+                400: z.object({
+                    error: z.string(),
+                    code: z.string(),
+                }).passthrough(),
+                404: z.object({ error: z.string() }).strict(),
+                503: SessionTranscriptStoredContentUnavailableResponseSchema,
+            },
         },
         preHandler: app.authenticate,
         config: {
@@ -213,9 +433,14 @@ export function registerSessionMessageRoutes(app: Fastify) {
                   afterSeq?: number;
                   role?: unknown;
                   roles?: unknown;
+                  projection?: unknown;
               }>
             | undefined;
-        const { limit = 150, beforeSeq, afterSeq } = query ?? {};
+        const externalShareableProjection = query?.projection === "externalShareableV1";
+        const { beforeSeq, afterSeq } = query ?? {};
+        const limit = query?.limit ?? (externalShareableProjection
+            ? EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1
+            : 150);
         const parsedRoles = resolveRequestedMessageRoles(query);
         if (!parsedRoles.ok) {
             return reply.code(400).send({ error: "Invalid parameters", code: "invalid-role" });
@@ -235,11 +460,6 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return reply.code(400).send({ error: "Invalid parameters", code: "missing-sidechain-id" });
         }
 
-        const access = await checkSessionAccess(userId, sessionId);
-        if (!access) {
-            return reply.code(404).send({ error: 'Session not found' });
-        }
-
         if (afterSeq !== undefined) {
             catchupFollowupFetchesCounter.inc({ type: 'session-messages-afterSeq' });
         }
@@ -256,10 +476,30 @@ export function registerSessionMessageRoutes(app: Fastify) {
             where.seq = { gt: afterSeq };
         }
 
-        const messages = await inTx(async (tx) => {
+        const {
+            messages: resultMessages,
+            hasMore,
+            publicationBlocked,
+            externalShareableSnapshot,
+            currentlyAccessible,
+        } = await inTx(async (tx) => {
             const publication = await loadSessionTranscriptPublication(tx, sessionId);
-            return await tx.sessionMessage.findMany({
-                where: buildSessionMessagePublicationWhere({ where, publication }),
+            const currentParticipantWhere = buildCurrentSessionParticipantWhere({ userId, sessionId });
+            const publicationWhere = externalShareableProjection
+                ? buildShareableSessionMessagePublicationWhere({
+                    where,
+                    publication,
+                    additionalSessionWhere: currentParticipantWhere,
+                })
+                : buildSessionMessagePublicationWhere({
+                    where: {
+                        ...where,
+                        session: currentParticipantWhere,
+                    },
+                    publication,
+                });
+            const fetchedMessages = await tx.sessionMessage.findMany({
+                where: publicationWhere,
                 orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
                 take: limit + 1,
                 select: {
@@ -275,12 +515,197 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     sourceCreatedAt: true,
                     sourceUpdatedAt: true,
                     transcriptObservationProvenance: true,
+                    inputAdmissionReceipt: true,
                 },
             });
-        });
+            const hasMore = fetchedMessages.length > limit;
+            const messages = hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
+            let externalShareableSnapshot: ReturnType<typeof ExternalShareableTranscriptSnapshotV1Schema.parse> | undefined;
+            let turnSettlementBlockedFromSeq: number | null = null;
+            let publicationBlockedFromSeq: number | null = null;
 
-        const hasMore = messages.length > limit;
-        const resultMessages = hasMore ? messages.slice(0, limit) : messages;
+            if (externalShareableProjection) {
+                const pageSeqs = messages
+                    .map((message) => readExternalShareableSequence(message.seq))
+                    .filter((seq): seq is number => seq !== null);
+                const firstPageSeq = pageSeqs.length > 0 ? Math.min(...pageSeqs) : null;
+                const lastPageSeq = pageSeqs.length > 0 ? Math.max(...pageSeqs) : null;
+                const transcriptAnchorProjectionActive =
+                    isSessionTurnTranscriptAnchorProjectionProtocolActive();
+                let hasLegacyTurnProjection = false;
+                let turnSnapshotExhausted = false;
+                let hasInconsistentTurnProjection = false;
+                let turnRows: Awaited<ReturnType<typeof tx.sessionTurn.findMany>> = [];
+
+                if (
+                    transcriptAnchorProjectionActive
+                    && firstPageSeq !== null
+                    && lastPageSeq !== null
+                ) {
+                    const legacyTurn = await tx.sessionTurn.findFirst({
+                        where: {
+                            sessionId,
+                            session: currentParticipantWhere,
+                            transcriptAnchorProjectionVersion: 0,
+                        },
+                        select: { id: true },
+                    });
+                    turnRows = await tx.sessionTurn.findMany({
+                        where: {
+                            sessionId,
+                            session: currentParticipantWhere,
+                            transcriptAnchorProjectionVersion: 1,
+                            OR: [
+                                {
+                                    transcriptAnchorMinSeq: { lte: lastPageSeq },
+                                    transcriptAnchorMaxSeq: { gte: firstPageSeq },
+                                },
+                                // An in-progress turn can have no range yet while its
+                                // admitted input is already publication-visible. Keep
+                                // that bounded unknown in the same snapshot rather than
+                                // allowing a client to cross it and guess later.
+                                {
+                                    status: "in_progress",
+                                    OR: [
+                                        { transcriptAnchorMinSeq: null },
+                                        { transcriptAnchorMaxSeq: null },
+                                    ],
+                                },
+                            ],
+                        },
+                        orderBy: [{ updatedAt: "asc" }, { createdAt: "asc" }],
+                        take: EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_SNAPSHOT_TURNS_V1,
+                    });
+                    hasLegacyTurnProjection = legacyTurn !== null;
+                    turnSnapshotExhausted = turnRows.length >= EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_SNAPSHOT_TURNS_V1;
+                    hasInconsistentTurnProjection = turnRows.some((row) =>
+                        !isSessionTurnTranscriptAnchorProjectionCurrent(row));
+                }
+
+                const consistentTurnRows = turnRows.filter((row) =>
+                    isSessionTurnTranscriptAnchorProjectionCurrent(row));
+
+                if (!transcriptAnchorProjectionActive) {
+                    // EXPAND/backfill has not crossed its final writer floor.
+                    // A page-local barrier keeps all public consumers from
+                    // claiming an irreversible external cursor on v0 facts.
+                    turnSettlementBlockedFromSeq = firstPageSeq;
+                } else {
+                    publicationBlockedFromSeq = resolveExternalShareableTranscriptBlockedFromSeq({
+                        rows: consistentTurnRows,
+                        publication,
+                    });
+                    turnSettlementBlockedFromSeq = resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq({
+                        messages,
+                        turns: consistentTurnRows,
+                        hasLegacyTurnProjection,
+                        turnSnapshotExhausted,
+                        hasInconsistentTurnProjection,
+                    });
+                }
+                const visibleTurns = parseStoredSessionTurns(consistentTurnRows.filter((row) =>
+                    isExternalShareableSessionTurnVisible({ row, publication })));
+                const pageSeqSet = new Set(pageSeqs);
+                const referencedUserSeqs = new Set<number>();
+                let exactInputWitnessBlockedFromSeq: number | null = null;
+                const completedPageFinals = visibleTurns.flatMap((turn) => {
+                    const finalAssistantMessageSeq = turn.transcriptAnchors?.finalAssistantMessageSeq;
+                    return turn.status === "completed"
+                        && typeof finalAssistantMessageSeq === "number"
+                        && pageSeqSet.has(finalAssistantMessageSeq)
+                        ? [{ turn, finalAssistantMessageSeq }]
+                        : [];
+                }).sort((left, right) => left.finalAssistantMessageSeq - right.finalAssistantMessageSeq);
+                for (const { turn, finalAssistantMessageSeq } of completedPageFinals) {
+                    const outOfPageUserMessageSeqs = (turn.transcriptAnchors?.userMessageSeqs ?? [])
+                        .filter((userMessageSeq) => !pageSeqSet.has(userMessageSeq));
+                    const newlyReferencedUserSeqs = new Set(outOfPageUserMessageSeqs.filter((userMessageSeq) =>
+                        !referencedUserSeqs.has(userMessageSeq)));
+                    if (
+                        outOfPageUserMessageSeqs.length > EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1
+                        || referencedUserSeqs.size + newlyReferencedUserSeqs.size
+                            > EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1
+                    ) {
+                        exactInputWitnessBlockedFromSeq = exactInputWitnessBlockedFromSeq === null
+                            ? finalAssistantMessageSeq
+                            : Math.min(exactInputWitnessBlockedFromSeq, finalAssistantMessageSeq);
+                        break;
+                    }
+                    for (const userMessageSeq of newlyReferencedUserSeqs) {
+                        referencedUserSeqs.add(userMessageSeq);
+                    }
+                }
+                const canReadReferencedUsers = !turnSnapshotExhausted
+                    && referencedUserSeqs.size <= EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1;
+                const referencedRows = canReadReferencedUsers && referencedUserSeqs.size > 0
+                    ? await tx.sessionMessage.findMany({
+                        where: buildShareableSessionMessagePublicationWhere({
+                            where: {
+                                sessionId,
+                                seq: { in: [...referencedUserSeqs] },
+                            },
+                            publication,
+                            additionalSessionWhere: currentParticipantWhere,
+                        }),
+                        orderBy: { seq: "asc" },
+                        take: EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1,
+                        select: {
+                            id: true,
+                            seq: true,
+                            localId: true,
+                            sidechainId: true,
+                            messageRole: true,
+                            content: true,
+                            createdAt: true,
+                            updatedAt: true,
+                            transcriptObservationProvenance: true,
+                            inputAdmissionReceipt: true,
+                        },
+                    })
+                    : [];
+                const referencedUserRows = referencedRows.flatMap((row) => {
+                    const projected = projectExternalShareableReferencedUserRow(row);
+                    return projected ? [projected] : [];
+                });
+                if (
+                    exactInputWitnessBlockedFromSeq !== null
+                    && (
+                        turnSettlementBlockedFromSeq === null
+                        || exactInputWitnessBlockedFromSeq < turnSettlementBlockedFromSeq
+                    )
+                ) {
+                    turnSettlementBlockedFromSeq = exactInputWitnessBlockedFromSeq;
+                }
+                externalShareableSnapshot = ExternalShareableTranscriptSnapshotV1Schema.parse({
+                    turns: visibleTurns,
+                    ...(publicationBlockedFromSeq !== null ? { publicationBlockedFromSeq } : {}),
+                    ...(turnSettlementBlockedFromSeq !== null ? { turnSettlementBlockedFromSeq } : {}),
+                    ...(referencedUserRows.length > 0 ? { referencedUserRows } : {}),
+                });
+            }
+            return {
+                messages,
+                hasMore,
+                publicationBlocked: externalShareableProjection
+                    && isSessionTranscriptPublicationBlocked(publication),
+                externalShareableSnapshot,
+                currentlyAccessible: (await checkSessionAccess(userId, sessionId, tx)) !== null,
+            };
+        });
+        if (!currentlyAccessible) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
+
+        const parsedResultContents: SessionStoredMessageContent[] = [];
+        for (const message of resultMessages) {
+            const parsedContent = SessionStoredMessageContentSchema.safeParse(message.content);
+            if (!parsedContent.success) {
+                return reply.code(503).send({
+                    error: "session_transcript_stored_content_unavailable",
+                });
+            }
+            parsedResultContents.push(parsedContent.data);
+        }
         if (afterSeq !== undefined) {
             catchupFollowupReturnedCounter.inc({ type: 'session-messages-afterSeq' }, resultMessages.length);
         }
@@ -299,10 +724,18 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 : null;
 
         return reply.send({
-            messages: resultMessages.map((v) => ({
+            messages: resultMessages.map((v, index) => ({
                 id: v.id,
                 seq: v.seq,
-                content: v.content,
+                content: parsedResultContents[index]!,
+                ...(() => {
+                    const reference = issueSessionMessageActionReference({
+                        sessionId,
+                        messageId: v.id,
+                        updatedAt: v.updatedAt,
+                    });
+                    return reference ? { messageActionReference: reference } : {};
+                })(),
                 ...(() => {
                     const deliveryResolution = parseSessionMessageDeliveryResolutionV1(v.deliveryResolution);
                     return deliveryResolution ? { deliveryResolution } : {};
@@ -320,11 +753,79 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 ...(() => {
                     const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(v.transcriptObservationProvenance);
                     return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
-                })()
+                })(),
+                ...(() => {
+                    if (!externalShareableProjection) return {};
+                    const externalShareableActor = deriveExternalShareableActor({
+                        inputAdmissionReceipt: v.inputAdmissionReceipt,
+                        messageRole: v.messageRole,
+                        transcriptObservationProvenance: v.transcriptObservationProvenance,
+                    });
+                    return externalShareableActor ? { externalShareableActor } : {};
+                })(),
             })),
-            hasMore,
+            hasMore: hasMore
+                || publicationBlocked
+                || externalShareableSnapshot?.publicationBlockedFromSeq !== undefined
+                || externalShareableSnapshot?.turnSettlementBlockedFromSeq !== undefined,
             nextBeforeSeq,
             nextAfterSeq,
+            ...(externalShareableProjection ? { publicationBlocked, externalShareableSnapshot } : {}),
+        });
+    });
+
+    app.post('/v2/sessions/:sessionId/transcript/import', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                sessionId: z.string(),
+            }),
+            body: z.object({
+                items: z.array(z.object({
+                    localId: z.string().trim().min(1),
+                    content: SessionStoredMessageContentSchema,
+                    messageRole: SessionMessageRoleSchema.optional(),
+                })).min(1).max(500),
+            }),
+            response: {
+                200: z.object({
+                    imported: z.number().int().min(0),
+                    cursor: z.number().int().min(0).nullable(),
+                }).strict(),
+                400: z.object({ error: z.literal("Invalid parameters"), code: z.string().optional() }).strict(),
+                403: z.object({ error: z.literal("Forbidden") }).strict(),
+                404: z.object({ error: z.literal("Session not found") }).strict(),
+                500: z.object({ error: z.literal("Failed to import transcript") }).strict(),
+            },
+        },
+    }, async (request, reply) => {
+        const { sessionId } = request.params;
+        const body = request.body as Readonly<{
+            items: readonly HistoricalSessionTranscriptImportItem[];
+        }>;
+        const result = await importHistoricalSessionTranscript({
+            actorUserId: request.userId,
+            sessionId,
+            items: body.items,
+        });
+        if (!result.ok) {
+            if (result.error === "forbidden") {
+                return reply.code(403).send({ error: "Forbidden" });
+            }
+            if (result.error === "session-not-found") {
+                return reply.code(404).send({ error: "Session not found" });
+            }
+            if (result.error === "internal") {
+                return reply.code(500).send({ error: "Failed to import transcript" });
+            }
+            return reply.code(400).send({
+                error: "Invalid parameters",
+                ...(result.code ? { code: result.code } : {}),
+            });
+        }
+        return reply.send({
+            imported: result.imported,
+            cursor: result.cursor,
         });
     });
 
@@ -395,6 +896,16 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     : null;
 
         const effectiveLocalId = localId ?? idempotencyKey ?? null;
+
+        // The Agent-transition divider local-ID namespace is reserved. Only the
+        // owner-only transition service may pass one to `createSessionMessage`;
+        // a generic client ingress must never mint or overwrite a divider row.
+        if (isSessionAgentTransitionDividerLocalId(effectiveLocalId)) {
+            return reply.code(400).send({
+                error: "Invalid parameters",
+                code: "session_message_reserved_local_id",
+            });
+        }
 
         const result =
             "content" in body

@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { type Fastify } from "../../types";
-import { encryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
 import {
@@ -36,23 +35,17 @@ export function connectVendorTokenRoutes(app: Fastify) {
             body: z.object({ token: z.string().min(1).max(maxTokenLen) }),
             params: z.object({ vendor: ConnectedServiceCloudVendorKeySchema }),
             response: {
-                200: z.object({ success: z.literal(true) }),
-                409: z.object({ error: z.literal("connect_credential_conflict") }),
+                400: z.object({ error: z.literal("connect_credential_invalid") }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
 
-        const encrypted = encryptString(["user", userId, "vendors", request.params.vendor, "token"], request.body.token);
-        const result = await mutateLegacyConnectedServiceVendorToken({
+        await mutateLegacyConnectedServiceVendorToken({
             accountId: userId,
             vendor: request.params.vendor,
-            token: encrypted,
         });
-        if (result.status === "connected_credential_conflict") {
-            return reply.code(409).send({ error: "connect_credential_conflict" });
-        }
-        reply.send({ success: true });
+        return reply.code(400).send({ error: "connect_credential_invalid" });
     });
 
     app.get("/v1/connect/:vendor/token", {
@@ -81,21 +74,17 @@ export function connectVendorTokenRoutes(app: Fastify) {
         schema: {
             params: z.object({ vendor: ConnectedServiceCloudVendorKeySchema }),
             response: {
-                200: z.object({ success: z.literal(true) }),
-                409: z.object({ error: z.literal("connect_credential_conflict") }),
+                400: z.object({ error: z.literal("connect_credential_invalid") }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
 
-        const result = await deleteLegacyConnectedServiceVendorToken({
+        await deleteLegacyConnectedServiceVendorToken({
             accountId: userId,
             vendor: request.params.vendor,
         });
-        if (result.status === "connected_credential_conflict") {
-            return reply.code(409).send({ error: "connect_credential_conflict" });
-        }
-        reply.send({ success: true });
+        return reply.code(400).send({ error: "connect_credential_invalid" });
     });
 
     app.get("/v1/connect/tokens", {

@@ -16,15 +16,21 @@ function isUnicodeScalarString(value: string): boolean {
     return true;
 }
 
-function opaqueVoiceIdentifierSchema() {
+function opaqueVoiceIdentifierSchema(maxUnicodeScalars: number) {
     return z.string()
         .refine(isUnicodeScalarString, "Identifier must contain valid Unicode")
         .refine((value) => value.trim().length > 0, "Identifier must not be blank")
-        .refine((value) => [...value].length <= 512, "Identifier must contain at most 512 Unicode characters");
+        .refine(
+            (value) => [...value].length <= maxUnicodeScalars,
+            `Identifier must contain at most ${maxUnicodeScalars} Unicode characters`,
+        );
 }
 
-export const voiceProviderConversationIdSchema = opaqueVoiceIdentifierSchema();
-export const voiceSessionCorrelationIdSchema = opaqueVoiceIdentifierSchema();
+// `providerConversationId` is written verbatim to the portable MySQL
+// `VARCHAR(191)` identity columns. Keep its public boundary within that
+// storage contract rather than accepting a value that later fails durably.
+export const voiceProviderConversationIdSchema = opaqueVoiceIdentifierSchema(191);
+export const voiceSessionCorrelationIdSchema = opaqueVoiceIdentifierSchema(512);
 
 export const voiceSessionLifecycleBodySchema = z.object({
     leaseId: voiceSessionLeaseIdSchema,
@@ -32,3 +38,9 @@ export const voiceSessionLifecycleBodySchema = z.object({
 });
 
 export type VoiceSessionLifecycleBody = z.infer<typeof voiceSessionLifecycleBodySchema>;
+
+export const voiceSessionReleaseBodySchema = z.object({
+    leaseId: voiceSessionLeaseIdSchema,
+});
+
+export type VoiceSessionReleaseBody = z.infer<typeof voiceSessionReleaseBodySchema>;

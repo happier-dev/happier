@@ -8,6 +8,10 @@ import {
 import type {
     CloseSessionPublisherResult,
 } from "@/app/presence/sessionPublisherPresence";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 
 type ClosedSessionPublisher = Extract<CloseSessionPublisherResult, { status: "closed" }>;
@@ -19,7 +23,19 @@ export async function publishSessionPublisherClose(params: Readonly<{
     closed: ClosedSessionPublisher;
     skipSenderConnection?: ClientConnection;
 }>): Promise<void> {
-    await Promise.all(params.closed.participantCursors.map(async ({ accountId, cursor }) => {
+    const session = await loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    if (session) await Promise.all(params.closed.participantCursors.map(async ({ accountId, cursor }) => {
+        const projection = projectSessionTranscriptPublicationRealtimeProjection(
+            {
+                active: false,
+                activeAt: params.closed.activeAt.getTime(),
+                ...(params.closed.projection ?? {}),
+                ...(params.closed.turnProjection ?? {}),
+            },
+            session,
+            accountId,
+        );
+        if (projection.kind === "suppress") return;
         eventRouter.emitUpdate({
             userId: accountId,
             payload: buildUpdateSessionUpdate(
@@ -28,12 +44,7 @@ export async function publishSessionPublisherClose(params: Readonly<{
                 randomKeyNaked(12),
                 undefined,
                 undefined,
-                {
-                    active: false,
-                    activeAt: params.closed.activeAt.getTime(),
-                    ...(params.closed.projection ?? {}),
-                    ...(params.closed.turnProjection ?? {}),
-                },
+                projection.value,
             ),
             recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
             ...(params.skipSenderConnection && accountId === params.publisherAccountId

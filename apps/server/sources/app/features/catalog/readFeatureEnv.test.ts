@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   readAuthMtlsFeatureEnv,
   readAuthFeatureEnv,
-  readChannelBridgesFeatureEnv,
   readConnectedServicesFeatureEnv,
   readMachineLiveStreamFeatureEnv,
   readMachineTransferFeatureEnv,
+  readPluginsFeatureEnv,
+  readSessionAgentSwitchingFeatureEnv,
   readSessionHandoffFeatureEnv,
   readSessionUsageLimitRecoveryFeatureEnv,
   readTerminalFeatureEnv,
@@ -16,6 +17,55 @@ async function loadFeatureEnvModule(): Promise<Record<string, any>> {
   const modulePath = './readFeatureEnv';
   return import(modulePath) as Promise<Record<string, any>>;
 }
+
+describe('readPluginsFeatureEnv Collection deployment limits', () => {
+  it('defaults and validates one coherent bounded Collection deployment policy', () => {
+    expect(readPluginsFeatureEnv({} as NodeJS.ProcessEnv).collectionLimits).toEqual({
+      maxRowEncodedBytes: 512 * 1024,
+      maxBatchBytes: 16 * 1024 * 1024,
+      maxBatchRows: 100,
+      maxAccountRows: 10_000,
+      maxAccountBytes: 256 * 1024 * 1024,
+    });
+
+    const valid: NodeJS.ProcessEnv = {
+      HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES: '524288',
+      HAPPIER_COLLECTION_MAX_BATCH_BYTES: '16777216',
+      HAPPIER_COLLECTION_MAX_BATCH_ROWS: '64',
+      HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS: '10000',
+      HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES: '268435456',
+    };
+    expect(readPluginsFeatureEnv(valid).collectionLimits).toEqual({
+      maxRowEncodedBytes: 524_288,
+      maxBatchBytes: 16_777_216,
+      maxBatchRows: 64,
+      maxAccountRows: 10_000,
+      maxAccountBytes: 268_435_456,
+    });
+
+    for (const env of [
+      { HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES: '0' },
+      { HAPPIER_COLLECTION_MAX_BATCH_BYTES: '16.5' },
+      { HAPPIER_COLLECTION_MAX_BATCH_ROWS: '101' },
+      { HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS: '100001' },
+      { HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES: '1073741825' },
+      {
+        HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES: '16777217',
+        HAPPIER_COLLECTION_MAX_BATCH_BYTES: '16777216',
+      },
+      {
+        HAPPIER_COLLECTION_MAX_BATCH_ROWS: '10001',
+        HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS: '10000',
+      },
+      {
+        HAPPIER_COLLECTION_MAX_BATCH_BYTES: '268435457',
+        HAPPIER_COLLECTION_MAX_ACCOUNT_BYTES: '268435456',
+      },
+    ]) {
+      expect(() => readPluginsFeatureEnv(env as NodeJS.ProcessEnv)).toThrow(/HAPPIER_COLLECTION_/u);
+    }
+  });
+});
 
 describe('readConnectedServicesFeatureEnv', () => {
   it('defaults connected-service server features to true when env is unset', () => {
@@ -34,20 +84,6 @@ describe('readConnectedServicesFeatureEnv', () => {
 
     expect(res.accountGroupsEnabled).toBe(false);
     expect(res.accountFallbackEnabled).toBe(false);
-  });
-});
-
-describe('readChannelBridgesFeatureEnv', () => {
-  it('defaults enabled to true when env is unset', () => {
-    const env: NodeJS.ProcessEnv = {};
-    const res = readChannelBridgesFeatureEnv(env);
-    expect(res.enabled).toBe(true);
-  });
-
-  it('defaults telegramEnabled to true when env is unset', () => {
-    const env: NodeJS.ProcessEnv = {};
-    const res = readChannelBridgesFeatureEnv(env);
-    expect(res.telegramEnabled).toBe(true);
   });
 });
 
@@ -146,6 +182,34 @@ describe('readSessionUsageLimitRecoveryFeatureEnv', () => {
     expect(readSessionUsageLimitRecoveryFeatureEnv({
       HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED: '0',
     } as NodeJS.ProcessEnv).enabled).toBe(false);
+  });
+});
+
+describe('readSessionAgentSwitchingFeatureEnv', () => {
+  it('defaults agent switching enabled when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readSessionAgentSwitchingFeatureEnv(env);
+
+    expect(res.agentSwitchingEnabled).toBe(true);
+  });
+
+  it('reads the opt-out env value', () => {
+    for (const raw of ['0', 'false', 'no', 'off']) {
+      const res = readSessionAgentSwitchingFeatureEnv({
+        HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: raw,
+      });
+
+      expect(res.agentSwitchingEnabled).toBe(false);
+    }
+  });
+
+  it('falls back to the default for an unparseable env value', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: 'maybe',
+    };
+    const res = readSessionAgentSwitchingFeatureEnv(env);
+
+    expect(res.agentSwitchingEnabled).toBe(true);
   });
 });
 

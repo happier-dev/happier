@@ -5,6 +5,7 @@ import {
     buildNewMessageUpdate,
     buildMessageUpdatedUpdate,
     createSessionMessage,
+    enqueuePendingMessage,
     emitUpdate,
     createSessionRouteTestBuilder,
     getSessionParticipantUserIds,
@@ -281,23 +282,21 @@ describe("sessionRoutes v2 messages", () => {
         });
     });
 
-    it("forwards messageRole to the message write service when provided", async () => {
-        const createdAt = new Date("2020-01-01T00:00:00.000Z");
-        createSessionMessage.mockResolvedValue({
+    it("adapts the remote-dev@6eabb977 predecessor direct human HTTP send into canonical Pending admission", async () => {
+        enqueuePendingMessage.mockResolvedValue({
             ok: true,
             didWrite: true,
-            didUpdate: false,
-            message: {
-                id: "m1",
-                seq: 10,
+            pending: {
                 localId: "l1",
-                sidechainId: null,
                 messageRole: "user",
                 content: { t: "encrypted", c: "c" },
-                createdAt,
-                updatedAt: createdAt,
+                requestedAction: { v: 1, kind: "enqueue" },
             },
             participantCursors: [],
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+            pendingVersion: 1,
+            badgeAttentionChanged: false,
         });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
@@ -307,14 +306,15 @@ describe("sessionRoutes v2 messages", () => {
             body: { ciphertext: "cipher", localId: "l1", messageRole: "user" },
         });
 
-        expect(createSessionMessage).toHaveBeenCalledWith({
+        expect(enqueuePendingMessage).toHaveBeenCalledWith({
             actorUserId: "u1",
             sessionId: "s1",
             ciphertext: "cipher",
             localId: "l1",
-            sidechainId: null,
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
         });
+        expect(createSessionMessage).not.toHaveBeenCalled();
     });
 
     it("forwards unsupported messageRole metadata without rejecting the write", async () => {
@@ -453,6 +453,27 @@ describe("sessionRoutes v2 messages", () => {
             didWrite: true,
             message: { id: "m1", seq: 10, localId: null, createdAt: createdAt.getTime() },
         });
+    });
+
+    it("rejects a reserved Agent-transition divider localId before reaching the message owner", async () => {
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+
+        const viaBody = await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: { ciphertext: "cipher", localId: "agent-transition:submitted-1" },
+        });
+        expect(viaBody.reply.code).toHaveBeenCalledWith(400);
+
+        // The idempotency-key header is the other way a localId reaches the owner.
+        const viaHeader = await route.invoke({
+            params: { sessionId: "s1" },
+            headers: { "idempotency-key": "agent-transition:submitted-2" },
+            body: { ciphertext: "cipher" },
+        });
+        expect(viaHeader.reply.code).toHaveBeenCalledWith(400);
+
+        expect(createSessionMessage).not.toHaveBeenCalled();
     });
 
     it("maps service errors to status codes", async () => {

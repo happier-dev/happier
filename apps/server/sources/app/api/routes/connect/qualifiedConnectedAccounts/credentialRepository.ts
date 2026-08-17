@@ -21,7 +21,7 @@ import {
     type StoredJsonContentEnvelope,
 } from "@happier-dev/protocol";
 
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { decryptString, encryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
@@ -50,6 +50,7 @@ import {
     createQualifiedConnectedAccountServiceDigest,
     assertQualifiedConnectedAccountLegacyIdentityMatches,
     classifyQualifiedConnectedAccountLegacyAuthenticationMode,
+    parseStoredQualifiedConnectedAccountRef,
     projectQualifiedConnectedAccountPublicAuthenticationModeId,
     resolveLegacyServiceAccountTokenIdentityFields,
     resolveQualifiedConnectedAccountLegacyIdentity,
@@ -99,6 +100,7 @@ export type QualifiedConnectedServiceCredentialMutationResult =
     }>
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "authentication_mode_mismatch" }>
+    | Readonly<{ status: "revision_required" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedAccountConfigurationMutationResult =
@@ -117,6 +119,7 @@ export type QualifiedConnectedAccountConfigurationMutationResult =
         configurationRevision: string | null;
     }>
     | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "revision_required" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedServiceCredentialHealthMutationResult =
@@ -135,12 +138,16 @@ export type QualifiedConnectedServiceCredentialHealthMutationResult =
         configurationRevision: string | null;
     }>
     | Readonly<{ status: "not_found" }>
-    | Readonly<{ status: "unsupported_format" }>;
+    | Readonly<{ status: "unsupported_format" }>
+    | Readonly<{ status: "revision_required" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedServiceCredentialDeleteResult =
     | Readonly<{ status: "deleted" }>
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "referenced" }>
+    | Readonly<{ status: "revision_required" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>
     | Readonly<{
         status: "superseded";
         credentialRevision: string | null;
@@ -148,8 +155,7 @@ export type QualifiedConnectedServiceCredentialDeleteResult =
     }>;
 
 type QualifiedConnectedServiceCredentialDeleteStorageResult =
-    | QualifiedConnectedServiceCredentialDeleteResult
-    | Readonly<{ status: "storage_mode_mismatch" }>;
+    QualifiedConnectedServiceCredentialDeleteResult;
 
 export type QualifiedConnectedAccountsAccountCleanupResult = Readonly<{
     deletedCredentialCount: number;
@@ -240,6 +246,7 @@ export async function clearQualifiedConnectedAccountsForAccountInTx(
 
 export type QualifiedConnectedServiceRefreshLeaseResult =
     | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "revision_required" }>
     | Readonly<{
         status: "resolved";
         acquired: boolean;
@@ -257,6 +264,13 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function createConfigurationRevision(): string {
     return `cscr_${randomBytes(24).toString("base64url")}`;
+}
+
+export function isQualifiedConnectedAccountConfigurationRevision(
+    value: unknown,
+): value is string {
+    return typeof value === "string"
+        && /^cscr_[A-Za-z0-9_-]{32}$/.test(value);
 }
 
 function encodeUtf8(value: string): Uint8Array<ArrayBuffer> {
@@ -280,18 +294,37 @@ function isEnvelopeModeCompatible(
         : envelope.t === "encrypted";
 }
 
+type QualifiedConnectedAccountEncryptionModeReadResult =
+    | Readonly<{
+        status: "resolved";
+        accountMode: "plain" | "e2ee";
+    }>
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>;
+
 async function readEffectiveAccountEncryptionMode(
     tx: Tx,
     accountId: string,
-): Promise<"plain" | "e2ee"> {
+): Promise<QualifiedConnectedAccountEncryptionModeReadResult> {
     const account = await tx.account.findUnique({
         where: { id: accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
-    if (!account) {
-        throw new Error("Qualified Connected Account owner account not found");
+    if (!account) return { status: "not_found" };
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") {
+        return { status: "storage_mode_mismatch" };
     }
-    return resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    return {
+        status: "resolved",
+        accountMode: currentness.currentness.encryptionMode,
+    };
 }
 
 function buildEnvelopeStorageKeyPath(params: Readonly<{
@@ -367,6 +400,40 @@ function decodeEnvelopeFromStorage(params: Readonly<{
     throw new Error("Unsupported qualified Connected Account content envelope");
 }
 
+function decodeQualifiedConnectedAccountConfigurationRowContent(
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+        row: Readonly<{
+            configurationRevision: string | null;
+            configurationContent: Uint8Array | null;
+        }>;
+    }>,
+): Readonly<{
+    configurationRevision: string;
+    configurationContent: StoredJsonContentEnvelope;
+}> | null {
+    const configurationRevision = params.row.configurationRevision;
+    const configurationBytes = params.row.configurationContent;
+    if ((configurationRevision === null) !== (configurationBytes === null)) {
+        throw new Error(
+            "Qualified Connected Account configuration sidecar is incomplete",
+        );
+    }
+    if (configurationRevision === null || configurationBytes === null) {
+        return null;
+    }
+    return {
+        configurationRevision,
+        configurationContent: decodeEnvelopeFromStorage({
+            accountId: params.accountId,
+            ref: params.ref,
+            kind: "configuration",
+            bytes: configurationBytes,
+        }),
+    };
+}
+
 function nextUpdatedAt(current: Date): Date {
     return new Date(Math.max(Date.now(), current.getTime() + 1));
 }
@@ -374,41 +441,37 @@ function nextUpdatedAt(current: Date): Date {
 function resolveQualifiedConnectedAccountCredentialRevision(params: Readonly<{
     rowId: string;
     metadata: unknown;
-}>): string {
+}>): string | null {
     return resolveQualifiedConnectedAccountStoredMetadata(params)
         .credentialRevision;
 }
 
-type StoredQualifiedConnectedAccountIdentity = Readonly<{
-    servicePluginId: string;
-    serviceLocalId: string;
-    qualifiedServiceDigest: string;
-    connectedAccountId: string;
-    qualifiedIdentityDigest: string;
-}>;
+type QualifiedConnectedAccountCredentialRevisionSemantics =
+    | Readonly<{
+        revisionSemantics: "revisioned";
+        credentialRevision: string;
+    }>
+    | Readonly<{
+        revisionSemantics: "legacy_unfenced";
+        credentialRevision: null;
+    }>;
 
-function parseStoredQualifiedConnectedAccountRef(
-    row: StoredQualifiedConnectedAccountIdentity,
-): QualifiedConnectedAccountRef {
-    const service = QualifiedConnectedAccountServiceRefSchema.parse({
-        pluginId: row.servicePluginId,
-        localId: row.serviceLocalId,
-    });
-    const ref = QualifiedConnectedAccountRefSchema.parse({
-        service,
-        accountId: row.connectedAccountId,
-    });
+function projectQualifiedConnectedAccountCredentialRevisionSemantics(
+    projection: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>,
+): QualifiedConnectedAccountCredentialRevisionSemantics {
     if (
-        row.qualifiedServiceDigest
-            !== createQualifiedConnectedAccountServiceDigest(service)
-        || row.qualifiedIdentityDigest
-            !== createQualifiedConnectedAccountIdentityDigest(ref)
+        projection.revisionSemantics === "revisioned"
+        && projection.credentialRevision !== null
     ) {
-        throw new Error(
-            "Qualified Connected Account stored identity digest mismatch",
-        );
+        return {
+            revisionSemantics: "revisioned",
+            credentialRevision: projection.credentialRevision,
+        };
     }
-    return ref;
+    return {
+        revisionSemantics: "legacy_unfenced",
+        credentialRevision: null,
+    };
 }
 
 type QualifiedCredentialMutationCommonParams = Readonly<{
@@ -505,6 +568,27 @@ async function readCurrentByQualifiedRef(
     return current;
 }
 
+/**
+ * Resolves the opaque stored Connected Account identity without projecting a
+ * credential, provider identity, or capability. The record's Account scope
+ * is authoritative; deletion and other-Account records are unavailable.
+ */
+export async function resolveQualifiedConnectedAccountHostReferenceInTx(
+    tx: Pick<Tx, "serviceAccountToken">,
+    params: Readonly<{ accountId: string; targetId: string }>,
+): Promise<Readonly<{ status: "available" }> | Readonly<{ status: "unavailable" }>> {
+    const credential = await tx.serviceAccountToken.findFirst({
+        where: {
+            id: params.targetId,
+            accountId: params.accountId,
+        },
+        select: { id: true },
+    });
+    return credential
+        ? Object.freeze({ status: "available" as const })
+        : Object.freeze({ status: "unavailable" as const });
+}
+
 export async function readQualifiedConnectedServiceCredentialMutationBasisInTx(
     tx: Tx,
     params: Readonly<{
@@ -512,7 +596,7 @@ export async function readQualifiedConnectedServiceCredentialMutationBasisInTx(
         ref: QualifiedConnectedAccountRef;
     }>,
 ): Promise<Readonly<{
-    credentialRevision: string;
+    credentialRevision: string | null;
     configurationRevision: string | null;
 }> | null> {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -589,6 +673,7 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
     tx: Tx,
     params: QualifiedCredentialMutationParams,
     preparedCreate: QualifiedConnectedAccountPreparedCreate | null,
+    accountEncryptionTransitionMode?: "plain" | "e2ee",
 ): Promise<QualifiedConnectedServiceCredentialMutationResult> {
     if (params.expectedCredentialRevision === null) {
         if (params.expectedConfigurationRevision !== undefined) {
@@ -604,10 +689,22 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
 
     const account = await tx.account.findUnique({
         where: { id: params.accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
     if (!account) return { status: "storage_mode_mismatch" };
-    const accountMode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") {
+        return { status: "storage_mode_mismatch" };
+    }
+    const accountMode =
+        accountEncryptionTransitionMode
+        ?? currentness.currentness.encryptionMode;
     if (!isEnvelopeModeCompatible(accountMode, params.content)
         || (
             params.initialConfiguration
@@ -627,6 +724,9 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         })
         : null;
     const currentConfigurationRevision = current?.configurationRevision ?? null;
+    if (current && currentCredentialRevision === null) {
+        return { status: "revision_required" };
+    }
     if (
         current
         && params.expectedCredentialRevision === null
@@ -808,6 +908,21 @@ export async function mutateQualifiedConnectedServiceCredentialInTx(
     );
 }
 
+export async function migrateQualifiedConnectedServiceCredentialInTx(
+    tx: Tx,
+    params: QualifiedCredentialMutationParams,
+    toMode: "plain" | "e2ee",
+): Promise<QualifiedConnectedServiceCredentialMutationResult> {
+    // This target-mode authority is scoped to the Account transition transaction;
+    // ordinary credential writers continue to derive mode from the Account row.
+    return await mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
+        tx,
+        params,
+        null,
+        toMode,
+    );
+}
+
 function canonicalizeQualifiedCredentialMutation(
     params: QualifiedCredentialMutationParams,
 ): QualifiedCredentialMutationParams {
@@ -901,11 +1016,21 @@ export async function prepareQualifiedConnectedServiceCredentialCreate(
     }
     const account = await db.account.findUnique({
         where: { id: canonicalParams.accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
     if (!account) return { status: "storage_mode_mismatch" };
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") {
+        return { status: "storage_mode_mismatch" };
+    }
     const accountMode =
-        resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+        currentness.currentness.encryptionMode;
     if (
         !isEnvelopeModeCompatible(accountMode, canonicalParams.content)
         || (
@@ -1055,14 +1180,22 @@ export async function mutateQualifiedConnectedServiceCredential(
 export async function readQualifiedConnectedAccountConfiguration(params: Readonly<{
     accountId: string;
     target: QualifiedConnectedAccountConfigurationTargetV4;
-}>): Promise<QualifiedConnectedAccountConfigurationSnapshotV4 | null> {
+}>): Promise<
+    | QualifiedConnectedAccountConfigurationSnapshotV4
+    | Readonly<{ status: "storage_mode_mismatch" }>
+    | null
+> {
     const target =
         QualifiedConnectedAccountConfigurationTargetV4Schema.parse(
             params.target,
         );
     return await inTx(async (tx) => {
-        const accountMode =
+        const accountModeResult =
             await readEffectiveAccountEncryptionMode(tx, params.accountId);
+        if (accountModeResult.status === "not_found") return null;
+        if (accountModeResult.status === "storage_mode_mismatch") {
+            return accountModeResult;
+        }
         const row = await readCurrentByQualifiedRef(
             tx,
             params.accountId,
@@ -1074,41 +1207,50 @@ export async function readQualifiedConnectedAccountConfiguration(params: Readonl
                 "Qualified Connected Account is missing its establishing authentication mode",
             );
         }
-        const configurationRevision = row.configurationRevision;
-        const configurationBytes = row.configurationContent;
-        if ((configurationRevision === null) !== (configurationBytes === null)) {
-            throw new Error(
-                "Qualified Connected Account configuration sidecar is incomplete",
-            );
+        const configuration =
+            decodeQualifiedConnectedAccountConfigurationRowContent({
+                accountId: params.accountId,
+                ref: target.ref,
+                row,
+            });
+        if (!configuration) return null;
+        if (!isEnvelopeModeCompatible(
+            accountModeResult.accountMode,
+            configuration.configurationContent,
+        )) {
+            return { status: "storage_mode_mismatch" };
         }
-        if (configurationRevision === null || configurationBytes === null) {
-            return null;
-        }
-        const configurationContent = decodeEnvelopeFromStorage({
-            accountId: params.accountId,
-            ref: target.ref,
-            kind: "configuration",
-            bytes: configurationBytes,
+        const metadata = resolveQualifiedConnectedAccountStoredMetadata({
+            rowId: row.id,
+            metadata: row.metadata,
         });
-        if (!isEnvelopeModeCompatible(accountMode, configurationContent)) {
-            throw new Error(
-                "Qualified Connected Account configuration storage mode does not match its owner account",
-            );
-        }
-        return {
+        const snapshot = {
             target,
             authenticationModeId:
                 projectQualifiedConnectedAccountPublicAuthenticationModeId({
                     service: target.ref.service,
                     authenticationModeId: row.authenticationModeId,
                 }),
-            credentialRevision: resolveQualifiedConnectedAccountCredentialRevision({
-                rowId: row.id,
-                metadata: row.metadata,
-            }),
-            configurationRevision,
-            configurationContent,
+            configurationRevision:
+                configuration.configurationRevision,
+            configurationContent:
+                configuration.configurationContent,
         };
+        const revision =
+            projectQualifiedConnectedAccountCredentialRevisionSemantics(
+                metadata,
+            );
+        return revision.revisionSemantics === "revisioned"
+            ? {
+                ...snapshot,
+                revisionSemantics: "revisioned" as const,
+                credentialRevision: revision.credentialRevision,
+            }
+            : {
+                ...snapshot,
+                revisionSemantics: "legacy_unfenced" as const,
+                credentialRevision: null,
+            };
     });
 }
 
@@ -1125,12 +1267,49 @@ export async function mutateQualifiedConnectedAccountConfigurationInTx(
     tx: Tx,
     params: QualifiedConnectedAccountConfigurationMutationParams,
 ): Promise<QualifiedConnectedAccountConfigurationMutationResult> {
+    return await mutateQualifiedConnectedAccountConfigurationForModeInTx(
+        tx,
+        params,
+    );
+}
+
+export async function migrateQualifiedConnectedAccountConfigurationInTx(
+    tx: Tx,
+    params: QualifiedConnectedAccountConfigurationMutationParams,
+    toMode: "plain" | "e2ee",
+): Promise<QualifiedConnectedAccountConfigurationMutationResult> {
+    // This target-mode authority is scoped to the Account transition transaction;
+    // ordinary configuration writers continue to derive mode from the Account row.
+    return await mutateQualifiedConnectedAccountConfigurationForModeInTx(
+        tx,
+        params,
+        toMode,
+    );
+}
+
+async function mutateQualifiedConnectedAccountConfigurationForModeInTx(
+    tx: Tx,
+    params: QualifiedConnectedAccountConfigurationMutationParams,
+    accountEncryptionTransitionMode?: "plain" | "e2ee",
+): Promise<QualifiedConnectedAccountConfigurationMutationResult> {
     const account = await tx.account.findUnique({
         where: { id: params.accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
     if (!account) return { status: "not_found" };
-    const accountMode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") {
+        return { status: "storage_mode_mismatch" };
+    }
+    const accountMode =
+        accountEncryptionTransitionMode
+        ?? currentness.currentness.encryptionMode;
     if (!isEnvelopeModeCompatible(
         accountMode,
         params.replacementContentEnvelope,
@@ -1148,6 +1327,9 @@ export async function mutateQualifiedConnectedAccountConfigurationInTx(
         rowId: row.id,
         metadata: row.metadata,
     });
+    if (credentialRevision === null) {
+        return { status: "revision_required" };
+    }
     if (params.expectedCredentialRevision !== credentialRevision) {
         return {
             status: "superseded",
@@ -1221,13 +1403,18 @@ export async function mutateQualifiedConnectedAccountConfigurationInTx(
             params.target.ref,
         );
         if (!latest) return { status: "not_found" };
+        const latestCredentialRevision =
+            resolveQualifiedConnectedAccountCredentialRevision({
+                rowId: latest.id,
+                metadata: latest.metadata,
+            });
+        if (latestCredentialRevision === null) {
+            return { status: "revision_required" };
+        }
         return {
             status: "superseded",
             reason: "concurrent_mutation",
-            credentialRevision: resolveQualifiedConnectedAccountCredentialRevision({
-                rowId: latest.id,
-                metadata: latest.metadata,
-            }),
+            credentialRevision: latestCredentialRevision,
             configurationRevision: latest.configurationRevision,
         };
     }
@@ -1477,6 +1664,7 @@ async function listQualifiedConnectedAccountsByFilterInTx(
                     service: rowService,
                     authenticationModeId: row.authenticationModeId,
                 }),
+            revisionSemantics: metadata.revisionSemantics,
             credentialRevision: metadata.credentialRevision,
             configurationReady: row.configurationRevision !== null,
             configurationRevision: row.configurationRevision,
@@ -1574,8 +1762,11 @@ export async function listAllQualifiedConnectedAccountsForLegacyProjectionInTx(
                 ?? stored.projection.kind
                 ?? null,
             publishLegacyCredentialRevision:
-                stored.projection.format === "v4"
-                || explicitLegacyRevision,
+                stored.projection.revisionSemantics === "revisioned"
+                && (
+                    stored.projection.format === "v4"
+                    || explicitLegacyRevision
+                ),
         };
     });
 }
@@ -1637,24 +1828,56 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
         health: ConnectedServiceCredentialHealthV1Schema.parse(params.health),
     };
     return await inTx(async (tx) => {
+        const accountModeResult =
+            await readEffectiveAccountEncryptionMode(
+                tx,
+                canonical.accountId,
+            );
+        if (accountModeResult.status !== "resolved") {
+            return accountModeResult;
+        }
         const current = await readCurrentByQualifiedRef(
             tx,
             canonical.accountId,
             canonical.ref,
         );
         if (!current) return { status: "not_found" };
-        if (
-            (current.configurationRevision === null)
-            !== (current.configurationContent === null)
-        ) {
-            throw new Error(
-                "Qualified Connected Account configuration sidecar is incomplete",
-            );
-        }
         const projection = resolveQualifiedConnectedAccountStoredMetadata({
             rowId: current.id,
             metadata: current.metadata,
         });
+        if (projection.revisionSemantics === "legacy_unfenced") {
+            return { status: "revision_required" };
+        }
+        const content =
+            decodeQualifiedConnectedServiceCredentialRowContent({
+                accountId: canonical.accountId,
+                ref: canonical.ref,
+                row: current,
+                isV4: projection.format === "v4",
+            });
+        if (!content) return { status: "unsupported_format" };
+        if (!isEnvelopeModeCompatible(
+            accountModeResult.accountMode,
+            content,
+        )) {
+            return { status: "storage_mode_mismatch" };
+        }
+        const configuration =
+            decodeQualifiedConnectedAccountConfigurationRowContent({
+                accountId: canonical.accountId,
+                ref: canonical.ref,
+                row: current,
+            });
+        if (
+            configuration
+            && !isEnvelopeModeCompatible(
+                accountModeResult.accountMode,
+                configuration.configurationContent,
+            )
+        ) {
+            return { status: "storage_mode_mismatch" };
+        }
         if (
             canonical.expectedCredentialRevision
                 !== projection.credentialRevision
@@ -1706,6 +1929,9 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
                     rowId: latest.id,
                     metadata: latest.metadata,
                 });
+            if (latestProjection.revisionSemantics === "legacy_unfenced") {
+                return { status: "revision_required" };
+            }
             return {
                 status: "superseded",
                 reason: "concurrent_mutation",
@@ -1725,22 +1951,53 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
     });
 }
 
-type QualifiedConnectedServiceCredentialSnapshot = Readonly<{
-    credentialRevision: string;
+type QualifiedConnectedServiceCredentialSnapshotBase = Readonly<{
     authenticationModeId: string | null;
     configurationRevision: string | null;
     content: StoredJsonContentEnvelope;
     metadata: QualifiedConnectedAccountCredentialMetadataV4;
 }>;
 
+type QualifiedConnectedServiceCredentialSnapshot =
+    | (Extract<
+        QualifiedConnectedAccountCredentialRevisionSemantics,
+        Readonly<{ revisionSemantics: "revisioned" }>
+    > & QualifiedConnectedServiceCredentialSnapshotBase)
+    | (Extract<
+        QualifiedConnectedAccountCredentialRevisionSemantics,
+        Readonly<{ revisionSemantics: "legacy_unfenced" }>
+    > & QualifiedConnectedServiceCredentialSnapshotBase);
+
+export type QualifiedConnectedServiceCredentialReadResult =
+    | Readonly<{
+        status: "resolved";
+        credential: QualifiedConnectedServiceCredentialSnapshot;
+    }>
+    | Readonly<{
+        status: "not_found";
+    }>
+    | Readonly<{
+        status: "unsupported_format";
+    }>
+    | Readonly<{
+        status: "storage_mode_mismatch";
+    }>;
+
 type QualifiedConnectedServiceCredentialLegacySnapshot =
-    Omit<
+    | (Extract<
         QualifiedConnectedServiceCredentialSnapshot,
-        "authenticationModeId"
+        Readonly<{ revisionSemantics: "revisioned" }>
     > & Readonly<{
         authenticationModeId: string;
         expiresAt: number | null;
-    }>;
+    }>)
+    | (Extract<
+        QualifiedConnectedServiceCredentialSnapshot,
+        Readonly<{ revisionSemantics: "legacy_unfenced" }>
+    > & Readonly<{
+        authenticationModeId: string;
+        expiresAt: number | null;
+    }>);
 
 type QualifiedConnectedServiceCredentialLegacyReadResult =
     | Readonly<{
@@ -1748,11 +2005,48 @@ type QualifiedConnectedServiceCredentialLegacyReadResult =
         credential: QualifiedConnectedServiceCredentialLegacySnapshot;
     }>
     | Readonly<{
-        status:
-            | "not_found"
-            | "unsupported_format"
-            | "storage_mode_mismatch";
+        status: "not_found";
+    }>
+    | Readonly<{
+        status: "unsupported_format";
+    }>
+    | Readonly<{
+        status: "storage_mode_mismatch";
     }>;
+
+function decodeQualifiedConnectedServiceCredentialRowContent(params: Readonly<{
+    accountId: string;
+    ref: QualifiedConnectedAccountRef;
+    row: Readonly<{
+        token: Uint8Array;
+        vendor: string | null;
+        profileId: string | null;
+        metadata: unknown;
+    }>;
+    isV4: boolean;
+}>): StoredJsonContentEnvelope | null {
+    if (params.isV4) {
+        return decodeEnvelopeFromStorage({
+            accountId: params.accountId,
+            ref: params.ref,
+            kind: "credential",
+            bytes: params.row.token,
+        });
+    }
+    try {
+        return params.row.vendor && params.row.profileId
+            ? decodeLegacyQualifiedConnectedAccountCredentialEnvelope({
+                accountId: params.accountId,
+                serviceId: params.row.vendor,
+                profileId: params.row.profileId,
+                token: params.row.token,
+                metadata: params.row.metadata,
+            })
+            : null;
+    } catch {
+        return null;
+    }
+}
 
 async function readQualifiedConnectedServiceCredentialInTx(
     tx: Tx,
@@ -1761,8 +2055,11 @@ async function readQualifiedConnectedServiceCredentialInTx(
         ref: QualifiedConnectedAccountRef;
     }>,
 ): Promise<QualifiedConnectedServiceCredentialLegacyReadResult> {
-    const accountMode =
+    const accountModeResult =
         await readEffectiveAccountEncryptionMode(tx, params.accountId);
+    if (accountModeResult.status !== "resolved") {
+        return accountModeResult;
+    }
     const row = await readCurrentByQualifiedRef(
         tx,
         params.accountId,
@@ -1786,53 +2083,130 @@ async function readQualifiedConnectedServiceCredentialInTx(
             metadata: row.metadata,
         });
     const isV4 = projection.format === "v4";
-    let content: StoredJsonContentEnvelope | null;
-    try {
-        content = isV4
-            ? decodeEnvelopeFromStorage({
-                accountId: params.accountId,
-                ref: params.ref,
-                kind: "credential",
-                bytes: row.token,
-            })
-            : (
-                row.vendor && row.profileId
-                    ? decodeLegacyQualifiedConnectedAccountCredentialEnvelope({
-                        accountId: params.accountId,
-                        serviceId: row.vendor,
-                        profileId: row.profileId,
-                        token: row.token,
-                        metadata: row.metadata,
-                    })
-                    : null
-            );
-    } catch (error) {
-        if (isV4) throw error;
-        return { status: "unsupported_format" };
-    }
+    const content = decodeQualifiedConnectedServiceCredentialRowContent({
+        accountId: params.accountId,
+        ref: params.ref,
+        row,
+        isV4,
+    });
     if (!content) return { status: "unsupported_format" };
-    if (!isEnvelopeModeCompatible(accountMode, content)) {
+    if (!isEnvelopeModeCompatible(accountModeResult.accountMode, content)) {
         return { status: "storage_mode_mismatch" };
     }
-    return {
-        status: "resolved",
-        credential: {
-            credentialRevision:
-                resolveQualifiedConnectedAccountCredentialRevision({
-                    rowId: row.id,
-                    metadata: row.metadata,
-                }),
-            authenticationModeId: row.authenticationModeId,
-            configurationRevision: row.configurationRevision,
-            content,
-            expiresAt: row.expiresAt?.getTime() ?? null,
-            metadata: isV4
-                ? parseQualifiedConnectedServiceCredentialStoredMetadataV4(
-                    row.metadata,
-                ).values
-                : projection.presentation,
-        },
+    const snapshot = {
+        authenticationModeId: row.authenticationModeId,
+        configurationRevision: row.configurationRevision,
+        content,
+        expiresAt: row.expiresAt?.getTime() ?? null,
+        metadata: isV4
+            ? parseQualifiedConnectedServiceCredentialStoredMetadataV4(
+                row.metadata,
+            ).values
+            : projection.presentation,
     };
+    const revision =
+        projectQualifiedConnectedAccountCredentialRevisionSemantics(
+            projection,
+        );
+    return revision.revisionSemantics === "revisioned"
+        ? {
+            status: "resolved" as const,
+            credential: {
+                ...snapshot,
+                revisionSemantics: "revisioned" as const,
+                credentialRevision: revision.credentialRevision,
+            },
+        }
+        : {
+            status: "resolved" as const,
+            credential: {
+                ...snapshot,
+                revisionSemantics: "legacy_unfenced" as const,
+                credentialRevision: null,
+            },
+        };
+}
+
+export type QualifiedConnectedServiceCredentialAccountEncryptionPostState =
+    | Readonly<{
+        status: "resolved";
+        credential:
+            QualifiedConnectedServiceCredentialLegacySnapshot;
+        configurationContent:
+            StoredJsonContentEnvelope | null;
+    }>
+    | Readonly<{
+        status:
+            | "not_found"
+            | "unsupported_format"
+            | "storage_mode_mismatch";
+    }>;
+
+/**
+ * Canonical transaction-local credential/configuration reader for Account
+ * transition replay. It opens server-sealed storage and preserves typed
+ * unavailable states rather than normalizing malformed content.
+ */
+export async function readQualifiedConnectedServiceCredentialAccountEncryptionPostStateInTx(
+    tx: Tx,
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+    }>,
+): Promise<
+    QualifiedConnectedServiceCredentialAccountEncryptionPostState
+> {
+    const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
+    const credential =
+        await readQualifiedConnectedServiceCredentialInTx(tx, {
+            accountId: params.accountId,
+            ref,
+        });
+    if (credential.status !== "resolved") {
+        return credential;
+    }
+    if (
+        credential.credential.configurationRevision === null
+    ) {
+        return {
+            ...credential,
+            configurationContent: null,
+        };
+    }
+    const row = await readCurrentByQualifiedRef(
+        tx,
+        params.accountId,
+        ref,
+    );
+    if (
+        !row
+        || row.configurationRevision
+            !== credential.credential.configurationRevision
+        || row.configurationContent === null
+    ) {
+        return { status: "not_found" };
+    }
+    try {
+        const configurationContent =
+            decodeEnvelopeFromStorage({
+                accountId: params.accountId,
+                ref,
+                kind: "configuration",
+                bytes: row.configurationContent,
+            });
+        if (
+            configurationContent.t
+            !== credential.credential.content.t
+        ) {
+            return { status: "storage_mode_mismatch" };
+        }
+        return {
+            ...credential,
+            configurationContent,
+        };
+    } catch {
+        return { status: "unsupported_format" };
+    }
 }
 
 export async function readQualifiedConnectedServiceCredentialForLegacyProjection(
@@ -1852,7 +2226,7 @@ export async function readQualifiedConnectedServiceCredentialForLegacyProjection
 export async function readQualifiedConnectedServiceCredential(params: Readonly<{
     accountId: string;
     ref: QualifiedConnectedAccountRef;
-}>): Promise<QualifiedConnectedServiceCredentialSnapshot | null> {
+}>): Promise<QualifiedConnectedServiceCredentialReadResult> {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     const result = await inTx(async (tx) =>
         await readQualifiedConnectedServiceCredentialInTx(tx, {
@@ -1860,162 +2234,63 @@ export async function readQualifiedConnectedServiceCredential(params: Readonly<{
             ref,
         }));
     if (result.status === "storage_mode_mismatch") {
-        throw new Error(
-            "Qualified Connected Account credential storage mode mismatch",
-        );
+        return { status: "storage_mode_mismatch" };
     }
-    if (result.status !== "resolved") return null;
-    const {
-        expiresAt: _legacyExpiresAt,
-        authenticationModeId,
-        ...credential
-    } = result.credential;
-    return {
-        ...credential,
-        authenticationModeId:
-            projectQualifiedConnectedAccountPublicAuthenticationModeId({
-                service: ref.service,
+    if (result.status === "not_found") return { status: "not_found" };
+    if (result.status === "unsupported_format") {
+        return { status: "unsupported_format" };
+    }
+    const credential = result.credential;
+    const authenticationModeId =
+        projectQualifiedConnectedAccountPublicAuthenticationModeId({
+            service: ref.service,
+            authenticationModeId: credential.authenticationModeId,
+        });
+    return credential.revisionSemantics === "revisioned"
+        ? {
+            status: "resolved" as const,
+            credential: {
+                revisionSemantics: "revisioned" as const,
+                credentialRevision: credential.credentialRevision,
                 authenticationModeId,
-            }),
-    };
-}
-
-function hasConnectedServiceCredentialOwnerMetadata(
-    metadata: unknown,
-): boolean {
-    return isConnectedServiceCredentialMetadataV2(metadata)
-        || isConnectedServiceCredentialMetadataV3(metadata)
-        || (
-            metadata !== null
-            && typeof metadata === "object"
-            && !Array.isArray(metadata)
-            && "v" in metadata
-            && metadata.v === 4
-        );
+                configurationRevision: credential.configurationRevision,
+                content: credential.content,
+                metadata: credential.metadata,
+            },
+        }
+        : {
+            status: "resolved" as const,
+            credential: {
+                revisionSemantics: "legacy_unfenced" as const,
+                credentialRevision: null,
+                authenticationModeId,
+                configurationRevision: credential.configurationRevision,
+                content: credential.content,
+                metadata: credential.metadata,
+            },
+        };
 }
 
 export async function mutateQualifiedConnectedServiceLegacyVendorToken(
-    params: Readonly<{
+    _params: Readonly<{
         accountId: string;
         vendor: string;
-        token: Uint8Array<ArrayBuffer>;
     }>,
 ): Promise<Readonly<{
-    status: "written" | "connected_credential_conflict";
+    status: "revision_required";
 }>> {
-    const identity = resolveLegacyServiceAccountTokenIdentityFields({
-        serviceId: params.vendor,
-        profileId: "default",
-    });
-    const ref = {
-        service: {
-            pluginId: identity.servicePluginId,
-            localId: identity.serviceLocalId,
-        },
-        accountId: identity.connectedAccountId,
-    };
-    return await inTx(async (tx) => {
-        const current = await readCurrentByQualifiedRef(
-            tx,
-            params.accountId,
-            ref,
-        );
-        if (
-            current
-            && hasConnectedServiceCredentialOwnerMetadata(
-                current.metadata,
-            )
-        ) {
-            return { status: "connected_credential_conflict" };
-        }
-        if (current) {
-            await tx.serviceAccountToken.update({
-                where: { id: current.id },
-                data: {
-                    updatedAt: new Date(),
-                    token: params.token,
-                    refreshLeaseOwnerMachineId: null,
-                    refreshLeaseExpiresAt: null,
-                },
-            });
-        } else {
-            const legacyTupleCollision =
-                await tx.serviceAccountToken.findUnique({
-                    where: {
-                        accountId_vendor_profileId: {
-                            accountId: params.accountId,
-                            vendor: params.vendor,
-                            profileId: "default",
-                        },
-                    },
-                    select: { id: true },
-                });
-            if (legacyTupleCollision) {
-                return { status: "connected_credential_conflict" };
-            }
-            await tx.serviceAccountToken.create({
-                data: {
-                    accountId: params.accountId,
-                    vendor: params.vendor,
-                    profileId: "default",
-                    ...identity,
-                    token: params.token,
-                },
-            });
-        }
-        await recordConnectedServiceAccountProfileChange({
-            tx,
-            accountId: params.accountId,
-        });
-        return { status: "written" };
-    });
+    return { status: "revision_required" };
 }
 
 export async function deleteQualifiedConnectedServiceLegacyVendorToken(
-    params: Readonly<{
+    _params: Readonly<{
         accountId: string;
         vendor: string;
     }>,
 ): Promise<Readonly<{
-    status:
-        | "deleted"
-        | "not_found"
-        | "connected_credential_conflict";
+    status: "revision_required";
 }>> {
-    const identity = resolveLegacyServiceAccountTokenIdentityFields({
-        serviceId: params.vendor,
-        profileId: "default",
-    });
-    const ref = {
-        service: {
-            pluginId: identity.servicePluginId,
-            localId: identity.serviceLocalId,
-        },
-        accountId: identity.connectedAccountId,
-    };
-    return await inTx(async (tx) => {
-        const current = await readCurrentByQualifiedRef(
-            tx,
-            params.accountId,
-            ref,
-        );
-        if (!current) return { status: "not_found" };
-        if (
-            hasConnectedServiceCredentialOwnerMetadata(
-                current.metadata,
-            )
-        ) {
-            return { status: "connected_credential_conflict" };
-        }
-        await tx.serviceAccountToken.delete({
-            where: { id: current.id },
-        });
-        await recordConnectedServiceAccountProfileChange({
-            tx,
-            accountId: params.accountId,
-        });
-        return { status: "deleted" };
-    });
+    return { status: "revision_required" };
 }
 
 export function deleteQualifiedConnectedServiceCredential(
@@ -2047,17 +2322,29 @@ export async function deleteQualifiedConnectedServiceCredential(
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     try {
         return await inTx(async (tx) => {
+            const accountModeResult =
+                await readEffectiveAccountEncryptionMode(
+                    tx,
+                    params.accountId,
+                );
+            if (accountModeResult.status !== "resolved") {
+                return accountModeResult;
+            }
             const current = await readCurrentByQualifiedRef(
                 tx,
                 params.accountId,
                 ref,
             );
             if (!current) return { status: "not_found" };
-            const credentialRevision =
-                resolveQualifiedConnectedAccountCredentialRevision({
+            const projection =
+                resolveQualifiedConnectedAccountStoredMetadata({
                     rowId: current.id,
                     metadata: current.metadata,
                 });
+            const credentialRevision = projection.credentialRevision;
+            if (credentialRevision === null) {
+                return { status: "revision_required" };
+            }
             if (
                 params.expectedCredentialRevision !== undefined
                 && credentialRevision
@@ -2117,13 +2404,25 @@ export async function deleteQualifiedConnectedServiceCredential(
             ) {
                 return { status: "referenced" };
             }
+            const content =
+                decodeQualifiedConnectedServiceCredentialRowContent({
+                    accountId: params.accountId,
+                    ref,
+                    row: current,
+                    isV4: projection.format === "v4",
+                });
+            if (
+                !content
+                || !isEnvelopeModeCompatible(
+                    accountModeResult.accountMode,
+                    content,
+                )
+            ) {
+                return { status: "storage_mode_mismatch" };
+            }
             if (params.expectedStorageMode !== undefined) {
-                const accountMode = await readEffectiveAccountEncryptionMode(
-                    tx,
-                    params.accountId,
-                );
                 if (
-                    (accountMode === "plain")
+                    (accountModeResult.accountMode === "plain")
                     !== (params.expectedStorageMode === "plain")
                 ) {
                     return { status: "storage_mode_mismatch" };
@@ -2283,6 +2582,9 @@ export async function deleteQualifiedConnectedServiceCredentialForStorageMode(
         cleanupGroupReferences: boolean;
     }>,
 ): Promise<QualifiedConnectedServiceCredentialDeleteStorageResult> {
+    if (params.expectedCredentialRevision === undefined) {
+        return { status: "revision_required" };
+    }
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     return await deleteQualifiedConnectedServiceCredential({
         accountId: params.accountId,
@@ -2325,6 +2627,9 @@ export async function acquireQualifiedConnectedServiceRefreshLease(
                 rowId: current.id,
                 metadata: current.metadata,
             });
+        if (credentialRevision === null) {
+            return { status: "revision_required" };
+        }
         if (
             params.expectedCredentialRevision !== undefined
             && params.expectedCredentialRevision !== credentialRevision
@@ -2376,6 +2681,14 @@ export async function acquireQualifiedConnectedServiceRefreshLease(
                 ref,
             );
             if (!latest) return { status: "not_found" };
+            const latestCredentialRevision =
+                resolveQualifiedConnectedAccountCredentialRevision({
+                    rowId: latest.id,
+                    metadata: latest.metadata,
+                });
+            if (latestCredentialRevision === null) {
+                return { status: "revision_required" };
+            }
             return {
                 status: "resolved",
                 acquired: false,
@@ -2383,11 +2696,7 @@ export async function acquireQualifiedConnectedServiceRefreshLease(
                     latest.refreshLeaseExpiresAt?.getTime()
                     ?? now.getTime(),
                 ownerId,
-                credentialRevision:
-                    resolveQualifiedConnectedAccountCredentialRevision({
-                        rowId: latest.id,
-                        metadata: latest.metadata,
-                    }),
+                credentialRevision: latestCredentialRevision,
             };
         }
         return {

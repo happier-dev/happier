@@ -549,60 +549,163 @@ export async function deleteSessionOrganizationFolder(params: Readonly<{
     });
 }
 
+export async function setSessionFolderAssignmentInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    folderId: string | null;
+}>): Promise<Readonly<{ sessionId: string; folderId: string | null }> | { error: "invalid-folder" }> {
+    if (params.folderId !== null) {
+        const targetFolder = await findActiveSessionOrganizationFoldersById({
+            tx,
+            accountId: params.accountId,
+            folderIds: [params.folderId],
+        });
+        if (targetFolder.length !== 1) {
+            return { error: "invalid-folder" };
+        }
+    }
+
+    if (params.folderId === null) {
+        await tx.sessionFolderAssignment.deleteMany({
+            where: {
+                accountId: params.accountId,
+                sessionId: params.sessionId,
+            },
+        });
+    } else {
+        await tx.sessionFolderAssignment.upsert({
+            where: {
+                accountId_sessionId: {
+                    accountId: params.accountId,
+                    sessionId: params.sessionId,
+                },
+            },
+            create: {
+                accountId: params.accountId,
+                sessionId: params.sessionId,
+                folderId: params.folderId,
+            },
+            update: {
+                folderId: params.folderId,
+            },
+        });
+    }
+
+    await markSessionFolderAssignmentChanged(tx, {
+        accountId: params.accountId,
+        sessionId: params.sessionId,
+        folderId: params.folderId,
+    });
+
+    return {
+        sessionId: params.sessionId,
+        folderId: params.folderId,
+    };
+}
+
 export async function setSessionFolderAssignment(params: Readonly<{
     accountId: string;
     sessionId: string;
     folderId: string | null;
 }>): Promise<Readonly<{ sessionId: string; folderId: string | null }> | { error: "invalid-folder" }> {
-    return await inTx(async (tx) => {
-        if (params.folderId !== null) {
-            const targetFolder = await findActiveSessionOrganizationFoldersById({
-                tx,
-                accountId: params.accountId,
-                folderIds: [params.folderId],
-            });
-            if (targetFolder.length !== 1) {
-                return { error: "invalid-folder" };
-            }
-        }
+    return await inTx(async (tx) =>
+        await setSessionFolderAssignmentInTx(tx, params),
+    );
+}
 
-        if (params.folderId === null) {
-            await tx.sessionFolderAssignment.deleteMany({
-                where: {
-                    accountId: params.accountId,
-                    sessionId: params.sessionId,
-                },
-            });
-        } else {
-            await tx.sessionFolderAssignment.upsert({
-                where: {
-                    accountId_sessionId: {
-                        accountId: params.accountId,
-                        sessionId: params.sessionId,
-                    },
-                },
-                create: {
-                    accountId: params.accountId,
-                    sessionId: params.sessionId,
-                    folderId: params.folderId,
-                },
-                update: {
-                    folderId: params.folderId,
-                },
-            });
-        }
+async function validateSessionOrganizationTagIdsInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    tagIds: readonly string[];
+}>): Promise<string[] | null> {
+    const uniqueTagIds = Array.from(new Set(params.tagIds));
+    const existingTags = uniqueTagIds.length > 0
+        ? await tx.sessionOrganizationTag.findMany({
+            where: { accountId: params.accountId, id: { in: uniqueTagIds }, archivedAt: null },
+            select: { id: true },
+        })
+        : [];
+    return existingTags.length === uniqueTagIds.length ? uniqueTagIds : null;
+}
 
-        await markSessionFolderAssignmentChanged(tx, {
+/**
+ * Applies only the initial placement of a just-created Session. Callers must
+ * use their surrounding Session-create transaction and turn a returned error
+ * into a rollback; ordinary later folder/tag edits retain their public owners.
+ */
+export async function applySessionCreationPlacementInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    folderId: string | null;
+    tagIds: readonly string[];
+}>): Promise<Readonly<{ folderId: string | null; tagIds: string[] }> | {
+    error: "invalid-folder" | "invalid-session-tags";
+}> {
+    if (params.folderId !== null) {
+        const targetFolder = await findActiveSessionOrganizationFoldersById({
+            tx,
             accountId: params.accountId,
-            sessionId: params.sessionId,
-            folderId: params.folderId,
+            folderIds: [params.folderId],
         });
+        if (targetFolder.length !== 1) {
+            return { error: "invalid-folder" };
+        }
+    }
+    if (!await validateSessionOrganizationTagIdsInTx(tx, {
+        accountId: params.accountId,
+        tagIds: params.tagIds,
+    })) {
+        return { error: "invalid-session-tags" };
+    }
 
-        return {
-            sessionId: params.sessionId,
-            folderId: params.folderId,
-        };
+    const folder = await setSessionFolderAssignmentInTx(tx, {
+        accountId: params.accountId,
+        sessionId: params.sessionId,
+        folderId: params.folderId,
     });
+    if ("error" in folder) return folder;
+    const tags = await setSessionTagAssignmentsInTx(tx, {
+        accountId: params.accountId,
+        sessionId: params.sessionId,
+        request: { tagIds: [...params.tagIds] },
+    });
+    if ("error" in tags) return tags;
+
+    return { folderId: folder.folderId, tagIds: tags.tagIds };
+}
+
+/**
+ * Returns the queryable organization projection for a Session create/load
+ * response. It is deliberately a snapshot, not creation correspondence:
+ * later ordinary organization edits remain visible and are never reverted by
+ * a create-key retry.
+ */
+export async function readSessionOrganizationPlacementInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+}>): Promise<Readonly<{ folderId: string | null; tagIds: string[] }>> {
+    const [folder, tags] = await Promise.all([
+        tx.sessionFolderAssignment.findUnique({
+            where: {
+                accountId_sessionId: {
+                    accountId: params.accountId,
+                    sessionId: params.sessionId,
+                },
+            },
+            select: { folderId: true },
+        }),
+        tx.sessionTagAssignment.findMany({
+            where: {
+                accountId: params.accountId,
+                sessionId: params.sessionId,
+            },
+            select: { tagId: true },
+            orderBy: { tagId: "asc" },
+        }),
+    ]);
+    return {
+        folderId: folder?.folderId ?? null,
+        tagIds: tags.map((tag) => tag.tagId),
+    };
 }
 
 export async function moveSessionFolderAssignments(params: Readonly<{
@@ -777,14 +880,11 @@ export async function setSessionTagAssignmentsInTx(tx: SessionOrganizationTx, pa
     sessionId: string;
     request: SetSessionTagAssignmentsRequest;
 }>): Promise<Readonly<{ sessionId: string; tagIds: string[] }> | { error: "invalid-session-tags" }> {
-    const uniqueTagIds = Array.from(new Set(params.request.tagIds));
-    const existingTags = uniqueTagIds.length > 0
-        ? await tx.sessionOrganizationTag.findMany({
-            where: { accountId: params.accountId, id: { in: uniqueTagIds }, archivedAt: null },
-            select: { id: true },
-        })
-        : [];
-    if (existingTags.length !== uniqueTagIds.length) {
+    const uniqueTagIds = await validateSessionOrganizationTagIdsInTx(tx, {
+        accountId: params.accountId,
+        tagIds: params.request.tagIds,
+    });
+    if (!uniqueTagIds) {
         return { error: "invalid-session-tags" };
     }
 

@@ -3,13 +3,26 @@ import { vi } from "vitest";
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT" | "HEAD" | "OPTIONS";
 type RouteHandler = (request: any, reply: any) => unknown | Promise<unknown>;
 type RouteRateLimit = Readonly<{ keyGenerator?: (...args: any[]) => unknown }> & Record<string, unknown>;
+// Keep the public assertion shape compatible with existing callers. Route
+// registrations enter through `any` and can still carry Fastify's `false`
+// sentinel at runtime, which tests such as the voice aliases assert directly.
 type RouteConfig = Readonly<{ rateLimit?: RouteRateLimit }> & Record<string, unknown>;
-type RouteOpts = Readonly<{ preHandler?: unknown; config?: RouteConfig }> & Record<string, unknown>;
+type RouteOpts = Readonly<{ onRequest?: unknown; preHandler?: unknown; config?: RouteConfig }> & Record<string, unknown>;
 type RouteEntry = Readonly<{ opts: RouteOpts; handler: RouteHandler }>;
 
 export type FakeRouteApp = {
     authenticate: ReturnType<typeof vi.fn>;
     routes: Map<string, RouteEntry>;
+    register: (plugin: (app: FakeRouteApp) => unknown) => void;
+    after: (listener: (error: Error | null) => void) => void;
+    rateLimit: ReturnType<typeof vi.fn>;
+    addContentTypeParser: (...args: any[]) => void;
+    removeContentTypeParser: (...args: any[]) => void;
+    route: (opts: Readonly<{
+        method: RouteMethod | readonly RouteMethod[];
+        url: string;
+        handler: RouteHandler;
+    }> & RouteOpts) => void;
     get: {
         (path: string, handler: RouteHandler): void;
         (path: string, opts: any, handler: RouteHandler): void;
@@ -56,6 +69,7 @@ function resolveOptsAndHandler(
 
 export function createFakeRouteApp(): FakeRouteApp {
     const routes = new Map<string, RouteEntry>();
+    const sharedRateLimitHandler = vi.fn();
     const register = (method: RouteMethod, path: string, opts: RouteOpts, handler: RouteHandler) => {
         routes.set(`${method} ${path}`, { opts, handler });
     };
@@ -63,6 +77,21 @@ export function createFakeRouteApp(): FakeRouteApp {
     return {
         authenticate: vi.fn(),
         routes,
+        register(plugin) {
+            void plugin(this);
+        },
+        after(listener) {
+            listener(null);
+        },
+        rateLimit: vi.fn(() => sharedRateLimitHandler),
+        addContentTypeParser() {},
+        removeContentTypeParser() {},
+        route(opts) {
+            const methods = Array.isArray(opts.method) ? opts.method : [opts.method];
+            for (const method of methods) {
+                register(method, opts.url, opts, opts.handler);
+            }
+        },
         get(path: string, optsOrHandler: unknown, maybeHandler?: unknown) {
             const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
             register("GET", path, opts ?? {}, handler);
@@ -107,11 +136,12 @@ export function getRouteHandler(
         return [];
     };
 
+    const onRequestHandlers = resolvePreHandlers(entry.opts.onRequest);
     const preHandlers = resolvePreHandlers(entry.opts.preHandler);
 
     return async (request, reply) => {
-        for (const preHandler of preHandlers) {
-            const result = await preHandler(request, reply);
+        for (const handler of [...onRequestHandlers, ...preHandlers]) {
+            const result = await handler(request, reply);
             if (reply?.sent === true) {
                 return undefined;
             }

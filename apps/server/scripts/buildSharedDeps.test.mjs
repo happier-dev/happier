@@ -30,8 +30,32 @@ test('server shared prerequisite adapter passes its package root and caller envi
   assert.deepEqual(result, { ok: true, built: [], skipped: [] });
 });
 
-test('server lifecycle retains shared runtime preparation and schema verification for executing tests', () => {
-  assert.match(packageJson.scripts.pretest, /\bbuild:shared\b/);
-  assert.match(packageJson.scripts.pretest, /\bschema:sync:check\b/);
-  assert.match(packageJson.scripts['typecheck:runtime'], /\bbuild:shared\b/);
+test('server source tests verify generated schemas without rebuilding shared runtime packages', () => {
+  assert.match(packageJson.scripts['test:local'], /\btest:prepare\b/);
+  assert.doesNotMatch(packageJson.scripts['test:prepare'], /\bbuild:shared\b/);
+  assert.match(packageJson.scripts['test:prepare'], /scripts\/schemaSync\.ts --check\b/);
+  assert.match(packageJson.scripts['typecheck:runtime'], /scripts\/generateClients\.ts --check\b/);
+  assert.doesNotMatch(
+    packageJson.scripts['typecheck:runtime'],
+    /\b(?:yarn|build|build:shared|generate:providers)\b/,
+  );
+});
+
+test('server ordinary typecheck checks source without entering the build lifecycle', () => {
+  assert.match(
+    packageJson.scripts['typecheck:local'],
+    /scripts\/runTypeScriptCli\.mjs --noEmit$/,
+  );
+  assert.doesNotMatch(
+    packageJson.scripts['typecheck:local'],
+    /\b(?:yarn|build|build:shared|generate:providers)\b/,
+  );
+});
+
+test('server ordinary integration entries route through hstack without runtime preparation', () => {
+  for (const scriptName of ['test:integration', 'test:db-contract']) {
+    assert.match(packageJson.scripts[scriptName], new RegExp(`--script=${scriptName}:local`));
+    assert.doesNotMatch(packageJson.scripts[scriptName], /\bbuild:shared\b/);
+    assert.doesNotMatch(packageJson.scripts[`${scriptName}:local`], /\bbuild:shared\b/);
+  }
 });

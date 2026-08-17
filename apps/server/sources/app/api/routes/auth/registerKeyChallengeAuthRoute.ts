@@ -1,38 +1,44 @@
-import { z } from "zod";
 import * as privacyKit from "privacy-kit";
+import { timingSafeEqual } from "node:crypto";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { type Fastify } from "../../types";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
+import {
+    KeyChallengeAuthRequestSchema,
+    createExpectedAccountKeyChallengeSigningInputV1,
+    resolveEffectiveDefaultAccountEncryptionMode,
+} from "@happier-dev/protocol";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 import {
     admitAccountContentKey,
+    deriveAccountEncryptionCurrentnessFromRow,
     verifyAccountContentKeyBinding,
     type VerifiedAccountContentKeyBinding,
 } from "@/app/encryption/accountContentKeyAdmission";
 
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+    return left.byteLength === right.byteLength
+        && timingSafeEqual(
+            Buffer.from(
+                left.buffer,
+                left.byteOffset,
+                left.byteLength,
+            ),
+            Buffer.from(
+                right.buffer,
+                right.byteOffset,
+                right.byteLength,
+            ),
+        );
+}
+
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
     app.post('/v1/auth', {
         schema: {
-            body: z.object({
-                publicKey: z.string(),
-                challenge: z.string(),
-                signature: z.string(),
-                contentPublicKey: z.string().optional(),
-                contentPublicKeySig: z.string().optional()
-            }).superRefine((value, ctx) => {
-                const hasContentKey = typeof value.contentPublicKey === 'string';
-                const hasContentSig = typeof value.contentPublicKeySig === 'string';
-                if (hasContentKey !== hasContentSig) {
-                    ctx.addIssue({
-                        code: z.ZodIssueCode.custom,
-                        message: 'contentPublicKey and contentPublicKeySig must be provided together'
-                    });
-                }
-            })
+            body: KeyChallengeAuthRequestSchema,
         }
     }, async (request, reply) => {
         const tweetnacl = (await import("tweetnacl")).default;
@@ -66,7 +72,19 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
         if (signature.length !== tweetnacl.sign.signatureLength) {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
-        const isValid = tweetnacl.sign.detached.verify(challenge, signature, publicKey);
+        const signingInput =
+            request.body.expectedAccountId
+                ? createExpectedAccountKeyChallengeSigningInputV1({
+                    challenge,
+                    expectedAccountId:
+                        request.body.expectedAccountId,
+                })
+                : challenge;
+        const isValid = tweetnacl.sign.detached.verify(
+            signingInput,
+            signature,
+            publicKey,
+        );
         if (!isValid) {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
@@ -88,6 +106,11 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                     request.body.contentPublicKeySig,
                 );
             } catch {
+                if (request.body.expectedAccountId) {
+                    return reply.code(401).send({
+                        error: "Invalid token",
+                    });
+                }
                 return reply.code(400).send({ error: 'Invalid content key encoding' });
             }
             contentKeyBinding = verifyAccountContentKeyBinding({
@@ -96,12 +119,75 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                 contentPublicKeySignature,
             });
             if (!contentKeyBinding) {
+                if (request.body.expectedAccountId) {
+                    return reply.code(401).send({
+                        error: "Invalid token",
+                    });
+                }
                 return reply.code(400).send({ error: 'Invalid contentPublicKeySig' });
             }
         }
 
-        // Create or update user in database
         const publicKeyHex = privacyKit.encodeHex(publicKey);
+        if (request.body.expectedAccountId) {
+            const expectedAccount = await db.account.findUnique({
+                where: { publicKey: publicKeyHex },
+                select: {
+                    id: true,
+                    encryptionMode: true,
+                    publicKey: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
+            });
+            const expectedCurrentness =
+                expectedAccount
+                    ? deriveAccountEncryptionCurrentnessFromRow(
+                        expectedAccount,
+                    )
+                    : null;
+            if (
+                !expectedAccount
+                || expectedAccount.id
+                    !== request.body.expectedAccountId
+                || expectedAccount.publicKey !== publicKeyHex
+                || expectedCurrentness?.status !== "ready"
+                || expectedCurrentness.currentness
+                    .encryptionMode !== "e2ee"
+                || !contentKeyBinding
+                || !expectedCurrentness.currentness
+                    .contentPublicKey
+                || !expectedCurrentness.currentness
+                    .contentPublicKeySignature
+                || !bytesEqual(
+                    expectedCurrentness.currentness
+                        .contentPublicKey,
+                    contentKeyBinding.contentPublicKey,
+                )
+                || !bytesEqual(
+                    expectedCurrentness.currentness
+                        .contentPublicKeySignature,
+                    contentKeyBinding.contentPublicKeySignature,
+                )
+            ) {
+                return reply.code(401).send({
+                    error: "Invalid token",
+                });
+            }
+            const eligibility = await enforceLoginEligibility({
+                accountId: expectedAccount.id,
+                env: process.env,
+            });
+            if (!eligibility.ok) {
+                return reply.code(401).send({
+                    error: "Invalid token",
+                });
+            }
+            return reply.send({
+                success: true,
+                token: await auth.createToken(expectedAccount.id),
+            });
+        }
 
         const encryptionFeatureEnv = readEncryptionFeatureEnv(process.env);
         const effectiveDefaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(
@@ -113,6 +199,10 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             where: { publicKey: publicKeyHex },
             select: {
                 id: true,
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
             },
         });
         if (!existingAccount) {
@@ -128,6 +218,15 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
         }
 
         if (existingAccount) {
+            if (
+                deriveAccountEncryptionCurrentnessFromRow(
+                    existingAccount,
+                ).status !== "ready"
+            ) {
+                return reply.code(401).send({
+                    error: "Invalid token",
+                });
+            }
             const eligibility = await enforceLoginEligibility({ accountId: existingAccount.id, env: process.env });
             if (!eligibility.ok) {
                 // Eligibility can fail closed with 401 (invalid-token) when the account cannot be validated.
@@ -182,7 +281,6 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                 });
             }
         }
-
         return reply.send({
             success: true,
             token: await auth.createToken(user.id)

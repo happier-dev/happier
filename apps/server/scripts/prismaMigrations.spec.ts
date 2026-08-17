@@ -236,6 +236,51 @@ describe("Prisma migration identifier hygiene", () => {
 });
 
 describe("applySqliteMigrations", () => {
+    it("upgrades a predecessor SQLite SessionMessage table through the actual row-revision migration", async () => {
+        const serverRoot = join(import.meta.dirname, "..");
+        const migrationName = "20260810190000_add_session_message_row_revision";
+        const migrationSql = await readFile(
+            join(serverRoot, "prisma", "sqlite", "migrations", migrationName, "migration.sql"),
+            "utf8",
+        );
+        const migrationsDir = await createMigrationDir("happier-prisma-sqlite-row-revision-", [{
+            name: migrationName,
+            sql: migrationSql,
+        }]);
+        const dataDir = await mkdtemp(join(tmpdir(), "happier-prisma-sqlite-row-revision-db-"));
+        const dbPath = join(dataDir, "test.sqlite");
+
+        try {
+            const { DatabaseSync } = await import("node:sqlite");
+            const predecessor = new DatabaseSync(dbPath);
+            try {
+                predecessor.exec('CREATE TABLE "SessionMessage" ("id" TEXT NOT NULL PRIMARY KEY);');
+            } finally {
+                predecessor.close();
+            }
+
+            await expect(
+                applySqliteMigrations({ databasePath: dbPath, migrationsDir }),
+            ).resolves.toEqual({ applied: [migrationName] });
+
+            const upgraded = new DatabaseSync(dbPath);
+            try {
+                expect(upgraded.prepare(`
+                    SELECT "rowRevision" FROM "SessionMessage" WHERE "id" = 'missing'
+                `).all()).toEqual([]);
+                upgraded.exec(`INSERT INTO "SessionMessage" ("id") VALUES ('message');`);
+                expect(upgraded.prepare(`
+                    SELECT "rowRevision" FROM "SessionMessage" WHERE "id" = 'message'
+                `).get()).toEqual({ rowRevision: 0 });
+            } finally {
+                upgraded.close();
+            }
+        } finally {
+            await rm(migrationsDir, { recursive: true, force: true });
+            await rm(dataDir, { recursive: true, force: true });
+        }
+    });
+
     it("upgrades the exact remote-dev SQLite migration lineage without rewriting applied checksums", async () => {
         const serverRoot = join(import.meta.dirname, "..");
         const predecessorMigrations = [

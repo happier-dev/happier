@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
     ExternalSessionOperationSocketCommandV1Schema,
+    ExternalSessionMaterializationPublicationV1Schema,
     makeExternalSessionHistoricalImportBatchIdV1,
     validateExternalSessionOperationSocketBatchV1,
     type ExternalSessionMaterializationPublicationV1,
@@ -15,17 +16,53 @@ import {
 
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { initializeExternalLinkedSessionStorage } from "@/app/session/externalLinkedSessionStorageInitialization";
+import { fenceExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { updateSessionMetadataEnvelopeTupleInTx } from "@/app/session/sessionWriteService";
-import { writeHistoricalSessionMessageBatchInTx } from "@/app/session/sessionTranscriptWrite";
+import {
+    HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
+    writeHistoricalSessionMessageBatchInTx,
+} from "@/app/session/sessionTranscriptWrite";
+import { findExactHostSessionSystemRecordInTx } from "@/app/session/systemRecords/sessionSystemRecordService";
 import { inTx, type Tx } from "@/storage/inTx";
+import { isPrismaErrorCode } from "@/storage/prisma";
+import type { Prisma } from "@prisma/client";
 
 const HISTORICAL_IMPORT_NAMESPACE = "external_sessions";
 const HISTORICAL_IMPORT_KIND = "historical_import";
+const TAKEOVER_ADMISSION_KIND = "takeover_admission";
 
 class HistoricalImportDiscardConflictError extends Error {
     constructor() {
         super("Historical import discard row ownership no longer matches.");
         this.name = "HistoricalImportDiscardConflictError";
+    }
+}
+
+class HistoricalImportStorageStateTransitionConflictError extends Error {
+    constructor() {
+        super("Historical import storage authority changed during transition.");
+        this.name = "HistoricalImportStorageStateTransitionConflictError";
+    }
+}
+
+class HistoricalImportSystemRecordAddressCollisionError extends Error {
+    constructor() {
+        super("Historical import job address collides with another system record.");
+        this.name = "HistoricalImportSystemRecordAddressCollisionError";
+    }
+}
+
+class HistoricalImportSystemRecordKindConflictError extends Error {
+    constructor() {
+        super("Historical import job address belongs to another system record kind.");
+        this.name = "HistoricalImportSystemRecordKindConflictError";
+    }
+}
+
+class HistoricalImportSystemRecordCreateRaceError extends Error {
+    constructor() {
+        super("Historical import job creation raced another command.");
+        this.name = "HistoricalImportSystemRecordCreateRaceError";
     }
 }
 
@@ -52,19 +89,32 @@ type HistoricalImportJob = Readonly<{
      * older job lacks sufficient ownership evidence and cannot be discarded.
      */
     insertedSequenceSpans: readonly HistoricalImportInsertedSequenceSpan[] | null;
+    /**
+     * The finalization receipt is owned by this job rather than the Session's
+     * mutable current publication. Absent values are pre-receipt current-dev
+     * jobs and cannot safely reconstruct a terminal response after publication
+     * advances.
+     */
+    publication?: ExternalSessionMaterializationPublicationV1;
     state: "importing" | "finalized" | "discarded";
     admission: PersistedTakeoverAdmission | null;
 }>;
 
 type PersistedTakeoverAdmissionCommand = Extract<
     ExternalSessionOperationSocketCommandV1,
-    { kind: "admit_persisted_takeover" }
+    { kind: "admit_persisted_takeover"; mode: "persisted" }
+>;
+
+type ExternalLinkedTakeoverAdmissionCommand = Extract<
+    ExternalSessionOperationSocketCommandV1,
+    { kind: "admit_persisted_takeover"; mode: "external_linked" }
 >;
 
 type PersistedTakeoverAdmission = Readonly<
     Pick<
         PersistedTakeoverAdmissionCommand,
         | "attemptId"
+        | "publisherPrecondition"
         | "expectedSessionMetadataVersion"
         | "metadataPatch"
         | "expectedSessionSeq"
@@ -72,6 +122,23 @@ type PersistedTakeoverAdmission = Readonly<
         | "expectedPublication"
     >
 >;
+
+type ExternalLinkedTakeoverAdmissionRecord = Readonly<{
+    v: 1;
+    machineId: string;
+    /**
+     * The one current admission attempt for this operation. This is deliberately
+     * not a receipt history: an explicit post-bind retry replaces it, while an
+     * ambiguous acknowledgement reuses this exact value.
+     */
+    attemptId: string;
+    /** The daemon operation revision at which this attempt was first admitted. */
+    operationRevision: number;
+    expectedSessionMetadataVersion: number;
+    expectedSessionSeq: number;
+    expectedPending: ExternalLinkedTakeoverAdmissionCommand["expectedPending"];
+    expectedPriorStableStorage: ExternalLinkedTakeoverAdmissionCommand["expectedPriorStableStorage"];
+}>;
 
 function errorResponse(
     errorCode: Extract<ExternalSessionOperationSocketResponseV1, { kind: "error" }>["errorCode"],
@@ -163,6 +230,14 @@ function readJob(value: unknown): HistoricalImportJob | null {
         expectedRevision: record.revision,
     });
     if (!parsedClaim.success) return null;
+    let publication: ExternalSessionMaterializationPublicationV1 | undefined;
+    if (record.publication !== undefined) {
+        const parsedPublication = ExternalSessionMaterializationPublicationV1Schema.safeParse(
+            record.publication,
+        );
+        if (!parsedPublication.success) return null;
+        publication = parsedPublication.data;
+    }
     const admissionInput = record.admission;
     let admission: PersistedTakeoverAdmission | null = null;
     if (admissionInput !== undefined && admissionInput !== null) {
@@ -170,15 +245,21 @@ function readJob(value: unknown): HistoricalImportJob | null {
         const parsedAdmission = ExternalSessionOperationSocketCommandV1Schema.safeParse({
             v: 1,
             kind: "admit_persisted_takeover",
+            mode: "persisted",
             claim: parsedClaim.data.claim,
             expectedRevision: record.revision,
             ...admissionInput,
         });
-        if (!parsedAdmission.success || parsedAdmission.data.kind !== "admit_persisted_takeover") {
+        if (
+            !parsedAdmission.success
+            || parsedAdmission.data.kind !== "admit_persisted_takeover"
+            || parsedAdmission.data.mode !== "persisted"
+        ) {
             return null;
         }
         admission = {
             attemptId: parsedAdmission.data.attemptId,
+            publisherPrecondition: parsedAdmission.data.publisherPrecondition,
             expectedSessionMetadataVersion: parsedAdmission.data.expectedSessionMetadataVersion,
             metadataPatch: parsedAdmission.data.metadataPatch,
             expectedSessionSeq: parsedAdmission.data.expectedSessionSeq,
@@ -199,9 +280,58 @@ function readJob(value: unknown): HistoricalImportJob | null {
         insertedSequenceSpans: Array.isArray(record.insertedSequenceSpans)
             ? readInsertedSequenceSpans(record.insertedSequenceSpans)
             : null,
+        ...(publication === undefined ? {} : { publication }),
         state: record.state,
         admission,
     };
+}
+
+/**
+ * The import operation owns exactly the rows recorded by its durable job while
+ * it can still be discarded. Retention consumes this predicate rather than
+ * parsing or reconstructing historical-import ownership itself.
+ */
+export function createRecoverableExternalSessionHistoricalImportMessageWhere(
+    params: Readonly<{
+        sessionId: string;
+        records: readonly Readonly<{
+            namespace: unknown;
+            kind: unknown;
+            content: unknown;
+        }>[];
+    }>,
+): Prisma.SessionMessageWhereInput | null {
+    const ownershipClauses: Prisma.SessionMessageWhereInput[] = [];
+    for (const record of params.records) {
+        if (
+            record.namespace !== HISTORICAL_IMPORT_NAMESPACE
+            || record.kind !== HISTORICAL_IMPORT_KIND
+        ) {
+            continue;
+        }
+        const job = readJob(record.content);
+        if (
+            !job
+            || job.state !== "importing"
+            || job.claim.sessionId !== params.sessionId
+        ) {
+            continue;
+        }
+        if (job.insertedMessageIds !== null && job.insertedMessageIds.length > 0) {
+            ownershipClauses.push({ id: { in: [...job.insertedMessageIds] } });
+        }
+        for (const span of job.insertedSequenceSpans ?? []) {
+            ownershipClauses.push({
+                seq: {
+                    gte: span.firstSeq,
+                    lte: span.lastSeq,
+                },
+            });
+        }
+    }
+    return ownershipClauses.length > 0
+        ? { sessionId: params.sessionId, OR: ownershipClauses }
+        : null;
 }
 
 function claimsEqual(
@@ -218,6 +348,10 @@ function admissionsEqual(
     right: PersistedTakeoverAdmissionCommand,
 ): boolean {
     return left.attemptId === right.attemptId
+        && left.publisherPrecondition.machineId
+            === right.publisherPrecondition.machineId
+        && left.publisherPrecondition.committedFenceMs
+            === right.publisherPrecondition.committedFenceMs
         && left.expectedSessionMetadataVersion === right.expectedSessionMetadataVersion
         && isDeepStrictEqual(left.metadataPatch, right.metadataPatch)
         && left.expectedSessionSeq === right.expectedSessionSeq
@@ -239,6 +373,7 @@ function takeoverAdmittedResponse(
     return {
         v: 1,
         kind: "takeover_admitted",
+        mode: "persisted",
         claim: job.claim,
         revision: job.revision,
         attemptId,
@@ -249,23 +384,314 @@ function localIdForOperation(operationId: string): string {
     return `historical-import:${operationId}`;
 }
 
+function localIdForTakeoverAdmission(operationId: string): string {
+    return `takeover-admission:${operationId}`;
+}
+
+function externalLinkedTakeoverAdmissionResponse(
+    command: ExternalLinkedTakeoverAdmissionCommand,
+): Extract<ExternalSessionOperationSocketResponseV1, { kind: "takeover_admitted" }> {
+    return {
+        v: 1,
+        kind: "takeover_admitted",
+        mode: "external_linked",
+        claim: command.claim,
+        revision: command.expectedRevision,
+        attemptId: command.attemptId,
+    };
+}
+
+function readExternalLinkedTakeoverAdmissionRecord(
+    value: unknown,
+    command: ExternalLinkedTakeoverAdmissionCommand,
+): ExternalLinkedTakeoverAdmissionRecord | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        record.v !== 1
+        || typeof record.machineId !== "string"
+        || !record.machineId
+        || Object.keys(record).some((key) => ![
+            "v",
+            "machineId",
+            "attemptId",
+            "operationRevision",
+            "expectedSessionMetadataVersion",
+            "expectedSessionSeq",
+            "expectedPending",
+            "expectedPriorStableStorage",
+        ].includes(key))
+    ) {
+        return null;
+    }
+    const parsed = ExternalSessionOperationSocketCommandV1Schema.safeParse({
+        v: 1,
+        kind: "admit_persisted_takeover",
+        mode: "external_linked",
+        claim: command.claim,
+        expectedRevision: record.operationRevision,
+        attemptId: record.attemptId,
+        publisherPrecondition: {
+            machineId: record.machineId,
+            committedFenceMs: command.publisherPrecondition.committedFenceMs,
+        },
+        expectedSessionMetadataVersion: record.expectedSessionMetadataVersion,
+        expectedSessionSeq: record.expectedSessionSeq,
+        expectedPending: record.expectedPending,
+        expectedPriorStableStorage: record.expectedPriorStableStorage,
+    });
+    if (
+        !parsed.success
+        || parsed.data.kind !== "admit_persisted_takeover"
+        || parsed.data.mode !== "external_linked"
+    ) {
+        return null;
+    }
+    return {
+        v: 1,
+        machineId: record.machineId,
+        attemptId: parsed.data.attemptId,
+        operationRevision: parsed.data.expectedRevision,
+        expectedSessionMetadataVersion: parsed.data.expectedSessionMetadataVersion,
+        expectedSessionSeq: parsed.data.expectedSessionSeq,
+        expectedPending: parsed.data.expectedPending,
+        expectedPriorStableStorage: parsed.data.expectedPriorStableStorage,
+    };
+}
+
+function externalLinkedTakeoverAdmissionRecordFromCommand(
+    command: ExternalLinkedTakeoverAdmissionCommand,
+    machineId: string,
+): ExternalLinkedTakeoverAdmissionRecord {
+    return {
+        v: 1,
+        machineId,
+        attemptId: command.attemptId,
+        operationRevision: command.expectedRevision,
+        expectedSessionMetadataVersion: command.expectedSessionMetadataVersion,
+        expectedSessionSeq: command.expectedSessionSeq,
+        expectedPending: command.expectedPending,
+        expectedPriorStableStorage: command.expectedPriorStableStorage,
+    };
+}
+
+async function readExternalLinkedTakeoverAdmissionInTx(
+    tx: Tx,
+    actorUserId: string,
+    command: ExternalLinkedTakeoverAdmissionCommand,
+): Promise<ExternalLinkedTakeoverAdmissionRecord | null> {
+    const lookup = await findExactHostSessionSystemRecordInTx(tx, {
+        accountId: actorUserId,
+        sessionId: command.claim.sessionId,
+        namespace: HISTORICAL_IMPORT_NAMESPACE,
+        localId: localIdForTakeoverAdmission(command.claim.operationId),
+    });
+    if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
+    if (lookup.row && lookup.row.kind !== TAKEOVER_ADMISSION_KIND) {
+        throw new HistoricalImportSystemRecordKindConflictError();
+    }
+    return lookup.row
+        ? readExternalLinkedTakeoverAdmissionRecord(lookup.row.content, command)
+        : null;
+}
+
+async function writeExternalLinkedTakeoverAdmissionInTx(
+    tx: Tx,
+    actorUserId: string,
+    command: ExternalLinkedTakeoverAdmissionCommand,
+    machineId: string,
+): Promise<void> {
+    const localId = localIdForTakeoverAdmission(command.claim.operationId);
+    const lookup = await findExactHostSessionSystemRecordInTx(tx, {
+        accountId: actorUserId,
+        sessionId: command.claim.sessionId,
+        namespace: HISTORICAL_IMPORT_NAMESPACE,
+        localId,
+    });
+    if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
+    if (lookup.row) {
+        if (lookup.row.kind !== TAKEOVER_ADMISSION_KIND) {
+            throw new HistoricalImportSystemRecordKindConflictError();
+        }
+        await tx.sessionSystemRecord.update({
+            where: { id: lookup.row.id },
+            data: {
+                kind: TAKEOVER_ADMISSION_KIND,
+                content: externalLinkedTakeoverAdmissionRecordFromCommand(
+                    command,
+                    machineId,
+                ),
+                ownerKind: "host",
+                pluginId: null,
+                namespaceAddressKey: lookup.keys.namespaceAddressKey,
+                recordAddressKey: lookup.keys.recordAddressKey,
+                version: { increment: 1 },
+            },
+        });
+        return;
+    }
+    try {
+        await tx.sessionSystemRecord.create({
+            data: {
+                accountId: actorUserId,
+                sessionId: command.claim.sessionId,
+                namespace: HISTORICAL_IMPORT_NAMESPACE,
+                kind: TAKEOVER_ADMISSION_KIND,
+                localId,
+                content: externalLinkedTakeoverAdmissionRecordFromCommand(
+                    command,
+                    machineId,
+                ),
+                ownerKind: "host",
+                pluginId: null,
+                namespaceAddressKey: lookup.keys.namespaceAddressKey,
+                recordAddressKey: lookup.keys.recordAddressKey,
+                version: 1,
+            },
+        });
+    } catch (error) {
+        if (isPrismaErrorCode(error, "P2002")) {
+            throw new HistoricalImportSystemRecordCreateRaceError();
+        }
+        throw error;
+    }
+}
+
+function externalLinkedAdmissionFencesMatch(
+    session: Readonly<{
+        metadataVersion: number;
+        currentStorageState: string;
+        seq: number;
+        acceptedThroughServerSeq: number | null;
+        materializationPublicationId: string | null;
+        materializedThroughSourceAt: bigint | null;
+        publishedThroughServerSeq: number | null;
+        pendingVersion: number;
+        pendingCount: number;
+        pendingBlockedCount: number;
+        active: boolean;
+        thinking: boolean;
+    }>,
+    command: ExternalLinkedTakeoverAdmissionCommand,
+): boolean {
+    return session.metadataVersion === command.expectedSessionMetadataVersion
+        && session.seq === command.expectedSessionSeq
+        && session.pendingVersion === command.expectedPending.version
+        && session.pendingCount === command.expectedPending.count
+        && session.pendingBlockedCount === command.expectedPending.blockedCount
+        && session.active
+        && !session.thinking
+        && (() => {
+            const current = inspectPriorStableStorage(session);
+            return current !== null
+                && priorStableStorageEqual(
+                    current,
+                    command.expectedPriorStableStorage,
+                );
+        })();
+}
+
+function externalLinkedAdmissionAttemptMatches(
+    stored: ExternalLinkedTakeoverAdmissionRecord,
+    current: ExternalLinkedTakeoverAdmissionCommand,
+): boolean {
+    return stored.attemptId === current.attemptId
+        && stored.expectedSessionMetadataVersion
+            === current.expectedSessionMetadataVersion
+        && stored.expectedSessionSeq === current.expectedSessionSeq
+        && isDeepStrictEqual(stored.expectedPending, current.expectedPending)
+        && priorStableStorageEqual(
+            stored.expectedPriorStableStorage,
+            current.expectedPriorStableStorage,
+        );
+}
+
+async function admitExternalLinkedTakeoverInTx(input: Readonly<{
+    tx: Tx;
+    actorUserId: string;
+    transportMachineId: string;
+    session: Parameters<typeof externalLinkedAdmissionFencesMatch>[0] & Readonly<{ id: string }>;
+    command: ExternalLinkedTakeoverAdmissionCommand;
+}>): Promise<ExternalSessionOperationSocketResponseV1> {
+    const { command } = input;
+    if (command.publisherPrecondition.machineId !== input.transportMachineId) {
+        return errorResponse(
+            "wrong_machine_socket",
+            "External-linked takeover publisher belongs to another machine.",
+        );
+    }
+    if (!externalLinkedAdmissionFencesMatch(input.session, command)) {
+        return errorResponse(
+            "invalid_state",
+            "External-linked takeover admission fences do not match canonical authority.",
+        );
+    }
+    if (!await fenceExactCurrentPublisherAuthorityInTx(
+        input.tx,
+        {
+            accountId: input.actorUserId,
+            machineId: command.publisherPrecondition.machineId,
+            sessionId: command.claim.sessionId,
+            committedFence: new Date(command.publisherPrecondition.committedFenceMs),
+        },
+        input.actorUserId,
+        command.claim.sessionId,
+    )) {
+        return errorResponse(
+            "invalid_state",
+            "External-linked takeover publisher authority was superseded.",
+        );
+    }
+    const existing = await readExternalLinkedTakeoverAdmissionInTx(
+        input.tx,
+        input.actorUserId,
+        command,
+    );
+    if (existing) {
+        if (
+            existing.machineId !== input.transportMachineId
+            || !externalLinkedAdmissionFencesMatch(input.session, command)
+        ) {
+            return errorResponse(
+                "invalid_state",
+                "External-linked takeover admission no longer matches canonical authority.",
+            );
+        }
+        if (externalLinkedAdmissionAttemptMatches(existing, command)) {
+            return externalLinkedTakeoverAdmissionResponse(command);
+        }
+        if (command.expectedRevision <= existing.operationRevision) {
+            return errorResponse(
+                "invalid_state",
+                "External-linked takeover attempt is superseded by canonical authority.",
+            );
+        }
+    }
+    await writeExternalLinkedTakeoverAdmissionInTx(
+        input.tx,
+        input.actorUserId,
+        command,
+        input.transportMachineId,
+    );
+    return externalLinkedTakeoverAdmissionResponse(command);
+}
+
 async function readJobInTx(
     tx: Tx,
     actorUserId: string,
     command: ExternalSessionOperationSocketCommandV1,
 ): Promise<HistoricalImportJob | null> {
-    const row = await tx.sessionSystemRecord.findUnique({
-        where: {
-            accountId_sessionId_namespace_localId: {
-                accountId: actorUserId,
-                sessionId: command.claim.sessionId,
-                namespace: HISTORICAL_IMPORT_NAMESPACE,
-                localId: localIdForOperation(command.claim.operationId),
-            },
-        },
-        select: { content: true },
+    const lookup = await findExactHostSessionSystemRecordInTx(tx, {
+        accountId: actorUserId,
+        sessionId: command.claim.sessionId,
+        namespace: HISTORICAL_IMPORT_NAMESPACE,
+        localId: localIdForOperation(command.claim.operationId),
     });
-    return row ? readJob(row.content) : null;
+    if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
+    if (lookup.row && lookup.row.kind !== HISTORICAL_IMPORT_KIND) {
+        throw new HistoricalImportSystemRecordKindConflictError();
+    }
+    return lookup.row ? readJob(lookup.row.content) : null;
 }
 
 async function writeJobInTx(
@@ -276,35 +702,63 @@ async function writeJobInTx(
     const {
         insertedMessageIds,
         insertedSequenceSpans,
+        publication,
         ...jobWithoutDiscardOwnership
     } = job;
     const content = {
         ...jobWithoutDiscardOwnership,
         ...(insertedMessageIds === null ? {} : { insertedMessageIds }),
         ...(insertedSequenceSpans === null ? {} : { insertedSequenceSpans }),
+        ...(publication === undefined ? {} : { publication }),
     };
-    await tx.sessionSystemRecord.upsert({
-        where: {
-            accountId_sessionId_namespace_localId: {
+    const localId = localIdForOperation(job.claim.operationId);
+    const lookup = await findExactHostSessionSystemRecordInTx(tx, {
+        accountId: actorUserId,
+        sessionId: job.claim.sessionId,
+        namespace: HISTORICAL_IMPORT_NAMESPACE,
+        localId,
+    });
+    if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
+    if (lookup.row && lookup.row.kind !== HISTORICAL_IMPORT_KIND) {
+        throw new HistoricalImportSystemRecordKindConflictError();
+    }
+    if (lookup.row) {
+        await tx.sessionSystemRecord.update({
+            where: { id: lookup.row.id },
+            data: {
+                kind: HISTORICAL_IMPORT_KIND,
+                content,
+                ownerKind: "host",
+                pluginId: null,
+                namespaceAddressKey: lookup.keys.namespaceAddressKey,
+                recordAddressKey: lookup.keys.recordAddressKey,
+                version: { increment: 1 },
+            },
+        });
+        return;
+    }
+    try {
+        await tx.sessionSystemRecord.create({
+            data: {
                 accountId: actorUserId,
                 sessionId: job.claim.sessionId,
                 namespace: HISTORICAL_IMPORT_NAMESPACE,
-                localId: localIdForOperation(job.claim.operationId),
+                kind: HISTORICAL_IMPORT_KIND,
+                localId,
+                content,
+                ownerKind: "host",
+                pluginId: null,
+                namespaceAddressKey: lookup.keys.namespaceAddressKey,
+                recordAddressKey: lookup.keys.recordAddressKey,
+                version: 1,
             },
-        },
-        create: {
-            accountId: actorUserId,
-            sessionId: job.claim.sessionId,
-            namespace: HISTORICAL_IMPORT_NAMESPACE,
-            kind: HISTORICAL_IMPORT_KIND,
-            localId: localIdForOperation(job.claim.operationId),
-            content,
-        },
-        update: {
-            kind: HISTORICAL_IMPORT_KIND,
-            content,
-        },
-    });
+        });
+    } catch (error) {
+        if (isPrismaErrorCode(error, "P2002")) {
+            throw new HistoricalImportSystemRecordCreateRaceError();
+        }
+        throw error;
+    }
 }
 
 function appendInsertedSequenceSpans(
@@ -375,14 +829,14 @@ function authorizeDiscardJob(
 
 function terminalResponse(
     job: HistoricalImportJob,
-    publication: ExternalSessionMaterializationPublicationV1 | null,
 ): Extract<
     ExternalSessionOperationSocketResponseV1,
     { kind: "finalized" | "discarded" | "error" }
 > | null {
     if (job.state === "finalized") {
+        const publication = job.publication;
         if (
-            publication === null
+            publication === undefined
             || publication.publishedThroughServerSeq !== (job.acceptedThroughServerSeq ?? 0)
         ) {
             return errorResponse(
@@ -531,6 +985,15 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
     command: unknown;
     limits: ExternalSessionOperationSocketBatchLimitsV1;
 }>): Promise<ExternalSessionOperationSocketResponseV1> {
+    return await executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(params, true);
+}
+
+async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(params: Readonly<{
+    actorUserId: string;
+    transportMachineId: string;
+    command: unknown;
+    limits: ExternalSessionOperationSocketBatchLimitsV1;
+}>, retryCreateRace: boolean): Promise<ExternalSessionOperationSocketResponseV1> {
     const parsed = ExternalSessionOperationSocketCommandV1Schema.safeParse(params.command);
     if (!parsed.success) {
         return errorResponse("invalid_state", "Invalid historical import command.");
@@ -584,6 +1047,18 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
             },
         });
         if (!session) return errorResponse("wrong_session", "Session is unavailable.");
+        if (
+            command.kind === "admit_persisted_takeover"
+            && command.mode === "external_linked"
+        ) {
+            return await admitExternalLinkedTakeoverInTx({
+                tx,
+                actorUserId: params.actorUserId,
+                transportMachineId: params.transportMachineId,
+                session,
+                command,
+            });
+        }
         let job = await readJobInTx(tx, params.actorUserId, command);
         if (command.kind === "inspect") {
             if (job) {
@@ -689,6 +1164,13 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     command,
                 );
                 if (rejection) return rejection;
+                if (job.state === "finalized") {
+                    if (command.expectedRevision > job.revision) {
+                        job = { ...job, revision: command.expectedRevision };
+                        await writeJobInTx(tx, params.actorUserId, job);
+                    }
+                    return terminalResponse(job)!;
+                }
                 const priorStableStorage = readPriorStableStorage(job, session);
                 if (
                     !priorStableStorage
@@ -709,10 +1191,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
             }
             const rejection = authorizeJob(job, params.transportMachineId, command);
             if (rejection) return rejection;
-            const terminal = terminalResponse(
-                job,
-                readMaterializationPublication(session),
-            );
+            const terminal = terminalResponse(job);
             if (terminal) return terminal;
             if (job.state !== "importing") {
                 return errorResponse("invalid_state", "Historical import is already finalized.");
@@ -746,10 +1225,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                 job = { ...job, revision: command.expectedRevision };
                 await writeJobInTx(tx, params.actorUserId, job);
             }
-            const terminal = terminalResponse(
-                job,
-                readMaterializationPublication(session),
-            );
+            const terminal = terminalResponse(job);
             if (terminal) return terminal;
             const priorStableStorage = readPriorStableStorage(job, session);
             if (!priorStableStorage) {
@@ -780,7 +1256,10 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                 : authorizeJob(job, params.transportMachineId, command);
         if (rejection) return rejection;
 
-        if (command.kind === "admit_persisted_takeover") {
+        if (
+            command.kind === "admit_persisted_takeover"
+            && command.mode === "persisted"
+        ) {
             if (job.admission) {
                 if (
                     !admissionsEqual(job.admission, command)
@@ -801,6 +1280,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                         actorUserId: params.actorUserId,
                         sessionId: session.id,
                         ...command.metadataPatch,
+                        publisherPrecondition: command.publisherPrecondition,
                     });
                 if (!metadataRetry.ok) {
                     return errorResponse(
@@ -827,7 +1307,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                 || session.pendingVersion !== command.expectedPending.version
                 || session.pendingCount !== command.expectedPending.count
                 || session.pendingBlockedCount !== command.expectedPending.blockedCount
-                || session.active
+                || !session.active
                 || session.thinking
                 || session.materializationPublicationId
                     !== publication.materializationPublicationId
@@ -849,6 +1329,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     actorUserId: params.actorUserId,
                     sessionId: session.id,
                     ...command.metadataPatch,
+                    publisherPrecondition: command.publisherPrecondition,
                 });
             if (!metadataUpdated.ok) {
                 return errorResponse(
@@ -868,7 +1349,10 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     pendingVersion: command.expectedPending.version,
                     pendingCount: command.expectedPending.count,
                     pendingBlockedCount: command.expectedPending.blockedCount,
-                    active: false,
+                    active: true,
+                    lastActiveAt: new Date(
+                        command.publisherPrecondition.committedFenceMs,
+                    ),
                     thinking: false,
                     materializationPublicationId:
                         publication.materializationPublicationId,
@@ -897,6 +1381,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                 revision: command.expectedRevision,
                 admission: {
                     attemptId: command.attemptId,
+                    publisherPrecondition: command.publisherPrecondition,
                     expectedSessionMetadataVersion: command.expectedSessionMetadataVersion,
                     metadataPatch: command.metadataPatch,
                     expectedSessionSeq: command.expectedSessionSeq,
@@ -923,12 +1408,15 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
             );
             const written = await writeHistoricalSessionMessageBatchInTx(tx, {
                 sessionId: session.id,
+                writeAuthority: "historical_import",
                 storagePolicy: readEncryptionFeatureEnv(process.env).storagePolicy,
                 items: command.items.map((item) => ({
                     localId: item.localId,
                     sidechainId: item.sidechainId,
                     messageRole: item.messageRole,
                     content: item.content,
+                    transcriptObservationProvenance:
+                        HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
                     ...(item.sourceCreatedAtMs === undefined
                         ? {}
                         : { sourceCreatedAt: new Date(item.sourceCreatedAtMs) }),
@@ -943,6 +1431,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     `Historical import batch rejected: ${written.error}.`,
                 );
             }
+            const expectedAcceptedThroughServerSeq = job.acceptedThroughServerSeq;
             const acceptedThroughServerSeq = Math.max(
                 job.acceptedThroughServerSeq ?? 0,
                 written.lastSeq ?? 0,
@@ -971,13 +1460,26 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
             };
             await writeJobInTx(tx, params.actorUserId, job);
             if (job.priorStorageState === "machine_only") {
-                await tx.session.update({
-                    where: { id: session.id },
+                const transitioned = await tx.session.updateMany({
+                    where: {
+                        id: session.id,
+                        accountId: params.actorUserId,
+                        currentStorageState: expectedAcceptedThroughServerSeq === null
+                            ? "machine_only"
+                            : "server_partial",
+                        acceptedThroughServerSeq: expectedAcceptedThroughServerSeq,
+                        materializationPublicationId: null,
+                        materializedThroughSourceAt: null,
+                        publishedThroughServerSeq: null,
+                    },
                     data: {
                         currentStorageState: "server_partial",
                         acceptedThroughServerSeq,
                     },
                 });
+                if (transitioned.count !== 1) {
+                    throw new HistoricalImportStorageStateTransitionConflictError();
+                }
             }
             return {
                 v: 1,
@@ -991,10 +1493,7 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
 
         if (command.kind === "finalize") {
             if (job.state === "finalized") {
-                return terminalResponse(
-                    job,
-                    readMaterializationPublication(session),
-                )!;
+                return terminalResponse(job)!;
             }
             const acceptedThroughServerSeq = job.acceptedThroughServerSeq ?? 0;
             if (
@@ -1003,13 +1502,45 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
             ) {
                 return errorResponse("stale_revision", "Historical import accepted ceiling does not match.");
             }
+            if (
+                session.publishedThroughServerSeq !== null
+                && acceptedThroughServerSeq < session.publishedThroughServerSeq
+            ) {
+                return errorResponse(
+                    "invalid_state",
+                    "Historical import cannot retract the current published ceiling.",
+                );
+            }
             const publication: ExternalSessionMaterializationPublicationV1 = {
                 materializationPublicationId: randomUUID(),
                 materializedThroughSourceAt: Date.now(),
                 publishedThroughServerSeq: acceptedThroughServerSeq,
             };
-            await tx.session.update({
-                where: { id: session.id },
+            const transitioned = await tx.session.updateMany({
+                where: {
+                    id: session.id,
+                    accountId: params.actorUserId,
+                    ...(job.priorStorageState === "machine_only"
+                        ? {
+                            currentStorageState: job.acceptedThroughServerSeq === null
+                                ? "machine_only"
+                                : "server_partial",
+                            acceptedThroughServerSeq: job.acceptedThroughServerSeq,
+                            materializationPublicationId: null,
+                            materializedThroughSourceAt: null,
+                            publishedThroughServerSeq: null,
+                        }
+                        : {
+                            currentStorageState: "snapshot_complete",
+                            acceptedThroughServerSeq: null,
+                            materializationPublicationId:
+                                session.materializationPublicationId,
+                            materializedThroughSourceAt:
+                                session.materializedThroughSourceAt,
+                            publishedThroughServerSeq:
+                                session.publishedThroughServerSeq,
+                        }),
+                },
                 data: {
                     currentStorageState: "snapshot_complete",
                     acceptedThroughServerSeq: null,
@@ -1020,17 +1551,21 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     publishedThroughServerSeq: acceptedThroughServerSeq,
                 },
             });
+            if (transitioned.count !== 1) {
+                throw new HistoricalImportStorageStateTransitionConflictError();
+            }
             job = {
                 ...job,
+                publication,
                 state: "finalized",
             };
             await writeJobInTx(tx, params.actorUserId, job);
-            return terminalResponse(job, publication)!;
+            return terminalResponse(job)!;
         }
 
         if (command.kind === "discard") {
             if (job.state === "discarded") {
-                return terminalResponse(job, null)!;
+                return terminalResponse(job)!;
             }
             if (
                 job.state !== "importing"
@@ -1085,8 +1620,18 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     throw new HistoricalImportDiscardConflictError();
                 }
             }
-            await tx.session.update({
-                where: { id: session.id },
+            const transitioned = await tx.session.updateMany({
+                where: {
+                    id: session.id,
+                    accountId: params.actorUserId,
+                    currentStorageState: job.acceptedThroughServerSeq === null
+                        ? "machine_only"
+                        : "server_partial",
+                    acceptedThroughServerSeq: job.acceptedThroughServerSeq,
+                    materializationPublicationId: null,
+                    materializedThroughSourceAt: null,
+                    publishedThroughServerSeq: null,
+                },
                 data: {
                     currentStorageState: "machine_only",
                     acceptedThroughServerSeq: null,
@@ -1095,6 +1640,9 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                     publishedThroughServerSeq: null,
                 },
             });
+            if (transitioned.count !== 1) {
+                throw new HistoricalImportStorageStateTransitionConflictError();
+            }
             job = {
                 ...job,
                 revision: command.expectedRevision,
@@ -1104,14 +1652,26 @@ export async function executeExternalSessionHistoricalImportCommand(params: Read
                 state: "discarded",
             };
             await writeJobInTx(tx, params.actorUserId, job);
-            return terminalResponse(job, null)!;
+            return terminalResponse(job)!;
         }
 
         return errorResponse("invalid_state", "Historical import command is invalid.");
         });
     } catch (error) {
+        if (error instanceof HistoricalImportStorageStateTransitionConflictError) {
+            return errorResponse("storage_mode_conflict", error.message);
+        }
         if (error instanceof HistoricalImportDiscardConflictError) {
             return errorResponse("invalid_state", error.message);
+        }
+        if (error instanceof HistoricalImportSystemRecordAddressCollisionError) {
+            return errorResponse("internal_error", error.message);
+        }
+        if (error instanceof HistoricalImportSystemRecordKindConflictError) {
+            return errorResponse("internal_error", error.message);
+        }
+        if (retryCreateRace && error instanceof HistoricalImportSystemRecordCreateRaceError) {
+            return await executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(params, false);
         }
         throw error;
     }

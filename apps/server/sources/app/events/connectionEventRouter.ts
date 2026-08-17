@@ -1,5 +1,7 @@
 import { log } from "@/utils/logging/log";
 import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
+import { readAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { getAccountStoredContentV3SocketRoom } from "@/app/api/socketRooms";
 import {
     type ClientConnection,
     type RecipientFilter,
@@ -146,6 +148,9 @@ class EventRouter {
             case 'user-machine-scoped-only':
                 return connection.connectionType === 'machine-scoped';
 
+            case 'account-stored-content-v3':
+                return readAccountStoredContentCompatibilityForSocket(connection.socket).supportsPluginDataProtocol;
+
             case 'all-user-authenticated-connections':
                 // Send to all connection types (default behavior)
                 return true;
@@ -254,6 +259,8 @@ class EventRouter {
                 return `machine:${filter.machineId}:${userId}`;
             case "user-machine-scoped-only":
                 return `user-machines:${userId}`;
+            case "account-stored-content-v3":
+                return getAccountStoredContentV3SocketRoom(userId);
             case "all-user-authenticated-connections":
             default:
                 return `user:${userId}`;

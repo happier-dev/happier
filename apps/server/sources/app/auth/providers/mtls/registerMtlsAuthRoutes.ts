@@ -1,4 +1,7 @@
 import { z } from "zod";
+import {
+    AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+} from "@happier-dev/protocol";
 
 import type { Fastify } from "@/app/api/types";
 import { db } from "@/storage/db";
@@ -7,9 +10,17 @@ import { readAuthMtlsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveMtlsIdentityFromForwardedHeaders } from "@/app/auth/providers/mtls/mtlsIdentity";
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
-import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import {
+    isTrulyKeylessPlainAccountRow,
+} from "@/app/encryption/accountEncryptionMode";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
+import {
+    consumeMtlsClaimCode,
+    createMtlsClaimCode,
+} from "./mtlsClaimCode";
 
 type ForwardedMtlsIdentity = NonNullable<ReturnType<typeof resolveMtlsIdentityFromForwardedHeaders>>;
 
@@ -35,13 +46,22 @@ async function resolveOrProvisionMtlsAccount(params: {
     if (existing) {
         const account = await db.account.findUnique({
             where: { id: existing.accountId },
-            select: { publicKey: true, encryptionMode: true },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
         });
         if (!account) {
             return { error: "not-eligible" };
         }
-        const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
-        if (mode === "e2ee") {
+        const currentness =
+            deriveAccountEncryptionCurrentnessFromRow(account);
+        if (
+            currentness.status === "inconsistent"
+            || currentness.currentness.encryptionMode === "e2ee"
+        ) {
             return { error: "restore-required" };
         }
         return { accountId: existing.accountId };
@@ -171,66 +191,6 @@ function isAllowedReturnTo(params: { returnTo: string; allowPrefixes: readonly s
     return false;
 }
 
-const MTLS_CLAIM_CODE_PREFIX = "mtls_claim_";
-
-async function createMtlsClaimCode(params: { userId: string; ttlMs: number }): Promise<string> {
-    const ttlMs = Number.isFinite(params.ttlMs) && params.ttlMs > 0 ? params.ttlMs : 60_000;
-    for (let i = 0; i < 3; i++) {
-        const code = randomKeyNaked(32);
-        const key = `${MTLS_CLAIM_CODE_PREFIX}${code}`;
-        try {
-            await db.repeatKey.create({
-                data: {
-                    key,
-                    value: JSON.stringify({ userId: params.userId }),
-                    expiresAt: new Date(Date.now() + ttlMs),
-                },
-            });
-            return code;
-        } catch {
-            // retry on rare collisions
-        }
-    }
-    // Extremely unlikely; treat as hard failure.
-    throw new Error("mtls-claim-code-unavailable");
-}
-
-async function consumeMtlsClaimCode(code: string): Promise<{ userId: string } | null> {
-    const raw = code.toString().trim();
-    if (!raw) return null;
-    const key = `${MTLS_CLAIM_CODE_PREFIX}${raw}`;
-
-    return await db.$transaction(async (tx) => {
-        const row = await tx.repeatKey.findUnique({
-            where: { key },
-            select: { value: true, expiresAt: true },
-        });
-        if (!row) return null;
-        const now = new Date();
-
-        // Consume via a conditional delete to ensure single-use semantics under concurrency.
-        const deleted = await tx.repeatKey.deleteMany({
-            where: {
-                key,
-                expiresAt: { gt: now },
-            },
-        });
-        if (deleted.count !== 1) {
-            // Best-effort cleanup of expired/invalid rows.
-            await tx.repeatKey.deleteMany({ where: { key } }).catch(() => undefined);
-            return null;
-        }
-        try {
-            const parsed = JSON.parse(row.value) as any;
-            const userId = typeof parsed?.userId === "string" ? parsed.userId.trim() : "";
-            if (!userId) return null;
-            return { userId };
-        } catch {
-            return null;
-        }
-    });
-}
-
 function isAllowedEmailIdentity(params: { providerUserId: string; allowedDomains: readonly string[] }): boolean {
     if (params.allowedDomains.length === 0) return true;
     const atIndex = params.providerUserId.lastIndexOf("@");
@@ -350,10 +310,42 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
     app.post(
         "/v1/auth/mtls",
         {
+            preHandler: async (request, reply) => {
+                if (
+                    (request.body as { purpose?: unknown } | undefined)
+                        ?.purpose
+                    === "account_encryption_first_key"
+                ) {
+                    return await app.authenticate(request, reply);
+                }
+            },
             schema: {
                 response: {
-                    200: z.object({ success: z.literal(true), token: z.string() }),
-                    401: z.object({ error: z.literal("mtls-required") }),
+                    200: z.union([
+                        z.object({
+                            success: z.literal(true),
+                            token: z.string(),
+                        }),
+                        z.object({
+                            success: z.literal(true),
+                            pending: z.string(),
+                        }),
+                    ]),
+                    400: z.object({
+                        error:
+                            z.literal(
+                                "invalid-step-up-request",
+                            ),
+                    }),
+                    401: z.union([
+                        z.object({
+                            error: z.literal("mtls-required"),
+                        }),
+                        z.object({
+                            error: z.string(),
+                            code: z.string().optional(),
+                        }),
+                    ]),
                     403: z.object({ error: z.union([z.literal("e2ee-required"), z.literal("not-eligible")]) }),
                     409: z.object({ error: z.literal("restore-required") }),
                 },
@@ -376,6 +368,88 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
             }
             if ((mtlsEnv.identitySource === "san_email" || mtlsEnv.identitySource === "san_upn") && !isAllowedEmailIdentity({ providerUserId: identity.providerUserId, allowedDomains: mtlsEnv.allowedEmailDomains })) {
                 return reply.code(403).send({ error: "not-eligible" });
+            }
+
+            const isStepUpRequest =
+                (request.body as {
+                    purpose?: unknown;
+                } | undefined)?.purpose
+                === "account_encryption_first_key";
+            const stepUpCandidate = z
+                .object({
+                    purpose:
+                        z.literal(
+                            "account_encryption_first_key",
+                        ),
+                    proofHash:
+                        z.string()
+                            .regex(/^[0-9a-f]{64}$/),
+                    requestDigest:
+                        AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+                })
+                .strict()
+                .safeParse(request.body);
+            if (
+                isStepUpRequest
+                && !stepUpCandidate.success
+            ) {
+                return reply.code(400).send({
+                    error: "invalid-step-up-request",
+                });
+            }
+            const stepUp = stepUpCandidate.success
+                ? stepUpCandidate.data
+                : null;
+            if (stepUp) {
+                const [linkedIdentity, account] =
+                    await Promise.all([
+                        db.accountIdentity.findFirst({
+                            where: {
+                                accountId: request.userId,
+                                provider: "mtls",
+                                providerUserId:
+                                    identity.providerUserId,
+                            },
+                            select: { id: true },
+                        }),
+                        db.account.findUnique({
+                            where: { id: request.userId },
+                            select: {
+                                publicKey: true,
+                                encryptionMode: true,
+                                contentPublicKey: true,
+                                contentPublicKeySig: true,
+                            },
+                        }),
+                    ]);
+                if (
+                    !linkedIdentity
+                    || !account
+                    || !isTrulyKeylessPlainAccountRow(
+                        account,
+                    )
+                ) {
+                    return reply
+                        .code(403)
+                        .send({ error: "not-eligible" });
+                }
+                const pending = await createMtlsClaimCode({
+                    userId: request.userId,
+                    ttlMs: mtlsEnv.claimTtlSeconds * 1000,
+                    stepUp: {
+                        purpose:
+                            "account_encryption_first_key",
+                        providerUserId:
+                            identity.providerUserId,
+                        proofHash: stepUp.proofHash,
+                        requestDigest:
+                            stepUp.requestDigest,
+                    },
+                });
+                return reply.send({
+                    success: true,
+                    pending,
+                });
             }
 
             const account = await resolveOrProvisionMtlsAccount({ identity, requestIp: request.ip });
@@ -411,13 +485,23 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
             }
             const account = await db.account.findUnique({
                 where: { id: verified.userId },
-                select: { publicKey: true, encryptionMode: true },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
             });
             if (!account) {
                 return reply.code(401).send({ error: "invalid-code" });
             }
-            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
-            if (mode === "e2ee") {
+            const currentness =
+                deriveAccountEncryptionCurrentnessFromRow(account);
+            if (
+                currentness.status === "inconsistent"
+                || currentness.currentness.encryptionMode
+                    === "e2ee"
+            ) {
                 return reply.code(409).send({ error: "restore-required" });
             }
             const token = await auth.createToken(verified.userId);

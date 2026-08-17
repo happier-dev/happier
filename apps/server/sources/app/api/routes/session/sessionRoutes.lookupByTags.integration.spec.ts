@@ -3,8 +3,16 @@ import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from "@happier-dev/proto
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { sessionRoutes } from "./sessionRoutes";
+
+const OWNER_METADATA_ENVELOPE_V1 = {
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+} as const;
+const STORED_OWNER_METADATA_ENVELOPE_V1 =
+    JSON.stringify(OWNER_METADATA_ENVELOPE_V1);
 
 describe("sessionRoutes lookup by tags (integration)", () => {
     let harness: LightSqliteHarness;
@@ -38,7 +46,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
     it("returns every matching active or archived account-owned session without mutating it", async () => {
         const owner = await db.account.create({
             data: {
-                publicKey: "pk-session-lookup-owner",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
             },
             select: { id: true },
@@ -56,7 +64,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                 tag: "direct:v1:current-collision-candidate",
                 accountId: owner.id,
                 metadata: "encrypted-active-metadata",
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadataLayoutVersion: 1,
                 agentState: "encrypted-active-agent-state",
                 active: true,
@@ -67,7 +75,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                 tag: "direct:v1:released-collision-candidate",
                 accountId: owner.id,
                 metadata: "encrypted-archived-metadata",
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                 metadataLayoutVersion: 1,
                 agentState: "encrypted-archived-agent-state",
                 archivedAt,
@@ -102,6 +110,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                     headers: {
                         "content-type": "application/json",
                         "x-test-user-id": owner.id,
+                        "x-happier-account-stored-content-protocol": "2",
                     },
                     payload: {
                         tags: [matchingActive.tag, matchingArchived.tag],
@@ -119,7 +128,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                         active: true,
                         archivedAt: null,
                         metadata: "encrypted-active-metadata",
-                        ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                        ownerMetadata: OWNER_METADATA_ENVELOPE_V1,
                         metadataLayoutVersion: 1,
                         agentState: "encrypted-active-agent-state",
                     }),
@@ -128,7 +137,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                         active: false,
                         archivedAt: archivedAt.getTime(),
                         metadata: "encrypted-archived-metadata",
-                        ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                        ownerMetadata: OWNER_METADATA_ENVELOPE_V1,
                         metadataLayoutVersion: 1,
                         agentState: "encrypted-archived-agent-state",
                     }),
@@ -142,6 +151,46 @@ describe("sessionRoutes lookup by tags (integration)", () => {
             orderBy: { id: "asc" },
         });
         expect(after).toEqual(before);
+    });
+
+    it("refuses a legacy caller before returning a layout-one owner row", async () => {
+        const owner = await db.account.create({
+            data: {
+                publicKey: "pk-session-lookup-legacy-caller",
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: "direct:v1:current-only",
+                accountId: owner.id,
+                metadata: "shared-safe",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadataLayoutVersion: 1,
+            },
+            select: { tag: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => sessionRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: "/v2/sessions/lookup-by-tags",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": owner.id,
+                    },
+                    payload: { tags: [session.tag] },
+                });
+
+                expect(response.statusCode).toBe(426);
+                expect(response.json()).toMatchObject({
+                    error: "client-upgrade-required",
+                });
+            },
+        );
     });
 
     it("fails closed for future layouts and malformed owner ciphertext", async () => {
@@ -172,6 +221,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                     headers: {
                         "content-type": "application/json",
                         "x-test-user-id": owner.id,
+                        "x-happier-account-stored-content-protocol": "2",
                     },
                     payload: { tags: [session.tag] },
                 });

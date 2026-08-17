@@ -3,15 +3,11 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { serverWorkspacePackageSourcesPlugin } from './vitestWorkspacePackageResolution';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  resolve: {
-    alias: [{
-      find: /^@happier-dev\/protocol$/,
-      replacement: resolve(__dirname, '../../packages/protocol/src/index.ts'),
-    }],
-  },
   test: {
     globals: true,
     environment: 'node',
@@ -30,10 +26,13 @@ export default defineConfig({
       S3_BUCKET: 'test',
     },
   },
-  plugins: [tsconfigPaths({
-    projects: [
-      resolve(__dirname, './tsconfig.json'),
-      resolve(__dirname, '../cli/tsconfig.json'),
-    ],
-  })],
+  plugins: [
+    serverWorkspacePackageSourcesPlugin,
+    tsconfigPaths({
+      projects: [
+        resolve(__dirname, './tsconfig.json'),
+        resolve(__dirname, '../cli/tsconfig.json'),
+      ],
+    }),
+  ],
 });

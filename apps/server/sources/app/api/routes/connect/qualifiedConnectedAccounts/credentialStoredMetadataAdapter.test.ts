@@ -5,6 +5,16 @@ import { resolveQualifiedConnectedAccountStoredMetadata } from "./credentialStor
 describe("qualified Connected Account stored metadata adapter", () => {
     it.each([
         {
+            name: "raw",
+            metadata: null,
+            expected: {
+                format: "legacy_unknown",
+                kind: null,
+                status: "needs_reauth",
+                presentation: { scopes: [] },
+            },
+        },
+        {
             name: "V2",
             metadata: {
                 v: 2,
@@ -16,6 +26,18 @@ describe("qualified Connected Account stored metadata adapter", () => {
                     v: 1,
                     status: "needs_reauth",
                     reconnectRequired: true,
+                },
+            },
+            expected: {
+                format: "legacy_v2",
+                kind: "oauth",
+                status: "needs_reauth",
+                presentation: {
+                    providerIdentity: {
+                        email: "operator@example.com",
+                        accountId: "provider-account-1",
+                    },
+                    scopes: [],
                 },
             },
         },
@@ -33,23 +55,48 @@ describe("qualified Connected Account stored metadata adapter", () => {
                     reconnectRequired: true,
                 },
             },
+            expected: {
+                format: "legacy_v3",
+                kind: "oauth",
+                status: "needs_reauth",
+                presentation: {
+                    providerIdentity: {
+                        email: "operator@example.com",
+                        accountId: "provider-account-1",
+                    },
+                    scopes: [],
+                },
+            },
         },
-    ])("translates activated legacy $name identity into V4 presentation", ({
+    ])("keeps an unfenced legacy $name row readable without fabricating a revision", ({
         metadata,
+        expected,
     }) => {
         expect(resolveQualifiedConnectedAccountStoredMetadata({
             rowId: "legacy-row",
             metadata,
         })).toMatchObject({
-            kind: "oauth",
-            status: "needs_reauth",
-            presentation: {
-                providerIdentity: {
-                    email: "operator@example.com",
-                    accountId: "provider-account-1",
-                },
-                scopes: [],
+            revisionSemantics: "legacy_unfenced",
+            credentialRevision: null,
+            ...expected,
+        });
+    });
+
+    it("retains an explicit legacy revision as the guarded compatibility path", () => {
+        const credentialRevision = "csr_abcdefghijklmnopqrstuvwxyz";
+        expect(resolveQualifiedConnectedAccountStoredMetadata({
+            rowId: "revisioned-v3-row",
+            metadata: {
+                v: 3,
+                storage: "plain_json_v1",
+                kind: "oauth",
+                credentialRevision,
+                providerEmail: null,
+                providerAccountId: null,
             },
+        })).toMatchObject({
+            revisionSemantics: "revisioned",
+            credentialRevision,
         });
     });
 
@@ -76,6 +123,7 @@ describe("qualified Connected Account stored metadata adapter", () => {
             metadata,
         })).toMatchObject({
             format: "v4",
+            revisionSemantics: "revisioned",
             credentialRevision: metadata.credentialRevision,
             status: "refreshing",
             presentation: metadata.values,

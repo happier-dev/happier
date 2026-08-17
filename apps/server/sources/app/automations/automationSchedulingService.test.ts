@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
     computeNextDueAtForAutomation,
-    shouldEnqueueNextRunForTerminalState,
+    isFinalAutomationRunStatus,
 } from "./automationSchedulingService";
+import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 
 describe("automationSchedulingService", () => {
     it("computes next due time for interval schedules", () => {
@@ -59,10 +60,22 @@ describe("automationSchedulingService", () => {
         expect(due?.toISOString()).toBe("2026-02-12T14:00:00.000Z");
     });
 
-    it("enqueues follow-up runs only for terminal states", () => {
-        expect(shouldEnqueueNextRunForTerminalState("succeeded")).toBe(true);
-        expect(shouldEnqueueNextRunForTerminalState("failed")).toBe(true);
-        expect(shouldEnqueueNextRunForTerminalState("cancelled")).toBe(true);
-        expect(shouldEnqueueNextRunForTerminalState("running")).toBe(false);
+    it("has one terminality predicate for every current Run outcome", () => {
+        expect(AUTOMATION_RUN_TERMINAL_STATES).toEqual([
+            "succeeded",
+            "failed",
+            "cancelled",
+            "expired",
+            "dispatch_failed",
+            "skipped",
+            "missed",
+            "outcome_uncertain",
+        ]);
+        for (const state of AUTOMATION_RUN_TERMINAL_STATES) {
+            expect(isFinalAutomationRunStatus(state)).toBe(true);
+        }
+        expect(isFinalAutomationRunStatus("queued")).toBe(false);
+        expect(isFinalAutomationRunStatus("claimed")).toBe(false);
+        expect(isFinalAutomationRunStatus("running")).toBe(false);
     });
 });

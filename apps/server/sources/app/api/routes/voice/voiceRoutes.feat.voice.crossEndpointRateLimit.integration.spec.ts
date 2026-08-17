@@ -86,8 +86,7 @@ describe("voiceRoutes (cross-endpoint rate limit, sqlite)", () => {
     }
 
     // A throttled mint returns 429 with the route's `{ allowed:false, reason }`
-    // contract (served by the shared lease-chokepoint throttle, and by the
-    // per-route plugin via its errorResponseBuilder).
+    // contract from the canonical grouped request limiter.
     function expectThrottled(res: { statusCode: number; json: () => unknown }) {
         expect(res.statusCode).toBe(429);
         expect(res.json()).toMatchObject({ allowed: false, reason: "too_many_sessions" });
@@ -108,5 +107,22 @@ describe("voiceRoutes (cross-endpoint rate limit, sqlite)", () => {
         // If it still minted (200) the budget would be per-endpoint and the user
         // could mint 2x the intended tokens by alternating endpoints.
         expectThrottled(await mint(app, "/v1/voice/lease/mint", user.id));
+    });
+
+    it("does not turn retained successful issuances into a second mint limiter after an API process restart", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-voice-rl-restart" }, select: { id: true } });
+        stubMintFetch();
+        const firstProcess = await createTestApp(user.id);
+
+        expect((await mint(firstProcess, "/v1/voice/token", user.id)).statusCode).toBe(200);
+        expect((await mint(firstProcess, "/v1/voice/token", user.id)).statusCode).toBe(200);
+        expectThrottled(await mint(firstProcess, "/v1/voice/token", user.id));
+        await firstProcess.close();
+
+        // The configured limiter is the Fastify request limiter. Its in-memory
+        // bucket has the same process lifetime as every other route limiter;
+        // lease retention must not silently extend that policy.
+        const restartedProcess = await createTestApp(user.id);
+        expect((await mint(restartedProcess, "/v1/voice/token", user.id)).statusCode).toBe(200);
     });
 });

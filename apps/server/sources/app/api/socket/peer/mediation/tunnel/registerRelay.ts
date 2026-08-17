@@ -41,6 +41,9 @@ type TunnelRelaySocket = Readonly<{
 
 type TunnelRelayIo = Readonly<{
     to: (room: string) => Readonly<{ emit: (event: string, payload: unknown) => unknown }>;
+    local: Readonly<{
+        to: (room: string) => Readonly<{ emit: (event: string, payload: unknown) => unknown }>;
+    }>;
 }>;
 
 type TunnelKey = string;
@@ -317,12 +320,16 @@ function emitEnvelopeToParticipant(input: Readonly<{
         }
         return;
     }
-    input.io.to(participantRoom({
+    const room = participantRoom({
         userId: input.userId,
         participant: input.participant,
         tunnelKey: input.tunnelKey,
         boundUserSocketId: input.boundUserSocketId,
-    })).emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, input.envelope);
+    });
+    const target = input.participant.kind === 'user' && input.coordinatorBacked
+        ? input.io.local.to(room)
+        : input.io.to(room);
+    target.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, input.envelope);
 }
 
 function emitAbortToRelayParticipants(input: Readonly<{
@@ -927,12 +934,16 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             tunnelId: input.tunnelId,
             reasonCode: 'relay_socket_disconnected',
         });
-        ctx.io.to(participantRoom({
+        emitEnvelopeToParticipant({
+            io: ctx.io,
             userId,
             participant: abortEnvelope.recipient,
+            envelope: abortEnvelope,
             tunnelKey: input.tunnelKey,
             boundUserSocketId: input.ownerSocketId,
-        })).emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, abortEnvelope);
+            coordinatorBacked: ctx.coordinator !== undefined,
+            notifyAttachedMachine: false,
+        });
     }
 
     async function handleRelayPayload(
@@ -1459,11 +1470,15 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 envelope,
             });
         } else {
-            ctx.io.to(participantRoom({
+            emitEnvelopeToParticipant({
+                io: ctx.io,
                 userId,
                 participant: envelope.recipient,
+                envelope,
                 tunnelKey,
-            })).emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope);
+                coordinatorBacked: ctx.coordinator !== undefined,
+                notifyAttachedMachine: false,
+            });
         }
         if (isV1OpenFrame) {
             const pending = pendingOpenByTunnelKey.get(tunnelKey);

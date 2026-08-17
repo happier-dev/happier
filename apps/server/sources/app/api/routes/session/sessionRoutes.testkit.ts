@@ -1,10 +1,37 @@
 import { vi } from "vitest";
+import tweetnacl from "tweetnacl";
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+} from "@happier-dev/protocol";
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import type { RouteRequestOverrides } from "../../testkit/requestFixtures";
+import type { AccessLevel } from "@/app/share/accessControl";
 
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
+
+const testAccountSigningKeyPair = tweetnacl.sign.keyPair();
+const testAccountContentKeyPair = tweetnacl.box.keyPair();
+const testAccountContentPublicKeySig = tweetnacl.sign.detached(
+    Buffer.concat([
+        Buffer.from("Happy content key v1\u0000", "utf8"),
+        Buffer.from(testAccountContentKeyPair.publicKey),
+    ]),
+    testAccountSigningKeyPair.secretKey,
+);
+const TEST_E2EE_ACCOUNT_CURRENTNESS_ROW = {
+    encryptionMode: "e2ee",
+    publicKey: Buffer.from(
+        testAccountSigningKeyPair.publicKey,
+    ).toString("hex"),
+    contentPublicKey: new Uint8Array(
+        testAccountContentKeyPair.publicKey,
+    ),
+    contentPublicKeySig: new Uint8Array(
+        testAccountContentPublicKeySig,
+    ),
+} as const;
 
 export const emitUpdate = vi.fn();
 export const emitEphemeral = vi.fn();
@@ -65,6 +92,7 @@ export const buildSessionMetadataRecipientUpdate = vi.fn(
 
 export const randomKeyNaked = vi.fn(() => "upd-id");
 export const createSessionMessage = vi.fn();
+export const enqueuePendingMessage = vi.fn();
 export const patchSession = vi.fn();
 export const updateSessionMetadataEnvelopeTuple = vi.fn();
 export const applySessionTurnMutation = vi.fn();
@@ -81,7 +109,36 @@ export const clearSessionRuntimeActivityProjectionInTx = vi.fn(async () => ({
     participantCursors: [],
     badgeAttentionChanged: false,
 }));
-export const checkSessionAccess = vi.fn(async () => ({ level: "owner" }));
+/**
+ * The route fixture intentionally carries the same access facts that a route
+ * may inspect.  Most legacy callers only need `level`; owner-private routes
+ * must state `isOwner` rather than inferring it from an access label.
+ */
+export type SessionRouteAccessFixture = Readonly<{
+    level: AccessLevel;
+    isOwner?: boolean;
+}>;
+
+export function createSessionRouteAccessFixture(
+    level: AccessLevel = "owner",
+    options?: Readonly<{ isOwner?: boolean }>,
+): SessionRouteAccessFixture {
+    return {
+        level,
+        isOwner: options?.isOwner ?? level === "owner",
+    };
+}
+
+export const checkSessionAccess = vi.fn<
+    (userId: string, sessionId: string) => Promise<SessionRouteAccessFixture | null>
+>(async () => createSessionRouteAccessFixture());
+export const buildCurrentSessionParticipantWhere = vi.fn((params: Readonly<{
+    userId: string;
+    sessionId: string;
+}>) => ({
+    id: params.sessionId,
+    OR: [{ accountId: params.userId }],
+}));
 export const requireAccessLevel = vi.fn((access: any, required: any) => {
     const levels = ["view", "edit", "admin", "owner"];
     const userLevel = levels.indexOf(access?.level);
@@ -94,7 +151,7 @@ export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
 
 const sessionDbMocks = createDbMocks({
-    account: ["findUnique"],
+    account: ["findMany", "findUnique"],
     session: ["findMany", "findFirst", "findUnique", "update", "updateMany"],
     sessionPin: ["count", "findMany"],
     sessionFolderAssignment: ["findMany"],
@@ -107,13 +164,14 @@ const sessionDbMocks = createDbMocks({
     sessionShare: ["findMany"],
     sessionMessage: ["findMany", "findFirst", "findUnique"],
     sessionPendingMessage: ["count"],
-    sessionTurn: ["findMany"],
+    sessionTurn: ["findFirst", "findMany"],
 } as const);
 
 const txDbMocks = createDbMocks({
-    account: ["findUnique"],
-    session: ["create", "findFirst", "findMany", "findUnique", "update"],
+    account: ["findMany", "findUnique"],
+    session: ["create", "findFirst", "findMany", "findUnique", "update", "updateMany"],
     sessionMessage: ["findMany", "findFirst"],
+    sessionTurn: ["findFirst", "findMany"],
     sessionPin: ["count", "deleteMany", "findMany", "findUnique", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
     sessionOrganizationFolder: ["count", "findMany", "updateMany", "upsert"],
@@ -122,13 +180,18 @@ const txDbMocks = createDbMocks({
     sessionOrganizationOrderEntry: ["deleteMany", "findMany", "upsert"],
     sessionOrganizationLabel: ["count", "findMany", "updateMany", "upsert"],
     sessionOrganizationCheckpoint: ["upsert"],
-    sessionSystemRecord: ["create", "findUnique", "findMany", "findFirst", "update"],
+    sessionSystemRecord: ["create", "findUnique", "findMany", "findFirst", "update", "updateMany", "deleteMany"],
 } as const);
+export const txExecuteRawUnsafe = vi.fn(async () => 1);
+const txDb = Object.assign(txDbMocks.db, {
+    $executeRawUnsafe: txExecuteRawUnsafe,
+});
 
 export const sessionFindMany = sessionDbMocks.db.session.findMany;
 export const sessionFindFirst = sessionDbMocks.db.session.findFirst;
 export const sessionFindUnique = sessionDbMocks.db.session.findUnique;
 export const accountFindUnique = sessionDbMocks.db.account.findUnique;
+export const accountFindMany = sessionDbMocks.db.account.findMany;
 export const sessionUpdate = sessionDbMocks.db.session.update;
 export const sessionUpdateMany = sessionDbMocks.db.session.updateMany;
 export const sessionPinCount = sessionDbMocks.db.sessionPin.count;
@@ -152,8 +215,11 @@ export const txSessionFindMany = txDbMocks.db.session.findMany;
 export const txSessionFindUnique = txDbMocks.db.session.findUnique;
 export const txSessionCreate = txDbMocks.db.session.create;
 export const txSessionUpdate = txDbMocks.db.session.update;
+export const txSessionUpdateMany = txDbMocks.db.session.updateMany;
 export const txSessionMessageFindMany = txDbMocks.db.sessionMessage.findMany;
 export const txSessionMessageFindFirst = txDbMocks.db.sessionMessage.findFirst;
+export const txSessionTurnFindFirst = txDbMocks.db.sessionTurn.findFirst;
+export const txSessionTurnFindMany = txDbMocks.db.sessionTurn.findMany;
 export const txSessionPinCount = txDbMocks.db.sessionPin.count;
 export const txSessionPinDeleteMany = txDbMocks.db.sessionPin.deleteMany;
 export const txSessionPinFindMany = txDbMocks.db.sessionPin.findMany;
@@ -188,6 +254,8 @@ export const txSessionSystemRecordFindUnique = txDbMocks.db.sessionSystemRecord.
 export const txSessionSystemRecordFindMany = txDbMocks.db.sessionSystemRecord.findMany;
 export const txSessionSystemRecordFindFirst = txDbMocks.db.sessionSystemRecord.findFirst;
 export const txSessionSystemRecordUpdate = txDbMocks.db.sessionSystemRecord.update;
+export const txSessionSystemRecordUpdateMany = txDbMocks.db.sessionSystemRecord.updateMany;
+export const txSessionSystemRecordDeleteMany = txDbMocks.db.sessionSystemRecord.deleteMany;
 export const txAccountFindUnique = txDbMocks.db.account.findUnique;
 
 vi.mock("@/app/events/eventRouter", () => ({
@@ -218,7 +286,12 @@ vi.mock("@/app/session/sessionWriteService", () => ({
     updateSessionMetadataEnvelopeTuple,
 }));
 
+vi.mock("@/app/session/pending/pendingMessageService", () => ({
+    enqueuePendingMessage,
+}));
+
 vi.mock("@/app/share/accessControl", () => ({
+    buildCurrentSessionParticipantWhere,
     checkSessionAccess,
     requireAccessLevel,
 }));
@@ -250,14 +323,37 @@ export const didSessionActivityBadgeContributionChange = vi.fn(() => false);
 vi.mock("@/app/activity/accountActivityBadge", () => ({
     didSessionActivityBadgeContributionChange,
 }));
-vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
+type SessionDeleteMockResult =
+    | Readonly<{ ok: true }>
+    | Readonly<{
+        ok: false;
+        error: "not-found" | "client-upgrade-required";
+    }>;
+export const sessionDelete = vi.fn<(
+    ctx: Readonly<{ uid: string }>,
+    sessionId: string,
+    options: Readonly<{
+        supportsCurrentStoredContentProtocol: boolean;
+    }>,
+) => Promise<SessionDeleteMockResult>>(async () => ({ ok: true as const }));
+vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete }));
+/**
+ * The Agent-transition cutover is mocked at the SERVICE boundary only. The
+ * route's publication path — including the real
+ * `publishSessionCurrentViewUpdates` and the real recipient projector — stays
+ * live, so a spec can prove what actually reaches the wire.
+ */
+export const applySessionAgentTransitionCutover = vi.fn();
+vi.mock("@/app/session/agentTransition/applySessionAgentTransitionCutover", () => ({
+    applySessionAgentTransitionCutover,
+}));
 export const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 export const markAccountChangedAfterCommit = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChangedAfterCommit", () => ({ markAccountChangedAfterCommit }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
 vi.mock("@/storage/inTx", () => ({
-    inTx: vi.fn(async (fn: any) => await fn(txDbMocks.db)),
+    inTx: vi.fn(async (fn: any) => await fn(txDb)),
     afterTx: vi.fn(),
 }));
 
@@ -265,19 +361,40 @@ export function resetSessionRouteMocks(): void {
     vi.clearAllMocks();
     sessionDbMocks.reset();
     txDbMocks.reset();
+    txExecuteRawUnsafe.mockReset();
+    txExecuteRawUnsafe.mockResolvedValue(1);
     randomKeyNaked.mockReturnValue("upd-id");
+    sessionDelete.mockReset();
+    sessionDelete.mockResolvedValue({ ok: true });
     applySessionTurnMutation.mockReset();
     applySessionReadCursorOperation.mockReset();
-    checkSessionAccess.mockResolvedValue({ level: "owner" });
+    applySessionAgentTransitionCutover.mockReset();
+    checkSessionAccess.mockResolvedValue(createSessionRouteAccessFixture());
     getSessionParticipantUserIds.mockResolvedValue([]);
     sessionFindMany.mockResolvedValue([]);
     sessionFindFirst.mockResolvedValue(null);
     sessionFindUnique.mockResolvedValue({
+        accountId: "u1",
+        metadata: "mNew",
+        metadataVersion: 2,
+        metadataLayoutVersion: 0,
+        ownerMetadata: null,
+        agentState: null,
+        agentStateVersion: 3,
         currentStorageState: "hosted",
         acceptedThroughServerSeq: null,
         publishedThroughServerSeq: null,
     });
-    accountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+    accountFindUnique.mockResolvedValue(
+        TEST_E2EE_ACCOUNT_CURRENTNESS_ROW,
+    );
+    accountFindMany.mockImplementation(async (args) => {
+        const ids = args?.where?.id?.in ?? [];
+        return ids.map((id: string) => ({
+            id,
+            ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW,
+        }));
+    });
     emitEphemeral.mockReset();
     buildSessionActivityEphemeral.mockClear();
     markSessionInactive.mockReset();
@@ -310,7 +427,11 @@ export function resetSessionRouteMocks(): void {
     });
     txSessionMessageFindMany.mockResolvedValue([]);
     txSessionMessageFindFirst.mockResolvedValue(null);
-    txAccountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+    txSessionTurnFindFirst.mockResolvedValue(null);
+    txSessionTurnFindMany.mockResolvedValue([]);
+    txAccountFindUnique.mockResolvedValue(
+        TEST_E2EE_ACCOUNT_CURRENTNESS_ROW,
+    );
     txSessionCreate.mockImplementation(async () => {
         throw new Error("txSessionCreate not configured for test");
     });
@@ -367,6 +488,8 @@ export function resetSessionRouteMocks(): void {
     txSessionSystemRecordUpdate.mockImplementation(async () => {
         throw new Error("txSessionSystemRecordUpdate not configured for test");
     });
+    txSessionSystemRecordUpdateMany.mockResolvedValue({ count: 0 });
+    txSessionSystemRecordDeleteMany.mockResolvedValue({ count: 0 });
     markAccountChangedAfterCommit.mockResolvedValue(1);
 }
 
@@ -391,7 +514,20 @@ export async function createSessionRouteTestBuilder(
     return createRouteTestBuilder({
         method,
         path,
-        defaultRequest: { userId: "u1", ...options.defaultRequest },
+        defaultRequest: {
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true,
+                outcome: "accepted",
+                declaration: {
+                    v: 1,
+                    protocolVersion:
+                        CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                },
+                upgradeRequired: null,
+            },
+            ...options.defaultRequest,
+        },
         registerRoutes(app) {
             sessionRoutes(app as any);
         },

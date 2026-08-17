@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+    AccountPetAssetReadResponseV1Schema,
     AccountPetCreateResponseV1Schema,
     AccountPetDeleteResponseV1Schema,
     AccountPetListResponseV1Schema,
@@ -43,11 +44,15 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
         schema: {
             response: {
                 200: AccountPetListResponseV1Schema,
+                409: AccountPetListResponseV1Schema,
             },
         },
     }, async (request, reply) => {
-        const pets = await listAccountPetsForAccount({ accountId: request.userId });
-        return reply.send({ ok: true, pets });
+        const result = await listAccountPetsForAccount({ accountId: request.userId });
+        if (!result.ok) {
+            return reply.code(409).send(result);
+        }
+        return reply.send(result);
     });
 
     app.post("/v1/account/pets", {
@@ -94,6 +99,11 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
             params: z.object({
                 petId: z.string().min(1),
             }),
+            response: {
+                200: z.any(),
+                404: z.object({ error: z.string() }),
+                409: AccountPetAssetReadResponseV1Schema,
+            },
         },
     }, async (request, reply) => {
         const asset = await readAccountPetAssetForAccount({
@@ -103,6 +113,9 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
         });
         if (!asset) {
             return reply.code(404).send({ error: "not_found" });
+        }
+        if (!asset.ok) {
+            return reply.code(409).send(asset);
         }
         sendAssetHeaders(reply, asset);
         return asset.bytes;
@@ -147,6 +160,11 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
                 petId: z.string().min(1),
                 assetId: z.string().min(1),
             }),
+            response: {
+                200: z.any(),
+                404: z.object({ error: z.string() }),
+                409: AccountPetAssetReadResponseV1Schema,
+            },
         },
     }, async (request, reply) => {
         const asset = await readAccountPetAssetForAccount({
@@ -156,6 +174,9 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
         });
         if (!asset) {
             return reply.code(404).send({ error: "not_found" });
+        }
+        if (!asset.ok) {
+            return reply.code(409).send(asset);
         }
         sendAssetHeaders(reply, asset);
         return asset.bytes;

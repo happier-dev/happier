@@ -11,6 +11,7 @@ import type { ServerFeatureResolver } from './serverFeatureRegistry';
 import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
 import { readPeerMediationFeatureEnv } from './readFeatureEnv';
 import { applyBrowserCapabilityFeatureGateClosure } from '../browserFeature';
+import { isSessionSystemRecordsProtocolV1Active } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
 const DEFAULT_SETUP_SURFACE_POLICY_FEATURES: Record<string, unknown> = Object.freeze({
     setup: {
@@ -83,6 +84,11 @@ export function resolveServerFeaturePayload(
         }));
     }
     Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, { session: { messages: { role: true } } }));
+    if (isSessionSystemRecordsProtocolV1Active()) {
+        Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, {
+            session: { systemRecords: { protocolVersions: [1] } },
+        }));
+    }
 
     const parsedFeatureGates = FeatureGatesSchema.safeParse(mergedFeatures);
     if (!parsedFeatureGates.success) {

@@ -1,16 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDbMocks, createDbTransactionMock, installDbModuleMock } from '../../api/testkit/dbMocks';
+import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 
 const findMany = vi.fn();
 const deleteMany = vi.fn();
 const updateMany = vi.fn();
+const executeRawUnsafe = vi.fn();
+const envSnapshot = snapshotEnv();
 
 const dbMocks = createDbMocks({
     accountChange: ["findMany", "deleteMany"],
     account: ["updateMany"],
 } as const);
-const dbTransactionMock = createDbTransactionMock(() => dbMocks.db);
+const dbTransactionMock = createDbTransactionMock(() => ({
+    ...dbMocks.db,
+    $executeRawUnsafe: (...args: unknown[]) => executeRawUnsafe(...args),
+}));
 
 dbMocks.db.accountChange.findMany.mockImplementation((...args: any[]) => findMany(...args));
 dbMocks.db.accountChange.deleteMany.mockImplementation((...args: any[]) => deleteMany(...args));
@@ -20,8 +26,17 @@ installDbModuleMock({ db: dbTransactionMock.wrapDb(dbMocks.db) });
 
 describe('accountChangeRetentionRule', () => {
     beforeEach(() => {
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: 'sqlite',
+        });
         vi.clearAllMocks();
         dbTransactionMock.transaction.mockClear();
+        executeRawUnsafe.mockResolvedValue(1);
+    });
+
+    afterEach(() => {
+        restoreEnv(envSnapshot);
     });
 
     it('advances changesFloor only to the highest cursor that was actually deleted', async () => {
@@ -70,6 +85,30 @@ describe('accountChangeRetentionRule', () => {
                 changesFloor: 1,
             },
         });
+        expect(executeRawUnsafe).toHaveBeenCalledWith(
+            'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?',
+            'owner-a',
+        );
         expect(dbTransactionMock.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('advances dry-run pages instead of recounting the first candidates', async () => {
+        findMany.mockResolvedValueOnce([
+            { accountId: 'owner-a', kind: 'session', entityId: 'a-11', cursor: 11 },
+            { accountId: 'owner-a', kind: 'session', entityId: 'a-12', cursor: 12 },
+        ]);
+
+        const { runAccountChangeRetentionRule } = await import('./accountChangeRetentionRule');
+        const result = await runAccountChangeRetentionRule({
+            cutoff: new Date('2025-01-01T00:00:00.000Z'),
+            batchSize: 2,
+            dryRun: true,
+            dryRunOffset: 10,
+            maxDeletesPerRulePerRun: 2,
+        });
+
+        expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 2 }));
+        expect(result).toEqual({ deleted: 2, candidatesExamined: 2, hasMore: true });
+        expect(deleteMany).not.toHaveBeenCalled();
     });
 });

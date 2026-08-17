@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAutomationUpsertInput } from "./automationValidation";
+import {
+    assertAutomationTemplateEnvelopeForAccountMode,
+    parseAutomationPatchInput,
+    parseAutomationUpsertInput,
+} from "./automationValidation";
 
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_encrypted_v1",
     payloadCiphertext: "ciphertext-base64",
+});
+
+describe("parseAutomationPatchInput", () => {
+    it("rejects an empty patch", () => {
+        expect(() => parseAutomationPatchInput({})).toThrow(/at least one field/i);
+    });
 });
 
 describe("parseAutomationUpsertInput", () => {
@@ -140,7 +150,7 @@ describe("parseAutomationUpsertInput", () => {
         ).toThrow(/sessionEncryptionKeyBase64/i);
     });
 
-    it("accepts encrypted automation templates when accountMode=plain", () => {
+    it("rejects encrypted new-session automation templates when accountMode=plain", () => {
         const encrypted = JSON.stringify({
             kind: "happier_automation_template_encrypted_v1",
             payloadCiphertext: "ciphertext",
@@ -154,7 +164,110 @@ describe("parseAutomationUpsertInput", () => {
                 targetType: "new_session",
                 templateCiphertext: encrypted,
             }, { accountMode: "plain" }),
-        ).not.toThrow();
+        ).toThrow(/encrypted.*existing_session|plain account/i);
+    });
+
+    it("rejects a predecessor encrypted outer session identifier outside the legacy request adapter", () => {
+        const encrypted = JSON.stringify({
+            kind: "happier_automation_template_encrypted_v1",
+            payloadCiphertext: "ciphertext",
+            existingSessionId: "session-e2ee",
+        });
+
+        expect(() =>
+            parseAutomationUpsertInput({
+                name: "Encrypted retained-session template",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: encrypted,
+            }, { accountMode: "plain" }),
+        ).toThrow(/templateCiphertext/i);
+    });
+
+    it("admits only the exact predecessor encrypted outer session identifier through the legacy request adapter", () => {
+        const encrypted = JSON.stringify({
+            kind: "happier_automation_template_encrypted_v1",
+            payloadCiphertext: "ciphertext",
+            existingSessionId: "session-e2ee",
+        });
+
+        const parsed = parseAutomationUpsertInput({
+            name: "Encrypted retained-session template",
+            enabled: true,
+            schedule: { kind: "interval", everyMs: 60_000 },
+            targetType: "existing_session",
+            templateCiphertext: encrypted,
+        }, {
+            accountMode: "plain",
+            allowLegacyEncryptedExistingSessionTemplate: true,
+        });
+
+        expect(parsed.legacyTemplateEnvelopeAdmission).toEqual({
+            kind: "legacy-encrypted-existing-session-v1",
+            existingSessionId: "session-e2ee",
+        });
+        expect(parsed.templateCiphertext).toBe(encrypted);
+    });
+
+    it("admits the exact predecessor plain outer session identifier only when it agrees with the payload", () => {
+        const plain = JSON.stringify({
+            kind: "happier_automation_template_plain_v1",
+            payload: { existingSessionId: "session-e2ee" },
+            existingSessionId: "session-e2ee",
+        });
+
+        const parsed = parseAutomationUpsertInput({
+            name: "Not an encrypted predecessor envelope",
+            enabled: true,
+            schedule: { kind: "interval", everyMs: 60_000 },
+            targetType: "existing_session",
+            templateCiphertext: plain,
+        }, {
+            accountMode: "plain",
+            allowLegacyEncryptedExistingSessionTemplate: true,
+        });
+
+        expect(parsed.legacyTemplateEnvelopeAdmission).toEqual({
+            kind: "legacy-plain-existing-session-v1",
+            existingSessionId: "session-e2ee",
+        });
+        expect(parsed.templateCiphertext).toBe(plain);
+    });
+
+    it("rejects a predecessor plain outer session identifier that disagrees with the payload", () => {
+        expect(() => parseAutomationUpsertInput({
+            name: "Mismatched predecessor envelope",
+            enabled: true,
+            schedule: { kind: "interval", everyMs: 60_000 },
+            targetType: "existing_session",
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_plain_v1",
+                payload: { existingSessionId: "session-inner" },
+                existingSessionId: "session-outer",
+            }),
+        }, {
+            accountMode: "plain",
+            allowLegacyEncryptedExistingSessionTemplate: true,
+        })).toThrow(/templateCiphertext/i);
+    });
+
+    it("rechecks the trusted legacy admission against the exact raw predecessor envelope", () => {
+        const encrypted = JSON.stringify({
+            kind: "happier_automation_template_encrypted_v1",
+            payloadCiphertext: "ciphertext",
+            existingSessionId: "session-e2ee",
+        });
+
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(
+            encrypted,
+            "plain",
+            "existing_session",
+            {
+                kind: "legacy-encrypted-existing-session-v1",
+                existingSessionId: "different-session",
+            },
+        )).toThrow(/templateCiphertext/i);
     });
 
     it("rejects plaintext automation templates when accountMode=e2ee", () => {

@@ -1,18 +1,20 @@
 import type { ConnectedServiceCredentialHealthV1 } from "@happier-dev/protocol";
 
 import { inTx, type Tx } from "@/storage/inTx";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
 import {
     resolveLegacyServiceAccountTokenIdentityFields,
 } from "../qualifiedConnectedAccounts/identity";
 import {
     deleteQualifiedConnectedServiceLegacyVendorToken,
+    migrateQualifiedConnectedServiceCredentialInTx,
     mutateQualifiedConnectedServiceCredentialHealth,
     mutateQualifiedConnectedServiceCredentialInTx,
     mutateQualifiedConnectedServiceLegacyVendorToken,
     readQualifiedConnectedServiceCredentialMutationBasisInTx,
     readQualifiedConnectedServiceCredential,
+    type QualifiedCredentialMutationParams,
 } from "../qualifiedConnectedAccounts/credentialRepository";
 import {
     decodeLegacyQualifiedConnectedAccountCredentialEnvelope,
@@ -25,12 +27,15 @@ export type ConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "written"; credentialRevision: string }>
     | Readonly<{ status: "superseded"; reason: "revision_mismatch" | "refresh_lease_lost"; credentialRevision: string | null }>
     | Readonly<{ status: "provider_identity_mismatch" }>
+    | Readonly<{ status: "revision_required" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type ConnectedServiceCredentialHealthMutationResult =
     | Readonly<{ status: "written"; credentialRevision: string }>
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "unsupported_format" }>
+    | Readonly<{ status: "revision_required" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>
     | Readonly<{ status: "superseded"; reason: "revision_mismatch"; credentialRevision: string }>;
 
 export type ConnectedServiceCredentialMutationParams = Readonly<{
@@ -52,16 +57,61 @@ export async function mutateConnectedServiceCredentialInTx(
     tx: Tx,
     params: ConnectedServiceCredentialMutationParams,
 ): Promise<ConnectedServiceCredentialMutationResult> {
+    return await mutateConnectedServiceCredentialForModeInTx(
+        tx,
+        params,
+    );
+}
+
+export async function migrateConnectedServiceCredentialInTx(
+    tx: Tx,
+    params: Omit<
+        ConnectedServiceCredentialMutationParams,
+        "expectedCredentialRevision"
+    > & Readonly<{ expectedCredentialRevision: string }>,
+    toMode: "plain" | "e2ee",
+): Promise<ConnectedServiceCredentialMutationResult> {
+    // Account encryption migration prepares the target representation before
+    // the canonical Account owner commits the target mode in the same transaction.
+    return await mutateConnectedServiceCredentialForModeInTx(
+        tx,
+        params,
+        toMode,
+    );
+}
+
+async function mutateConnectedServiceCredentialForModeInTx(
+    tx: Tx,
+    params: ConnectedServiceCredentialMutationParams,
+    accountEncryptionTransitionMode?: "plain" | "e2ee",
+): Promise<ConnectedServiceCredentialMutationResult> {
+    if (params.expectedCredentialRevision === undefined) {
+        return { status: "revision_required" };
+    }
     const account = await tx.account.findUnique({
         where: { id: params.accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    const accountMode =
+        accountEncryptionTransitionMode
+        ?? (
+            currentness?.status === "ready"
+                ? currentness.currentness.encryptionMode
+                : null
+        );
     if (
         !account
-        || (
-            resolveEffectiveAccountEncryptionModeFromAccountRow(account)
-                === "plain"
-        ) !== (params.storageMode === "plain")
+        || currentness?.status !== "ready"
+        || (accountMode === "plain")
+            !== (params.storageMode === "plain")
     ) {
         return { status: "storage_mode_mismatch" };
     }
@@ -105,13 +155,11 @@ export async function mutateConnectedServiceCredentialInTx(
                 ref,
             },
         );
-    const currentRevision = current?.credentialRevision ?? null;
-    const expectedCredentialRevision =
-        params.expectedCredentialRevision !== undefined
-            ? params.expectedCredentialRevision
-            : currentRevision;
-    const result = await mutateQualifiedConnectedServiceCredentialInTx(
-        tx,
+    if (current?.credentialRevision === null) {
+        return { status: "revision_required" };
+    }
+    const expectedCredentialRevision = params.expectedCredentialRevision;
+    const mutationParams: QualifiedCredentialMutationParams =
         expectedCredentialRevision === null
             ? {
                 accountId: params.accountId,
@@ -151,14 +199,25 @@ export async function mutateConnectedServiceCredentialInTx(
                     profileId: params.profileId,
                 },
                 legacyExpiresAt: params.expiresAt,
-            },
-    );
+            };
+    const result =
+        accountEncryptionTransitionMode
+            ? await migrateQualifiedConnectedServiceCredentialInTx(
+                tx,
+                mutationParams,
+                accountEncryptionTransitionMode,
+            )
+            : await mutateQualifiedConnectedServiceCredentialInTx(
+                tx,
+                mutationParams,
+            );
     if (result.status === "written") {
         return {
             status: "written",
             credentialRevision: result.credentialRevision,
         };
     }
+    if (result.status === "revision_required") return result;
     if (result.status === "provider_identity_mismatch") return result;
     if (result.status === "storage_mode_mismatch"
         || result.status === "authentication_mode_mismatch") {
@@ -192,6 +251,9 @@ export async function mutateConnectedServiceCredentialHealth(params: Readonly<{
     health: ConnectedServiceCredentialHealthV1;
     expectedCredentialRevision?: string;
 }>): Promise<ConnectedServiceCredentialHealthMutationResult> {
+    if (params.expectedCredentialRevision === undefined) {
+        return { status: "revision_required" };
+    }
     const identity = resolveLegacyServiceAccountTokenIdentityFields({
         serviceId: params.serviceId,
         profileId: params.profileId,
@@ -207,16 +269,17 @@ export async function mutateConnectedServiceCredentialHealth(params: Readonly<{
         accountId: params.accountId,
         ref,
     });
-    if (!current) return { status: "not_found" };
+    if (current.status !== "resolved") return current;
+    if (current.credential.revisionSemantics === "legacy_unfenced") {
+        return { status: "revision_required" };
+    }
     const result = await mutateQualifiedConnectedServiceCredentialHealth({
         accountId: params.accountId,
         ref,
         health: params.health,
-        expectedCredentialRevision:
-            params.expectedCredentialRevision
-            ?? current.credentialRevision,
+        expectedCredentialRevision: params.expectedCredentialRevision,
         expectedConfigurationRevision:
-            current.configurationRevision,
+            current.credential.configurationRevision,
     });
     if (result.status === "superseded") {
         return {
@@ -231,19 +294,17 @@ export async function mutateConnectedServiceCredentialHealth(params: Readonly<{
 export async function mutateLegacyConnectedServiceVendorToken(params: Readonly<{
     accountId: string;
     vendor: string;
-    token: Uint8Array<ArrayBuffer>;
-}>): Promise<Readonly<{ status: "written" | "connected_credential_conflict" }>> {
+}>): Promise<Readonly<{ status: "revision_required" }>> {
     return await mutateQualifiedConnectedServiceLegacyVendorToken({
         accountId: params.accountId,
         vendor: params.vendor,
-        token: params.token,
     });
 }
 
 export async function deleteLegacyConnectedServiceVendorToken(params: Readonly<{
     accountId: string;
     vendor: string;
-}>): Promise<Readonly<{ status: "deleted" | "not_found" | "connected_credential_conflict" }>> {
+}>): Promise<Readonly<{ status: "revision_required" }>> {
     return await deleteQualifiedConnectedServiceLegacyVendorToken({
         accountId: params.accountId,
         vendor: params.vendor,

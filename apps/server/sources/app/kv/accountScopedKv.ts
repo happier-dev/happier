@@ -1,0 +1,118 @@
+import { PluginIdSchema } from "@happier-dev/protocol";
+
+import { isTodoKvKey } from "./todoKvStoredContent";
+
+/**
+ * UserKVStore is shared with pre-plugin generic KV, so Account-owned domains
+ * need physical names that cannot be addressed by that public API. These are
+ * direct, inspectable canonical identities: no hash or secondary lookup table
+ * decides which plugin owns a row.
+ */
+export const ACCOUNT_SCOPED_KV_RESERVED_PREFIX = "@happier/" as const;
+export const PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX =
+    "@happier/account/plugin-storage/v1/" as const;
+export const PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX =
+    "@happier/account/plugin-settings/v1/" as const;
+
+export type AccountScopedKvKeyClassification =
+    | Readonly<{ kind: "generic" }>
+    | Readonly<{ kind: "todo"; keyKind: "index" | "item" }>
+    | Readonly<{ kind: "pluginAccountStorage"; pluginId: string }>
+    | Readonly<{ kind: "pluginDeclarativeSettings"; pluginId: string }>
+    | Readonly<{ kind: "reservedUnknown" }>;
+
+export class AccountScopedKvReservedKeyError extends Error {
+    constructor() {
+        super("Reserved AccountScopedKv keys are not addressable through public KV");
+        this.name = "AccountScopedKvReservedKeyError";
+    }
+}
+
+function parsePluginIdAtPrefix(
+    key: string,
+    prefix: string,
+): string | null {
+    if (!key.startsWith(prefix)) return null;
+    const parsed = PluginIdSchema.safeParse(key.slice(prefix.length));
+    return parsed.success ? parsed.data : null;
+}
+
+export function buildPluginAccountStoragePhysicalKey(pluginId: string): string {
+    return `${PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX}${PluginIdSchema.parse(pluginId)}`;
+}
+
+export function buildPluginDeclarativeSettingsPhysicalKey(pluginId: string): string {
+    return `${PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX}${PluginIdSchema.parse(pluginId)}`;
+}
+
+/**
+ * One classifier owns every currently reserved Account UserKV row. Todo is a
+ * legacy public arm; the two plugin arms are private server namespaces.
+ */
+export function classifyAccountScopedKvKey(
+    key: string,
+): AccountScopedKvKeyClassification {
+    const pluginAccountStorage = parsePluginIdAtPrefix(
+        key,
+        PLUGIN_ACCOUNT_STORAGE_KEY_PREFIX,
+    );
+    if (pluginAccountStorage !== null) {
+        return { kind: "pluginAccountStorage", pluginId: pluginAccountStorage };
+    }
+
+    const pluginDeclarativeSettings = parsePluginIdAtPrefix(
+        key,
+        PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX,
+    );
+    if (pluginDeclarativeSettings !== null) {
+        return {
+            kind: "pluginDeclarativeSettings",
+            pluginId: pluginDeclarativeSettings,
+        };
+    }
+
+    if (key.startsWith(ACCOUNT_SCOPED_KV_RESERVED_PREFIX)) {
+        return { kind: "reservedUnknown" };
+    }
+
+    if (isTodoKvKey(key)) {
+        return {
+            kind: "todo",
+            keyKind: key === "todo.index" ? "index" : "item",
+        };
+    }
+
+    return { kind: "generic" };
+}
+
+export function isReservedAccountScopedKvKey(key: string): boolean {
+    const classification = classifyAccountScopedKvKey(key);
+    return classification.kind === "pluginAccountStorage"
+        || classification.kind === "pluginDeclarativeSettings"
+        || classification.kind === "reservedUnknown";
+}
+
+/**
+ * Public generic KV may retain its historical generic and Todo keys, but it
+ * cannot disclose or mutate any host-private AccountScopedKv row.
+ */
+export function assertPublicGenericKvKey(key: string): void {
+    if (isReservedAccountScopedKvKey(key)) {
+        throw new AccountScopedKvReservedKeyError();
+    }
+}
+
+/**
+ * A prefix such as "@" or "@happier" could enumerate reserved rows even if it
+ * does not itself contain the full reserved marker, so reject every prefix
+ * that overlaps the reserved namespace.
+ */
+export function assertPublicGenericKvPrefix(prefix: string | undefined): void {
+    if (!prefix) return;
+    if (
+        prefix.startsWith(ACCOUNT_SCOPED_KV_RESERVED_PREFIX)
+        || ACCOUNT_SCOPED_KV_RESERVED_PREFIX.startsWith(prefix)
+    ) {
+        throw new AccountScopedKvReservedKeyError();
+    }
+}

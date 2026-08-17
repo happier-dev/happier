@@ -6,6 +6,7 @@ import {
     type ReviewCommentV1,
 } from "@happier-dev/protocol";
 
+import type { AccountEncryptionCurrentness } from "@/app/encryption/accountContentKeyAdmission";
 import { ReviewCommentOperationError } from "./errors";
 
 export type ReviewCommentPrincipal = Readonly<{
@@ -14,6 +15,8 @@ export type ReviewCommentPrincipal = Readonly<{
     grants?: readonly string[];
     currentIntent?: ReviewCommentCurrentIntentV1;
     storageMode?: "plain" | "e2ee";
+    accountVersion?: number;
+    accountEncryptionCurrentness?: AccountEncryptionCurrentness;
 }>;
 
 export function hasReviewCommentDirectWriteGrant(params: ReviewCommentPrincipal): boolean {

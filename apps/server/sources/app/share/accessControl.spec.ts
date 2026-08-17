@@ -13,10 +13,13 @@ installDbModuleMock({ db: dbMocks.db });
 let checkSessionAccess: typeof import("./accessControl").checkSessionAccess;
 let isSessionOwner: typeof import("./accessControl").isSessionOwner;
 let canManageSharing: typeof import("./accessControl").canManageSharing;
+let canManageSharingInTx: typeof import("./accessControl").canManageSharingInTx;
 let areFriends: typeof import("./accessControl").areFriends;
+let buildCurrentSessionParticipantWhere: typeof import("./accessControl").buildCurrentSessionParticipantWhere;
 
 beforeAll(async () => {
-    ({ checkSessionAccess, isSessionOwner, canManageSharing, areFriends } = await import("./accessControl"));
+    ({ checkSessionAccess, isSessionOwner, canManageSharing, canManageSharingInTx, areFriends } = await import("./accessControl"));
+    ({ buildCurrentSessionParticipantWhere } = await import("./accessControl"));
 });
 
 describe("accessControl", () => {
@@ -131,6 +134,63 @@ describe("accessControl", () => {
         });
     });
 
+    it("builds one current participant predicate for owner and current share paths", () => {
+        expect(buildCurrentSessionParticipantWhere({ userId: "user-1", sessionId: "session-1" }))
+            .toMatchObject({
+                id: "session-1",
+                OR: [
+                    { accountId: "user-1" },
+                    {
+                        AND: [
+                            { OR: expect.any(Array) },
+                            { shares: { some: { sharedWithUserId: "user-1" } } },
+                        ],
+                    },
+                ],
+            });
+    });
+
+    it("builds a current-admin predicate with delegated-approval capability when requested", async () => {
+        const findFirst = vi.fn().mockResolvedValue({
+            accountId: "user-1",
+            currentStorageState: "hosted",
+        });
+
+        await expect(canManageSharingInTx({
+            session: { findFirst },
+        } as never, {
+            userId: "user-1",
+            sessionId: "session-1",
+            requirePermissionDelegation: true,
+        })).resolves.toBe(true);
+
+        expect(findFirst).toHaveBeenCalledWith({
+            where: expect.objectContaining({
+                id: "session-1",
+                OR: [
+                    { accountId: "user-1" },
+                    expect.objectContaining({
+                        AND: expect.arrayContaining([
+                            expect.objectContaining({
+                                shares: {
+                                    some: expect.objectContaining({
+                                        sharedWithUserId: "user-1",
+                                        accessLevel: { in: ["admin"] },
+                                        canApprovePermissions: true,
+                                    }),
+                                },
+                            }),
+                        ]),
+                    }),
+                ],
+            }),
+            select: expect.objectContaining({
+                accountId: true,
+                seq: true,
+            }),
+        });
+    });
+
     describe("isSessionOwner", () => {
         it("should return true when user owns the session", async () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
@@ -179,6 +239,7 @@ describe("accessControl", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 id: "session-1",
                 accountId: "user-owner",
+                currentStorageState: "hosted",
             } as any);
 
             dbMocks.db.sessionShare.findUnique.mockResolvedValue({

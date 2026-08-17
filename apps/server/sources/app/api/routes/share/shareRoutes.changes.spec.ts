@@ -7,10 +7,13 @@ import {
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 vi.mock("@/app/share/accessControl", () => ({
     canManageSharing: vi.fn(async () => true),
+    canManageSharingInTx: vi.fn(async () => true),
     canManagePermissionDelegation: vi.fn(async () => true),
+    buildCurrentSessionParticipantWhere: vi.fn(() => ({})),
     areFriends: vi.fn(async () => true),
 }));
 
@@ -63,6 +66,7 @@ const dbMocks = createDbMocks({
     sessionShare: ["upsert", "findFirst", "update"],
 } as const);
 const txDbMocks = createDbMocks({
+    account: ["findUnique"],
     session: ["findUnique"],
     sessionShare: ["upsert", "update", "findFirst", "delete"],
 } as const);
@@ -73,6 +77,7 @@ installDbModuleMock(() => ({
 
 vi.mock("@/storage/inTx", () => {
     const harness = createInTxHarness(() => ({
+            account: txDbMocks.db.account,
             session: txDbMocks.db.session,
             sessionShare: txDbMocks.db.sessionShare,
         }));
@@ -88,6 +93,31 @@ const ENCRYPTED_DATA_KEY = encodeBase64(
     "base64",
 );
 const MALFORMED_ENCRYPTED_DATA_KEY = encodeBase64(Uint8Array.from([0, ...new Array(73).fill(1)]), "base64");
+const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+});
+const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
+const CURRENT_STORED_CONTENT_COMPATIBILITY = {
+    accepted: true,
+    supportsCurrentProtocol: true,
+    outcome: "accepted",
+    declaration: { v: 1, protocolVersion: 1 },
+    upgradeRequired: null,
+} as const;
+
+function createCurrentRouteTestBuilder(
+    options: Parameters<typeof createRouteTestBuilder>[0],
+) {
+    return createRouteTestBuilder({
+        ...options,
+        defaultRequest: {
+            accountStoredContentCompatibility:
+                CURRENT_STORED_CONTENT_COMPATIBILITY,
+            ...options.defaultRequest,
+        },
+    });
+}
 
 describe("shareRoutes (AccountChange integration)", () => {
     beforeEach(() => {
@@ -99,14 +129,23 @@ describe("shareRoutes (AccountChange integration)", () => {
             encryptionMode: "e2ee",
             currentStorageState: "hosted",
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
         });
         txDbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
+            accountId: "owner",
             encryptionMode: "e2ee",
             currentStorageState: "hosted",
+            metadata: STORED_SHARED_METADATA_V1,
+            metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+            agentState: null,
+            agentStateVersion: 0,
+        });
+        txDbMocks.db.account.findUnique.mockResolvedValue({
+            encryptionMode: "e2ee",
+            ...createSignedAccountContentBinding(),
         });
         dbMocks.db.account.findUnique.mockResolvedValue({ id: "recipient" });
 
@@ -141,7 +180,7 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("POST marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "POST",
             path: "/v1/sessions/:sessionId/shares",
             registerRoutes(app) {
@@ -177,7 +216,7 @@ describe("shareRoutes (AccountChange integration)", () => {
         );
     });
 
-    it("POST preserves released layout-zero direct sharing", async () => {
+    it("POST refuses released layout-zero direct sharing until owner migration", async () => {
         dbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
             accountId: "owner",
@@ -204,7 +243,7 @@ describe("shareRoutes (AccountChange integration)", () => {
         });
 
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "POST",
             path: "/v1/sessions/:sessionId/shares",
             registerRoutes(app) {
@@ -222,13 +261,10 @@ describe("shareRoutes (AccountChange integration)", () => {
             },
         });
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(response).toEqual({
-            share: expect.objectContaining({
-                id: "share-1",
-                accessLevel: "edit",
-                canApprovePermissions: false,
-            }),
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
         expect(txDbMocks.db.session.findUnique).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: "s1" },
@@ -237,16 +273,44 @@ describe("shareRoutes (AccountChange integration)", () => {
                 ownerMetadata: true,
             }),
         }));
-        expect(txDbMocks.db.sessionShare.upsert).toHaveBeenCalledTimes(1);
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({
-                accountId: "recipient",
-                kind: "session",
-                entityId: "s1",
-            }),
-        );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(txDbMocks.db.sessionShare.upsert).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
+    it("POST refuses a layout-one share when the owning plain Account has an encrypted owner envelope", async () => {
+        txDbMocks.db.account.findUnique.mockResolvedValue({
+            encryptionMode: "plain",
+            publicKey: null,
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        });
+
+        const { shareRoutes } = await import("./shareRoutes");
+        const route = createCurrentRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
+
+        const { reply, response } = await route.invoke({
+            userId: "owner",
+            params: { sessionId: "s1" },
+            body: {
+                userId: "recipient",
+                accessLevel: "view",
+                encryptedDataKey: ENCRYPTED_DATA_KEY,
+            },
+        });
+
+        expect(reply.statusCode).toBe(409);
+        expect(response).toEqual({
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
+        });
+        expect(txDbMocks.db.sessionShare.upsert).not.toHaveBeenCalled();
     });
 
     it.each(["machine_only", "server_partial"] as const)(
@@ -254,9 +318,14 @@ describe("shareRoutes (AccountChange integration)", () => {
         async (currentStorageState) => {
             txDbMocks.db.session.findUnique.mockResolvedValue({
                 id: "s1",
+                accountId: "owner",
                 encryptionMode: "e2ee",
+                metadata: STORED_SHARED_METADATA_V1,
+                metadataVersion: 1,
                 metadataLayoutVersion: 1,
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                agentState: null,
+                agentStateVersion: 0,
                 currentStorageState,
                 acceptedThroughServerSeq: currentStorageState === "server_partial" ? 1 : null,
                 materializationPublicationId: null,
@@ -265,7 +334,7 @@ describe("shareRoutes (AccountChange integration)", () => {
             });
 
             const { shareRoutes } = await import("./shareRoutes");
-            const route = createRouteTestBuilder({
+            const route = createCurrentRouteTestBuilder({
                 method: "POST",
                 path: "/v1/sessions/:sessionId/shares",
                 registerRoutes(app) {
@@ -294,9 +363,14 @@ describe("shareRoutes (AccountChange integration)", () => {
     it("POST allows plaintext sessions without an encryptedDataKey", async () => {
         txDbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
+            accountId: "owner",
             encryptionMode: "plain",
+            metadata: STORED_SHARED_METADATA_V1,
+            metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+            agentState: null,
+            agentStateVersion: 0,
             currentStorageState: "hosted",
         });
         txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
@@ -313,7 +387,7 @@ describe("shareRoutes (AccountChange integration)", () => {
         }));
 
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "POST",
             path: "/v1/sessions/:sessionId/shares",
             registerRoutes(app) {
@@ -343,7 +417,7 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("POST rejects malformed E2EE encryptedDataKey envelopes before writing a share", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "POST",
             path: "/v1/sessions/:sessionId/shares",
             registerRoutes(app) {
@@ -371,9 +445,14 @@ describe("shareRoutes (AccountChange integration)", () => {
     it("POST downgrade to view clears existing permission approval delegation on upsert", async () => {
         txDbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
+            accountId: "owner",
             encryptionMode: "plain",
+            metadata: STORED_SHARED_METADATA_V1,
+            metadataVersion: 1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+            agentState: null,
+            agentStateVersion: 0,
             currentStorageState: "hosted",
         });
         txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
@@ -390,7 +469,7 @@ describe("shareRoutes (AccountChange integration)", () => {
         }));
 
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "POST",
             path: "/v1/sessions/:sessionId/shares",
             registerRoutes(app) {
@@ -419,7 +498,7 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("PATCH marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "PATCH",
             path: "/v1/sessions/:sessionId/shares/:shareId",
             registerRoutes(app) {
@@ -465,7 +544,7 @@ describe("shareRoutes (AccountChange integration)", () => {
         }));
 
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "PATCH",
             path: "/v1/sessions/:sessionId/shares/:shareId",
             registerRoutes(app) {
@@ -501,7 +580,7 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("DELETE marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const route = createRouteTestBuilder({
+        const route = createCurrentRouteTestBuilder({
             method: "DELETE",
             path: "/v1/sessions/:sessionId/shares/:shareId",
             registerRoutes(app) {

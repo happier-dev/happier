@@ -1,6 +1,7 @@
 import { db } from "@/storage/db";
 import {
     applySessionTranscriptPublicationCeilingToProjection,
+    resolveSessionTranscriptPublicationCeiling,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     type SessionTranscriptPublicationFields,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -38,7 +39,8 @@ type SessionActivityBadgeRow = Readonly<{
 }>;
 
 export function computeSessionContributesToActivityBadge(session: SessionActivityBadgeInputs): boolean {
-    if (session.active === false) return false;
+    const hasLiveFacts = resolveSessionTranscriptPublicationCeiling(session) === null;
+    if (hasLiveFacts && session.active === false) return false;
     if (session.archivedAt) return false;
 
     const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
@@ -51,13 +53,20 @@ export function computeSessionContributesToActivityBadge(session: SessionActivit
     const seq = publicationProjection.seq;
     const lastViewedSessionSeq = publicationProjection.lastViewedSessionSeq;
     const pendingPermissionRequestCount =
-        typeof session.pendingPermissionRequestCount === "number" ? session.pendingPermissionRequestCount : 0;
+        hasLiveFacts && typeof session.pendingPermissionRequestCount === "number"
+            ? session.pendingPermissionRequestCount
+            : 0;
     const pendingUserActionRequestCount =
-        typeof session.pendingUserActionRequestCount === "number" ? session.pendingUserActionRequestCount : 0;
+        hasLiveFacts && typeof session.pendingUserActionRequestCount === "number"
+            ? session.pendingUserActionRequestCount
+            : 0;
     const pendingBlockedCount =
-        typeof session.pendingBlockedCount === "number" ? session.pendingBlockedCount : 0;
+        hasLiveFacts && typeof session.pendingBlockedCount === "number"
+            ? session.pendingBlockedCount
+            : 0;
     const hasFailedPrimaryRuntimeIssue =
-        session.latestTurnStatus === "failed"
+        hasLiveFacts
+        && session.latestTurnStatus === "failed"
         && typeof session.lastRuntimeIssue === "string"
         && session.lastRuntimeIssue.trim().length > 0;
 
@@ -94,8 +103,6 @@ export async function computeAccountActivityBadgeCounts(accountIds: ReadonlyArra
             archivedAt: null,
         },
         select: {
-            accountId: true,
-            seq: true,
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             pendingCount: true,
             pendingBlockedCount: true,

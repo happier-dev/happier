@@ -40,21 +40,31 @@ describe("voiceRoutes (rate limit)", () => {
         resetVoiceEnv();
     });
 
-    it("registers /v1/voice/token with a per-user rate limit by default", async () => {
+    it("composes one Fastify request limiter for both mint aliases and disables their automatic route limiters", async () => {
         const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
-        const opts = getRouteEntry(app, "POST", "/v1/voice/token").opts;
-        expect(opts).toBeTruthy();
-        expect(opts?.config?.rateLimit).toEqual(
+        const tokenRoute = getRouteEntry(app, "POST", "/v1/voice/token").opts;
+        const leaseMintRoute = getRouteEntry(app, "POST", "/v1/voice/lease/mint").opts;
+        expect(app.rateLimit).toHaveBeenCalledTimes(1);
+        expect(app.rateLimit).toHaveBeenCalledWith(
             expect.objectContaining({
                 max: 10,
                 timeWindow: "1 minute",
             }),
         );
-        expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
-        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
+        const sharedHandler = app.rateLimit.mock.results[0]?.value;
+        expect(tokenRoute.config?.rateLimit).toBe(false);
+        expect(leaseMintRoute.config?.rateLimit).toBe(false);
+        expect(tokenRoute.onRequest).toBe(sharedHandler);
+        expect(leaseMintRoute.onRequest).toBe(sharedHandler);
+        expect(tokenRoute.preHandler).toBe(app.authenticate);
+        expect(leaseMintRoute.preHandler).toBe(app.authenticate);
+
+        const rateLimitOptions = app.rateLimit.mock.calls[0]?.[0];
+        expect(rateLimitOptions?.keyGenerator).toEqual(expect.any(Function));
+        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
             "uid:user-1",
         );
     });
@@ -64,7 +74,14 @@ describe("voiceRoutes (rate limit)", () => {
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
+        const sessionStart = getRouteEntry(app, "POST", "/v1/voice/session/start").opts;
         const opts = getRouteEntry(app, "POST", "/v1/voice/session/complete").opts;
+        expect(sessionStart.config?.rateLimit).toEqual(
+            expect.objectContaining({
+                max: 60,
+                timeWindow: "1 minute",
+            }),
+        );
         expect(opts).toBeTruthy();
         expect(opts?.config?.rateLimit).toEqual(
             expect.objectContaining({
@@ -92,8 +109,8 @@ describe("voiceRoutes (rate limit)", () => {
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
-        const opts = getRouteEntry(app, "POST", "/v1/voice/token").opts;
-        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
+        const rateLimitOptions = app.rateLimit.mock.calls[0]?.[0];
+        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
             "ip:203.0.113.9",
         );
     });
@@ -113,12 +130,30 @@ describe("voiceRoutes (rate limit)", () => {
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
-        const opts = getRouteEntry(app, "POST", "/v1/voice/token").opts;
-        expect(opts?.config?.rateLimit).toEqual(
+        expect(app.rateLimit).toHaveBeenCalledWith(
             expect.objectContaining({
                 max: 7,
                 timeWindow: "30 seconds",
             }),
         );
+    });
+
+    it("does not create a mint handler when API route rate limiting is disabled", async () => {
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            HAPPIER_API_RATE_LIMITS_ENABLED: "false",
+        });
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = createFakeRouteApp();
+        voiceRoutes(app as any);
+
+        expect(app.rateLimit).not.toHaveBeenCalled();
+        expect(getRouteEntry(app, "POST", "/v1/voice/token").opts.onRequest).toBeUndefined();
+        expect(getRouteEntry(app, "POST", "/v1/voice/lease/mint").opts.onRequest).toBeUndefined();
     });
 });

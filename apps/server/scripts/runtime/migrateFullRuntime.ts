@@ -2,6 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
+import {
+    hasSessionSystemRecordContractMigration,
+    runSessionSystemRecordFinalContractBackfill,
+} from '../../sources/app/session/systemRecords/sessionSystemRecordBackfillExecution';
+import {
+    runSessionSystemRecordMigrationDeployment,
+} from '../../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment';
+
 export interface FullRuntimeMigrationProcessBoundary {
     spawn(command: string, args: string[], options: {
         cwd: string;
@@ -47,6 +55,15 @@ const defaultProcessBoundary: FullRuntimeMigrationProcessBoundary = {
     },
 };
 
+class PackagedPrismaMigrationFailure extends Error {
+    readonly exitCode: number;
+
+    constructor(exitCode: number) {
+        super(`[happier-server-migrate] packaged Prisma exited with code ${exitCode}`);
+        this.exitCode = exitCode;
+    }
+}
+
 export async function runFullRuntimeMigration({
     executablePath,
     env,
@@ -85,21 +102,46 @@ export async function runFullRuntimeMigration({
         requirePath(queryEnginePath, 'file'),
     ]);
 
-    const completion = processBoundary.spawn(runnerPath, ['migrate', 'deploy', '--schema', schemaPath], {
-        cwd: artifactRoot,
-        env: {
-            ...env,
-            DATABASE_URL: databaseUrl,
-            HAPPIER_DB_PROVIDER: provider,
-            PRISMA_SCHEMA_ENGINE_BINARY: schemaEnginePath,
-            PRISMA_QUERY_ENGINE_LIBRARY: queryEnginePath,
-        },
-        stdio: 'inherit',
-    });
-    if (completion.error) throw new Error(`[happier-server-migrate] failed to launch packaged Prisma: ${completion.error.message}`);
-    if (completion.status === 0 && completion.signal === null) return 0;
-    if (typeof completion.status === 'number' && completion.status !== 0) return completion.status;
-    return 1;
+    const deploy = async (stageSchemaPath: string): Promise<void> => {
+        const completion = processBoundary.spawn(runnerPath, ['migrate', 'deploy', '--schema', stageSchemaPath], {
+            cwd: artifactRoot,
+            env: {
+                ...env,
+                DATABASE_URL: databaseUrl,
+                HAPPIER_DB_PROVIDER: provider,
+                PRISMA_SCHEMA_ENGINE_BINARY: schemaEnginePath,
+                PRISMA_QUERY_ENGINE_LIBRARY: queryEnginePath,
+            },
+            stdio: 'inherit',
+        });
+        if (completion.error) {
+            throw new Error(`[happier-server-migrate] failed to launch packaged Prisma: ${completion.error.message}`);
+        }
+        if (completion.status === 0 && completion.signal === null) return;
+        if (typeof completion.status === 'number' && completion.status !== 0) {
+            throw new PackagedPrismaMigrationFailure(completion.status);
+        }
+        throw new PackagedPrismaMigrationFailure(1);
+    };
+
+    try {
+        await runSessionSystemRecordMigrationDeployment({
+            migrationsDir: migrationRoot,
+            schemaPath,
+            isContractApplied: async () => await hasSessionSystemRecordContractMigration({
+                provider,
+                databaseUrl,
+            }),
+            deploy: async (stage) => await deploy(stage.schemaPath!),
+            runFinalContractBackfill: async () => {
+                await runSessionSystemRecordFinalContractBackfill({ provider, databaseUrl });
+            },
+        });
+        return 0;
+    } catch (error) {
+        if (error instanceof PackagedPrismaMigrationFailure) return error.exitCode;
+        throw error;
+    }
 }
 
 const isMain = (import.meta as ImportMeta & { main?: boolean }).main === true;

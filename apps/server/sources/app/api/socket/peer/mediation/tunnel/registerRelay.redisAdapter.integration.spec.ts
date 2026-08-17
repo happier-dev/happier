@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import http from "node:http";
+import net from "node:net";
 
 import {
     createPeerTcpTunnelRelayAuthorizationSigningInputV2,
@@ -7,6 +9,7 @@ import {
 } from "@happier-dev/protocol";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { Redis } from "ioredis";
+import { RedisMemoryServer } from "redis-memory-server";
 import { Server } from "socket.io";
 import { io as createClient, type Socket as ClientSocket } from "socket.io-client";
 import tweetnacl from "tweetnacl";
@@ -41,10 +44,36 @@ type StartedCluster = Readonly<{
     coordinatorB: PeerTcpTunnelRelayCoordinator;
     portA: number;
     portB: number;
+    partitionRedisA(): void;
+    healRedisA(): Promise<void>;
     close(): Promise<void>;
 }>;
 
-async function listen(server: http.Server): Promise<number> {
+type RedisPartitionProxy = Readonly<{
+    redisUrl: string;
+    partition(): void;
+    heal(): void;
+    close(): Promise<void>;
+}>;
+
+type ProductRedisModule = typeof import("@/storage/redis/redis");
+
+type RestartableProductCluster = Readonly<{
+    ioA: Server;
+    ioB: Server;
+    redisA: Redis;
+    redisB: Redis;
+    coordinatorA: PeerTcpTunnelRelayCoordinator;
+    coordinatorB: PeerTcpTunnelRelayCoordinator;
+    portA: number;
+    portB: number;
+    restartRedis(): Promise<void>;
+    waitForGrantConsumedBeforeAdapterRecovery(grantId: string): Promise<void>;
+    waitForAdapterRecovery(): Promise<void>;
+    close(): Promise<void>;
+}>;
+
+async function listen(server: http.Server | net.Server): Promise<number> {
     await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(0, "127.0.0.1", () => resolve());
@@ -54,8 +83,58 @@ async function listen(server: http.Server): Promise<number> {
     throw new Error("Failed to determine relay cluster test port");
 }
 
-async function closeServer(server: http.Server): Promise<void> {
+async function closeServer(server: http.Server | net.Server): Promise<void> {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function startRedisPartitionProxy(redisUrl: string): Promise<RedisPartitionProxy> {
+    const upstreamUrl = new URL(redisUrl);
+    const upstreamHost = upstreamUrl.hostname;
+    const upstreamPort = Number(upstreamUrl.port || "6379");
+    const sockets = new Set<net.Socket>();
+    let partitioned = false;
+    const server = net.createServer((client) => {
+        if (partitioned) {
+            client.destroy();
+            return;
+        }
+        const upstream = net.createConnection({
+            host: upstreamHost,
+            port: upstreamPort,
+        });
+        sockets.add(client);
+        sockets.add(upstream);
+        const destroyPair = (): void => {
+            sockets.delete(client);
+            sockets.delete(upstream);
+            client.destroy();
+            upstream.destroy();
+        };
+        client.once("error", destroyPair);
+        upstream.once("error", destroyPair);
+        client.once("close", destroyPair);
+        upstream.once("close", destroyPair);
+        client.pipe(upstream);
+        upstream.pipe(client);
+    });
+    const proxyPort = await listen(server);
+    const proxyUrl = new URL(redisUrl);
+    proxyUrl.hostname = "127.0.0.1";
+    proxyUrl.port = String(proxyPort);
+    return {
+        redisUrl: proxyUrl.toString(),
+        partition: () => {
+            partitioned = true;
+            for (const socket of [...sockets]) socket.destroy();
+        },
+        heal: () => {
+            partitioned = false;
+        },
+        close: async () => {
+            for (const socket of [...sockets]) socket.destroy();
+            await closeServer(server);
+        },
+    };
 }
 
 type RegisterRelayModule = typeof import("./registerRelay");
@@ -69,6 +148,10 @@ function registerRelayServer(
     io: Server,
     redis: Redis,
     registerRelay: RegisterRelayModule,
+    relayCaps: Readonly<{
+        maxIdleMs?: number;
+        maxDurationMs?: number;
+    }> = {},
 ): PeerTcpTunnelRelayCoordinator {
     const coordinator = createPeerTcpTunnelRelayCoordinator({
         io,
@@ -93,17 +176,99 @@ function registerRelayServer(
             allowedPorts: [3000],
             relayAuthorizationTrustRoots,
             coordinator,
+            ...relayCaps,
         });
     });
     return coordinator;
 }
 
-async function startCluster(): Promise<StartedCluster> {
+async function startCluster(relayCaps: Readonly<{
+    maxIdleMs?: number;
+    maxDurationMs?: number;
+}> = {}): Promise<StartedCluster> {
     const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
         env: process.env,
     });
-    const redisA = new Redis(redisUrl);
+    const redisAProxy = await startRedisPartitionProxy(redisUrl);
+    const redisA = new Redis(redisAProxy.redisUrl);
     const redisB = new Redis(redisUrl);
+    redisA.on("error", () => {
+        // Expected while the integration harness severs this replica's Redis path.
+    });
+    const httpA = http.createServer();
+    const httpB = http.createServer();
+    const ioA = new Server(httpA, {
+        path: SOCKET_PATH,
+        transports: ["websocket"],
+        serveClient: false,
+        adapter: createAdapter(redisA),
+    });
+    const ioB = new Server(httpB, {
+        path: SOCKET_PATH,
+        transports: ["websocket"],
+        serveClient: false,
+        adapter: createAdapter(redisB),
+    });
+    const registerRelayA = await loadIsolatedRegisterRelayModule();
+    const registerRelayB = await loadIsolatedRegisterRelayModule();
+    const coordinatorA = registerRelayServer(ioA, redisA, registerRelayA, relayCaps);
+    const coordinatorB = registerRelayServer(ioB, redisB, registerRelayB, relayCaps);
+    const portA = await listen(httpA);
+    const portB = await listen(httpB);
+    return {
+        ioA,
+        ioB,
+        redisA,
+        redisB,
+        redisMemory,
+        coordinatorA,
+        coordinatorB,
+        portA,
+        portB,
+        partitionRedisA: () => redisAProxy.partition(),
+        healRedisA: async () => {
+            redisAProxy.heal();
+            await waitForCondition(() => redisA.status === "ready");
+        },
+        close: async () => {
+            await ioA.close();
+            await coordinatorA.close();
+            await ioB.close();
+            await coordinatorB.close();
+            await closeServer(httpA);
+            await closeServer(httpB);
+            if (redisA.status === "ready") {
+                await redisA.quit();
+            } else {
+                redisA.disconnect(false);
+            }
+            await redisB.quit();
+            await redisAProxy.close();
+            await redisMemory?.stop();
+        },
+    };
+}
+
+async function startRestartableProductCluster(): Promise<RestartableProductCluster> {
+    const redisMemory = await RedisMemoryServer.create();
+    const redisUrl = `redis://${await redisMemory.getIp()}:${await redisMemory.getPort()}`;
+    const originalRedisUrl = process.env.REDIS_URL;
+
+    const loadProductRedisModule = async (): Promise<ProductRedisModule> => {
+        process.env.REDIS_URL = redisUrl;
+        vi.resetModules();
+        return await import("@/storage/redis/redis");
+    };
+    const redisModuleA = await loadProductRedisModule();
+    const redisA = redisModuleA.getRedisSocketClusterClient();
+    const redisModuleB = await loadProductRedisModule();
+    const redisB = redisModuleB.getRedisSocketClusterClient();
+    if (originalRedisUrl === undefined) {
+        delete process.env.REDIS_URL;
+    } else {
+        process.env.REDIS_URL = originalRedisUrl;
+    }
+
     const httpA = http.createServer();
     const httpB = http.createServer();
     const ioA = new Server(httpA, {
@@ -124,26 +289,71 @@ async function startCluster(): Promise<StartedCluster> {
     const coordinatorB = registerRelayServer(ioB, redisB, registerRelayB);
     const portA = await listen(httpA);
     const portB = await listen(httpB);
+
+    const waitForRedisReady = async (redis: Redis): Promise<void> => {
+        await waitForCondition(() => redis.status === "ready", 15_000);
+    };
+
     return {
         ioA,
         ioB,
         redisA,
         redisB,
-        redisMemory,
         coordinatorA,
         coordinatorB,
         portA,
         portB,
+        restartRedis: async () => {
+            await redisMemory.stop();
+            await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+            await redisMemory.start();
+            if (redisA.status === "ready") {
+                throw new Error("Redis adapter recovered before the restart probe could exercise admission isolation");
+            }
+        },
+        waitForGrantConsumedBeforeAdapterRecovery: async (grantId) => {
+            const verifier = new Redis(redisUrl, {
+                enableOfflineQueue: false,
+                lazyConnect: true,
+                maxRetriesPerRequest: 0,
+            });
+            const grantDigest = createHash("sha256").update(grantId, "utf8").digest("hex");
+            const grantKey = `peer-tunnel-relay-grant:v1:${grantDigest}`;
+            try {
+                await verifier.connect();
+                const deadline = Date.now() + 4_000;
+                while (Date.now() < deadline) {
+                    if (redisA.status === "ready") {
+                        throw new Error("Adapter recovered before the dedicated admission client consumed the grant");
+                    }
+                    if (await verifier.exists(grantKey) === 1) return;
+                    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+                }
+                throw new Error("Dedicated admission client did not consume the grant before adapter recovery");
+            } finally {
+                if (verifier.status === "ready") {
+                    await verifier.quit();
+                } else {
+                    verifier.disconnect(false);
+                }
+            }
+        },
+        waitForAdapterRecovery: async () => {
+            await Promise.all([
+                waitForRedisReady(redisA),
+                waitForRedisReady(redisB),
+            ]);
+        },
         close: async () => {
             await ioA.close();
             await coordinatorA.close();
             await ioB.close();
             await coordinatorB.close();
-            await closeServer(httpA);
-            await closeServer(httpB);
-            await redisA.quit();
-            await redisB.quit();
-            await redisMemory?.stop();
+            if (httpA.listening) await closeServer(httpA);
+            if (httpB.listening) await closeServer(httpB);
+            redisModuleA.closeRedisSocketClusterClient();
+            redisModuleB.closeRedisSocketClusterClient();
+            await redisMemory.stop();
         },
     };
 }
@@ -182,8 +392,10 @@ function createOpenEnvelope(input: Readonly<{
     tunnelId: string;
     grantId: string;
     relaySocketId: string;
+    issuedAt?: number;
+    expiresAt?: number;
 }>): PeerTcpTunnelRelayEnvelope {
-    const now = Date.now();
+    const now = input.issuedAt ?? Date.now();
     const destination = { host: "127.0.0.1", port: 3000 } as const;
     const payload = {
         v: 2,
@@ -204,7 +416,7 @@ function createOpenEnvelope(input: Readonly<{
         maxDurationMs: 300_000,
         maxTotalBytes: 64 * 1024 * 1024,
         iat: now,
-        exp: now + 300_000,
+        exp: input.expiresAt ?? now + 300_000,
         aud: "happier-tcp-tunnel-relay-authorization",
     } as const;
     return {
@@ -309,13 +521,268 @@ function createMachineTerminalEnvelope(input: Readonly<{
 }
 
 describe("peer tunnel relay Redis adapter integration", () => {
-    const clusters: StartedCluster[] = [];
+    const clusters: Array<Readonly<{ close(): Promise<void> }>> = [];
     const clients: ClientSocket[] = [];
 
     afterEach(async () => {
         while (clients.length > 0) clients.pop()?.disconnect();
         while (clusters.length > 0) await clusters.pop()?.close();
     });
+
+    it("fails closed before OPEN when the owner replica loses Redis transport and preserves one global winner after recovery", async () => {
+        const cluster = await startCluster();
+        clusters.push(cluster);
+        const userA = await connectClient(cluster.portA, "user-scoped");
+        const userB = await connectClient(cluster.portB, "user-scoped");
+        const machine = await connectClient(cluster.portB, "machine-scoped");
+        clients.push(userA, userB, machine);
+
+        const userAFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        const userBFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        const machineFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        userA.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => userAFrames.push(value));
+        userB.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => userBFrames.push(value));
+        machine.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => machineFrames.push(value));
+
+        cluster.partitionRedisA();
+        expect(userA.connected).toBe(true);
+        expect(userB.connected).toBe(true);
+        expect(machine.connected).toBe(true);
+
+        const grantId = "partition-before-open-global-grant";
+        const unavailableTunnelId = "partition-before-open-unavailable";
+        const unavailableOpen = createOpenEnvelope({
+            tunnelId: unavailableTunnelId,
+            grantId,
+            relaySocketId: userA.id!,
+        });
+        userA.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, unavailableOpen);
+
+        await waitForCondition(() => userAFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === unavailableTunnelId
+            && frame.frame.reasonCode === "route_unavailable",
+        ));
+        expect(machineFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === unavailableTunnelId,
+        )).toHaveLength(0);
+
+        await cluster.healRedisA();
+        userA.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, unavailableOpen);
+        await waitForCondition(() => machineFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === unavailableTunnelId,
+        ));
+        userA.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, unavailableOpen);
+        userB.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId: "partition-before-open-duplicate",
+            grantId,
+            relaySocketId: userB.id!,
+        }));
+        await waitForCondition(() => userBFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === "partition-before-open-duplicate"
+            && frame.frame.reasonCode === "relay_authorization_invalid",
+        ));
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        expect(userAFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === unavailableTunnelId,
+        ).map((frame) => frame.v === 1 && frame.frame.kind === "abort"
+            ? frame.frame.reasonCode
+            : "unexpected")).toEqual([
+            "route_unavailable",
+            "tunnel_id_already_open",
+        ]);
+        expect(machineFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === unavailableTunnelId,
+        )).toHaveLength(1);
+        expect(userBFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === "partition-before-open-duplicate"
+            && frame.frame.reasonCode === "relay_authorization_invalid",
+        )).toHaveLength(1);
+    });
+
+    it("terminalizes an admitted cross-replica tunnel once during Redis transport partition without reroute or resurrection", async () => {
+        const cluster = await startCluster({
+            maxIdleMs: 250,
+            maxDurationMs: 2_000,
+        });
+        clusters.push(cluster);
+        const user = await connectClient(cluster.portA, "user-scoped");
+        const machine = await connectClient(cluster.portB, "machine-scoped");
+        clients.push(user, machine);
+
+        const userFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        const machineFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        user.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => userFrames.push(value));
+        machine.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => machineFrames.push(value));
+
+        const tunnelId = "partition-after-attachment";
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId,
+            grantId: "partition-after-attachment-grant",
+            relaySocketId: user.id!,
+        }));
+        await waitForCondition(() => machineFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === tunnelId,
+        ));
+
+        cluster.partitionRedisA();
+        expect(user.connected).toBe(true);
+        expect(machine.connected).toBe(true);
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createUserDataEnvelope({
+            tunnelId,
+            payload: "must-not-cross-partition",
+        }));
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        expect(machineFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "data"
+            && frame.frame.tunnelId === tunnelId,
+        )).toHaveLength(0);
+
+        await waitForCondition(() => userFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === tunnelId
+            && frame.frame.reasonCode === "relay_cap_exceeded",
+        ));
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+        expect(userFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === tunnelId
+            && frame.frame.reasonCode === "relay_cap_exceeded",
+        )).toHaveLength(1);
+
+        await cluster.healRedisA();
+        await waitForCondition(() => cluster.coordinatorB.routeMachineEnvelope({
+            tunnelKey: `${ACCOUNT_ID}:machine:${MACHINE_ID}:user:${tunnelId}`,
+            machineSocketId: machine.id!,
+            envelope: createMachineDataEnvelope({
+                tunnelId,
+                userSocketId: user.id!,
+                payload: "release-probe",
+            }),
+        }) === "rejected");
+        machine.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createMachineDataEnvelope({
+            tunnelId,
+            userSocketId: user.id!,
+            payload: "must-not-resurrect-after-heal",
+        }));
+        await new Promise<void>((resolve) => setTimeout(resolve, 200));
+        expect(userFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "data"
+            && frame.frame.tunnelId === tunnelId,
+        )).toHaveLength(0);
+        expect(userFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === tunnelId
+            && frame.frame.reasonCode === "relay_cap_exceeded",
+        )).toHaveLength(1);
+
+        const freshTunnelId = "partition-after-attachment-fresh";
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId: freshTunnelId,
+            grantId: "partition-after-attachment-fresh-grant",
+            relaySocketId: user.id!,
+        }));
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createUserDataEnvelope({
+            tunnelId: freshTunnelId,
+            payload: "fresh-after-heal",
+        }));
+        await waitForCondition(() => machineFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "data"
+            && frame.frame.tunnelId === freshTunnelId,
+        ));
+    });
+
+    it("routes a fresh cross-replica OPEN after Redis restarts while client sockets stay connected", async () => {
+        const cluster = await startRestartableProductCluster();
+        clusters.push(cluster);
+        const user = await connectClient(cluster.portA, "user-scoped");
+        const machine = await connectClient(cluster.portB, "machine-scoped");
+        clients.push(user, machine);
+
+        const machineFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        const userFrames: PeerTcpTunnelRelayEnvelope[] = [];
+        machine.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => machineFrames.push(value));
+        user.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (value) => userFrames.push(value));
+
+        const beforeRestartTunnelId = "redis-restart-before";
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId: beforeRestartTunnelId,
+            grantId: "redis-restart-before-grant",
+            relaySocketId: user.id!,
+        }));
+        await waitForCondition(() => machineFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === beforeRestartTunnelId,
+        ));
+
+        await cluster.restartRedis();
+        expect(user.connected).toBe(true);
+        expect(machine.connected).toBe(true);
+
+        const expiredTunnelId = "redis-restart-expired";
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId: expiredTunnelId,
+            grantId: "redis-restart-expired-grant",
+            relaySocketId: user.id!,
+            issuedAt: Date.now() - 2_000,
+            expiresAt: Date.now() - 1_000,
+        }));
+        await waitForCondition(() => userFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === expiredTunnelId
+            && frame.frame.reasonCode === "relay_authorization_invalid",
+        ));
+
+        const afterRestartTunnelId = "redis-restart-after";
+        const afterRestartGrantId = "redis-restart-after-grant";
+        user.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope({
+            tunnelId: afterRestartTunnelId,
+            grantId: afterRestartGrantId,
+            relaySocketId: user.id!,
+        }));
+        await cluster.waitForGrantConsumedBeforeAdapterRecovery(afterRestartGrantId);
+        await cluster.waitForAdapterRecovery();
+        await waitForCondition(() => machineFrames.some((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === afterRestartTunnelId,
+        ), 30_000);
+
+        expect(machineFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "open"
+            && frame.frame.open.tunnelId === afterRestartTunnelId,
+        )).toHaveLength(1);
+        expect(userFrames.filter((frame) =>
+            frame.v === 1
+            && frame.frame.kind === "abort"
+            && frame.frame.tunnelId === expiredTunnelId
+            && frame.frame.reasonCode === "relay_authorization_invalid",
+        )).toHaveLength(1);
+    }, 120_000);
 
     it("keeps admission, machine frames, and recipient disconnect settlement on the user replica", async () => {
         const cluster = await startCluster();

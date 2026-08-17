@@ -1,8 +1,67 @@
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
+import {
+    parseAutomationRunExecutionRecipeV1,
+    validateAutomationRunExecutionRecipeOuterV1,
+    type AutomationAccountCurrentnessWitnessV1,
+} from "@happier-dev/protocol";
 
-import { emitAutomationRunUpdated } from "./automationChangePublisher";
-import type { AutomationRunWithAutomation } from "./automationTypes";
+import { emitAutomationRunTransition } from "./automationChangePublisher";
+import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
+import { automationRunWithAutomationSelect } from "./automationPersistenceSelect";
+import {
+    failInvalidAutomationRunBeforeClaimTx,
+    markAbandonedAutomationExecutionDispatchOutcomeUnknownTx,
+    terminalizeRetiredAutomationRunAfterLeaseExpiryTx,
+} from "./automationRunService";
+import { validateRetainedAutomationRunExecutionInputV2OuterForMode } from "./automationStoredContentRead";
+import type {
+    AutomationRunOriginKind,
+    AutomationRunWithAutomation,
+    AutomationTriggerKind,
+} from "./automationTypes";
+
+type ClaimCandidateState = "queued" | "claimed" | "running";
+
+function isClaimCandidateState(state: string): state is ClaimCandidateState {
+    return state === "queued" || state === "claimed" || state === "running";
+}
+
+/**
+ * Current recipe bytes are admitted only through Protocol. The retained V2
+ * parser is a read-only compatibility boundary while released V2 workers can
+ * still surface their frozen bytes; it never produces or rewrites a recipe.
+ */
+function hasClaimableFrozenRecipe(params: {
+    executionInputEnvelope: string | null;
+    originKind?: AutomationRunOriginKind;
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1;
+    requireV2RunRepresentability?: boolean;
+}): boolean {
+    if (params.requireV2RunRepresentability) {
+        if (params.executionInputEnvelope === null) return false;
+        return validateRetainedAutomationRunExecutionInputV2OuterForMode({
+            raw: params.executionInputEnvelope,
+            mode: params.accountCurrentness.mode,
+            originKind: params.originKind,
+        })?.kind === "available";
+    }
+    const strictRecipe = parseAutomationRunExecutionRecipeV1(params.executionInputEnvelope);
+    if (strictRecipe.kind === "available") {
+        return validateAutomationRunExecutionRecipeOuterV1({
+            recipe: strictRecipe.recipe,
+            accountCurrentness: params.accountCurrentness,
+        }).kind === "available";
+    }
+
+    if (params.executionInputEnvelope === null) return false;
+    return validateRetainedAutomationRunExecutionInputV2OuterForMode({
+        raw: params.executionInputEnvelope,
+        mode: params.accountCurrentness.mode,
+        originKind: params.originKind,
+    })?.kind === "available";
+}
 
 export function resolveClaimLeaseExpiresAt(params: { now: Date; leaseDurationMs: number }): Date {
     const leaseMs = Number.isFinite(params.leaseDurationMs)
@@ -22,38 +81,123 @@ export function isRunClaimableState(params: {
     return params.leaseExpiresAt.getTime() < params.now.getTime();
 }
 
+function activeAutomationClaimWhere(params: {
+    machineId: string;
+    expectedTriggerKind?: AutomationTriggerKind;
+}) {
+    return {
+        enabled: true,
+        deletedAt: null,
+        ...(params.expectedTriggerKind
+            ? { triggerKind: params.expectedTriggerKind }
+            : {}),
+        assignments: {
+            some: {
+                machineId: params.machineId,
+                enabled: true,
+            },
+        },
+    };
+}
+
+function retiredAutomationForClaimantWhere(params: {
+    machineId: string;
+    expectedTriggerKind?: AutomationTriggerKind;
+}) {
+    return {
+        ...(params.expectedTriggerKind
+            ? { triggerKind: params.expectedTriggerKind }
+            : {}),
+        OR: [
+            { enabled: false },
+            { deletedAt: { not: null } },
+            {
+                assignments: {
+                    none: {
+                        machineId: params.machineId,
+                        enabled: true,
+                    },
+                },
+            },
+        ],
+    };
+}
+
 async function findClaimCandidates(params: {
     tx: Tx;
     accountId: string;
     machineId: string;
     now: Date;
     limit: number;
+    cursor?: string;
+    expectedTriggerKind?: AutomationTriggerKind;
 }) {
     return await params.tx.automationRun.findMany({
         where: {
             accountId: params.accountId,
             dueAt: { lte: params.now },
             OR: [
-                { state: "queued" },
-                { state: "claimed", leaseExpiresAt: { lt: params.now } },
-                { state: "running", leaseExpiresAt: { lt: params.now } },
-            ],
-            automation: {
-                enabled: true,
-                assignments: {
-                    some: {
+                {
+                    state: "queued",
+                    automation: activeAutomationClaimWhere({
                         machineId: params.machineId,
-                        enabled: true,
-                    },
+                        expectedTriggerKind: params.expectedTriggerKind,
+                    }),
                 },
-            },
+                {
+                    state: "claimed",
+                    leaseExpiresAt: { lt: params.now },
+                    OR: [
+                        {
+                            automation: activeAutomationClaimWhere({
+                                machineId: params.machineId,
+                                expectedTriggerKind: params.expectedTriggerKind,
+                            }),
+                        },
+                        {
+                            claimedByMachineId: params.machineId,
+                            automation: retiredAutomationForClaimantWhere({
+                                machineId: params.machineId,
+                                expectedTriggerKind: params.expectedTriggerKind,
+                            }),
+                        },
+                    ],
+                },
+                {
+                    state: "running",
+                    leaseExpiresAt: { lt: params.now },
+                    OR: [
+                        {
+                            automation: activeAutomationClaimWhere({
+                                machineId: params.machineId,
+                                expectedTriggerKind: params.expectedTriggerKind,
+                            }),
+                        },
+                        {
+                            claimedByMachineId: params.machineId,
+                            automation: retiredAutomationForClaimantWhere({
+                                machineId: params.machineId,
+                                expectedTriggerKind: params.expectedTriggerKind,
+                            }),
+                        },
+                    ],
+                },
+            ],
         },
-        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         take: params.limit,
+        ...(params.cursor
+            ? { cursor: { id: params.cursor }, skip: 1 }
+            : {}),
         select: {
             id: true,
+            automationId: true,
             state: true,
             leaseExpiresAt: true,
+            revision: true,
+            originKind: true,
+            executionInputEnvelope: true,
+            executionDispatchState: true,
         },
     });
 }
@@ -62,15 +206,26 @@ async function tryClaimRun(params: {
     tx: Tx;
     runId: string;
     previousState: string;
+    expectedRunRevision: number;
+    executionInputEnvelope: string | null;
+    originKind?: AutomationRunOriginKind;
     now: Date;
     machineId: string;
     leaseExpiresAt: Date;
+    expectedTriggerKind?: AutomationTriggerKind;
 }) {
     if (params.previousState === "queued") {
         return await params.tx.automationRun.updateMany({
             where: {
                 id: params.runId,
                 state: "queued",
+                revision: params.expectedRunRevision,
+                executionInputEnvelope: params.executionInputEnvelope,
+                ...(params.originKind ? { originKind: params.originKind } : {}),
+                automation: activeAutomationClaimWhere({
+                    machineId: params.machineId,
+                    expectedTriggerKind: params.expectedTriggerKind,
+                }),
             },
             data: {
                 state: "claimed",
@@ -78,6 +233,7 @@ async function tryClaimRun(params: {
                 claimedByMachineId: params.machineId,
                 leaseExpiresAt: params.leaseExpiresAt,
                 attempt: { increment: 1 },
+                revision: { increment: 1 },
             },
         });
     }
@@ -88,6 +244,13 @@ async function tryClaimRun(params: {
             id: params.runId,
             state: previousState,
             leaseExpiresAt: { lt: params.now },
+            revision: params.expectedRunRevision,
+            executionInputEnvelope: params.executionInputEnvelope,
+            ...(params.originKind ? { originKind: params.originKind } : {}),
+            automation: activeAutomationClaimWhere({
+                machineId: params.machineId,
+                expectedTriggerKind: params.expectedTriggerKind,
+            }),
         },
         data: {
             state: "claimed",
@@ -95,6 +258,7 @@ async function tryClaimRun(params: {
             claimedByMachineId: params.machineId,
             leaseExpiresAt: params.leaseExpiresAt,
             attempt: { increment: 1 },
+            revision: { increment: 1 },
         },
     });
 }
@@ -102,35 +266,7 @@ async function tryClaimRun(params: {
 async function fetchClaimedRun(tx: Tx, runId: string): Promise<AutomationRunWithAutomation | null> {
     const row = await tx.automationRun.findUnique({
         where: { id: runId },
-        select: {
-            id: true,
-            automationId: true,
-            accountId: true,
-            state: true,
-            scheduledAt: true,
-            dueAt: true,
-            claimedAt: true,
-            startedAt: true,
-            finishedAt: true,
-            claimedByMachineId: true,
-            leaseExpiresAt: true,
-            attempt: true,
-            summaryCiphertext: true,
-            errorCode: true,
-            errorMessage: true,
-            producedSessionId: true,
-            createdAt: true,
-            updatedAt: true,
-            automation: {
-                select: {
-                    id: true,
-                    name: true,
-                    enabled: true,
-                    targetType: true,
-                    templateCiphertext: true,
-                },
-            },
-        },
+        select: automationRunWithAutomationSelect,
     });
 
     if (!row) return null;
@@ -141,8 +277,16 @@ export async function claimAutomationRun(params: {
     accountId: string;
     machineId: string;
     leaseDurationMs: number;
-}): Promise<{ run: AutomationRunWithAutomation | null }> {
+    expectedTriggerKind?: AutomationTriggerKind;
+    requireV2RunRepresentability?: boolean;
+}): Promise<{
+    run: AutomationRunWithAutomation | null;
+    /** C: read after the claim's Account change marker in the same transaction. */
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1 | null;
+}> {
     return await inTx(async (tx) => {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
+        if (accountFence.status !== "ready") return { run: null, accountCurrentness: null };
         const machine = await tx.machine.findFirst({
             where: {
                 accountId: params.accountId,
@@ -151,21 +295,30 @@ export async function claimAutomationRun(params: {
             select: { id: true },
         });
         if (!machine) {
-            return { run: null };
+            return { run: null, accountCurrentness: null };
         }
 
         const now = new Date();
         const leaseExpiresAt = resolveClaimLeaseExpiresAt({ now, leaseDurationMs: params.leaseDurationMs });
 
-        const candidates = await findClaimCandidates({
-            tx,
-            accountId: params.accountId,
-            machineId: params.machineId,
-            now,
-            limit: 25,
-        });
+        const candidatePageSize = 25;
+        let candidateCursor: string | undefined;
+        while (true) {
+            const candidates = await findClaimCandidates({
+                tx,
+                accountId: params.accountId,
+                machineId: params.machineId,
+                now,
+                limit: candidatePageSize,
+                cursor: candidateCursor,
+                expectedTriggerKind: params.expectedTriggerKind,
+            });
+            let skippedIncompatibleRetainedV2Candidate = false;
 
-        for (const candidate of candidates) {
+            for (const candidate of candidates) {
+            if (!isClaimCandidateState(candidate.state)) {
+                continue;
+            }
             if (!isRunClaimableState({
                 state: candidate.state,
                 leaseExpiresAt: candidate.leaseExpiresAt,
@@ -174,13 +327,108 @@ export async function claimAutomationRun(params: {
                 continue;
             }
 
+            const preclaimCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);
+            if (!preclaimCurrentness) {
+                return { run: null, accountCurrentness: null };
+            }
+            const hasV2FrozenRecipe = params.requireV2RunRepresentability
+                ? hasClaimableFrozenRecipe({
+                    executionInputEnvelope: candidate.executionInputEnvelope,
+                    originKind: candidate.originKind,
+                    accountCurrentness: preclaimCurrentness,
+                    requireV2RunRepresentability: true,
+                })
+                : null;
+            if (hasV2FrozenRecipe === false) {
+                // This Run may be valid for a current worker. A released V2
+                // claimant has no authority to classify or mutate it.
+                continue;
+            }
+            if (candidate.state !== "queued") {
+                const terminalizedRetirement = await terminalizeRetiredAutomationRunAfterLeaseExpiryTx({
+                    tx,
+                    accountId: params.accountId,
+                    automationId: candidate.automationId,
+                    runId: candidate.id,
+                    state: candidate.state,
+                    runRevision: candidate.revision,
+                    machineId: params.machineId,
+                    executionInputEnvelope: candidate.executionInputEnvelope,
+                    originKind: candidate.originKind,
+                    executionDispatchState: candidate.executionDispatchState,
+                    accountCurrentness: preclaimCurrentness,
+                    now,
+                    expectedTriggerKind: params.expectedTriggerKind,
+                    requireV2RunRepresentability: params.requireV2RunRepresentability,
+                });
+                if (terminalizedRetirement) {
+                    continue;
+                }
+            }
+            if (
+                candidate.state !== "queued"
+                && candidate.executionDispatchState === "dispatchPermitted"
+            ) {
+                await markAbandonedAutomationExecutionDispatchOutcomeUnknownTx({
+                    tx,
+                    accountId: params.accountId,
+                    automationId: candidate.automationId,
+                    runId: candidate.id,
+                    state: candidate.state,
+                    runRevision: candidate.revision,
+                    executionInputEnvelope: candidate.executionInputEnvelope,
+                    accountCurrentness: preclaimCurrentness,
+                    now,
+                    expectedTriggerKind: params.expectedTriggerKind,
+                });
+                continue;
+            }
+            if (
+                !params.requireV2RunRepresentability
+                && !hasClaimableFrozenRecipe({
+                    executionInputEnvelope: candidate.executionInputEnvelope,
+                    originKind: candidate.originKind,
+                    accountCurrentness: preclaimCurrentness,
+                })
+            ) {
+                if (
+                    candidate.executionInputEnvelope !== null
+                    && validateRetainedAutomationRunExecutionInputV2OuterForMode({
+                        raw: candidate.executionInputEnvelope,
+                        mode: preclaimCurrentness.mode,
+                    })?.kind === "available"
+                ) {
+                    // Retained V2 bytes whose frozen origin disagrees with the
+                    // durable Run are incompatible, not malformed-current input.
+                    skippedIncompatibleRetainedV2Candidate = true;
+                    continue;
+                }
+                await failInvalidAutomationRunBeforeClaimTx({
+                    tx,
+                    accountId: params.accountId,
+                    automationId: candidate.automationId,
+                    runId: candidate.id,
+                    state: candidate.state,
+                    runRevision: candidate.revision,
+                    executionInputEnvelope: candidate.executionInputEnvelope,
+                    accountCurrentness: preclaimCurrentness,
+                    now,
+                    expectedTriggerKind: params.expectedTriggerKind,
+                });
+                continue;
+            }
+
             const updated = await tryClaimRun({
                 tx,
                 runId: candidate.id,
                 previousState: candidate.state,
+                expectedRunRevision: candidate.revision,
+                executionInputEnvelope: candidate.executionInputEnvelope,
+                originKind: candidate.originKind,
                 now,
                 machineId: params.machineId,
                 leaseExpiresAt,
+                expectedTriggerKind: params.expectedTriggerKind,
             });
             if (updated.count !== 1) {
                 continue;
@@ -196,19 +444,37 @@ export async function claimAutomationRun(params: {
                 kind: "automation",
                 entityId: run.automationId,
             });
+            const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);
+            if (!accountCurrentness) {
+                // Returning after the claim would commit a Run a worker cannot
+                // safely start, so abort the transaction instead.
+                throw new Error("Automation Account currentness became unavailable during claim");
+            }
 
             afterTx(tx, () => {
-                emitAutomationRunUpdated({
+                emitAutomationRunTransition({
                     accountId: params.accountId,
                     run,
+                    previousState: candidate.state,
                     cursor,
                 });
             });
 
-            return { run };
+                return { run, accountCurrentness };
+            }
+
+            if (
+                candidates.length < candidatePageSize
+                || (
+                    !params.requireV2RunRepresentability
+                    && !skippedIncompatibleRetainedV2Candidate
+                )
+            ) break;
+            candidateCursor = candidates[candidates.length - 1]?.id;
+            if (!candidateCursor) break;
         }
 
-        return { run: null };
+        return { run: null, accountCurrentness: null };
     });
 }
 
@@ -216,21 +482,68 @@ export async function heartbeatAutomationRun(params: {
     accountId: string;
     runId: string;
     machineId: string;
+    attempt: number;
     leaseDurationMs: number;
+    expectedTriggerKind?: AutomationTriggerKind;
+    requireV2RunRepresentability?: boolean;
 }): Promise<{ ok: boolean; leaseExpiresAt: Date | null }> {
     return await inTx(async (tx) => {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
+        if (accountFence.status !== "ready") return { ok: false, leaseExpiresAt: null };
         const now = new Date();
         const leaseExpiresAt = resolveClaimLeaseExpiresAt({ now, leaseDurationMs: params.leaseDurationMs });
+
+        const candidate = params.requireV2RunRepresentability
+            ? await tx.automationRun.findFirst({
+                where: {
+                    id: params.runId,
+                    accountId: params.accountId,
+                    claimedByMachineId: params.machineId,
+                    attempt: params.attempt,
+                    state: { in: ["claimed", "running"] },
+                    leaseExpiresAt: { gt: now },
+                    ...(params.expectedTriggerKind
+                        ? { automation: { triggerKind: params.expectedTriggerKind } }
+                        : {}),
+                },
+                select: { executionInputEnvelope: true, originKind: true },
+            })
+            : null;
+        if (
+            params.requireV2RunRepresentability
+            && (
+                !candidate?.executionInputEnvelope
+                || validateRetainedAutomationRunExecutionInputV2OuterForMode({
+                    raw: candidate.executionInputEnvelope,
+                    mode: accountFence.account.currentness.encryptionMode,
+                    originKind: candidate.originKind,
+                })?.kind !== "available"
+            )
+        ) {
+            return { ok: false, leaseExpiresAt: null };
+        }
 
         const updated = await tx.automationRun.updateMany({
             where: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
+                attempt: params.attempt,
                 state: { in: ["claimed", "running"] },
+                leaseExpiresAt: { gt: now },
+                ...(candidate
+                    ? {
+                        executionInputEnvelope: candidate.executionInputEnvelope,
+                        originKind: candidate.originKind,
+                    }
+                    : {}),
+                ...(params.expectedTriggerKind
+                    ? { automation: { triggerKind: params.expectedTriggerKind } }
+                    : {}),
             },
             data: {
                 leaseExpiresAt,
+                revision: { increment: 1 },
                 updatedAt: now,
             },
         });

@@ -17,6 +17,7 @@ const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updI
 }));
 
 const dbMocks = createDbMocks({
+    account: ["findUnique"],
     machine: ["findFirst"],
 } as const);
 
@@ -57,6 +58,11 @@ vi.mock("@/storage/inTx", () => {
 
 describe("machinesRoutes (AccountChange integration)", () => {
     it("marks machine create once and emits new-machine + update-machine using the same cursor", async () => {
+        dbMocks.db.account.findUnique.mockResolvedValue({
+            contentPublicKey: null,
+            publicKey: "account-signing-key",
+            encryptionMode: "e2ee",
+        });
         dbMocks.db.machine.findFirst.mockResolvedValue(null);
         const { machinesRoutes } = await import("./machinesRoutes");
         const route = createRouteTestBuilder({

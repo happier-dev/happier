@@ -31,6 +31,22 @@ describe("apiRateLimitCatalog", () => {
         );
     });
 
+    it("resolves the authenticated peer-mediation route-grant bucket from its dedicated env keys", () => {
+        const rateLimit = resolveApiHotEndpointRateLimit({
+            HAPPIER_API_RATE_LIMITS_ENABLED: "1",
+            HAPPIER_MACHINES_PEER_MEDIATION_ROUTE_GRANT_RATE_LIMIT_MAX: "9",
+            HAPPIER_MACHINES_PEER_MEDIATION_ROUTE_GRANT_RATE_LIMIT_WINDOW: "30 seconds",
+        }, "machines.peerMediation.routeGrant");
+
+        expect(rateLimit).toEqual(
+            expect.objectContaining({
+                max: 9,
+                timeWindow: "30 seconds",
+                keyGenerator: expect.any(Function),
+            }),
+        );
+    });
+
     it("allows overriding max/window via env vars derived from the id", () => {
         const env = {
             HAPPIER_API_RATE_LIMITS_ENABLED: "1",

@@ -3,7 +3,7 @@ import type { FastifyReply } from "fastify";
 
 import type { Fastify } from "../../types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
 import {
     buildProviderAccountUsageRecordId,
@@ -31,7 +31,9 @@ import {
 import { writeProviderAccountUsageRecordWithPolicy } from "./providerAccountUsage/routeWritePolicy";
 import type { ProviderAccountUsageSourceLinkOutcome } from "./providerAccountUsage/types";
 import {
+    deleteQualifiedProviderAccountUsageRecord,
     listQualifiedUsageSourcesForRecord,
+    requestQualifiedProviderAccountUsageRefresh,
     writeQualifiedProviderAccountUsageRecordFromLegacyBoundary,
 } from "./qualifiedConnectedAccounts/usageRepository";
 import {
@@ -48,9 +50,20 @@ function normalizeResponseStatus(status: string): "ok" | "unavailable" | "estima
 async function readE2eeAccount(accountId: string) {
     const account = await db.account.findUnique({
         where: { id: accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
-    return account && resolveEffectiveAccountEncryptionModeFromAccountRow(account) === "e2ee" ? account : null;
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    return currentness?.status === "ready"
+        && currentness.currentness.encryptionMode === "e2ee"
+        ? account
+        : null;
 }
 
 function sendProviderAccountUsageInvalidParams(
@@ -258,10 +271,19 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
         const account = await readE2eeAccount(request.userId);
         if (!account) return reply.code(404).send({ error: "provider_account_usage_not_found" });
 
-        const refreshResult = await requestProviderAccountUsageRefresh({
+        const qualifiedSources = await listQualifiedUsageSourcesForRecord({
             accountId: request.userId,
             recordId: request.params.recordId,
         });
+        const refreshResult = qualifiedSources.length > 0
+            ? await requestQualifiedProviderAccountUsageRefresh({
+                accountId: request.userId,
+                recordId: request.params.recordId,
+            })
+            : await requestProviderAccountUsageRefresh({
+                accountId: request.userId,
+                recordId: request.params.recordId,
+            });
         if (refreshResult === "not_found") {
             return reply.code(404).send({ error: "provider_account_usage_not_found" });
         }
@@ -282,10 +304,19 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
         const account = await readE2eeAccount(request.userId);
         if (!account) return reply.code(404).send({ error: "provider_account_usage_not_found" });
 
-        const deleted = await deleteProviderAccountUsageRecord({
+        const qualifiedSources = await listQualifiedUsageSourcesForRecord({
             accountId: request.userId,
             recordId: request.params.recordId,
         });
+        const deleted = qualifiedSources.length > 0
+            ? await deleteQualifiedProviderAccountUsageRecord({
+                accountId: request.userId,
+                recordId: request.params.recordId,
+            })
+            : await deleteProviderAccountUsageRecord({
+                accountId: request.userId,
+                recordId: request.params.recordId,
+            });
         if (deleted === "not_found") {
             return reply.code(404).send({ error: "provider_account_usage_not_found" });
         }

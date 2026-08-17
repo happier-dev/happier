@@ -136,6 +136,8 @@ describe("unreleased migration contraction", () => {
         expect(pluginGrantSql).toContain("authority_kind");
         expect(pluginGrantSql).toContain("active_identity_key");
         expect(pluginGrantSql).toContain("plugin_permission_requests_active_identity_key");
+        expect(pluginGrantSql.match(/["`]subject_json["`]\s+(?:LONG)?TEXT(?:\s+CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)?\s+NOT NULL/gu))
+            .toHaveLength(3);
         expect(pluginGrantSql).not.toContain("plugin-permission-active-identity-migration");
         expect(pluginGrantSql).not.toMatch(/ROW_NUMBER\(\)\s+OVER/iu);
         expect(pluginGrantSql).not.toMatch(/(?:CHAR|CHR)\(31\)/u);
@@ -155,6 +157,8 @@ describe("unreleased migration contraction", () => {
             "prisma/mysql/migrations",
             "20260606103000_add_plugin_permission_grants",
         );
+        expect(sql.match(/`subject_json` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/gu))
+            .toHaveLength(3);
         const boundedInitialScopeIndex = [
             "`account_id`(64)",
             "`plugin_id`(64)",

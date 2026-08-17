@@ -4,6 +4,9 @@ import { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } f
 export { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
 export const startVoiceProviderIdentityBackfillWorkerMock = vi.fn((_params: unknown) => null)
+export const startPluginWebhookCredentialRetirementWorkerMock = vi.fn(
+  (_params: unknown): Readonly<{ stop: () => void }> | null => null,
+)
 
 export const START_SERVER_ENV_KEYS = [
   'SERVER_ROLE',
@@ -55,7 +58,6 @@ export function installStartServerCommonWiringMocks(): void {
     }
   })
   vi.mock('@/modules/encrypt', () => ({ initEncrypt: vi.fn(async () => {}) }))
-  vi.mock('@/app/auth/providers/github/webhooks', () => ({ initGithub: vi.fn(async () => {}) }))
   vi.mock('@/storage/blob/files', () => ({
     loadFiles: vi.fn(async () => {}),
     initFilesLocalFromEnv: vi.fn(() => {}),
@@ -64,6 +66,11 @@ export function installStartServerCommonWiringMocks(): void {
   vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }))
   vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
     startRetentionWorker: vi.fn(() => null),
+  }))
+  vi.mock('@/app/plugins/webhooks/credentialRetirementWorker', () => ({
+    startPluginWebhookCredentialRetirementWorker: (params: unknown) => (
+      startPluginWebhookCredentialRetirementWorkerMock(params)
+    ),
   }))
   vi.mock('@/app/voice/providerIdentityBackfill/worker', () => ({
     startVoiceProviderIdentityBackfillWorker: (params: unknown) => startVoiceProviderIdentityBackfillWorkerMock(params),
@@ -89,6 +96,7 @@ type StartServerDbMockOptions = Readonly<{
 export function createStartServerDbMocks(options: StartServerDbMockOptions = {}) {
   const dbConnect = vi.fn()
   const dbDisconnect = vi.fn()
+  const dbQueryRawUnsafe = vi.fn()
   const initDbPostgres = vi.fn()
   const initDbPglite = vi.fn()
   const initDbMysql = vi.fn()
@@ -115,6 +123,9 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
   const reset = () => {
     dbConnect.mockReset().mockImplementation(async () => {})
     dbDisconnect.mockReset().mockImplementation(async () => {})
+    dbQueryRawUnsafe.mockReset().mockResolvedValue([{
+      migration_name: '20260810120000_contract_session_system_record_addresses',
+    }])
     initDbPostgres.mockReset().mockImplementation(() => {})
     initDbPglite.mockReset().mockImplementation(async () => {})
     initDbMysql.mockReset().mockImplementation(async () => {})
@@ -139,6 +150,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
       db: {
         $connect: (...args: any[]) => dbConnect(...args),
         $disconnect: (...args: any[]) => dbDisconnect(...args),
+        $queryRawUnsafe: (...args: any[]) => dbQueryRawUnsafe(...args),
         simpleCache: {
           findUnique: (...args: any[]) => simpleCacheFindUnique(...args),
           create: (...args: any[]) => simpleCacheCreate(...args),
@@ -157,6 +169,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
     },
     dbConnect,
     dbDisconnect,
+    dbQueryRawUnsafe,
     getDbProviderFromEnv,
     simpleCacheFindUnique,
     simpleCacheCreate,

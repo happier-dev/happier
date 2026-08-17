@@ -3,7 +3,9 @@ import { z } from "zod";
 import { type Fastify } from "../../types";
 import { claimAutomationRun, heartbeatAutomationRun } from "@/app/automations/automationClaimService";
 import { listDaemonAssignments } from "@/app/automations/automationAssignmentService";
-import { toAutomationRunApiDto } from "@/app/automations/automationTypes";
+import { toAutomationRunV2ApiDto } from "@/app/automations/automationApiProjection";
+import { readRetainedAutomationRunExecutionInputV2ForMode } from "@/app/automations/automationStoredContentRead";
+import { resolveAutomationRunAttemptV2 } from "./automationRunAttemptV2Compatibility";
 
 export function registerAutomationDaemonRoutes(app: Fastify): void {
     app.post('/v2/automations/runs/claim', {
@@ -19,18 +21,26 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
             accountId: request.userId,
             machineId: request.body.machineId,
             leaseDurationMs: request.body.leaseDurationMs ?? 30_000,
+            expectedTriggerKind: "schedule",
+            requireV2RunRepresentability: true,
         });
-        const runWithAutomation = result.run as (typeof result.run & { automation?: any }) | null;
+        const frozenInput = result.run?.executionInputEnvelope && result.accountCurrentness
+            ? readRetainedAutomationRunExecutionInputV2ForMode({
+                raw: result.run.executionInputEnvelope,
+                mode: result.accountCurrentness.mode,
+                originKind: result.run.originKind,
+            })
+            : null;
 
         return {
-            run: result.run ? toAutomationRunApiDto(result.run) : null,
-            automation: runWithAutomation?.automation
+            run: result.run && frozenInput ? toAutomationRunV2ApiDto(result.run) : null,
+            automation: result.run && frozenInput
                 ? {
-                    id: runWithAutomation.automation.id,
-                    name: runWithAutomation.automation.name,
-                    enabled: runWithAutomation.automation.enabled,
-                    targetType: runWithAutomation.automation.targetType,
-                    templateCiphertext: runWithAutomation.automation.templateCiphertext,
+                    id: result.run.automation.id,
+                    name: result.run.automation.name,
+                    enabled: result.run.automation.enabled,
+                    targetType: frozenInput.targetType,
+                    templateCiphertext: frozenInput.templateCiphertext,
                 }
                 : null,
         };
@@ -42,6 +52,7 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
             params: z.object({ runId: z.string() }),
             body: z.object({
                 machineId: z.string().trim().min(1),
+                attempt: z.number().int().min(1).optional(),
                 leaseDurationMs: z.number().int().min(5_000).max(15 * 60_000).optional(),
             }),
         },
@@ -50,7 +61,10 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
             accountId: request.userId,
             runId: request.params.runId,
             machineId: request.body.machineId,
+            attempt: resolveAutomationRunAttemptV2(request.body.attempt),
             leaseDurationMs: request.body.leaseDurationMs ?? 30_000,
+            expectedTriggerKind: "schedule",
+            requireV2RunRepresentability: true,
         });
 
         if (!result.ok) {
@@ -74,6 +88,8 @@ export function registerAutomationDaemonRoutes(app: Fastify): void {
         const rows = await listDaemonAssignments({
             accountId: request.userId,
             machineId: request.query.machineId,
+            expectedTriggerKind: "schedule",
+            requireV2DefinitionRepresentability: true,
         });
 
         return {

@@ -10,6 +10,7 @@ export type InTxOptions = Readonly<{
     isolationLevel?: "Serializable" | "ReadCommitted";
     timeoutMs?: number;
     maxWaitMs?: number;
+    deadlineAtMs?: number;
 }>;
 
 export class TransactionAcquisitionUnavailableError extends Error {
@@ -21,6 +22,20 @@ export class TransactionAcquisitionUnavailableError extends Error {
         this.name = "TransactionAcquisitionUnavailableError";
         this.cause = cause;
     }
+}
+
+export class TransactionDeadlineExceededError extends Error {
+    readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super("Database transaction request deadline expired");
+        this.name = "TransactionDeadlineExceededError";
+        this.cause = cause;
+    }
+}
+
+export function isTransactionDeadlineExceededError(error: unknown): error is TransactionDeadlineExceededError {
+    return error instanceof TransactionDeadlineExceededError;
 }
 
 const symbol = Symbol();
@@ -103,6 +118,12 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
     let transactionCallbackEntered = false;
     let wrapped = async (tx: Tx) => {
         transactionCallbackEntered = true;
+        if (
+            options?.deadlineAtMs !== undefined
+            && Date.now() >= options.deadlineAtMs
+        ) {
+            throw new TransactionDeadlineExceededError(null);
+        }
         (tx as any)[symbol] = [];
         let result = await fn(tx);
         let callbacks = (tx as any)[symbol] as (() => void)[];
@@ -111,16 +132,30 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
     while (true) {
         transactionCallbackEntered = false;
         try {
+            const remainingMs = options?.deadlineAtMs === undefined
+                ? null
+                : Math.floor(options.deadlineAtMs - Date.now());
+            if (remainingMs !== null && remainingMs < 2) {
+                throw new TransactionDeadlineExceededError(null);
+            }
+            const configuredMaxWaitMs = options?.maxWaitMs ?? transactionConfig.maxWaitMs;
+            const configuredTimeoutMs = options?.timeoutMs ?? transactionConfig.timeoutMs;
+            const boundedMaxWaitMs = remainingMs === null
+                ? configuredMaxWaitMs
+                : Math.max(1, Math.min(configuredMaxWaitMs, Math.floor(remainingMs / 3)));
+            const boundedTimeoutMs = remainingMs === null
+                ? configuredTimeoutMs
+                : Math.max(1, Math.min(configuredTimeoutMs, remainingMs - boundedMaxWaitMs));
             const txOpts =
                 provider === "sqlite"
                     ? {
-                          timeout: options?.timeoutMs ?? transactionConfig.timeoutMs,
-                          maxWait: options?.maxWaitMs ?? transactionConfig.maxWaitMs,
+                          timeout: boundedTimeoutMs,
+                          maxWait: boundedMaxWaitMs,
                       }
                     : {
                           isolationLevel: options?.isolationLevel ?? "Serializable",
-                          timeout: options?.timeoutMs ?? transactionConfig.timeoutMs,
-                          maxWait: options?.maxWaitMs ?? transactionConfig.maxWaitMs,
+                          timeout: boundedTimeoutMs,
+                          maxWait: boundedMaxWaitMs,
                       };
             let result = await db.$transaction(wrapped, txOpts);
             for (let callback of result.callbacks) {
@@ -134,6 +169,13 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
         } catch (e) {
             const acquisitionTimeout = isTransactionAcquisitionTimeout(e) && !transactionCallbackEntered;
             const retryable = acquisitionTimeout || isRetryableTransactionError({ provider, err: e });
+            if (
+                options?.deadlineAtMs !== undefined
+                && transactionCallbackEntered
+                && (Date.now() >= options.deadlineAtMs || isPrismaErrorCode(e, "P2028"))
+            ) {
+                throw new TransactionDeadlineExceededError(e);
+            }
             if (retryable && counter < transactionConfig.maxRetries) {
                 const nextAttempt = counter + 1;
                 const retryDelayMs = resolveTransactionRetryDelayMs({
@@ -155,12 +197,16 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                     }
                     throw e;
                 }
+                if (options?.deadlineAtMs !== undefined && Date.now() + retryDelayMs >= options.deadlineAtMs) {
+                    throw new TransactionDeadlineExceededError(e);
+                }
                 counter = nextAttempt;
                 recordDatabaseTransactionRetry(provider);
                 await delay(retryDelayMs);
                 continue;
             }
             if (acquisitionTimeout) {
+                if (options?.deadlineAtMs !== undefined) throw new TransactionDeadlineExceededError(e);
                 throw new TransactionAcquisitionUnavailableError(e);
             }
             throw e;

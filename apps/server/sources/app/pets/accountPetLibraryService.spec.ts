@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
 import { createLocalPrivateFilesBackend } from "@/storage/privateFiles/privateFilesLocal";
@@ -35,7 +35,7 @@ function requestFor(bytes: Uint8Array) {
             id: "blink",
             displayName: "Blink",
             description: "Happier companion pet",
-            spritesheetPath: "spritesheet.webp",
+            spritesheetPath: "spritesheet.webp" as const,
         },
         spritesheet: {
             mediaType: "image/webp",
@@ -55,6 +55,37 @@ function stableManifestJson(manifest: Record<string, unknown>): string {
 function packageSizeBytesFor(bytes: Uint8Array): number {
     const request = requestFor(bytes);
     return Buffer.byteLength(stableManifestJson(request.manifest), "utf8") + bytes.byteLength;
+}
+
+function persistedPetWithModes(params: {
+    packageContentMode: string;
+    assetContentMode: string;
+}): PersistedAccountPet {
+    return {
+        accountId: "account-1",
+        accountPetId: "pet-1",
+        contentMode: params.packageContentMode,
+        entry: {
+            accountPetId: "pet-1",
+            packageFormat: "codex-compatible-atlas-v1",
+            manifest: requestFor(WEBP_BYTES).manifest,
+            spritesheetAssetRef: {
+                assetId: "asset-1",
+                mediaType: "image/webp",
+                digest: digest(WEBP_BYTES),
+                sizeBytes: WEBP_BYTES.byteLength,
+            },
+            digest: "sha256:package",
+            sizeBytes: packageSizeBytesFor(WEBP_BYTES),
+            createdAt: 1,
+            updatedAt: 1,
+            origin: { kind: "manualImport" },
+        },
+        asset: {
+            contentMode: params.assetContentMode,
+            objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp",
+        },
+    };
 }
 
 function createDeferred<T>(): {
@@ -133,7 +164,10 @@ function createPersistenceThatPausesFirstPersist(): {
                     return { ok: false, error: "quota-exceeded" };
                 }
 
-                const existingBytes = recordsForAccount.reduce((sum, record) => sum + record.entry.sizeBytes, 0);
+                const existingBytes = recordsForAccount.reduce(
+                    (sum, record) => sum + (record.entry?.sizeBytes ?? 0),
+                    0,
+                );
                 if (existingBytes + params.entry.sizeBytes > params.quotaLimits.maxImportedPetBytesPerAccount) {
                     return { ok: false, error: "quota-exceeded" };
                 }
@@ -146,8 +180,13 @@ function createPersistenceThatPausesFirstPersist(): {
 
                 recordsByPetId.set(params.entry.accountPetId, {
                     accountId: params.accountId,
+                    accountPetId: params.entry.accountPetId,
+                    contentMode: "plain",
                     entry: params.entry,
-                    asset: { objectKey: params.objectKey },
+                    asset: {
+                        contentMode: "plain",
+                        objectKey: params.objectKey,
+                    },
                 });
                 return { ok: true };
             },
@@ -266,6 +305,148 @@ describe("account pet library services", () => {
         });
     }
 
+    it.each([
+        {
+            name: "the persisted Account is E2EE",
+            accountEncryptionMode: "e2ee",
+            packageContentMode: "plain",
+            assetContentMode: "plain",
+        },
+        {
+            name: "the package content mode is malformed",
+            accountEncryptionMode: "plain",
+            packageContentMode: "future-mode",
+            assetContentMode: "plain",
+        },
+        {
+            name: "the selected asset content mode is malformed",
+            accountEncryptionMode: "plain",
+            packageContentMode: "plain",
+            assetContentMode: "future-mode",
+        },
+    ] as const)("returns typed unavailable without metadata or bytes when $name", async ({
+        accountEncryptionMode,
+        packageContentMode,
+        assetContentMode,
+    }) => {
+        const record = persistedPetWithModes({
+            packageContentMode,
+            assetContentMode,
+        });
+        const readPrivateFile = vi.fn(async () => WEBP_BYTES);
+        const services = createAccountPetLibraryServices({
+            privateFiles: {
+                async init() {},
+                async writePrivateFile() {},
+                readPrivateFile,
+                async deletePrivateFile() {},
+            },
+            persistence: {
+                async persistAccountPet() {
+                    return { ok: true };
+                },
+                async listAccountPets() {
+                    return [record];
+                },
+                async readAccountPet() {
+                    return record;
+                },
+                async deleteAccountPet() {
+                    return { ok: false, error: "not-found" };
+                },
+            },
+        });
+
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode,
+        })).resolves.toEqual({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
+        await expect(services.readAccountPetAssetForAccount({
+            accountId: "account-1",
+            accountEncryptionMode,
+            petId: "pet-1",
+            assetId: "asset-1",
+        })).resolves.toEqual({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
+        expect(readPrivateFile).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        {
+            name: "package row",
+            record: {
+                accountId: "account-1",
+                accountPetId: "pet-1",
+                contentMode: "plain",
+                entry: null,
+                asset: {
+                    contentMode: "plain",
+                    objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp",
+                },
+            },
+        },
+        {
+            name: "asset row",
+            record: {
+                accountId: "account-1",
+                accountPetId: "pet-1",
+                contentMode: "plain",
+                entry: null,
+                asset: null,
+            },
+        },
+    ])("returns typed unavailable rather than omitting or 404 when a persisted $name is malformed", async ({
+        record,
+    }) => {
+        const readPrivateFile = vi.fn(async () => WEBP_BYTES);
+        const services = createAccountPetLibraryServices({
+            privateFiles: {
+                async init() {},
+                async writePrivateFile() {},
+                readPrivateFile,
+                async deletePrivateFile() {},
+            },
+            persistence: {
+                async persistAccountPet() {
+                    return { ok: true };
+                },
+                async listAccountPets() {
+                    return [record as unknown as PersistedAccountPet];
+                },
+                async readAccountPet() {
+                    return record as unknown as PersistedAccountPet;
+                },
+                async deleteAccountPet() {
+                    return { ok: false, error: "not-found" };
+                },
+            },
+        });
+
+        const unavailable = {
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        };
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual(unavailable);
+        await expect(services.readAccountPetAssetForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+            petId: "pet-1",
+            assetId: "asset-1",
+        })).resolves.toEqual(unavailable);
+        expect(readPrivateFile).not.toHaveBeenCalled();
+    });
+
     it("stores spritesheet bytes privately while listing only account-owned metadata", async () => {
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
@@ -289,18 +470,26 @@ describe("account pet library services", () => {
         if (!created.ok) throw new Error("expected account pet creation to succeed");
         expect(JSON.stringify(created.pet)).not.toContain("spritesheetBytes");
 
-        const listedForOwner = await services.listAccountPetsForAccount({ accountId: "account-1" });
-        expect(listedForOwner).toEqual([created.pet]);
+        const listedForOwner = await services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        });
+        expect(listedForOwner).toEqual({ ok: true, pets: [created.pet] });
 
-        const listedForOtherAccount = await services.listAccountPetsForAccount({ accountId: "account-2" });
-        expect(listedForOtherAccount).toEqual([]);
+        const listedForOtherAccount = await services.listAccountPetsForAccount({
+            accountId: "account-2",
+            accountEncryptionMode: "plain",
+        });
+        expect(listedForOtherAccount).toEqual({ ok: true, pets: [] });
 
         const asset = await services.readAccountPetAssetForAccount({
             accountId: "account-1",
+            accountEncryptionMode: "plain",
             petId: created.pet.accountPetId,
             assetId: created.pet.spritesheetAssetRef.assetId,
         });
         expect(asset).toEqual({
+            ok: true,
             mediaType: "image/webp",
             bytes: WEBP_BYTES,
             digest: digest(WEBP_BYTES),
@@ -340,9 +529,13 @@ describe("account pet library services", () => {
             accountPetId: created.pet.accountPetId,
             deletedAt: expect.any(Number),
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [] });
         await expect(services.readAccountPetAssetForAccount({
             accountId: "account-1",
+            accountEncryptionMode: "plain",
             petId: created.pet.accountPetId,
             assetId: created.pet.spritesheetAssetRef.assetId,
         })).resolves.toBeNull();
@@ -419,12 +612,17 @@ describe("account pet library services", () => {
             errorCode: "internal_error",
             error: "internal_error",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([created.pet]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [created.pet] });
         await expect(services.readAccountPetAssetForAccount({
             accountId: "account-1",
+            accountEncryptionMode: "plain",
             petId: created.pet.accountPetId,
             assetId: created.pet.spritesheetAssetRef.assetId,
         })).resolves.toEqual({
+            ok: true,
             mediaType: "image/webp",
             bytes: WEBP_BYTES,
             digest: digest(WEBP_BYTES),
@@ -440,7 +638,10 @@ describe("account pet library services", () => {
             accountPetId: created.pet.accountPetId,
             deletedAt: expect.any(Number),
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [] });
     });
 
     it("persists account pet metadata across service recreation", async () => {
@@ -476,7 +677,10 @@ describe("account pet library services", () => {
             }),
         });
 
-        await expect(secondServices.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([created.pet]);
+        await expect(secondServices.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [created.pet] });
         await expect(db.accountChange.findUnique({
             where: {
                 accountId_kind_entityId: {
@@ -528,7 +732,10 @@ describe("account pet library services", () => {
             errorCode: "quota_exceeded",
             error: "quota_exceeded",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toHaveLength(1);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 
     it("serializes concurrent account pet creation against the per-account count quota", async () => {
@@ -570,7 +777,10 @@ describe("account pet library services", () => {
             errorCode: "quota_exceeded",
             error: "quota_exceeded",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toHaveLength(1);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 
     it("enforces the per-account count quota at the persistence boundary across service instances", async () => {
@@ -623,7 +833,10 @@ describe("account pet library services", () => {
 
         expect(successCount).toBe(1);
         expect(quotaFailures).toHaveLength(1);
-        await expect(firstServices.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toHaveLength(1);
+        await expect(firstServices.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 
     it("enforces the per-account count quota inside Prisma persistence across service instances", async () => {
@@ -677,7 +890,10 @@ describe("account pet library services", () => {
 
         expect(successCount).toBe(1);
         expect(quotaFailures).toHaveLength(1);
-        await expect(firstServices.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toHaveLength(1);
+        await expect(firstServices.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 
     it("rejects account pet creation after the configured per-account byte limit", async () => {
@@ -705,7 +921,10 @@ describe("account pet library services", () => {
             errorCode: "quota_exceeded",
             error: "quota_exceeded",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [] });
     });
 
     it("denies custom pet sync for e2ee accounts before writing private bytes", async () => {
@@ -735,7 +954,10 @@ describe("account pet library services", () => {
             errorCode: "custom_pet_sync_requires_plaintext",
             error: "custom_pet_sync_requires_plaintext",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [] });
         await expect(readdir(rootDir)).resolves.toEqual([]);
     });
 
@@ -766,7 +988,10 @@ describe("account pet library services", () => {
             errorCode: "custom_pet_sync_requires_plaintext",
             error: "custom_pet_sync_requires_plaintext",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toEqual([]);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [] });
         await expect(readdir(rootDir)).resolves.toEqual([]);
     });
 
@@ -807,6 +1032,9 @@ describe("account pet library services", () => {
             errorCode: "quota_exceeded",
             error: "quota_exceeded",
         });
-        await expect(services.listAccountPetsForAccount({ accountId: "account-1" })).resolves.toHaveLength(1);
+        await expect(services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 });

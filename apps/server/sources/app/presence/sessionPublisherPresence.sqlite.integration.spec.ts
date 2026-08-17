@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
-import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import {
+    applySessionTurnMutation,
+    updateSessionMetadataEnvelopeTuple,
+} from "@/app/session/sessionWriteService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { createSessionPublisherPresence, expireSessionPublisherCandidates } from "./sessionPublisherPresence";
@@ -23,7 +27,10 @@ describe("session publisher presence on SQLite", () => {
     afterAll(async () => await harness.close());
 
     async function seed() {
-        const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` }, select: { id: true } });
+        const owner = await db.account.create({
+            data: createSignedAccountContentBinding(),
+            select: { id: true },
+        });
         const participant = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` }, select: { id: true } });
         const machineId = `machine-${randomUUID()}`;
         await db.machine.create({ data: { id: machineId, accountId: owner.id, metadata: "{}" } });
@@ -84,6 +91,154 @@ describe("session publisher presence on SQLite", () => {
         })).resolves.toEqual({ status: "rejected", reason: "archived" });
     });
 
+    it("rejects publisher generation overflow without changing reachability", async () => {
+        const seeded = await seed();
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: { publisherGeneration: 9_223_372_036_854_775_807n },
+        });
+        const presence = createSessionPublisherPresence();
+
+        await expect(presence.registerPublisher({
+            socket: {},
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        })).resolves.toEqual({ status: "rejected", reason: "revision_overflow" });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, lastActiveAt: true, publisherGeneration: true },
+        })).resolves.toEqual({
+            active: false,
+            lastActiveAt: seeded.fence,
+            publisherGeneration: 9_223_372_036_854_775_807n,
+        });
+    });
+
+    it("rejects a predecessor publisher tuple patch after a successor commits its fence", async () => {
+        const seeded = await seed();
+        const previousOwnerMetadataCiphertext =
+            "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+        const nextOwnerMetadataCiphertext =
+            "oQohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh5AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGA==";
+        const previousOwnerMetadata = {
+            t: "encrypted",
+            c: previousOwnerMetadataCiphertext,
+        } as const;
+        const nextOwnerMetadata = {
+            t: "encrypted",
+            c: nextOwnerMetadataCiphertext,
+        } as const;
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: {
+                metadataLayoutVersion: 1,
+                metadata: "shared-before",
+                metadataVersion: 4,
+                ownerMetadata: JSON.stringify(previousOwnerMetadata),
+                agentState: "agent-before",
+                agentStateVersion: 8,
+            },
+        });
+        let now = new Date(seeded.fence.getTime() + 10);
+        const presence = createSessionPublisherPresence({ now: () => now });
+        const predecessor = await presence.registerPublisher({
+            socket: {},
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        expect(predecessor.status).toBe("registered");
+        if (predecessor.status !== "registered") {
+            throw new Error("expected predecessor registration");
+        }
+        now = new Date(predecessor.committedFence.getTime() + 10);
+        const successor = await presence.registerPublisher({
+            socket: {},
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 },
+        });
+        expect(successor.status).toBe("registered");
+
+        const stalePublisherPatch = {
+            mode: "owner" as const,
+            actorUserId: seeded.binding.accountId,
+            sessionId: seeded.binding.sessionId,
+            metadataLayoutVersion: 1 as const,
+            publisherPrecondition: {
+                machineId: seeded.binding.machineId,
+                committedFenceMs: predecessor.committedFence.getTime(),
+            },
+            expectedOwnerMetadata: previousOwnerMetadata,
+            sharedMetadata: {
+                ciphertext: "shared-after",
+                expectedVersion: 4,
+            },
+            ownerMetadata: nextOwnerMetadata,
+            agentState: {
+                ciphertext: "agent-after",
+                expectedVersion: 8,
+            },
+        };
+        await expect(updateSessionMetadataEnvelopeTuple(
+            stalePublisherPatch,
+        )).resolves.toEqual({
+            ok: false,
+            error: "publisher-superseded",
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: {
+                metadata: true,
+                metadataVersion: true,
+                ownerMetadata: true,
+                agentState: true,
+                agentStateVersion: true,
+                lastActiveAt: true,
+            },
+        })).resolves.toEqual({
+            metadata: "shared-before",
+            metadataVersion: 4,
+            ownerMetadata: JSON.stringify(previousOwnerMetadata),
+            agentState: "agent-before",
+            agentStateVersion: 8,
+            lastActiveAt:
+                successor.status === "registered"
+                    ? successor.committedFence
+                    : expect.any(Date),
+        });
+    });
+
+    it("expires a queued current-publisher operation without running it after the held neighbor settles", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => new Date(seeded.fence.getTime() + 1) });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 },
+        });
+        expect(registered.status).toBe("registered");
+
+        let releaseFirst!: () => void;
+        const first = presence.runAsCurrentPublisher({
+            socket,
+            operation: async () => await new Promise<void>((resolve) => { releaseFirst = resolve; }),
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const secondOperation = vi.fn(async () => "started");
+        const second = presence.runAsCurrentPublisherInTx({
+            socket,
+            deadlineAtMs: Date.now() + 25,
+            operation: secondOperation,
+        });
+        await expect(second).rejects.toMatchObject({ name: "LockAdmissionDeadlineExceededError" });
+
+        releaseFirst();
+        await first;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        expect(secondOperation).not.toHaveBeenCalled();
+    });
+
     it("makes registration the positive transition and fences a replaced publisher's writes and close", async () => {
         const seeded = await seed();
         const turnId = `turn-${randomUUID()}`;
@@ -111,10 +266,21 @@ describe("session publisher presence on SQLite", () => {
         expect(first.status).toBe("registered");
         if (first.status !== "registered") throw new Error("expected registration");
         expect(first.badgeAttentionChanged).toBe(false);
+        const registeredRow = await db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, lastActiveAt: true, updatedAt: true },
+        });
+        expect(registeredRow).toMatchObject({
+            active: true,
+            lastActiveAt: first.committedFence,
+        });
+        await expect(presence.checkCurrentPublisher({
+            socket: predecessor,
+        })).resolves.toBe(true);
         await expect(db.session.findUniqueOrThrow({
             where: { id: seeded.binding.sessionId },
-            select: { active: true, lastActiveAt: true },
-        })).resolves.toEqual({ active: true, lastActiveAt: first.committedFence });
+            select: { updatedAt: true },
+        })).resolves.toEqual({ updatedAt: registeredRow.updatedAt });
 
         now = new Date(first.committedFence.getTime() + 10);
         const replacement = await presence.registerPublisher({
@@ -125,6 +291,12 @@ describe("session publisher presence on SQLite", () => {
         expect(replacement.status).toBe("registered");
         if (replacement.status !== "registered") throw new Error("expected replacement");
         expect(replacement.badgeAttentionChanged).toBe(false);
+        await expect(presence.checkCurrentPublisher({
+            socket: predecessor,
+        })).resolves.toBe(false);
+        await expect(presence.checkCurrentPublisher({
+            socket: successor,
+        })).resolves.toBe(true);
 
         await expect(presence.publishSnapshot({
             socket: predecessor,
@@ -575,6 +747,163 @@ describe("session publisher presence on SQLite", () => {
             runtimeActivityState: "unknown",
             runtimeActivityActiveCount: 0,
         });
+    });
+
+    it("reports unavailable machine control when the session is not bound to that machine", async () => {
+        const seeded = await seed();
+        await db.accessKey.deleteMany({
+            where: {
+                accountId: seeded.binding.accountId,
+                machineId: seeded.binding.machineId,
+                sessionId: seeded.binding.sessionId,
+            },
+        });
+
+        const presence = createSessionPublisherPresence();
+        await expect(presence.captureExplicitMachineStop({ binding: seeded.binding })).resolves.toEqual({
+            status: "rejected",
+            reason: "machine_control_unavailable",
+        });
+    });
+
+    it("lets a proven explicit stop close the captured publisher after its heartbeat advances", async () => {
+        const seeded = await seed();
+        let now = new Date(seeded.fence.getTime() + 10);
+        const presence = createSessionPublisherPresence({ now: () => now });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+
+        const captured = await presence.captureExplicitMachineStop({ binding: seeded.binding });
+        if (captured.status !== "captured") throw new Error("expected explicit-stop capture");
+        now = new Date(registered.committedFence.getTime() + 10);
+        const touched = await presence.touchPublisher({ socket });
+        expect(touched.status).toBe("touched");
+        if (touched.status !== "touched") throw new Error("expected touch");
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: {
+                publisherGeneration: true,
+                publisherGenerationLastActiveAt: true,
+            },
+        })).resolves.toEqual({
+            publisherGeneration: registered.publisherGeneration,
+            publisherGenerationLastActiveAt: touched.committedFence,
+        });
+
+        await expect(presence.finalizeExplicitMachineStop({ target: captured.target }))
+            .resolves.toMatchObject({ status: "closed" });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true },
+        })).resolves.toEqual({ active: false });
+    });
+
+    it("does not let a terminalized publisher heartbeat reactivate the session", async () => {
+        const seeded = await seed();
+        let now = new Date(seeded.fence.getTime() + 10);
+        const presence = createSessionPublisherPresence({ now: () => now });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+        const captured = await presence.captureExplicitMachineStop({ binding: seeded.binding });
+        if (captured.status !== "captured") throw new Error("expected explicit-stop capture");
+
+        await expect(presence.finalizeExplicitMachineStop({ target: captured.target }))
+            .resolves.toMatchObject({ status: "closed" });
+        now = new Date(registered.committedFence.getTime() + 10);
+        await expect(presence.touchPublisher({ socket })).resolves.toEqual({ status: "superseded" });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true },
+        })).resolves.toEqual({ active: false });
+    });
+
+    it("keeps a timeout-recoverable publisher terminal after the captured daemon proof arrives", async () => {
+        const seeded = await seed();
+        let now = new Date(seeded.fence.getTime() + 10);
+        const presence = createSessionPublisherPresence({ now: () => now });
+        const socket = {};
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+        const captured = await presence.captureMachineSessionTerminal({ binding: seeded.binding });
+        if (captured.status !== "captured") throw new Error("expected machine-terminal capture");
+
+        await expect(expireSessionPublisherCandidates({
+            candidates: [{ sessionId: seeded.binding.sessionId, observedFence: registered.committedFence }],
+        })).resolves.toMatchObject([{ status: "expired" }]);
+        await expect(presence.finalizeMachineSessionTerminal({ target: captured.target }))
+            .resolves.toEqual({ status: "already_inactive" });
+        now = new Date(registered.committedFence.getTime() + 10);
+        await expect(presence.touchPublisher({ socket })).resolves.toEqual({ status: "superseded" });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, publisherGenerationLastActiveAt: true },
+        })).resolves.toEqual({ active: false, publisherGenerationLastActiveAt: null });
+    });
+
+    it("keeps an exact-heartbeat fallback for a publisher registered by an older server", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence();
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: { active: true },
+        });
+
+        const captured = await presence.captureExplicitMachineStop({ binding: seeded.binding });
+        expect(captured).toMatchObject({
+            status: "captured",
+            target: {
+                authority: { kind: "legacy-heartbeat", committedFence: seeded.fence },
+            },
+        });
+        if (captured.status !== "captured") throw new Error("expected legacy capture");
+
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: { lastActiveAt: new Date(seeded.fence.getTime() + 1) },
+        });
+        await expect(presence.finalizeExplicitMachineStop({ target: captured.target }))
+            .resolves.toEqual({ status: "superseded" });
+    });
+
+    it("does not let a completed generation stop close a later old-server publisher", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => new Date(seeded.fence.getTime() + 10) });
+        const registered = await presence.registerPublisher({
+            socket: {},
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+        const captured = await presence.captureExplicitMachineStop({ binding: seeded.binding });
+        if (captured.status !== "captured") throw new Error("expected explicit-stop capture");
+        await expect(presence.finalizeExplicitMachineStop({ target: captured.target }))
+            .resolves.toMatchObject({ status: "closed" });
+
+        const oldServerFence = new Date(registered.committedFence.getTime() + 10);
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: { active: true, lastActiveAt: oldServerFence },
+        });
+        await expect(presence.finalizeExplicitMachineStop({ target: captured.target }))
+            .resolves.toEqual({ status: "superseded" });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId },
+            select: { active: true, lastActiveAt: true },
+        })).resolves.toEqual({ active: true, lastActiveAt: oldServerFence });
     });
 
     it("makes a duplicate exact-fence machine terminal finalize a no-op", async () => {

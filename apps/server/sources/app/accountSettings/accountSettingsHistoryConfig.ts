@@ -1,6 +1,7 @@
 export const ACCOUNT_SETTINGS_HISTORY_LIMIT_ENV = "HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT";
 export const DEFAULT_ACCOUNT_SETTINGS_HISTORY_LIMIT = 25;
 export const MAX_ACCOUNT_SETTINGS_HISTORY_LIMIT = 250;
+export const ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES = 16 * 1024 * 1024;
 
 export function resolveAccountSettingsHistoryLimitFromEnv(env: NodeJS.ProcessEnv): number {
     const raw = env[ACCOUNT_SETTINGS_HISTORY_LIMIT_ENV];

@@ -7,10 +7,9 @@ import { auth } from "@/app/auth/auth";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import {
-    applySessionTranscriptPublicationCeiling,
     buildShareableSessionMessagePublicationWhere,
     isSessionTranscriptShareable,
-    resolveSessionTranscriptNonOwnerRecencyMs,
+    projectSessionTranscriptPublicationPreview,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -26,9 +25,16 @@ import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
     projectSessionMetadataForRecipient,
+    readSessionMetadataOwnerAccountMode,
     SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_CODE,
     SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_MESSAGE,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
+import {
+    captureAccountStoredContentCompatibilityForHttpRequest,
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
 
 const PublicShareConsentQuerySchema = z.object({
     consent: z.union([
@@ -115,6 +121,10 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
         const userId = await getOptionalAuthenticatedUserId(request);
         const ipAddress = getIpAddress(request.headers);
         const userAgent = getUserAgent(request.headers);
+        captureAccountStoredContentCompatibilityForHttpRequest(request);
+        const supportsCurrentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         // Use transaction to atomically check limits and increment use count
         const result = await inTx(async (tx) => {
@@ -144,8 +154,6 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                 where: { id: publicShare.sessionId },
                 select: {
                     id: true,
-                    seq: true,
-                    accountId: true,
                     encryptionMode: true,
                     createdAt: true,
                     updatedAt: true,
@@ -166,6 +174,16 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             if (!session) {
                 return { error: 'Public share not found or expired' };
             }
+            if (
+                session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                && !supportsCurrentProtocol
+            ) {
+                return {
+                    error: "Client upgrade required",
+                    clientUpgradeRequired: true as const,
+                };
+            }
             if (!isSessionTranscriptShareable(session)) {
                 return {
                     error: 'Transcript unavailable',
@@ -174,9 +192,20 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             }
             let metadataProjection;
             try {
+                const ownerAccountMode = session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1
+                    ? await readSessionMetadataOwnerAccountMode(
+                        tx,
+                        session.accountId,
+                    )
+                    : undefined;
                 metadataProjection = projectSessionMetadataForRecipient({
                     session,
-                    recipientAccountId: null,
+                    recipient: {
+                        type: "shared",
+                        accountId: null,
+                        ownerAccountMode,
+                    },
                 });
             } catch (error) {
                 if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
@@ -249,6 +278,16 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
 
         // Handle errors from transaction
         if ('error' in result) {
+            if (
+                "clientUpgradeRequired" in result
+                && result.clientUpgradeRequired
+            ) {
+                await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                );
+                return;
+            }
             if ('privacyUpgradeRequired' in result && result.privacyUpgradeRequired) {
                 return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
             }
@@ -267,6 +306,12 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
         }
 
         const session = result.session;
+        const publicationProjection = projectSessionTranscriptPublicationPreview({
+            seq: session.seq,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            lastActiveAt: session.lastActiveAt,
+        }, session);
 
         const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
         const encryptedDataKeyB64 =
@@ -282,12 +327,12 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
         return reply.send({
             session: {
                 id: session.id,
-                seq: applySessionTranscriptPublicationCeiling(session.seq, session),
+                seq: publicationProjection.seq,
                 encryptionMode: sessionEncryptionMode,
                 createdAt: session.createdAt.getTime(),
-                updatedAt: resolveSessionTranscriptNonOwnerRecencyMs(session, session.updatedAt),
-                active: session.active,
-                activeAt: session.lastActiveAt.getTime(),
+                updatedAt: publicationProjection.updatedAt,
+                active: publicationProjection.hasLiveFacts && session.active,
+                activeAt: publicationProjection.activeAt,
                 ...result.metadataProjection,
             },
             owner: toShareUserProfile(session.account),

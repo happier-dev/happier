@@ -5,7 +5,7 @@ import { sendDirectApnsLiveActivityUpdate } from "@/app/activity/liveActivities/
 import { sendExpoBackgroundWakeLiveActivityUpdate } from "@/app/activity/liveActivities/providers/expoBackgroundWakeProvider";
 import { sendHostedRelayLiveActivityUpdate } from "@/app/activity/liveActivities/providers/hostedRelayLiveActivityProvider";
 import { parseIntEnv } from "@/config/env";
-import { db } from "@/storage/db";
+import { db, getActivePrismaRuntime } from "@/storage/db";
 import type { AccountLiveActivityTarget } from "@prisma/client";
 import type { Fastify } from "../../types";
 
@@ -102,7 +102,7 @@ async function recordBackgroundWakeDeliveryResult(params: Readonly<{
                 lastPayloadHash: params.snapshotFingerprint,
                 failureCount: 0,
                 lastFailureCode: null,
-                diagnostics: null,
+                diagnostics: getActivePrismaRuntime().DbNull,
             },
         });
         return;

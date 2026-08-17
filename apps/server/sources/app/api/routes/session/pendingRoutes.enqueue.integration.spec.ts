@@ -1,10 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX } from "@happier-dev/protocol";
+
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const enqueuePendingMessage = vi.fn();
 const emitUpdate = vi.fn();
 const buildPendingChangedUpdate = vi.fn(() => ({ type: "pending-changed" }));
+const sessionFindUnique = vi.fn();
+
+const HOSTED_RECIPIENT_PROJECTION = {
+    currentStorageState: "hosted",
+    acceptedThroughServerSeq: null,
+    materializationPublicationId: null,
+    materializedThroughSourceAt: null,
+    publishedThroughServerSeq: null,
+    seq: 0,
+    lastViewedSessionSeq: null,
+    latestReadyEventSeq: null,
+    latestReadyEventAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    meaningfulActivityAt: null,
+    lastActiveAt: new Date(0),
+} as const;
 
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     enqueuePendingMessage,
@@ -12,6 +31,9 @@ vi.mock("@/app/session/pending/pendingMessageService", () => ({
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
     buildPendingChangedUpdate,
+}));
+vi.mock("@/storage/db", () => ({
+    db: { session: { findUnique: sessionFindUnique } },
 }));
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: () => "update-id" }));
 
@@ -21,6 +43,8 @@ describe("sessionPendingRoutes (enqueue)", () => {
         enqueuePendingMessage.mockReset();
         emitUpdate.mockReset();
         buildPendingChangedUpdate.mockClear();
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(HOSTED_RECIPIENT_PROJECTION);
     });
 
     it("forwards the external handoff admission mode to enqueuePendingMessage", async () => {
@@ -130,33 +154,8 @@ describe("sessionPendingRoutes (enqueue)", () => {
         });
     });
 
-    it("acknowledges the persisted requested action on enqueue", async () => {
-        const createdAt = new Date(1);
+    it("rejects caller-supplied equality evidence before Account admission", async () => {
         const requestedAction = { v: 1 as const, kind: "send_now" as const };
-        enqueuePendingMessage.mockResolvedValueOnce({
-            ok: true,
-            didWrite: true,
-            pending: {
-                localId: "l-exact",
-                messageRole: "user",
-                content: { t: "encrypted", c: "cipher" },
-                requestedAction,
-                status: "queued",
-                deliveryStatus: { status: "queued" },
-                position: 1,
-                createdAt,
-                updatedAt: createdAt,
-                discardedAt: null,
-                discardedReason: null,
-                authorAccountId: "actor",
-            },
-            pendingCount: 1,
-            pendingBlockedCount: 0,
-            pendingVersion: 1,
-            badgeAttentionChanged: false,
-            participantCursors: [],
-        });
-
         const { sessionPendingRoutes } = await import("./pendingRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
@@ -165,13 +164,25 @@ describe("sessionPendingRoutes (enqueue)", () => {
                 sessionPendingRoutes(app as any);
             },
         });
-        const { response } = await route.invoke({
+        const requestEqualityEvidenceV1 = {
+            kind: "e2eeTag" as const,
+            tag: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        };
+        const { reply, response } = await route.invoke({
             userId: "actor",
             params: { sessionId: "s1" },
-            body: { localId: "l-exact", ciphertext: "cipher", messageRole: "user", requestedAction },
+            body: {
+                localId: "l-exact",
+                ciphertext: "cipher",
+                messageRole: "user",
+                requestedAction,
+                requestEqualityEvidenceV1,
+            },
         });
 
-        expect(response).toEqual(expect.objectContaining({ requestedAction }));
+        expect(reply.statusCode).toBe(400);
+        expect(response).toEqual({ error: "invalid-params" });
+        expect(enqueuePendingMessage).not.toHaveBeenCalled();
     });
 
     it("returns the exact committed-message proof for a terminal same-localId rejoin", async () => {
@@ -364,5 +375,84 @@ describe("sessionPendingRoutes (enqueue)", () => {
             payload: { type: "pending-changed" },
             recipientFilter: { type: "user-machine-scoped-only" },
         });
+    });
+
+    it("proves a durable enqueue can be followed by publication failure before the HTTP response", async () => {
+        const createdAt = new Date("2026-08-11T10:00:00.000Z");
+        enqueuePendingMessage.mockResolvedValueOnce({
+            ok: true,
+            didWrite: true,
+            pending: {
+                localId: "committed-before-publication-failure",
+                messageRole: "user",
+                content: { t: "plain", v: { type: "user", text: "hi" } },
+                status: "queued",
+                position: 1,
+                createdAt,
+                updatedAt: createdAt,
+                discardedAt: null,
+                discardedReason: null,
+                authorAccountId: "actor",
+            },
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+            pendingVersion: 2,
+            meaningfulActivityAt: createdAt,
+            badgeAttentionChanged: false,
+            participantCursors: [],
+        });
+        sessionFindUnique.mockRejectedValueOnce(new Error("publication projection unavailable"));
+
+        const { sessionPendingRoutes } = await import("./pendingRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                // The narrow route harness intentionally supplies only the Fastify registration surface.
+                sessionPendingRoutes(app as any);
+            },
+        });
+
+        await expect(route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1" },
+            body: {
+                localId: "committed-before-publication-failure",
+                content: { t: "plain", v: { type: "user", text: "hi" } },
+                messageRole: "user",
+                requestedAction: { v: 1, kind: "enqueue" },
+            },
+        })).rejects.toThrow("publication projection unavailable");
+        expect(enqueuePendingMessage).toHaveBeenCalledOnce();
+    });
+
+    it("rejects a reserved Agent-transition divider localId before it can be enqueued", async () => {
+        // A Pending row materializes into a transcript row under its own localId, so this is
+        // a generic client message ingress. A client that could enqueue a divider could forge
+        // a departure boundary the bounded context pass trusts, or pre-plant a conflicting row
+        // that makes the real cutover's append refuse forever.
+        const { sessionPendingRoutes } = await import("./pendingRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                // The narrow route harness intentionally supplies only the Fastify registration surface.
+                sessionPendingRoutes(app as any);
+            },
+        });
+
+        const { reply, response } = await route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1" },
+            body: {
+                localId: `${SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX}local-42`,
+                content: { t: "plain", v: { type: "user", text: "hi" } },
+                messageRole: "user",
+            },
+        });
+
+        expect(reply.statusCode).toBe(400);
+        expect(response).toEqual({ error: "invalid-params" });
+        expect(enqueuePendingMessage).not.toHaveBeenCalled();
     });
 });

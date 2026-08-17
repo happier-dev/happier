@@ -4,10 +4,12 @@ import {
     createStartServerDbMocks,
     installStartServerDbModuleMock,
     installStartServerCommonWiringMocks,
+    startPluginWebhookCredentialRetirementWorkerMock,
 } from '@/testkit/startServerMocks';
 import { createStartServerHarness } from '@/testkit/startServerHarness';
 
 const retentionStop = vi.fn();
+const webhookCredentialRetirementStop = vi.fn();
 
 vi.mock('@/storage/redis/redis', () => ({
     getRedisClient: () => ({ ping: vi.fn(async () => 'PONG') }),
@@ -32,6 +34,7 @@ describe('startServer retention worker wiring', () => {
     beforeEach(() => {
         startServerDbMocks.reset();
         startServerHarness.reset();
+        startPluginWebhookCredentialRetirementWorkerMock.mockReset().mockReturnValue(null);
     });
 
     afterEach(() => {
@@ -50,6 +53,22 @@ describe('startServer retention worker wiring', () => {
         expect(startRetentionWorker).toHaveBeenCalledTimes(1);
         expect(onShutdown).toHaveBeenCalledWith(
             'retention-worker',
+            expect.any(Function),
+        );
+    });
+
+    it('starts webhook credential retirement under the worker lifecycle', async () => {
+        startPluginWebhookCredentialRetirementWorkerMock.mockReturnValue({
+            stop: webhookCredentialRetirementStop,
+        });
+        startServerHarness.prepareImport();
+        const { startServer } = await import('./startServer');
+
+        await startServer('full');
+
+        expect(startPluginWebhookCredentialRetirementWorkerMock).toHaveBeenCalledWith(undefined);
+        expect(onShutdown).toHaveBeenCalledWith(
+            'plugin-webhook-credential-retirement-worker',
             expect.any(Function),
         );
     });

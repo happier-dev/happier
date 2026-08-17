@@ -29,6 +29,7 @@ vi.mock('@/app/changes/markAccountChanged', () => ({ markAccountChanged }));
 vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
 
 const findFirst = vi.fn();
+const claimSession = vi.fn(async () => ({ count: 1 }));
 const deleteSession = vi.fn(async () => ({ count: 1 }));
 const deleteMessages = vi.fn(async () => ({ count: 2 }));
 const deleteReports = vi.fn(async () => ({ count: 1 }));
@@ -38,6 +39,7 @@ vi.mock('@/storage/inTx', () => {
         const { inTx, afterTx } = createInTxHarness(() => ({
             session: {
                 findFirst,
+                updateMany: claimSession,
                 deleteMany: deleteSession,
             },
             sessionMessage: { deleteMany: deleteMessages },
@@ -58,18 +60,25 @@ describe('deleteOwnedSession', () => {
         findFirst.mockResolvedValueOnce({
             id: 's1',
             accountId: 'owner',
+            metadataLayoutVersion: 0,
             shares: [{ sharedWithUserId: 'u2' }],
         });
 
         const { deleteOwnedSession } = await import('./deleteOwnedSession');
         const ok = await deleteOwnedSession({ sessionId: 's1', reason: 'retention_policy' });
 
-        expect(ok).toBe(true);
+        expect(ok).toEqual({ ok: true });
         expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: 's1' },
         }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'owner', kind: 'session', entityId: 's1' }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'u2', kind: 'session', entityId: 's1' }));
+        expect(claimSession.mock.invocationCallOrder[0]!).toBeLessThan(
+            markAccountChanged.mock.invocationCallOrder[0]!,
+        );
+        expect(markAccountChanged.mock.invocationCallOrder[0]!).toBeLessThan(
+            deleteMessages.mock.invocationCallOrder[0]!,
+        );
         expect(deleteMessages).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteReports).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteAccessKeys).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
@@ -97,7 +106,7 @@ describe('deleteOwnedSession', () => {
             reason: 'user_request',
         });
 
-        expect(ok).toBe(false);
+        expect(ok).toEqual({ ok: false, error: 'not-found' });
         expect(deleteSession).not.toHaveBeenCalled();
     });
 
@@ -121,7 +130,7 @@ describe('deleteOwnedSession', () => {
 
         const ok = await deleteOwnedSession(params);
 
-        expect(ok).toBe(false);
+        expect(ok).toEqual({ ok: false, error: 'not-found' });
         expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: {
                 id: 's1',
@@ -136,6 +145,7 @@ describe('deleteOwnedSession', () => {
         findFirst.mockResolvedValueOnce({
             id: 's1',
             accountId: 'owner',
+            metadataLayoutVersion: 0,
             shares: [{ sharedWithUserId: 'u2' }],
         });
         deleteSession.mockResolvedValueOnce({ count: 0 });
@@ -150,7 +160,7 @@ describe('deleteOwnedSession', () => {
             },
         });
 
-        expect(ok).toBe(false);
+        expect(ok).toEqual({ ok: false, error: 'not-found' });
         expect(deleteSession).toHaveBeenCalledWith({
             where: {
                 AND: [
@@ -167,5 +177,84 @@ describe('deleteOwnedSession', () => {
             'Session deleted successfully',
         );
         expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
+    it('allows deletion of a layout-1 session without interpreting its stored content', async () => {
+        findFirst.mockResolvedValueOnce({
+            id: 's1',
+            accountId: 'owner',
+            metadataLayoutVersion: 1,
+            shares: [{ sharedWithUserId: 'u2' }],
+        });
+
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        const result = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(markAccountChanged).toHaveBeenCalledTimes(2);
+        expect(deleteMessages).toHaveBeenCalledOnce();
+        expect(deleteSession).toHaveBeenCalledOnce();
+    });
+
+    it('keeps legacy layout-0 deletion valid and carries the layout fence into the final delete', async () => {
+        findFirst.mockResolvedValueOnce({
+            id: 's1',
+            accountId: 'owner',
+            metadataLayoutVersion: 0,
+            shares: [],
+        });
+
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        const result = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(deleteSession).toHaveBeenCalledWith({
+            where: {
+                AND: [
+                    { id: 's1' },
+                    {
+                        accountId: 'owner',
+                        metadataLayoutVersion: 0,
+                    },
+                ],
+            },
+        });
+    });
+
+    it('deletes layout 1 with the observed layout guarded atomically', async () => {
+        findFirst.mockResolvedValueOnce({
+            id: 's1',
+            accountId: 'owner',
+            metadataLayoutVersion: 1,
+            shares: [],
+        });
+
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        const result = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(deleteSession).toHaveBeenCalledWith({
+            where: {
+                AND: [
+                    { id: 's1' },
+                    {
+                        accountId: 'owner',
+                        metadataLayoutVersion: 1,
+                    },
+                ],
+            },
+        });
     });
 });

@@ -8,12 +8,15 @@ describe('retention/readRetentionPolicyFromEnv', () => {
 
         expect(policy).toMatchObject({
             enabled: false,
-            intervalMs: 6 * 60 * 60 * 1000,
-            batchSize: 100,
+            intervalMs: 60 * 60 * 1000,
+            batchSize: 500,
             dryRun: false,
-            maxDeletesPerRulePerRun: 1000,
+            maxDeletesPerRulePerRun: 100_000,
+            sweepTimeBudgetMs: 10_000,
+            maxCandidatesPerRulePerRun: 10_000,
             domains: {
                 sessions: { mode: 'keep_forever' },
+                sessionSidechainMessages: { mode: 'keep_forever' },
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -27,12 +30,15 @@ describe('retention/readRetentionPolicyFromEnv', () => {
 
         expect(policy).toMatchObject({
             enabled: false,
-            intervalMs: 6 * 60 * 60 * 1000,
-            batchSize: 100,
+            intervalMs: 60 * 60 * 1000,
+            batchSize: 500,
             dryRun: false,
-            maxDeletesPerRulePerRun: 1000,
+            maxDeletesPerRulePerRun: 100_000,
+            sweepTimeBudgetMs: 10_000,
+            maxCandidatesPerRulePerRun: 10_000,
             domains: {
                 sessions: { mode: 'keep_forever' },
+                sessionSidechainMessages: { mode: 'keep_forever' },
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -48,8 +54,12 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             HAPPIER_SERVER_RETENTION__BATCH_SIZE: '25',
             HAPPIER_SERVER_RETENTION__DRY_RUN: '1',
             HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN: '250',
+            HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS: '5000',
+            HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN: '750',
             HAPPIER_SERVER_RETENTION__SESSIONS__MODE: 'delete_inactive',
             HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS: '30',
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS: '7',
             HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE: 'delete_older_than',
             HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: '14',
             HAPPIER_SERVER_RETENTION__VOICE_SESSION_LEASES__MODE: 'delete_older_than',
@@ -64,8 +74,11 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             batchSize: 25,
             dryRun: true,
             maxDeletesPerRulePerRun: 250,
+            sweepTimeBudgetMs: 5_000,
+            maxCandidatesPerRulePerRun: 750,
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
+                sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
                 usageEvents: { mode: 'delete_older_than', days: 180 },
@@ -77,6 +90,10 @@ describe('retention/readRetentionPolicyFromEnv', () => {
         expect(() => readRetentionPolicyFromEnv({
             HAPPIER_SERVER_RETENTION__SESSIONS__MODE: 'delete_inactive',
         })).toThrow(/SESSIONS__INACTIVITY_DAYS/i);
+
+        expect(() => readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
+        })).toThrow(/SESSION_SIDECHAIN_MESSAGES__DAYS/i);
     });
 
     it('rejects non-integer numeric values for positive integer settings', () => {

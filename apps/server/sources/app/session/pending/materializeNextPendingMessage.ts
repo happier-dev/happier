@@ -1,10 +1,16 @@
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
-import { hasExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
+import {
+    fenceExactCurrentPublisherAuthorityInTx,
+    hasExactCurrentPublisherAuthorityInTx,
+} from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
-import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveSessionPendingAccess";
-import { inTx, type Tx } from "@/storage/inTx";
-import { db, isPrismaErrorCode } from "@/storage/db";
+import {
+    inTx,
+    isTransactionAcquisitionUnavailableError,
+    isTransactionDeadlineExceededError,
+    type Tx,
+} from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     decideRuntimeIdleAdmission,
@@ -12,13 +18,15 @@ import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     normalizePendingRequestedActionV1,
     pendingDeliveryStatusV1ToPersistedFields,
+    SessionInputAdmissionReceiptV1Schema,
     type SessionMessageRole,
+    type SessionInputAdmissionReceiptV1,
     type SessionStoredContentKind,
 } from "@happier-dev/protocol";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { resolveSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
-import { resolvePendingTranscriptCompatibility } from "@/app/session/pending/pendingMessageTranscriptCommit";
+import { compareSessionMessageContentAndRole } from "@/app/session/sessionTranscriptWrite";
 import type { SessionReadyProjectionUpdate } from "@/app/session/sessionWriteService";
 import { logger } from "@/utils/logging/log";
 import {
@@ -29,7 +37,6 @@ import {
 
 type ParticipantCursor = SessionParticipantCursor;
 class PublisherAuthorityLostError extends Error {}
-class PendingProviderClaimRaceError extends Error {}
 const pendingMessageEligibleForMaterializationWhere = {
     status: "queued" as const,
     deliveryState: null,
@@ -60,7 +67,7 @@ export type MaterializeNextPendingMessageResult =
         ok: true;
         didMaterialize: true;
         didWriteMessage: boolean;
-        message: { id: string | null; seq: number | null; localId: string; messageRole: SessionMessageRole | null; content: PrismaJson.SessionMessageContent; requestedAction: import("@happier-dev/protocol").PendingRequestedActionV1; providerAction: PendingProviderAction; createdAt: Date; updatedAt: Date };
+        message: { id: string | null; seq: number | null; localId: string; messageRole: SessionMessageRole | null; content: PrismaJson.SessionMessageContent; requestedAction: import("@happier-dev/protocol").PendingRequestedActionV1; providerAction: PendingProviderAction; inputAdmissionReceipt: SessionInputAdmissionReceiptV1 | null; createdAt: Date; updatedAt: Date };
         participantCursorsMessage: ParticipantCursor[];
         participantCursorsPending: ParticipantCursor[];
         pendingCount: number;
@@ -71,10 +78,16 @@ export type MaterializeNextPendingMessageResult =
         readyProjection?: SessionReadyProjectionUpdate;
         deliveryState?: PendingMaterializationDeliveryState;
       }
+    | { ok: false; error: "transaction-unavailable"; retryAfterMs: number }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "transcript-conflict" | "internal" };
 
 function toSessionMessageContentFromPending(content: PrismaJson.SessionPendingMessageContent): PrismaJson.SessionMessageContent {
     return content;
+}
+
+function readPendingInputAdmissionReceipt(value: unknown): SessionInputAdmissionReceiptV1 | null {
+    const parsed = SessionInputAdmissionReceiptV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 async function resolvePendingProviderRejoinInTx(params: {
@@ -116,6 +129,7 @@ async function resolvePendingProviderRejoinInTx(params: {
             content: true,
             requestedAction: true,
             providerAction: true,
+            inputAdmissionReceipt: true,
             createdAt: true,
             updatedAt: true,
         },
@@ -186,11 +200,11 @@ async function resolvePendingProviderRejoinInTx(params: {
         select: { id: true, seq: true, content: true, messageRole: true },
     });
     if (existingTranscriptMessage) {
-        const compatibility = resolvePendingTranscriptCompatibility({
+        const compatibility = compareSessionMessageContentAndRole({
             existing: existingTranscriptMessage,
-            pending: { content, messageRole },
+            candidate: { content, messageRole },
         });
-        if (!compatibility.ok) {
+        if (compatibility.kind !== "match") {
             return { ok: false, error: "transcript-conflict" };
         }
     }
@@ -212,6 +226,7 @@ async function resolvePendingProviderRejoinInTx(params: {
             content,
             requestedAction: normalizePendingRequestedActionV1(row.requestedAction),
             providerAction: row.providerAction,
+            inputAdmissionReceipt: readPendingInputAdmissionReceipt(row.inputAdmissionReceipt),
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
         },
@@ -225,7 +240,7 @@ async function resolvePendingProviderRejoinInTx(params: {
     };
 }
 
-export async function materializeNextPendingMessage(params: {
+type MaterializeNextPendingMessageParams = Readonly<{
     actorUserId: string;
     sessionId: string;
     deliveryState: PendingMaterializationDeliveryStateMode;
@@ -233,19 +248,34 @@ export async function materializeNextPendingMessage(params: {
     foregroundState: PendingClaimForegroundState;
     expectedRuntimeActivityRevision?: number;
     publisherAuthority: CurrentSessionPublisherAuthority;
-}): Promise<MaterializeNextPendingMessageResult> {
-    return await materializeNextPendingMessageWithRaceRetry(params, true);
+    deadlineAtMs?: number;
+}>;
+
+export async function materializeNextPendingMessage(
+    params: MaterializeNextPendingMessageParams,
+): Promise<MaterializeNextPendingMessageResult> {
+    try {
+        return await inTx(
+            async (tx) => await materializeNextPendingMessageInTx({ ...params, tx }),
+            params.deadlineAtMs === undefined ? undefined : { deadlineAtMs: params.deadlineAtMs },
+        );
+    } catch (error) {
+        return mapPendingMaterializationError(error);
+    }
 }
 
-async function materializeNextPendingMessageWithRaceRetry(params: {
-    actorUserId: string;
-    sessionId: string;
-    deliveryState: PendingMaterializationDeliveryStateMode;
-    deliveryTiming: PendingMaterializationDeliveryTiming;
-    foregroundState: PendingClaimForegroundState;
-    expectedRuntimeActivityRevision?: number;
-    publisherAuthority: CurrentSessionPublisherAuthority;
-}, retryRace: boolean): Promise<MaterializeNextPendingMessageResult> {
+export function mapPendingMaterializationError(error: unknown): MaterializeNextPendingMessageResult {
+    if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
+    if (isTransactionDeadlineExceededError(error) || isTransactionAcquisitionUnavailableError(error)) {
+        return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+    }
+    return { ok: false, error: "internal" };
+}
+
+export async function materializeNextPendingMessageInTx(
+    params: MaterializeNextPendingMessageParams & Readonly<{ tx: Tx }>,
+): Promise<MaterializeNextPendingMessageResult> {
+    const tx = params.tx;
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const materializedDeliveryState = { mode: "provider", unresolved: true } satisfies PendingMaterializationDeliveryState;
@@ -267,12 +297,17 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
         return { ok: false, error: "invalid-params" };
     }
 
-    const access = await resolveSessionPendingOwnerAccess(actorUserId, sessionId);
-    if (!access.ok) return { ok: false, error: access.error };
+    if (!await fenceExactCurrentPublisherAuthorityInTx(
+        tx,
+        params.publisherAuthority,
+        actorUserId,
+        sessionId,
+    )) return { ok: false, error: "forbidden" };
 
-    const sessionRow = await db.session.findUnique({
+    const sessionRow = await tx.session.findUnique({
         where: { id: sessionId },
         select: {
+            accountId: true,
             encryptionMode: true,
             seq: true,
             pendingCount: true,
@@ -286,16 +321,17 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
         },
     });
     if (!sessionRow) return { ok: false, error: "session-not-found" };
+    if (sessionRow.accountId !== actorUserId) return { ok: false, error: "forbidden" };
     if ((sessionRow.pendingCount ?? 0) <= 0) {
         // pendingCount is a denormalized counter; treat it as a fast-path hint, not a source of truth.
         // If the counter is inconsistent (e.g. race/data corruption), fall back to checking the queue.
-        const hasEligibleQueued = await db.sessionPendingMessage.findFirst({
+        const hasEligibleQueued = await tx.sessionPendingMessage.findFirst({
             where: { sessionId, ...pendingMessageCandidateWhere },
             orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
             select: { localId: true },
         });
         if (!hasEligibleQueued) {
-            const pendingCount = await db.sessionPendingMessage.count({
+            const pendingCount = await tx.sessionPendingMessage.count({
                 where: { sessionId, status: "queued" },
             });
             if (pendingCount <= 0) {
@@ -314,12 +350,10 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
     const sessionEncryptionMode: "e2ee" | "plain" = sessionRow.encryptionMode === "plain" ? "plain" : "e2ee";
     const policy = readEncryptionFeatureEnv(process.env);
 
-    try {
-        const result = await inTx(async (tx) => {
+        const result = await (async () => {
             const sessionBefore = await tx.session.findUniqueOrThrow({
                 where: { id: sessionId },
                 select: {
-                    seq: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -350,7 +384,7 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
             const pendingCandidates = await tx.sessionPendingMessage.findMany({
                 where: { sessionId, ...pendingMessageCandidateWhere },
                 orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
-                select: { localId: true, messageRole: true, content: true, requestedAction: true, providerAction: true, status: true, deliveryState: true, deliveryBlockedReason: true, position: true, createdAt: true, updatedAt: true },
+                select: { localId: true, messageRole: true, content: true, requestedAction: true, providerAction: true, inputAdmissionReceipt: true, status: true, deliveryState: true, deliveryBlockedReason: true, position: true, createdAt: true, updatedAt: true },
             });
             const invocationSelection = selectPendingProviderInvocation({
                 rows: pendingCandidates,
@@ -519,11 +553,11 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
                     select: { id: true, seq: true, content: true, messageRole: true },
                 });
                 if (existingTranscriptMessage) {
-                    const compatibility = resolvePendingTranscriptCompatibility({
+                    const compatibility = compareSessionMessageContentAndRole({
                         existing: existingTranscriptMessage,
-                        pending: { content, messageRole },
+                        candidate: { content, messageRole },
                     });
-                    if (!compatibility.ok) {
+                    if (compatibility.kind !== "match") {
                         return { ok: false, error: "transcript-conflict" } as const;
                     }
                 }
@@ -545,7 +579,6 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
                     },
                 });
                 if (claimed.count === 0) {
-                    if (retryRace) throw new PendingProviderClaimRaceError();
                     const latestSession = await tx.session.findUniqueOrThrow({
                         where: { id: sessionId },
                         select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
@@ -582,7 +615,6 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
                 const session = await tx.session.findUniqueOrThrow({
                     where: { id: sessionId },
                     select: {
-                        seq: true,
                         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                         pendingCount: true,
                         pendingBlockedCount: true,
@@ -615,6 +647,7 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
                         content,
                         requestedAction,
                         providerAction,
+                        inputAdmissionReceipt: readPendingInputAdmissionReceipt(nextPending.inputAdmissionReceipt),
                         createdAt: nextPending.createdAt,
                         updatedAt: nextPending.updatedAt,
                     },
@@ -638,7 +671,7 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
                         },
                     ),
             } as const;
-        });
+        })();
         if (result.ok && result.didMaterialize) {
             logger.debug({
                 sessionId,
@@ -653,14 +686,4 @@ async function materializeNextPendingMessageWithRaceRetry(params: {
             }, "session.pending.materialize");
         }
         return result;
-    } catch (error) {
-        if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
-        if (error instanceof PendingProviderClaimRaceError) {
-            return await materializeNextPendingMessageWithRaceRetry(params, false);
-        }
-        if (retryRace && (isPrismaErrorCode(error, "P2002") || isPrismaErrorCode(error, "P2025"))) {
-            return await materializeNextPendingMessageWithRaceRetry(params, false);
-        }
-        return { ok: false, error: "internal" };
-    }
 }

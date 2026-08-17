@@ -75,6 +75,7 @@ async function createConnectedServiceProfileBinding(
                 storage: "plain_json_v1",
                 kind: "oauth",
                 ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
+                credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
             },
         },
         select: { id: true },

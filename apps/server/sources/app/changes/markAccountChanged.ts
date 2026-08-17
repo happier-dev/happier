@@ -1,6 +1,51 @@
-import type { Tx } from "@/storage/inTx";
+import { afterTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
-import { ChangeKindSchema, type ChangeKind } from "@happier-dev/protocol/changes";
+import { buildAccountChangeWakeUpdate } from "@/app/events/eventPayloadBuilders";
+import { eventRouter } from "@/app/events/connectionEventRouter";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import {
+    ChangeKindSchema,
+    PluginDomainChangeHintSchema,
+    buildPluginDomainAccountChangeEntityId,
+    type ChangeKind,
+} from "@happier-dev/protocol/changes";
+
+function preserveCollectionFullHint(existingHint: unknown, nextHint: unknown): unknown {
+    const existing = PluginDomainChangeHintSchema.safeParse(existingHint);
+    const next = PluginDomainChangeHintSchema.safeParse(nextHint);
+    if (
+        !existing.success
+        || !next.success
+        || existing.data.pluginDomain !== "dataCollection"
+        || next.data.pluginDomain !== "dataCollection"
+        || !("full" in existing.data && existing.data.full === true)
+        || ("full" in next.data && next.data.full === true)
+        || existing.data.pluginId !== next.data.pluginId
+        || existing.data.collectionId !== next.data.collectionId
+    ) {
+        return nextHint;
+    }
+
+    // AccountChange coalesces one plugin/collection entity across every
+    // compatible retained Collection contract. An exact successor cannot
+    // narrow a pending full reread, but its newer digest/revision remains the
+    // most current diagnostic fact for the qualified collection.
+    return {
+        pluginDomain: "dataCollection" as const,
+        pluginId: next.data.pluginId,
+        collectionId: next.data.collectionId,
+        contractDigest: next.data.contractDigest,
+        revision: next.data.revision,
+        full: true as const,
+    };
+}
+
+function isExactCollectionHint(hint: unknown): boolean {
+    const parsed = PluginDomainChangeHintSchema.safeParse(hint);
+    return parsed.success
+        && parsed.data.pluginDomain === "dataCollection"
+        && !("full" in parsed.data && parsed.data.full === true);
+}
 
 function compactHint(_kind: ChangeKind, hint: unknown): unknown {
     if (!hint || typeof hint !== "object" || Array.isArray(hint)) {
@@ -29,6 +74,16 @@ function compactHint(_kind: ChangeKind, hint: unknown): unknown {
     return hint;
 }
 
+function scheduleAccountChangeWake(tx: Tx, accountId: string, cursor: number): void {
+    afterTx(tx, () => {
+        eventRouter.emitUpdate({
+            userId: accountId,
+            payload: buildAccountChangeWakeUpdate(cursor, randomKeyNaked(12)),
+            recipientFilter: { type: 'account-stored-content-v3' },
+        });
+    });
+}
+
 export async function markAccountChanged(
     tx: Tx,
     params: {
@@ -42,11 +97,26 @@ export async function markAccountChanged(
     const kindRes = ChangeKindSchema.safeParse(params.kind);
     const kind = kindRes.success ? kindRes.data : null;
     const entityId = typeof params.entityId === 'string' ? params.entityId : '';
-    const hint = kind ? compactHint(kind, params.hint) : params.hint;
 
     if (!accountId) throw new Error('markAccountChanged: accountId is required');
     if (!kind) throw new Error('markAccountChanged: kind is required');
     if (!entityId) throw new Error('markAccountChanged: entityId is required');
+
+    const pluginDomainHint = kind === 'pluginDomain'
+        ? PluginDomainChangeHintSchema.safeParse(params.hint)
+        : null;
+    if (pluginDomainHint && !pluginDomainHint.success) {
+        throw new Error('markAccountChanged: pluginDomain hint is invalid');
+    }
+    if (
+        pluginDomainHint?.success
+        && entityId !== buildPluginDomainAccountChangeEntityId(pluginDomainHint.data)
+    ) {
+        throw new Error('markAccountChanged: pluginDomain entityId does not match the hint identity');
+    }
+    const hint = pluginDomainHint?.success
+        ? pluginDomainHint.data
+        : compactHint(kind, params.hint);
 
     const now = new Date();
     const sessionId = kind === "session" || kind === "share" ? entityId : null;
@@ -96,7 +166,24 @@ export async function markAccountChanged(
             DO UPDATE SET
                 "cursor" = EXCLUDED."cursor",
                 "changedAt" = EXCLUDED."changedAt",
-                "hint" = EXCLUDED."hint",
+                "hint" = CASE
+                    WHEN
+                        "AccountChange"."hint"->>'pluginDomain' = 'dataCollection'
+                        AND "AccountChange"."hint"->>'full' = 'true'
+                        AND "AccountChange"."hint"->>'pluginId' = EXCLUDED."hint"->>'pluginId'
+                        AND "AccountChange"."hint"->>'collectionId' = EXCLUDED."hint"->>'collectionId'
+                        AND EXCLUDED."hint"->>'pluginDomain' = 'dataCollection'
+                        AND COALESCE(EXCLUDED."hint"->>'full', 'false') <> 'true'
+                    THEN jsonb_build_object(
+                        'pluginDomain', 'dataCollection',
+                        'pluginId', EXCLUDED."hint"->'pluginId',
+                        'collectionId', EXCLUDED."hint"->'collectionId',
+                        'contractDigest', EXCLUDED."hint"->'contractDigest',
+                        'revision', EXCLUDED."hint"->'revision',
+                        'full', true
+                    )
+                    ELSE EXCLUDED."hint"
+                END,
                 "sessionId" = EXCLUDED."sessionId",
                 "machineId" = EXCLUDED."machineId",
                 "artifactId" = EXCLUDED."artifactId",
@@ -117,6 +204,7 @@ export async function markAccountChanged(
         if (!Number.isFinite(cursor)) {
             throw new Error("markAccountChanged: failed to allocate cursor");
         }
+        scheduleAccountChangeWake(tx, accountId, cursor);
         return cursor;
     }
 
@@ -143,6 +231,25 @@ export async function markAccountChanged(
 
     const cursor = next.seq;
 
+    // The Account update above is the shared per-Account writer fence for the
+    // Prisma providers. Read the coalesced row only after it, so a later
+    // exact Collection write cannot observe and overwrite a stale full scope.
+    const current = isExactCollectionHint(hint)
+        ? await tx.accountChange.findUnique({
+            where: {
+                accountId_kind_entityId: {
+                    accountId,
+                    kind,
+                    entityId,
+                },
+            },
+            select: { hint: true },
+        })
+        : null;
+    const persistedHint = current
+        ? preserveCollectionFullHint(current.hint, hint)
+        : hint;
+
     await tx.accountChange.upsert({
         where: {
             accountId_kind_entityId: {
@@ -158,15 +265,16 @@ export async function markAccountChanged(
             ...fk,
             cursor,
             changedAt: now,
-            hint,
+            hint: persistedHint,
         },
         update: {
             ...fk,
             cursor,
             changedAt: now,
-            hint,
+            hint: persistedHint,
         },
     });
 
+    scheduleAccountChangeWake(tx, accountId, cursor);
     return cursor;
 }

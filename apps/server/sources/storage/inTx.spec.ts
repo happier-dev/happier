@@ -22,6 +22,7 @@ describe("inTx", () => {
     const envSnapshot = snapshotEnv();
 
     afterEach(() => {
+        vi.restoreAllMocks();
         restoreEnv(envSnapshot);
         transaction.mockReset();
         transaction.mockImplementation(async (fn: any, _opts?: any) => fn({} as any));
@@ -85,6 +86,27 @@ describe("inTx", () => {
         expect(transaction.mock.calls[0]![1]).toEqual(
             expect.objectContaining({ isolationLevel: "ReadCommitted" }),
         );
+    });
+
+    it("caps transaction acquisition and execution inside an absolute request deadline", async () => {
+        restoreEnv(envSnapshot);
+        applyEnvValues({
+            HAPPY_DB_PROVIDER: undefined,
+            HAPPIER_DB_PROVIDER: "postgres",
+            HAPPIER_DB_TX_TIMEOUT_MS: "10000",
+            HAPPIER_DB_TX_MAX_WAIT_MS: "5000",
+        });
+        vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+        const { inTx } = await import("./inTx");
+        await expect(inTx(async () => 123, { deadlineAtMs: 10_000 })).resolves.toBe(123);
+
+        expect(transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+            maxWait: expect.any(Number),
+            timeout: expect.any(Number),
+        }));
+        const options = transaction.mock.calls[0]![1] as { maxWait: number; timeout: number };
+        expect(options.maxWait + options.timeout).toBeLessThanOrEqual(9_000);
     });
 
     it("retries P2034 and eventually succeeds", async () => {

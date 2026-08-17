@@ -37,13 +37,16 @@ describe("voice provider conversation identity", () => {
         })).toThrow(VoiceProviderConversationIdentityCollisionError);
     });
 
-    it("preserves exact opaque identifiers and accepts 512 Unicode characters only", () => {
-        const exact = `  ${"🙂".repeat(508)}  `;
-        expect([...exact]).toHaveLength(512);
-        expect(voiceProviderConversationIdSchema.parse(exact)).toBe(exact);
-        expect(voiceSessionCorrelationIdSchema.parse(exact)).toBe(exact);
+    it("keeps provider conversation ids within the portable persistence limit without narrowing session correlation ids", () => {
+        const providerConversationId = ` ${"🙂".repeat(189)} `;
+        const sessionCorrelationId = `  ${"🙂".repeat(508)}  `;
 
-        expect(voiceProviderConversationIdSchema.safeParse("🙂".repeat(513)).success).toBe(false);
+        expect([...providerConversationId]).toHaveLength(191);
+        expect(voiceProviderConversationIdSchema.parse(providerConversationId)).toBe(providerConversationId);
+        expect(voiceProviderConversationIdSchema.safeParse("🙂".repeat(192)).success).toBe(false);
+
+        expect([...sessionCorrelationId]).toHaveLength(512);
+        expect(voiceSessionCorrelationIdSchema.parse(sessionCorrelationId)).toBe(sessionCorrelationId);
         expect(voiceSessionCorrelationIdSchema.safeParse("🙂".repeat(513)).success).toBe(false);
         expect(voiceProviderConversationIdSchema.safeParse("   ").success).toBe(false);
         expect(voiceSessionCorrelationIdSchema.safeParse("   ").success).toBe(false);

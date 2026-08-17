@@ -15,6 +15,7 @@ vi.mock("@/app/events/eventRouter", async () => {
 });
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -44,6 +45,16 @@ function createTestApp() {
     return trackApp(typed);
 }
 
+async function createReadyE2eeAccount() {
+    return await db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
+        },
+        select: { id: true },
+    });
+}
+
 describe("connectRoutes (connected services v2) sealed credential endpoints (integration)", () => {
     let harness: LightSqliteHarness;
 
@@ -69,7 +80,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
 
     it("keeps v2 connected service routes registered when the retired master env is off", async () => {
         harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0" });
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-disabled" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -87,7 +98,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("stores and returns sealed ciphertext for a connected service profile", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-u1" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -100,6 +111,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
         expect(register.statusCode).toBe(200);
@@ -182,40 +194,35 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         expect(register.json()).toEqual({ error: "connect_credential_invalid" });
     });
 
-    it("supports v1 register-sealed and credential shims (default profile)", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-v1-shims" }, select: { id: true } });
+    it("keeps the V1 credential shim read-only while preserving its default-profile projection", async () => {
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const register = await app.inject({
+        const createViaV2 = await app.inject({
             method: "POST",
-            url: "/v1/connect/anthropic/register-sealed",
+            url: "/v2/connect/anthropic/profiles/default/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "token", providerEmail: "user@example.com" },
+                expectedCredentialRevision: null,
             },
         });
-        expect(register.statusCode).toBe(200);
-        expect(register.json()).toEqual(expect.objectContaining({ success: true, credentialRevision: expect.any(String) }));
+        expect(createViaV2.statusCode).toBe(200);
 
-        const sameIdentity = await app.inject({
+        const rejectedV1Mutation = await app.inject({
             method: "POST",
             url: "/v1/connect/anthropic/register-sealed",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: { sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVkLTI=" }, metadata: { kind: "token", providerEmail: "user@example.com" } },
         });
-        expect(sameIdentity.statusCode).toBe(200);
-        const changedIdentity = await app.inject({
-            method: "POST",
-            url: "/v1/connect/anthropic/register-sealed",
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
-            payload: { sealed: { format: "account_scoped_v1", ciphertext: "Zm9yZWlnbg==" }, metadata: { kind: "token", providerEmail: "other@example.com" } },
+        expect(rejectedV1Mutation.statusCode).toBe(400);
+        expect(rejectedV1Mutation.json()).toEqual({
+            error: "connect_credential_invalid",
         });
-        expect(changedIdentity.statusCode).toBe(409);
-        expect(changedIdentity.json()).toEqual({ error: "connect_reconnect_provider_identity_mismatch" });
 
         const getOne = await app.inject({
             method: "GET",
@@ -225,16 +232,13 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         expect(getOne.statusCode).toBe(200);
         expect(getOne.json()).toEqual({
             credentialRevision: expect.any(String),
-            sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVkLTI=" },
+            sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
             metadata: expect.objectContaining({ kind: "token", providerEmail: "user@example.com" }),
         });
     });
 
     it("does not let the v1 credential shim bypass the canonical qualified identity", async () => {
-        const user = await db.account.create({
-            data: { publicKey: "pk-csv2-v1-canonical-read" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await db.serviceAccountToken.create({
             data: {
                 accountId: user.id,
@@ -433,7 +437,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("lists connected service profiles without returning plaintext secrets", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-u2" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -446,6 +450,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
@@ -481,13 +486,14 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
         expect(res.statusCode).toBe(400);
     });
 
-    it("preserves released raw v1 vendor-token writes for public-key accounts", async () => {
+    it("rejects raw V1 vendor-token writes without a credential revision while retaining passive reads", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-csv2-u3" }, select: { id: true } });
 
         const app = createTestApp();
@@ -500,20 +506,25 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: { token: "legacy-token" },
         });
-        expect(legacyRegister.statusCode).toBe(200);
-        expect(legacyRegister.json()).toEqual({ success: true });
+        expect(legacyRegister.statusCode).toBe(400);
+        expect(legacyRegister.json()).toEqual({
+            error: "connect_credential_invalid",
+        });
 
-        const getOne = await app.inject({
+        const passiveRead = await app.inject({
             method: "GET",
-            url: "/v2/connect/anthropic/profiles/default/credential",
+            url: "/v1/connect/anthropic/token",
             headers: { "x-test-user-id": user.id },
         });
-        expect(getOne.statusCode).toBe(409);
-        expect(getOne.json()).toEqual({ error: "connect_credential_unsupported_format" });
+        expect(passiveRead.statusCode).toBe(200);
+        expect(passiveRead.json()).toEqual({ hasToken: false });
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: user.id },
+        })).resolves.toBe(0);
     });
 
     it("acquires a refresh lease and prevents concurrent refresh", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-u4" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -526,6 +537,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
@@ -549,7 +561,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("treats duplicate daemons on one machine as distinct refresh lease owners", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-lease-owner" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -562,6 +574,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
@@ -594,7 +607,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("allows only one concurrent refresh lease acquirer", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-lease-race" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -607,6 +620,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
@@ -622,10 +636,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("does not acquire a refresh lease through stale legacy identity shadows", async () => {
-        const user = await db.account.create({
-            data: { publicKey: "pk-csv2-lease-identity" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
@@ -643,6 +654,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
                     ciphertext: "c2VhbGVk",
                 },
                 metadata: { kind: "oauth" },
+                expectedCredentialRevision: null,
             },
         });
         expect(created.statusCode).toBe(200);
@@ -691,21 +703,26 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("rejects reconnect when incoming sealed credential identity is omitted", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-reconnect-unknown" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        await app.inject({
+        const initial = await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "old" },
                 metadata: { kind: "oauth", providerEmail: "old@example.com", providerAccountId: "acct_old" },
+                expectedCredentialRevision: null,
             },
         });
+        expect(initial.statusCode).toBe(200);
+        const initialRevision = (
+            initial.json() as { credentialRevision: string }
+        ).credentialRevision;
 
         const reconnect = await app.inject({
             method: "POST",
@@ -714,6 +731,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "new" },
                 metadata: { kind: "oauth" },
+                expectedCredentialRevision: initialRevision,
             },
         });
 
@@ -722,21 +740,26 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("rejects reconnect when incoming sealed credential drops the existing provider account id", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-reconnect-account-id-loss" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        await app.inject({
+        const initial = await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "old" },
                 metadata: { kind: "oauth", providerEmail: "old@example.com", providerAccountId: "acct_old" },
+                expectedCredentialRevision: null,
             },
         });
+        expect(initial.statusCode).toBe(200);
+        const initialRevision = (
+            initial.json() as { credentialRevision: string }
+        ).credentialRevision;
 
         const reconnect = await app.inject({
             method: "POST",
@@ -745,6 +768,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "new" },
                 metadata: { kind: "oauth", providerEmail: "old@example.com" },
+                expectedCredentialRevision: initialRevision,
             },
         });
 
@@ -753,7 +777,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("accepts canonical profile ids containing colon separators", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-profile-colon" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -766,6 +790,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
 
@@ -773,26 +798,33 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("deletes a connected service credential for a profile", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-u5" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
 
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        await app.inject({
+        const created = await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
                 metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+                expectedCredentialRevision: null,
             },
         });
+        expect(created.statusCode).toBe(200);
+        const createdRevision = (
+            created.json() as { credentialRevision: string }
+        ).credentialRevision;
         vi.clearAllMocks();
 
         const del = await app.inject({
             method: "DELETE",
-            url: "/v2/connect/openai-codex/profiles/work/credential",
+            url:
+                "/v2/connect/openai-codex/profiles/work/credential"
+                + `?expectedCredentialRevision=${encodeURIComponent(createdRevision)}`,
             headers: { "x-test-user-id": user.id },
         });
         expect(del.statusCode).toBe(200);
@@ -833,24 +865,27 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("fences stale refresh persistence and health with the canonical credential revision", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-dev-revision" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
-        const write = async (ciphertext: string, expectedCredentialRevision?: string) => await app.inject({
+        const write = async (
+            ciphertext: string,
+            expectedCredentialRevision: string | null,
+        ) => await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext },
                 metadata: { kind: "oauth", providerAccountId: "account-1" },
-                ...(expectedCredentialRevision ? { expectedCredentialRevision } : {}),
+                expectedCredentialRevision,
             },
         });
-        const first = await write("credential-a");
+        const first = await write("credential-a", null);
         const revisionA = (first.json() as { credentialRevision: string }).credentialRevision;
         expect(revisionA).toEqual(expect.stringMatching(/^csr_/));
-        const reconnect = await write("credential-b");
+        const reconnect = await write("credential-b", revisionA);
         const revisionB = (reconnect.json() as { credentialRevision: string }).credentialRevision;
 
         vi.clearAllMocks();
@@ -875,7 +910,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("treats an explicit null revision as expect-absence", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-expect-absence" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
@@ -887,6 +922,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext: "credential-a" },
                 metadata: { kind: "oauth" },
+                expectedCredentialRevision: null,
             },
         });
         expect(first.statusCode).toBe(200);
@@ -912,22 +948,25 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("rejects a stale guarded credential delete and preserves the newer credential", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-csv2-delete-cas" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const app = createTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const write = async (ciphertext: string, expectedCredentialRevision?: string) => await app.inject({
+        const write = async (
+            ciphertext: string,
+            expectedCredentialRevision: string | null,
+        ) => await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/credential",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 sealed: { format: "account_scoped_v1", ciphertext },
                 metadata: { kind: "oauth" },
-                ...(expectedCredentialRevision ? { expectedCredentialRevision } : {}),
+                expectedCredentialRevision,
             },
         });
-        const revisionA = (await write("credential-a").then((response) => response.json()) as { credentialRevision: string }).credentialRevision;
+        const revisionA = (await write("credential-a", null).then((response) => response.json()) as { credentialRevision: string }).credentialRevision;
         const revisionB = (await write("credential-b", revisionA).then((response) => response.json()) as { credentialRevision: string }).credentialRevision;
 
         const staleDelete = await app.inject({
@@ -959,7 +998,12 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
                     profileId: "work",
                 }),
                 token: new Uint8Array([1]),
-                metadata: { v: 3, storage: "plain_json_v1", kind: "token" },
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "token",
+                    credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
+                },
             },
         });
         const app = createTestApp();
@@ -968,7 +1012,9 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
 
         const response = await app.inject({
             method: "DELETE",
-            url: "/v2/connect/openai-codex/profiles/work/credential",
+            url:
+                "/v2/connect/openai-codex/profiles/work/credential"
+                + "?expectedCredentialRevision=csr_abcdefghijklmnopqrstuvwxyz",
             headers: { "x-test-user-id": user.id },
         });
 

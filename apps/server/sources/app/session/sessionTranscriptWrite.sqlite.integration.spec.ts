@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    buildAccountStoredContentCompatibilityHttpHeadersV1,
+    createPlainSessionOwnerMetadataEnvelopeV1,
     makeExternalSessionHistoricalImportBatchIdV1,
+    projectSessionSharedMetadataV1,
     UsageAnalyticsQueryRequestSchema,
 } from "@happier-dev/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,9 +23,11 @@ import {
 import {
     executeExternalSessionHistoricalImportCommand as executeExternalSessionHistoricalImportCommandWithLimits,
 } from "@/app/session/externalSessionHistoricalImportCommand";
+import { deriveSessionSystemRecordAddressKeys } from "@/app/session/systemRecords/sessionSystemRecordAddressKeys";
 import { loadUsageMessageStatsForQuery } from "@/app/usage/query/loadUsageMessageStatsForQuery";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { sessionRoutes } from "@/app/api/routes/session/sessionRoutes";
@@ -35,6 +41,24 @@ const LIVE_EXTERNAL_LINK_OWNER_METADATA =
     "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
 const RETIRED_EXTERNAL_LINK_OWNER_METADATA =
     "oQohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh5AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGA==";
+const LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE = {
+    t: "encrypted",
+    c: LIVE_EXTERNAL_LINK_OWNER_METADATA,
+} as const;
+const RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE = {
+    t: "encrypted",
+    c: RETIRED_EXTERNAL_LINK_OWNER_METADATA,
+} as const;
+const STORED_PLAIN_OWNER_METADATA_ENVELOPE = JSON.stringify(
+    createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
+);
+const STORED_SHARED_METADATA = JSON.stringify(
+    projectSessionSharedMetadataV1({ metadata: {} }),
+);
+const CURRENT_ACCOUNT_STORED_CONTENT_HEADERS =
+    buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    );
 
 async function executeExternalSessionHistoricalImportCommand(
     params: Omit<
@@ -48,6 +72,27 @@ async function executeExternalSessionHistoricalImportCommand(
         ...params,
         limits: params.limits ?? defaultHistoricalImportSocketLimits,
     });
+}
+
+function hostSystemRecordUniqueWhere(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    namespace: string;
+    localId: string;
+}>) {
+    const keys = deriveSessionSystemRecordAddressKeys({
+        ownerKind: "host",
+        pluginId: null,
+        namespace: params.namespace,
+        localId: params.localId,
+    });
+    return {
+        accountId_sessionId_recordAddressKey: {
+            accountId: params.accountId,
+            sessionId: params.sessionId,
+            recordAddressKey: keys.recordAddressKey,
+        },
+    };
 }
 
 describe("canonical transcript sequence writer on SQLite", () => {
@@ -72,6 +117,14 @@ describe("canonical transcript sequence writer on SQLite", () => {
         await harness.close();
     });
 
+    it("creates fresh SQLite transcript tables with the private Message row revision", async () => {
+        const columns = await db.$queryRawUnsafe<Array<{ name: string }>>(
+            "SELECT name FROM pragma_table_info('SessionMessage')",
+        );
+
+        expect(columns.map((column) => column.name)).toContain("rowRevision");
+    });
+
     it("keeps non-owner recency byte-stable during hidden catch-up and advances it only on publication", async () => {
         const owner = await db.account.create({
             data: { publicKey: `c1-recency-owner-${randomUUID()}`, encryptionMode: "plain" },
@@ -93,7 +146,9 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 tag: `c1-recency-tag-${randomUUID()}-${index}`,
                 accountId: owner.id,
                 encryptionMode: "plain",
-                metadata: JSON.stringify({ index }),
+                metadata: STORED_SHARED_METADATA,
+                metadataLayoutVersion: 1,
+                ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
                 currentStorageState: "snapshot_complete",
                 materializationPublicationId: `publication-${index}`,
                 materializedThroughSourceAt: BigInt(publicationAtForIndex(index)),
@@ -187,7 +242,10 @@ describe("canonical transcript sequence writer on SQLite", () => {
                     const response = await app.inject({
                         method: "GET",
                         url: "/v1/sessions",
-                        headers: { "x-test-user-id": viewer.id },
+                        headers: {
+                            "x-test-user-id": viewer.id,
+                            ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                        },
                     });
                     expect(response.statusCode).toBe(200);
                     return response.json().sessions as Array<{ id: string; updatedAt: number }>;
@@ -196,7 +254,10 @@ describe("canonical transcript sequence writer on SQLite", () => {
                     const response = await app.inject({
                         method: "GET",
                         url: `/v2/sessions/${sessionIds[targetIndex]}`,
-                        headers: { "x-test-user-id": viewer.id },
+                        headers: {
+                            "x-test-user-id": viewer.id,
+                            ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                        },
                     });
                     expect(response.statusCode).toBe(200);
                     return response.json().session as { updatedAt: number };
@@ -205,7 +266,10 @@ describe("canonical transcript sequence writer on SQLite", () => {
                     const response = await app.inject({
                         method: "GET",
                         url: "/v2/sessions?limit=200",
-                        headers: { "x-test-user-id": viewer.id },
+                        headers: {
+                            "x-test-user-id": viewer.id,
+                            ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                        },
                     });
                     expect(response.statusCode).toBe(200);
                     return response.json().sessions as Array<{ id: string; updatedAt: number }>;
@@ -214,6 +278,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
                     const response = await app.inject({
                         method: "GET",
                         url: `/v1/public-share/${encodeURIComponent(publicToken)}`,
+                        headers: CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
                     });
                     expect(response.statusCode).toBe(200);
                     return response.json().session as { updatedAt: number };
@@ -292,8 +357,11 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 expect(publishedList.some((session) => session.id === sessionIds[boundaryIndex])).toBe(false);
                 await expect(readV2Detail()).resolves.toMatchObject({ updatedAt: publishedAt });
                 const publishedV2List = await readV2List();
-                expect(publishedV2List.map((session) => session.id)).toEqual(sessionIds);
-                expect(publishedV2List[targetIndex]).toMatchObject({
+                expect(publishedV2List.map((session) => session.id)).toEqual([
+                    sessionIds[targetIndex],
+                    ...sessionIds.filter((_, index) => index !== targetIndex),
+                ]);
+                expect(publishedV2List[0]).toMatchObject({
                     id: sessionIds[targetIndex],
                     updatedAt: publishedAt,
                 });
@@ -301,6 +369,67 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
         );
     }, 120_000);
+
+    it("refuses the reserved Agent-transition divider namespace at the historical batch owner", async () => {
+        // The reserved namespace is enforced at THIS owner rather than at the
+        // hosted `/transcript/import` adapter, because the batch writer has two
+        // callers: the hosted import route and the external-Session historical
+        // import command. Guarding the adapter alone would leave the second one
+        // able to plant `agent-transition:<inputLocalId>` and permanently block
+        // the owner-only transition's divider append on that Session.
+        const account = await db.account.create({
+            data: { publicKey: `reserved-divider-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `reserved-divider-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "machine_only",
+            },
+            select: { id: true },
+        });
+
+        const planted = await writeHistoricalSessionMessageBatch({
+            sessionId: session.id,
+            storagePolicy: "optional",
+            items: [{
+                localId: "agent-transition:submitted-1",
+                sidechainId: null,
+                messageRole: "event" as const,
+                content: { t: "plain" as const, v: { role: "agent", text: "planted" } },
+            }],
+        });
+        expect(planted).toEqual({ ok: false, error: "reserved-local-id" });
+
+        // A whole batch is refused when ANY item is reserved: a partial write
+        // would still let the attacker choose what lands.
+        const mixed = await writeHistoricalSessionMessageBatch({
+            sessionId: session.id,
+            storagePolicy: "optional",
+            items: [
+                {
+                    localId: "history:legitimate",
+                    sidechainId: null,
+                    messageRole: "user" as const,
+                    content: { t: "plain" as const, v: { role: "user", text: "history" } },
+                },
+                {
+                    localId: "agent-transition:submitted-2",
+                    sidechainId: null,
+                    messageRole: "event" as const,
+                    content: { t: "plain" as const, v: { role: "agent", text: "planted" } },
+                },
+            ],
+        });
+        expect(mixed).toEqual({ ok: false, error: "reserved-local-id" });
+
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(0);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { seq: true } }))
+            .toEqual({ seq: 0 });
+    }, 60_000);
 
     it("keeps historical, Pending, and ordinary writes gapless, transactional, and idempotent", async () => {
         const account = await db.account.create({
@@ -319,7 +448,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         });
         const historyItems = [{
             localId: "history:item-1",
-            sidechainId: null,
+            sidechainId: "child-thread-1",
             messageRole: "user" as const,
             content: { t: "plain" as const, v: { role: "user", text: "history" } },
         }];
@@ -401,15 +530,150 @@ describe("canonical transcript sequence writer on SQLite", () => {
         const stored = await db.sessionMessage.findMany({
             where: { sessionId: session.id },
             orderBy: { seq: "asc" },
-            select: { seq: true, localId: true },
+            select: { seq: true, localId: true, sidechainId: true },
         });
         expect(stored).toEqual([
-            { seq: 1, localId: "history:item-1" },
-            { seq: 2, localId: "pending:item-1" },
-            { seq: 3, localId: "ordinary:item-1" },
+            { seq: 1, localId: "history:item-1", sidechainId: "child-thread-1" },
+            { seq: 2, localId: "pending:item-1", sidechainId: null },
+            { seq: 3, localId: "ordinary:item-1", sidechainId: null },
         ]);
         expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { seq: true } }))
             .toEqual({ seq: 3 });
+    }, 120_000);
+
+    it("rejects preactivation structured snapshots at the HTTP, Pending, and historical-import entries without allocating a message", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-structured-presentation-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-structured-presentation-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "hosted",
+            },
+            select: { id: true },
+        });
+        const structuredContent = {
+            t: "plain" as const,
+            v: {
+                v: 1,
+                profile: "pluginTranscriptV1",
+                owner: { pluginId: "acme.preview", contributionLocalId: "review-card" },
+                snapshot: { kind: "text", text: "must wait for a reader floor" },
+            },
+        };
+        const expectNoMessageMutation = async () => {
+            await expect(db.session.findUniqueOrThrow({
+                where: { id: session.id },
+                select: { seq: true },
+            })).resolves.toEqual({ seq: 0 });
+            await expect(db.sessionMessage.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        };
+
+        await withAuthenticatedTestApp(
+            (app) => sessionRoutes(app as never),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: `/v2/sessions/${session.id}/messages`,
+                    headers: {
+                        "x-test-user-id": account.id,
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
+                    payload: { content: structuredContent, localId: "http:structured-presentation" },
+                });
+
+                expect(response.statusCode, response.body).toBe(400);
+                expect(response.json()).toMatchObject({
+                    error: "Invalid parameters",
+                    code: "session_structured_presentation_unavailable",
+                });
+            },
+        );
+        await expectNoMessageMutation();
+
+        await expect(inTx(async (tx) => await createSessionMessageFromPending(tx, {
+            sessionId: session.id,
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "pending:structured-presentation",
+            messageRole: "agent",
+            content: structuredContent,
+        }))).resolves.toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_unavailable",
+        });
+        await expectNoMessageMutation();
+
+        await db.session.update({
+            where: { id: session.id },
+            data: { currentStorageState: "machine_only" },
+        });
+        await expect(writeHistoricalSessionMessageBatch({
+            sessionId: session.id,
+            storagePolicy: "optional",
+            items: [{
+                localId: "import:structured-presentation",
+                sidechainId: null,
+                messageRole: "agent",
+                content: structuredContent,
+            }],
+        })).resolves.toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_unavailable",
+        });
+        await expectNoMessageMutation();
+
+        // Pending settlement normally updates an existing row directly to
+        // backfill its role. It must not make a previously supplied snapshot
+        // current merely because it avoids the insert writer.
+        await db.session.update({
+            where: { id: session.id },
+            data: { currentStorageState: "hosted", seq: 1 },
+        });
+        await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                localId: "pending:existing-structured-presentation",
+                sidechainId: null,
+                messageRole: null,
+                content: structuredContent,
+            },
+        });
+        await expect(inTx(async (tx) => await createSessionMessageFromPending(tx, {
+            sessionId: session.id,
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            localId: "pending:existing-structured-presentation",
+            messageRole: "agent",
+            content: structuredContent,
+        }))).resolves.toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_structured_presentation_unavailable",
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { seq: true },
+        })).resolves.toEqual({ seq: 1 });
+        await expect(db.sessionMessage.findUniqueOrThrow({
+            where: {
+                sessionId_localId: {
+                    sessionId: session.id,
+                    localId: "pending:existing-structured-presentation",
+                },
+            },
+            select: { messageRole: true, content: true },
+        })).resolves.toEqual({
+            messageRole: null,
+            content: structuredContent,
+        });
     }, 120_000);
 
     it.each(["machine_only", "server_partial", "snapshot_complete"] as const)(
@@ -504,6 +768,124 @@ describe("canonical transcript sequence writer on SQLite", () => {
         },
         120_000,
     );
+
+    it("fails closed when a historical import digest lookup resolves another raw host address", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-materialize-address-collision-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-materialize-address-collision-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "machine_only",
+            },
+            select: { id: true },
+        });
+        const claim = {
+            sessionId: session.id,
+            operationId: "materialize-operation-address-collision",
+            operationClaimId: "materialize-claim-address-collision",
+        } as const;
+        const expectedLocalId = `historical-import:${claim.operationId}`;
+        const addressKeys = deriveSessionSystemRecordAddressKeys({
+            ownerKind: "host",
+            pluginId: null,
+            namespace: "external_sessions",
+            localId: expectedLocalId,
+        });
+        await db.sessionSystemRecord.create({
+            data: {
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "other_private_namespace",
+                kind: "historical_import",
+                localId: "another-private-job",
+                content: { v: 1 },
+                ownerKind: "host",
+                pluginId: null,
+                namespaceAddressKey: addressKeys.namespaceAddressKey,
+                recordAddressKey: addressKeys.recordAddressKey,
+                version: 1,
+            },
+        });
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: account.id,
+            transportMachineId: "machine-address-collision",
+            command: { v: 1, kind: "inspect", claim, expectedRevision: 0 },
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "internal_error",
+        });
+    });
+
+    it("fails closed without overwriting another kind at the exact historical import address", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `c1-materialize-kind-conflict-${randomUUID()}` },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-materialize-kind-conflict-${randomUUID()}`,
+                accountId: account.id,
+                metadata: "metadata",
+                encryptionMode: "plain",
+                currentStorageState: "machine_only",
+            },
+            select: { id: true },
+        });
+        const claim = {
+            sessionId: session.id,
+            operationId: "materialize-operation-kind-conflict",
+            operationClaimId: "materialize-claim-kind-conflict",
+        } as const;
+        const command = {
+            v: 1 as const,
+            kind: "begin" as const,
+            claim,
+            expectedRevision: 0,
+            expectedPriorStableStorage: { state: "machine_only" as const },
+        };
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: account.id,
+            transportMachineId: "machine-kind-conflict",
+            command,
+        })).resolves.toMatchObject({ kind: "ready" });
+
+        const record = await db.sessionSystemRecord.findUniqueOrThrow({
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
+            select: { id: true, content: true },
+        });
+        await db.sessionSystemRecord.update({
+            where: { id: record.id },
+            data: { kind: "another_private_kind" },
+        });
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: account.id,
+            transportMachineId: "machine-kind-conflict",
+            command: { v: 1, kind: "inspect", claim, expectedRevision: 0 },
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "internal_error",
+        });
+        await expect(db.sessionSystemRecord.findUniqueOrThrow({
+            where: { id: record.id },
+            select: { kind: true, content: true },
+        })).resolves.toEqual({
+            kind: "another_private_kind",
+            content: record.content,
+        });
+    });
 
     it("binds one historical import claim, fences partial rows, and publishes atomically", async () => {
         const account = await db.account.create({
@@ -646,17 +1028,33 @@ describe("canonical transcript sequence writer on SQLite", () => {
             priorStableStorage: { state: "machine_only" },
         });
         const jobAfterInspect = await db.sessionSystemRecord.findUniqueOrThrow({
-            where: {
-                accountId_sessionId_namespace_localId: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    namespace: "external_sessions",
-                    localId: `historical-import:${claim.operationId}`,
-                },
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
+            select: {
+                content: true,
+                ownerKind: true,
+                pluginId: true,
+                namespaceAddressKey: true,
+                recordAddressKey: true,
+                version: true,
             },
-            select: { content: true },
         });
         expect(jobAfterInspect.content).toMatchObject({ revision: 0 });
+        expect(jobAfterInspect).toMatchObject({
+            ownerKind: "host",
+            pluginId: null,
+            version: 1,
+        });
+        expect(Buffer.from(jobAfterInspect.namespaceAddressKey ?? []).toString("hex")).toBe(
+            "923c641e9011f00d5b9f88e837139f7e8f70fcc155261e72faf1b4fe2735ee60",
+        );
+        expect(Buffer.from(jobAfterInspect.recordAddressKey ?? []).toString("hex")).toBe(
+            "864dc2d19471d84126662539e3ffae7f8337dd1aa199525662de882f977466b7",
+        );
         await expect(executeExternalSessionHistoricalImportCommand({
             actorUserId: account.id,
             transportMachineId: "machine-1",
@@ -937,6 +1335,409 @@ describe("canonical transcript sequence writer on SQLite", () => {
         });
     }, 120_000);
 
+    it.each([
+        ["zero-batch lower", 0, 2, "error"],
+        ["lower", 1, 2, "error"],
+        ["equal", 2, 2, "finalized"],
+        ["higher", 3, 3, "finalized"],
+    ] as const)(
+        "keeps an existing shared publication monotone for a %s update import",
+        async (_caseName, acceptedCeiling, expectedVisibleCount, expectedKind) => {
+            const owner = await db.account.create({
+                data: { publicKey: `c1-materialize-monotone-owner-${randomUUID()}` },
+                select: { id: true },
+            });
+            const viewer = await db.account.create({
+                data: { publicKey: `c1-materialize-monotone-viewer-${randomUUID()}` },
+                select: { id: true },
+            });
+            const session = await db.session.create({
+                data: {
+                    tag: `c1-materialize-monotone-${randomUUID()}`,
+                    accountId: owner.id,
+                    metadata: "metadata",
+                    encryptionMode: "plain",
+                    currentStorageState: "machine_only",
+                },
+                select: { id: true },
+            });
+            const execute = async (command: unknown) =>
+                await executeExternalSessionHistoricalImportCommand({
+                    actorUserId: owner.id,
+                    transportMachineId: "machine-materialize-monotone",
+                    command,
+                });
+            const items = [
+                {
+                    localId: "history:monotone-first",
+                    sidechainId: null,
+                    messageRole: "user" as const,
+                    content: { t: "plain" as const, v: { text: "first" } },
+                },
+                {
+                    localId: "history:monotone-second",
+                    sidechainId: null,
+                    messageRole: "agent" as const,
+                    content: { t: "plain" as const, v: { text: "second" } },
+                },
+                {
+                    localId: "history:monotone-third",
+                    sidechainId: null,
+                    messageRole: "agent" as const,
+                    content: { t: "plain" as const, v: { text: "third" } },
+                },
+            ];
+            const initialClaim = {
+                sessionId: session.id,
+                operationId: `materialize-monotone-initial-${randomUUID()}`,
+                operationClaimId: `materialize-monotone-initial-claim-${randomUUID()}`,
+            } as const;
+
+            await expect(execute({
+                v: 1,
+                kind: "begin",
+                claim: initialClaim,
+                expectedRevision: 0,
+                expectedPriorStableStorage: { state: "machine_only" },
+            })).resolves.toMatchObject({ kind: "ready" });
+            await expect(execute({
+                v: 1,
+                kind: "batch",
+                claim: initialClaim,
+                expectedRevision: 0,
+                batchId: makeExternalSessionHistoricalImportBatchIdV1(
+                    items.slice(0, 2).map((item) => item.localId),
+                ),
+                items: items.slice(0, 2),
+            })).resolves.toMatchObject({
+                kind: "batch_accepted",
+                acceptedThroughServerSeq: 2,
+            });
+            const initialFinalized = await execute({
+                v: 1,
+                kind: "finalize",
+                claim: initialClaim,
+                expectedRevision: 0,
+                expectedAcceptedThroughServerSeq: 2,
+            });
+            expect(initialFinalized).toMatchObject({ kind: "finalized" });
+            if (initialFinalized.kind !== "finalized") {
+                throw new Error("Expected initial historical import to finalize.");
+            }
+            await db.sessionShare.create({
+                data: {
+                    sessionId: session.id,
+                    sharedByUserId: owner.id,
+                    sharedWithUserId: viewer.id,
+                    accessLevel: "view",
+                },
+            });
+
+            const publicationSelect = {
+                currentStorageState: true,
+                acceptedThroughServerSeq: true,
+                materializationPublicationId: true,
+                materializedThroughSourceAt: true,
+                publishedThroughServerSeq: true,
+            } as const;
+            const rowSelect = {
+                seq: true,
+                localId: true,
+                messageRole: true,
+                content: true,
+            } as const;
+            const initialPublication = await db.session.findUniqueOrThrow({
+                where: { id: session.id },
+                select: publicationSelect,
+            });
+            const initialRows = await db.sessionMessage.findMany({
+                where: { sessionId: session.id },
+                orderBy: { seq: "asc" },
+                select: rowSelect,
+            });
+            const updateClaim = {
+                sessionId: session.id,
+                operationId: `materialize-monotone-update-${randomUUID()}`,
+                operationClaimId: `materialize-monotone-update-claim-${randomUUID()}`,
+            } as const;
+
+            await expect(execute({
+                v: 1,
+                kind: "begin",
+                claim: updateClaim,
+                expectedRevision: 0,
+                expectedPriorStableStorage: {
+                    state: "snapshot_complete",
+                    publication: initialFinalized.publication,
+                },
+            })).resolves.toMatchObject({ kind: "ready" });
+            if (acceptedCeiling > 0) {
+                const updateItems = items.slice(0, acceptedCeiling);
+                await expect(execute({
+                    v: 1,
+                    kind: "batch",
+                    claim: updateClaim,
+                    expectedRevision: 0,
+                    batchId: makeExternalSessionHistoricalImportBatchIdV1(
+                        updateItems.map((item) => item.localId),
+                    ),
+                    items: updateItems,
+                })).resolves.toMatchObject({
+                    kind: "batch_accepted",
+                    acceptedThroughServerSeq: acceptedCeiling,
+                });
+            }
+            const jobWhere = hostSystemRecordUniqueWhere({
+                accountId: owner.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${updateClaim.operationId}`,
+            });
+            const jobBeforeFinalize = await db.sessionSystemRecord.findUniqueOrThrow({
+                where: jobWhere,
+                select: { content: true, version: true },
+            });
+
+            const result = await execute({
+                v: 1,
+                kind: "finalize",
+                claim: updateClaim,
+                expectedRevision: 0,
+                expectedAcceptedThroughServerSeq: acceptedCeiling,
+            });
+            expect(result).toMatchObject(expectedKind === "error"
+                ? { kind: "error", errorCode: "invalid_state" }
+                : {
+                    kind: "finalized",
+                    acceptedThroughServerSeq: acceptedCeiling,
+                    publication: { publishedThroughServerSeq: acceptedCeiling },
+                });
+
+            const publication = await db.session.findUniqueOrThrow({
+                where: { id: session.id },
+                select: publicationSelect,
+            });
+            const rows = await db.sessionMessage.findMany({
+                where: { sessionId: session.id },
+                orderBy: { seq: "asc" },
+                select: rowSelect,
+            });
+            if (expectedKind === "error") {
+                expect(publication).toEqual(initialPublication);
+                expect(rows).toEqual(initialRows);
+                await expect(db.sessionSystemRecord.findUniqueOrThrow({
+                    where: jobWhere,
+                    select: { content: true, version: true },
+                })).resolves.toEqual(jobBeforeFinalize);
+                const recoveryItems = items.slice(0, 2);
+                await expect(execute({
+                    v: 1,
+                    kind: "batch",
+                    claim: updateClaim,
+                    expectedRevision: 0,
+                    batchId: makeExternalSessionHistoricalImportBatchIdV1(
+                        recoveryItems.map((item) => item.localId),
+                    ),
+                    items: recoveryItems,
+                })).resolves.toMatchObject({
+                    kind: "batch_accepted",
+                    acceptedThroughServerSeq: 2,
+                });
+                await expect(execute({
+                    v: 1,
+                    kind: "finalize",
+                    claim: updateClaim,
+                    expectedRevision: 0,
+                    expectedAcceptedThroughServerSeq: 2,
+                })).resolves.toMatchObject({
+                    kind: "finalized",
+                    acceptedThroughServerSeq: 2,
+                    publication: { publishedThroughServerSeq: 2 },
+                });
+            } else {
+                expect(publication).toMatchObject({
+                    currentStorageState: "snapshot_complete",
+                    acceptedThroughServerSeq: null,
+                    publishedThroughServerSeq: acceptedCeiling,
+                });
+            }
+            const visiblePublication = await loadSessionTranscriptPublication(db, session.id);
+            await expect(db.sessionMessage.findMany({
+                where: buildSessionMessagePublicationWhere({
+                    where: { sessionId: session.id },
+                    publication: visiblePublication,
+                }),
+                orderBy: { seq: "asc" },
+                select: { seq: true },
+            })).resolves.toHaveLength(expectedVisibleCount);
+        },
+        120_000,
+    );
+
+    it.each([
+        ["same", false],
+        ["advanced", true],
+    ] as const)(
+        "replays a finalized job receipt after a later %s-ceiling publication",
+        async (_ceilingKind, advancesCeiling) => {
+            const account = await db.account.create({
+                data: { publicKey: `c1-materialize-receipt-${randomUUID()}` },
+                select: { id: true },
+            });
+            const session = await db.session.create({
+                data: {
+                    tag: `c1-materialize-receipt-${randomUUID()}`,
+                    accountId: account.id,
+                    metadata: "metadata",
+                    encryptionMode: "plain",
+                    currentStorageState: "machine_only",
+                },
+                select: { id: true },
+            });
+            const firstClaim = {
+                sessionId: session.id,
+                operationId: `materialize-receipt-first-${randomUUID()}`,
+                operationClaimId: `materialize-receipt-first-claim-${randomUUID()}`,
+            } as const;
+            const execute = async (command: unknown) =>
+                await executeExternalSessionHistoricalImportCommand({
+                    actorUserId: account.id,
+                    transportMachineId: "machine-materialize-receipt",
+                    command,
+                });
+
+            await expect(execute({
+                v: 1,
+                kind: "begin",
+                claim: firstClaim,
+                expectedRevision: 0,
+                expectedPriorStableStorage: { state: "machine_only" },
+            })).resolves.toMatchObject({ kind: "ready" });
+            await expect(execute({
+                v: 1,
+                kind: "batch",
+                claim: firstClaim,
+                expectedRevision: 0,
+                batchId: makeExternalSessionHistoricalImportBatchIdV1([
+                    "history:receipt-first",
+                ]),
+                items: [{
+                    localId: "history:receipt-first",
+                    sidechainId: null,
+                    messageRole: "user",
+                    content: { t: "plain", v: { role: "user", text: "first" } },
+                }],
+            })).resolves.toMatchObject({
+                kind: "batch_accepted",
+                acceptedThroughServerSeq: 1,
+            });
+            const firstFinalized = await execute({
+                v: 1,
+                kind: "finalize",
+                claim: firstClaim,
+                expectedRevision: 0,
+                expectedAcceptedThroughServerSeq: 1,
+            });
+            expect(firstFinalized).toMatchObject({
+                kind: "finalized",
+                claim: firstClaim,
+                acceptedThroughServerSeq: 1,
+            });
+            if (firstFinalized.kind !== "finalized") {
+                throw new Error("Expected the first historical import to finalize.");
+            }
+
+            const secondClaim = {
+                sessionId: session.id,
+                operationId: `materialize-receipt-second-${randomUUID()}`,
+                operationClaimId: `materialize-receipt-second-claim-${randomUUID()}`,
+            } as const;
+            await expect(execute({
+                v: 1,
+                kind: "begin",
+                claim: secondClaim,
+                expectedRevision: 0,
+                expectedPriorStableStorage: {
+                    state: "snapshot_complete",
+                    publication: firstFinalized.publication,
+                },
+            })).resolves.toMatchObject({ kind: "ready" });
+            await expect(execute({
+                v: 1,
+                kind: "batch",
+                claim: secondClaim,
+                expectedRevision: 0,
+                batchId: makeExternalSessionHistoricalImportBatchIdV1([
+                    "history:receipt-first",
+                ]),
+                items: [{
+                    localId: "history:receipt-first",
+                    sidechainId: null,
+                    messageRole: "user",
+                    content: { t: "plain", v: { role: "user", text: "first" } },
+                }],
+            })).resolves.toMatchObject({
+                kind: "batch_accepted",
+                acceptedThroughServerSeq: 1,
+            });
+            if (advancesCeiling) {
+                await expect(execute({
+                    v: 1,
+                    kind: "batch",
+                    claim: secondClaim,
+                    expectedRevision: 0,
+                    batchId: makeExternalSessionHistoricalImportBatchIdV1([
+                        "history:receipt-second",
+                    ]),
+                    items: [{
+                        localId: "history:receipt-second",
+                        sidechainId: null,
+                        messageRole: "agent",
+                        content: { t: "plain", v: { text: "second" } },
+                    }],
+                })).resolves.toMatchObject({
+                    kind: "batch_accepted",
+                    acceptedThroughServerSeq: 2,
+                });
+            }
+            const secondFinalized = await execute({
+                v: 1,
+                kind: "finalize",
+                claim: secondClaim,
+                expectedRevision: 0,
+                expectedAcceptedThroughServerSeq: advancesCeiling ? 2 : 1,
+            });
+            expect(secondFinalized).toMatchObject({ kind: "finalized" });
+            if (secondFinalized.kind !== "finalized") {
+                throw new Error("Expected the second historical import to finalize.");
+            }
+            expect(secondFinalized.publication.materializationPublicationId)
+                .not.toBe(firstFinalized.publication.materializationPublicationId);
+
+            await expect(execute({
+                v: 1,
+                kind: "finalize",
+                claim: firstClaim,
+                expectedRevision: 0,
+                expectedAcceptedThroughServerSeq: 1,
+            })).resolves.toEqual(firstFinalized);
+            await expect(execute({
+                v: 1,
+                kind: "begin",
+                claim: firstClaim,
+                expectedRevision: 0,
+                expectedPriorStableStorage: { state: "machine_only" },
+            })).resolves.toEqual(firstFinalized);
+            await expect(execute({
+                v: 1,
+                kind: "resume",
+                claim: firstClaim,
+                expectedRevision: 0,
+            })).resolves.toEqual(firstFinalized);
+        },
+        120_000,
+    );
+
     it("keeps unpublished discard ownership compact across many accepted batches", async () => {
         const account = await db.account.create({
             data: { publicKey: `c1-compact-job-${randomUUID()}` },
@@ -970,21 +1771,21 @@ describe("canonical transcript sequence writer on SQLite", () => {
             expectedRevision: 0,
             expectedPriorStableStorage: { state: "machine_only" },
         })).resolves.toMatchObject({ kind: "ready" });
-        const jobKey = {
+        const jobAddress = {
             accountId: account.id,
             sessionId: session.id,
             namespace: "external_sessions",
             localId: `historical-import:${claim.operationId}`,
         } as const;
-        const legacyRecord = await db.sessionSystemRecord.findUniqueOrThrow({
-            where: { accountId_sessionId_namespace_localId: jobKey },
+        const currentRecord = await db.sessionSystemRecord.findUniqueOrThrow({
+            where: hostSystemRecordUniqueWhere(jobAddress),
             select: { content: true },
         });
         await db.sessionSystemRecord.update({
-            where: { accountId_sessionId_namespace_localId: jobKey },
+            where: hostSystemRecordUniqueWhere(jobAddress),
             data: {
                 content: {
-                    ...(legacyRecord.content as Readonly<Record<string, unknown>>),
+                    ...(currentRecord.content as Readonly<Record<string, unknown>>),
                     lastBatchId: "legacy-current-dev-batch",
                     lastBatchContentSha256: "legacy-current-dev-content",
                 },
@@ -1010,15 +1811,15 @@ describe("canonical transcript sequence writer on SQLite", () => {
         }
 
         const record = await db.sessionSystemRecord.findUniqueOrThrow({
-            where: {
-                accountId_sessionId_namespace_localId: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    namespace: "external_sessions",
-                    localId: `historical-import:${claim.operationId}`,
-                },
+            where: hostSystemRecordUniqueWhere(jobAddress),
+            select: {
+                content: true,
+                ownerKind: true,
+                pluginId: true,
+                namespaceAddressKey: true,
+                recordAddressKey: true,
+                version: true,
             },
-            select: { content: true },
         });
         expect(record.content).toMatchObject({
             insertedSequenceSpans: [{ firstSeq: 1, lastSeq: 100 }],
@@ -1027,6 +1828,15 @@ describe("canonical transcript sequence writer on SQLite", () => {
         expect(record.content).not.toHaveProperty("lastBatchId");
         expect(record.content).not.toHaveProperty("lastBatchContentSha256");
         expect(new TextEncoder().encode(JSON.stringify(record.content)).byteLength).toBeLessThan(1_024);
+        expect(record.ownerKind).toBe("host");
+        expect(record.pluginId).toBeNull();
+        expect(record.version).toBeGreaterThan(1);
+        expect(Buffer.from(record.namespaceAddressKey ?? []).toString("hex")).toBe(
+            "923c641e9011f00d5b9f88e837139f7e8f70fcc155261e72faf1b4fe2735ee60",
+        );
+        expect(Buffer.from(record.recordAddressKey ?? []).toString("hex")).toBe(
+            "9e6a7df5fa4362a7bc6c60eefb4ca08e07feb6b1f759c54e10c6741b0db3dbb7",
+        );
     }, 120_000);
 
     it("binds every historical batch identity to its ordered stable local ids", async () => {
@@ -1159,6 +1969,31 @@ describe("canonical transcript sequence writer on SQLite", () => {
         await expect(db.sessionMessage.count({
             where: { sessionId: session.id },
         })).resolves.toBe(3);
+        await expect(db.sessionMessage.findMany({
+            where: { sessionId: session.id },
+            orderBy: { seq: "asc" },
+            select: {
+                localId: true,
+                transcriptObservationProvenance: true,
+                inputAdmissionReceipt: true,
+            },
+        })).resolves.toEqual([
+            {
+                localId: "history:a1",
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                inputAdmissionReceipt: null,
+            },
+            {
+                localId: "history:a2",
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                inputAdmissionReceipt: null,
+            },
+            {
+                localId: "history:b",
+                transcriptObservationProvenance: { kind: "non_dependent", source: "history" },
+                inputAdmissionReceipt: null,
+            },
+        ]);
     }, 120_000);
 
     it("rejects a batch above its negotiated socket limit before any transcript or job write", async () => {
@@ -1207,14 +2042,12 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
         });
         const jobBefore = await db.sessionSystemRecord.findUniqueOrThrow({
-            where: {
-                accountId_sessionId_namespace_localId: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    namespace: "external_sessions",
-                    localId: `historical-import:${claim.operationId}`,
-                },
-            },
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
             select: { content: true },
         });
 
@@ -1256,14 +2089,12 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
         })).resolves.toEqual(sessionBefore);
         await expect(db.sessionSystemRecord.findUniqueOrThrow({
-            where: {
-                accountId_sessionId_namespace_localId: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    namespace: "external_sessions",
-                    localId: `historical-import:${claim.operationId}`,
-                },
-            },
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
             select: { content: true },
         })).resolves.toEqual(jobBefore);
         await expect(db.sessionMessage.count({ where: { sessionId: session.id } }))
@@ -1396,7 +2227,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         }
     }, 120_000);
 
-    it("imports more than 200 historical rows through bounded contiguous batches", async () => {
+    it("imports more than 1,000 historical rows through bounded contiguous batches", async () => {
         const account = await db.account.create({
             data: { publicKey: `c1-materialize-batched-${randomUUID()}` },
             select: { id: true },
@@ -1433,71 +2264,59 @@ describe("canonical transcript sequence writer on SQLite", () => {
             limits: { maxItems: 200 },
         });
 
-        const firstBatchItems = Array.from({ length: 200 }, (_, index) => ({
+        const items = Array.from({ length: 1_001 }, (_, index) => ({
             localId: `history:batched:${index + 1}`,
             sidechainId: null,
-            messageRole: "user" as const,
+            messageRole: index % 2 === 0 ? ("user" as const) : ("agent" as const),
             content: { t: "plain" as const, v: { text: `historical row ${index + 1}` } },
         }));
-        await expect(execute({
-            v: 1,
-            kind: "batch",
-            claim,
-            expectedRevision: 0,
-            batchId: makeExternalSessionHistoricalImportBatchIdV1(
-                firstBatchItems.map((item) => item.localId),
-            ),
-            items: firstBatchItems,
-        })).resolves.toMatchObject({
-            kind: "batch_accepted",
-            batchId: makeExternalSessionHistoricalImportBatchIdV1(
-                firstBatchItems.map((item) => item.localId),
-            ),
-            acceptedThroughServerSeq: 200,
-        });
-        await expect(execute({
-            v: 1,
-            kind: "batch",
-            claim,
-            expectedRevision: 0,
-            batchId: makeExternalSessionHistoricalImportBatchIdV1([
-                "history:batched:201",
-            ]),
-            items: [{
-                localId: "history:batched:201",
-                sidechainId: null,
-                messageRole: "agent",
-                content: { t: "plain", v: { text: "historical row 201" } },
-            }],
-        })).resolves.toMatchObject({
-            kind: "batch_accepted",
-            batchId: makeExternalSessionHistoricalImportBatchIdV1([
-                "history:batched:201",
-            ]),
-            acceptedThroughServerSeq: 201,
-        });
+        for (let offset = 0; offset < items.length; offset += 200) {
+            const batch = items.slice(offset, offset + 200);
+            const batchId = makeExternalSessionHistoricalImportBatchIdV1(
+                batch.map((item) => item.localId),
+            );
+            await expect(execute({
+                v: 1,
+                kind: "batch",
+                claim,
+                expectedRevision: 0,
+                batchId,
+                items: batch,
+            })).resolves.toMatchObject({
+                kind: "batch_accepted",
+                batchId,
+                acceptedThroughServerSeq: offset + batch.length,
+            });
+        }
         await expect(execute({
             v: 1,
             kind: "finalize",
             claim,
             expectedRevision: 0,
-            expectedAcceptedThroughServerSeq: 201,
+            expectedAcceptedThroughServerSeq: items.length,
         })).resolves.toMatchObject({
             kind: "finalized",
-            acceptedThroughServerSeq: 201,
+            acceptedThroughServerSeq: items.length,
         });
 
         const rows = await db.sessionMessage.findMany({
             where: { sessionId: session.id },
             orderBy: { seq: "asc" },
-            select: { seq: true, localId: true },
+            select: { seq: true, localId: true, content: true },
         });
-        expect(rows).toHaveLength(201);
+        expect(rows).toHaveLength(items.length);
         expect(rows.map((row) => row.seq)).toEqual(
-            Array.from({ length: 201 }, (_, index) => index + 1),
+            Array.from({ length: items.length }, (_, index) => index + 1),
         );
         expect(rows[0]?.localId).toBe("history:batched:1");
-        expect(rows[200]?.localId).toBe("history:batched:201");
+        expect(rows[500]).toMatchObject({
+            localId: "history:batched:501",
+            content: { t: "plain", v: { text: "historical row 501" } },
+        });
+        expect(rows[1_000]).toMatchObject({
+            localId: "history:batched:1001",
+            content: { t: "plain", v: { text: "historical row 1001" } },
+        });
     }, 120_000);
 
     it("publishes an empty historical import without manufacturing a transcript row", async () => {
@@ -1561,6 +2380,126 @@ describe("canonical transcript sequence writer on SQLite", () => {
             publishedThroughServerSeq: 0,
             seq: 0,
         });
+    }, 120_000);
+
+    it("keeps physically stored legacy-unknown transcript rows unpublished across SQLite readers", async () => {
+        const owner = await db.account.create({
+            data: {
+                publicKey: `c1-legacy-unknown-owner-${randomUUID()}`,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const viewer = await db.account.create({
+            data: {
+                publicKey: `c1-legacy-unknown-viewer-${randomUUID()}`,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `c1-legacy-unknown-${randomUUID()}`,
+                accountId: owner.id,
+                encryptionMode: "plain",
+                metadata: STORED_SHARED_METADATA,
+                metadataLayoutVersion: 1,
+                ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+                currentStorageState: "legacy_external_unknown",
+                seq: 1,
+            },
+            select: { id: true },
+        });
+        await db.sessionMessage.create({
+            data: {
+                sessionId: session.id,
+                seq: 1,
+                localId: "legacy-unknown:private-row",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "plain", v: { role: "agent", text: "must remain unpublished" } },
+            },
+        });
+        await db.sessionShare.create({
+            data: {
+                sessionId: session.id,
+                sharedByUserId: owner.id,
+                sharedWithUserId: viewer.id,
+                accessLevel: "view",
+            },
+        });
+        const publicToken = `c1-legacy-unknown-public-${randomUUID()}`;
+        await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash: createHash("sha256").update(publicToken, "utf8").digest(),
+                encryptedDataKey: null,
+                isConsentRequired: false,
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => {
+                sessionRoutes(app as never);
+                publicShareRoutes(app as never);
+            },
+            async (app) => {
+                const ownerMessages = await app.inject({
+                    method: "GET",
+                    url: `/v1/sessions/${session.id}/messages?scope=all&limit=500`,
+                    headers: { "x-test-user-id": owner.id },
+                });
+                expect(ownerMessages.statusCode).toBe(200);
+                expect(ownerMessages.json().messages).toEqual([]);
+
+                const ownerByLocalId = await app.inject({
+                    method: "GET",
+                    url: `/v2/sessions/${session.id}/messages/by-local-id/${
+                        encodeURIComponent("legacy-unknown:private-row")
+                    }`,
+                    headers: { "x-test-user-id": owner.id },
+                });
+                expect(ownerByLocalId.statusCode).toBe(404);
+
+                await expect(loadUsageMessageStatsForQuery(
+                    owner.id,
+                    UsageAnalyticsQueryRequestSchema.parse({}),
+                    [session.id],
+                )).resolves.toEqual({ messageCount: 0 });
+
+                const viewerSessions = await app.inject({
+                    method: "GET",
+                    url: "/v1/sessions",
+                    headers: {
+                        "x-test-user-id": viewer.id,
+                        ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                    },
+                });
+                expect(viewerSessions.statusCode).toBe(200);
+                expect(
+                    (viewerSessions.json().sessions as Array<{ id: string }>).some(
+                        (candidate) => candidate.id === session.id,
+                    ),
+                ).toBe(false);
+
+                const publicRead = await app.inject({
+                    method: "GET",
+                    url: `/v1/public-share/${encodeURIComponent(publicToken)}`,
+                    headers: CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
+                });
+                expect(publicRead.statusCode).toBe(404);
+                expect(publicRead.json()).toMatchObject({ code: "session_transcript_unavailable" });
+            },
+        );
+
+        await expect(db.sessionMessage.findMany({
+            where: { sessionId: session.id },
+            select: { seq: true, localId: true },
+        })).resolves.toEqual([{
+            seq: 1,
+            localId: "legacy-unknown:private-row",
+        }]);
     }, 120_000);
 
     it("discards only exact job rows and keeps every surviving stored tail unpublished", async () => {
@@ -1770,14 +2709,12 @@ describe("canonical transcript sequence writer on SQLite", () => {
             revision: 3,
         });
         await expect(db.sessionSystemRecord.findUnique({
-            where: {
-                accountId_sessionId_namespace_localId: {
-                    accountId: account.id,
-                    sessionId: session.id,
-                    namespace: "external_sessions",
-                    localId: `historical-import:${claim.operationId}`,
-                },
-            },
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
         })).resolves.toMatchObject({
             content: expect.objectContaining({
                 state: "discarded",
@@ -1787,19 +2724,261 @@ describe("canonical transcript sequence writer on SQLite", () => {
         });
     }, 120_000);
 
-    it("admits persisted takeover exactly once from the finalized publication without changing Pending or runtime state", async () => {
+    it("reconciles an external-linked takeover without retaining stale admission attempts", async () => {
+        const sharedMetadata = JSON.stringify(
+            projectSessionSharedMetadataV1({ metadata: {} }),
+        );
         const account = await db.account.create({
-            data: { publicKey: `c2-takeover-admission-${randomUUID()}` },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        const machineId = `machine-external-linked-takeover-${randomUUID()}`;
+        const fence = new Date(1_234);
+        await db.machine.create({
+            data: { id: machineId, accountId: account.id, metadata: "{}" },
+        });
+        const session = await db.session.create({
+            data: {
+                tag: `external-linked-takeover-${randomUUID()}`,
+                accountId: account.id,
+                metadata: sharedMetadata,
+                metadataVersion: 7,
+                metadataLayoutVersion: 1,
+                ownerMetadata: JSON.stringify(LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
+                agentState: null,
+                agentStateVersion: 0,
+                encryptionMode: "plain",
+                currentStorageState: "machine_only",
+                pendingVersion: 4,
+                pendingCount: 2,
+                pendingBlockedCount: 1,
+                active: true,
+                thinking: false,
+                lastActiveAt: fence,
+            },
+            select: { id: true },
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: account.id,
+                machineId,
+                sessionId: session.id,
+                data: "encrypted",
+            },
+        });
+        const claim = {
+            sessionId: session.id,
+            operationId: "external-linked-takeover-operation",
+            operationClaimId: "external-linked-takeover-claim",
+        } as const;
+        const command = {
+            v: 1,
+            kind: "admit_persisted_takeover",
+            mode: "external_linked",
+            claim,
+            expectedRevision: 9,
+            attemptId: "attempt-1",
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: fence.getTime(),
+            },
+            expectedSessionMetadataVersion: 7,
+            expectedSessionSeq: 0,
+            expectedPending: {
+                version: 4,
+                count: 2,
+                blockedCount: 1,
+            },
+            expectedPriorStableStorage: { state: "machine_only" },
+        } as const;
+        const execute = async (candidate: unknown) =>
+            await executeExternalSessionHistoricalImportCommand({
+                actorUserId: account.id,
+                transportMachineId: machineId,
+                command: candidate,
+            });
+
+        await expect(execute(command)).resolves.toEqual({
+            v: 1,
+            kind: "takeover_admitted",
+            mode: "external_linked",
+            claim,
+            revision: 9,
+            attemptId: "attempt-1",
+        });
+        await expect(execute(command)).resolves.toEqual({
+            v: 1,
+            kind: "takeover_admitted",
+            mode: "external_linked",
+            claim,
+            revision: 9,
+            attemptId: "attempt-1",
+        });
+        await expect(execute({
+            ...command,
+            publisherPrecondition: {
+                ...command.publisherPrecondition,
+                committedFenceMs: fence.getTime() + 1,
+            },
+        })).resolves.toMatchObject({ kind: "error", errorCode: "invalid_state" });
+
+        const reclaimedFence = new Date(fence.getTime() + 10);
+        await db.session.update({
+            where: { id: session.id },
+            data: { lastActiveAt: reclaimedFence },
+        });
+        const reclaimed = {
+            ...command,
+            claim: {
+                ...claim,
+                operationClaimId: "external-linked-takeover-reclaimed-claim",
+            },
+            expectedRevision: 10,
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: reclaimedFence.getTime(),
+            },
+        } as const;
+        await expect(execute(reclaimed)).resolves.toEqual({
+            v: 1,
+            kind: "takeover_admitted",
+            mode: "external_linked",
+            claim: reclaimed.claim,
+            revision: 10,
+            attemptId: "attempt-1",
+        });
+
+        const retryFence = new Date(reclaimedFence.getTime() + 10);
+        await db.session.update({
+            where: { id: session.id },
+            data: { lastActiveAt: retryFence },
+        });
+        const freshRetry = {
+            ...reclaimed,
+            claim: {
+                ...reclaimed.claim,
+                operationClaimId: "external-linked-takeover-retry-claim",
+            },
+            expectedRevision: 11,
+            attemptId: "attempt-2",
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: retryFence.getTime(),
+            },
+        } as const;
+        await expect(execute(freshRetry)).resolves.toEqual({
+            v: 1,
+            kind: "takeover_admitted",
+            mode: "external_linked",
+            claim: freshRetry.claim,
+            revision: 11,
+            attemptId: "attempt-2",
+        });
+
+        const lateOldFence = new Date(retryFence.getTime() + 10);
+        await db.session.update({
+            where: { id: session.id },
+            data: { lastActiveAt: lateOldFence },
+        });
+        await expect(execute({
+            ...reclaimed,
+            claim: {
+                ...reclaimed.claim,
+                operationClaimId: "external-linked-takeover-late-old-claim",
+            },
+            expectedRevision: reclaimed.expectedRevision,
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: lateOldFence.getTime(),
+            },
+        })).resolves.toMatchObject({ kind: "error", errorCode: "invalid_state" });
+
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: {
+                metadataVersion: true,
+                metadata: true,
+                ownerMetadata: true,
+                agentStateVersion: true,
+                agentState: true,
+                seq: true,
+                currentStorageState: true,
+                acceptedThroughServerSeq: true,
+                materializationPublicationId: true,
+                materializedThroughSourceAt: true,
+                publishedThroughServerSeq: true,
+                pendingVersion: true,
+                pendingCount: true,
+                pendingBlockedCount: true,
+                active: true,
+                thinking: true,
+                lastActiveAt: true,
+            },
+        })).resolves.toEqual({
+            metadataVersion: 7,
+            metadata: sharedMetadata,
+            ownerMetadata: JSON.stringify(LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
+            agentStateVersion: 0,
+            agentState: null,
+            seq: 0,
+            currentStorageState: "machine_only",
+            acceptedThroughServerSeq: null,
+            materializationPublicationId: null,
+            materializedThroughSourceAt: null,
+            publishedThroughServerSeq: null,
+            pendingVersion: 4,
+            pendingCount: 2,
+            pendingBlockedCount: 1,
+            active: true,
+            thinking: false,
+            lastActiveAt: lateOldFence,
+        });
+        await expect(db.sessionSystemRecord.findUnique({
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `historical-import:${claim.operationId}`,
+            }),
+        })).resolves.toBeNull();
+        await expect(db.sessionSystemRecord.findUnique({
+            where: hostSystemRecordUniqueWhere({
+                accountId: account.id,
+                sessionId: session.id,
+                namespace: "external_sessions",
+                localId: `takeover-admission:${claim.operationId}`,
+            }),
+        })).resolves.toMatchObject({
+            kind: "takeover_admission",
+            content: expect.objectContaining({
+                attemptId: "attempt-2",
+                operationRevision: 11,
+            }),
+        });
+    }, 120_000);
+
+    it("admits persisted takeover exactly once from the finalized publication without changing Pending or runtime state", async () => {
+        const sharedMetadata = JSON.stringify(
+            projectSessionSharedMetadataV1({ metadata: {} }),
+        );
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
             select: { id: true },
         });
         const session = await db.session.create({
             data: {
                 tag: `c2-takeover-admission-${randomUUID()}`,
                 accountId: account.id,
-                metadata: "metadata",
+                metadata: sharedMetadata,
                 metadataVersion: 7,
                 metadataLayoutVersion: 1,
-                ownerMetadata: LIVE_EXTERNAL_LINK_OWNER_METADATA,
+                ownerMetadata: JSON.stringify(LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
                 agentState: null,
                 agentStateVersion: 0,
                 encryptionMode: "plain",
@@ -1812,6 +2991,19 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
             select: { id: true },
         });
+        const machineId = `machine-persisted-takeover-${randomUUID()}`;
+        const publisherFence = new Date(4_321);
+        await db.machine.create({
+            data: { id: machineId, accountId: account.id, metadata: "{}" },
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: account.id,
+                machineId,
+                sessionId: session.id,
+                data: "encrypted",
+            },
+        });
         const claim = {
             sessionId: session.id,
             operationId: "persisted-takeover-operation",
@@ -1819,7 +3011,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         } as const;
         const execute = async (command: unknown) => await executeExternalSessionHistoricalImportCommand({
             actorUserId: account.id,
-            transportMachineId: "machine-persisted-takeover",
+            transportMachineId: machineId,
             command,
         });
 
@@ -1854,6 +3046,11 @@ describe("canonical transcript sequence writer on SQLite", () => {
             expectedAcceptedThroughServerSeq: 1,
         })).resolves.toMatchObject({ kind: "finalized" });
 
+        await db.session.update({
+            where: { id: session.id },
+            data: { active: true, lastActiveAt: publisherFence },
+        });
+
         const before = await db.session.findUniqueOrThrow({
             where: { id: session.id },
             select: {
@@ -1880,7 +3077,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             pendingVersion: 4,
             pendingCount: 2,
             pendingBlockedCount: 1,
-            active: false,
+            active: true,
             thinking: false,
         });
         expect(before.materializationPublicationId).toEqual(expect.any(String));
@@ -1889,22 +3086,24 @@ describe("canonical transcript sequence writer on SQLite", () => {
         const command = {
             v: 1,
             kind: "admit_persisted_takeover",
+            mode: "persisted",
             claim,
             expectedRevision: 9,
             attemptId: "attempt-1",
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: publisherFence.getTime(),
+            },
             expectedSessionMetadataVersion: 7,
             metadataPatch: {
                 mode: "owner",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    LIVE_EXTERNAL_LINK_OWNER_METADATA,
+                expectedOwnerMetadata: LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
                 sharedMetadata: {
-                    ciphertext: "metadata",
+                    ciphertext: sharedMetadata,
                     expectedVersion: 7,
                 },
-                ownerMetadata: {
-                    ciphertext: RETIRED_EXTERNAL_LINK_OWNER_METADATA,
-                },
+                ownerMetadata: RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: null,
                     expectedVersion: 0,
@@ -1930,8 +3129,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 ...command,
                 metadataPatch: {
                     ...command.metadataPatch,
-                    expectedOwnerMetadataCiphertext:
-                        RETIRED_EXTERNAL_LINK_OWNER_METADATA,
+                    expectedOwnerMetadata: RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
                 },
             },
             { ...command, expectedSessionSeq: 2 },
@@ -1967,6 +3165,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         await expect(execute(command)).resolves.toEqual({
             v: 1,
             kind: "takeover_admitted",
+            mode: "persisted",
             claim,
             revision: 9,
             attemptId: "attempt-1",
@@ -1974,6 +3173,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         await expect(execute(command)).resolves.toEqual({
             v: 1,
             kind: "takeover_admitted",
+            mode: "persisted",
             claim,
             revision: 9,
             attemptId: "attempt-1",
@@ -1984,6 +3184,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
         })).resolves.toEqual({
             v: 1,
             kind: "takeover_admitted",
+            mode: "persisted",
             claim,
             revision: 11,
             attemptId: "attempt-1",
@@ -2005,9 +3206,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             expectedRevision: 11,
             metadataPatch: {
                 ...command.metadataPatch,
-                ownerMetadata: {
-                    ciphertext: LIVE_EXTERNAL_LINK_OWNER_METADATA,
-                },
+                ownerMetadata: LIVE_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE,
             },
         })).resolves.toMatchObject({
             kind: "error",
@@ -2038,8 +3237,8 @@ describe("canonical transcript sequence writer on SQLite", () => {
         })).resolves.toEqual({
             metadataVersion: 8,
             metadataLayoutVersion: 1,
-            metadata: "metadata",
-            ownerMetadata: RETIRED_EXTERNAL_LINK_OWNER_METADATA,
+            metadata: sharedMetadata,
+            ownerMetadata: JSON.stringify(RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
             agentStateVersion: 1,
             agentState: null,
             seq: 1,
@@ -2051,7 +3250,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             pendingVersion: 4,
             pendingCount: 2,
             pendingBlockedCount: 1,
-            active: false,
+            active: true,
             thinking: false,
         });
     }, 120_000);

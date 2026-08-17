@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createInTxHarness } from "../api/testkit/txHarness";
+import {
+    createInTxHarness,
+    createSessionTransactionModel,
+} from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
 const buildDeleteSessionUpdate = vi.fn((_sid: string, updSeq: number, updId: string) => ({
@@ -28,19 +31,22 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/storage/inTx", () => {
-    const { inTx, afterTx } = createInTxHarness(() => ({
-            session: {
-                findFirst: vi.fn(async () => ({
-                    id: "s1",
-                    accountId: "owner",
-                    shares: [{ sharedWithUserId: "u2" }],
-                })),
-                deleteMany: vi.fn(async () => ({ count: 1 })),
-            },
+    const { inTx, afterTx } = createInTxHarness(() => {
+        const { session } = createSessionTransactionModel({
+            id: "s1",
+            accountId: "owner",
+            metadataLayoutVersion: 0,
+            seq: 0,
+            updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+            shares: [{ sharedWithUserId: "u2" }],
+        });
+        return {
+            session,
             sessionMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             usageReport: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             accessKey: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-    }));
+        };
+    });
 
     return { afterTx, inTx };
 });
@@ -49,8 +55,11 @@ describe("sessionDelete (AccountChange integration)", () => {
     it("marks session change for owner and recipients and emits delete-session updates using those cursors", async () => {
         const { sessionDelete } = await import("./sessionDelete");
 
-        const ok = await sessionDelete({ uid: "owner" } as any, "s1");
-        expect(ok).toBe(true);
+        const result = await sessionDelete(
+            { uid: "owner" } as any,
+            "s1",
+        );
+        expect(result).toEqual({ ok: true });
 
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "session", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u2", kind: "session", entityId: "s1" }));

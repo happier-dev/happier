@@ -29,7 +29,6 @@ export async function applyPendingSessionStateChange(params: {
     const before = await tx.session.findUniqueOrThrow({
         where: { id: sessionId },
         select: {
-            seq: true,
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             pendingCount: true,
             pendingBlockedCount: true,

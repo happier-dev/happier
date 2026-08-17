@@ -6,27 +6,23 @@ import {
     SessionMetadataInactiveModelIntentPatchSuccessV1Schema,
     SessionMetadataInactiveModelIntentPatchV1Schema,
     SessionMetadataInactiveModelIntentVersionConflictV1Schema,
-    SessionMetadataRecipientProjectionV1Schema,
     SessionMetadataTuplePatchSuccessV1Schema,
     SessionMetadataTuplePatchV1Schema,
     SessionMetadataVersionConflictV1Schema,
-    type SessionMetadataRecipientProjectionV1,
 } from "@happier-dev/protocol";
 
-import {
-    buildSessionMetadataRecipientUpdate,
-    buildUpdateSessionUpdate,
-    eventRouter,
-} from "@/app/events/eventRouter";
 import {
     patchSession,
     updateSessionMetadataEnvelopeTuple,
 } from "@/app/session/sessionWriteService";
 import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
-    projectSessionMetadataForRecipient,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
+import { db } from "@/storage/db";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { type Fastify } from "../../types";
 
 export function registerSessionPatchRoute(app: Fastify) {
@@ -78,7 +74,13 @@ export function registerSessionPatchRoute(app: Fastify) {
                     }),
                     SessionMetadataVersionConflictV1Schema,
                     SessionMetadataActiveConflictV1Schema,
+                    z.object({
+                        code: z.literal(
+                            "session_publisher_authority_lost",
+                        ),
+                    }).strict(),
                 ]),
+                426: z.unknown(),
                 500: z.object({ error: z.literal("Failed to update session") }),
             },
         },
@@ -87,6 +89,14 @@ export function registerSessionPatchRoute(app: Fastify) {
         const { sessionId } = request.params;
         if ("mode" in request.body) {
             const tupleBody = request.body;
+            if (
+                !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                )
+            ) {
+                return;
+            }
             const tupleResult = await updateSessionMetadataEnvelopeTuple({
                 ...tupleBody,
                 actorUserId: userId,
@@ -99,6 +109,12 @@ export function registerSessionPatchRoute(app: Fastify) {
                 if (tupleResult.error === "session_active") {
                     return reply.code(409).send({
                         code: "session_active" as const,
+                    });
+                }
+                if (tupleResult.error === "publisher-superseded") {
+                    return reply.code(409).send({
+                        code:
+                            "session_publisher_authority_lost" as const,
                     });
                 }
                 if (tupleResult.error === "metadata_privacy_upgrade_required") {
@@ -137,121 +153,29 @@ export function registerSessionPatchRoute(app: Fastify) {
                 return reply.code(500).send({ error: "Failed to update session" });
             }
 
-            const ownerPrivateTuple =
-                (
-                    tupleBody.mode === "owner"
-                    || tupleBody.mode === "owner_inactive_model_intent"
-                )
-                && tupleResult.ownerMetadata
-                && tupleResult.agentState
-                    ? {
-                        ownerMetadata: tupleResult.ownerMetadata.value,
-                        agentState: tupleResult.agentState.value,
-                        agentStateVersion: tupleResult.agentState.version,
-                    }
-                    : null;
-            if (
-                tupleBody.mode !== "shared_editor"
-                && !ownerPrivateTuple
-            ) {
+            const published = await publishSessionCurrentViewUpdates({
+                sessionId,
+                participantCursors: tupleResult.participantCursors,
+                source: {
+                    kind: "envelope_tuple_v1",
+                    sessionOwnerId: tupleResult.sessionOwnerId,
+                    ownerAccountMode: tupleResult.ownerAccountMode,
+                    sharedMetadata: tupleResult.sharedMetadata,
+                    ownerMetadata: tupleResult.ownerMetadata,
+                    agentState: tupleResult.agentState,
+                },
+            });
+            if (!published.ok) {
                 return reply.code(500).send({
                     error: "Failed to update session",
                 });
             }
-
-            let sharedEditorProjection:
-                SessionMetadataRecipientProjectionV1 | null = null;
-            if (tupleBody.mode === "shared_editor") {
-                const parsedSharedEditorProjection =
-                    SessionMetadataRecipientProjectionV1Schema.safeParse({
-                        metadata: tupleResult.sharedMetadata.value,
-                        metadataVersion: tupleResult.sharedMetadata.version,
-                        metadataLayoutVersion:
-                            tupleResult.metadataLayoutVersion,
-                        agentState: null,
-                        agentStateVersion: tupleResult.agentStateVersion,
-                    });
-                if (!parsedSharedEditorProjection.success) {
-                    return reply.code(500).send({
-                        error: "Failed to update session",
-                    });
-                }
-                sharedEditorProjection = parsedSharedEditorProjection.data;
-            }
-
-            let publications: ReadonlyArray<Readonly<{
-                accountId: string;
-                cursor: number;
-                projection: SessionMetadataRecipientProjectionV1;
-            }>>;
-            try {
-                publications = tupleResult.participantCursors.map(
-                    ({ accountId, cursor }) => {
-                        if (ownerPrivateTuple) {
-                            const projection =
-                                SessionMetadataRecipientProjectionV1Schema.parse(
-                                    projectSessionMetadataForRecipient({
-                                        session: {
-                                            accountId: userId,
-                                            metadata:
-                                                tupleResult.sharedMetadata.value,
-                                            metadataVersion:
-                                                tupleResult.sharedMetadata.version,
-                                            metadataLayoutVersion:
-                                                tupleResult.metadataLayoutVersion,
-                                            ownerMetadata:
-                                                ownerPrivateTuple.ownerMetadata,
-                                            agentState:
-                                                ownerPrivateTuple.agentState,
-                                            agentStateVersion:
-                                                ownerPrivateTuple.agentStateVersion,
-                                        },
-                                        recipientAccountId: accountId,
-                                    }),
-                                );
-                            return { accountId, cursor, projection };
-                        }
-                        if (!sharedEditorProjection) {
-                            throw new Error(
-                                "Tuple update has no recipient projection",
-                            );
-                        }
-                        return {
-                            accountId,
-                            cursor,
-                            projection: sharedEditorProjection,
-                        };
-                    },
-                );
-            } catch {
-                return reply.code(500).send({
-                    error: "Failed to update session",
-                });
-            }
-
-            await Promise.all(publications.map(async ({
-                accountId,
-                cursor,
-                projection,
-            }) => {
-                const payload = buildSessionMetadataRecipientUpdate(
-                    sessionId,
-                    cursor,
-                    randomKeyNaked(12),
-                    projection,
-                );
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload,
-                    recipientFilter: { type: "all-interested-in-session", sessionId },
-                });
-            }));
 
             return reply.send({
                 success: true as const,
                 metadataLayoutVersion: tupleResult.metadataLayoutVersion,
                 sharedMetadata: { version: tupleResult.sharedMetadata.version },
-                ...(tupleResult.agentState
+                ...(tupleBody.mode !== "shared_editor"
                     ? { agentState: { version: tupleResult.agentState.version } }
                     : {}),
             });
@@ -323,17 +247,35 @@ export function registerSessionPatchRoute(app: Fastify) {
             return reply.code(500).send({ error: "Failed to update session" });
         }
 
-        const metadataUpdate = result.metadata ? { value: result.metadata.value, version: result.metadata.version } : undefined;
-        const agentStateUpdate = result.agentState ? { value: result.agentState.value, version: result.agentState.version } : undefined;
-
-        await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-            const payload = buildUpdateSessionUpdate(sessionId, cursor, randomKeyNaked(12), metadataUpdate, agentStateUpdate);
-            eventRouter.emitUpdate({
-                userId: accountId,
-                payload,
-                recipientFilter: { type: "all-interested-in-session", sessionId },
+        const currentSession = await db.session.findUnique({
+            where: { id: sessionId },
+            select: {
+                accountId: true,
+                metadata: true,
+                metadataVersion: true,
+                metadataLayoutVersion: true,
+                ownerMetadata: true,
+                agentState: true,
+                agentStateVersion: true,
+            },
+        });
+        if (!currentSession) {
+            return reply.code(404).send({
+                error: "Session not found",
             });
-        }));
+        }
+        const publishedLegacy = await publishSessionCurrentViewUpdates({
+            sessionId,
+            participantCursors: result.participantCursors,
+            source: {
+                kind: "legacy_v0",
+                sessionOwnerId: userId,
+                session: currentSession,
+            },
+        });
+        if (!publishedLegacy.ok) {
+            return reply.code(500).send({ error: "Failed to update session" });
+        }
 
         if (conditionedMutation) {
             if (!result.metadata) {

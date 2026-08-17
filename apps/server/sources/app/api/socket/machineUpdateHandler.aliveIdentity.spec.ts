@@ -154,14 +154,14 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         }));
     });
 
-    it("captures and finalizes only the authenticated machine session terminal fence", async () => {
+    it("captures and finalizes only the authenticated machine session terminal authority", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
         const committedFence = new Date(1_234);
         captureMachineSessionTerminal.mockResolvedValueOnce({
             status: "captured",
             target: {
                 binding: { accountId: "u1", machineId: "m1", sessionId: "s1" },
-                committedFence,
+                authority: { kind: "generation", publisherGeneration: 7n },
             },
         });
         finalizeMachineSessionTerminal.mockResolvedValueOnce({
@@ -190,19 +190,19 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
             v: 1,
             status: "captured",
             sessionId: "s1",
-            committedFenceMs: 1_234,
+            authority: { kind: "generation", publisherGeneration: "7" },
         });
 
         const finalizeCallback = vi.fn();
         await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1)({
             v: 1,
             sessionId: "s1",
-            committedFenceMs: 1_234,
+            authority: { kind: "generation", publisherGeneration: "7" },
         }, finalizeCallback);
         expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
             target: {
                 binding: { accountId: "u1", machineId: "m1", sessionId: "s1" },
-                committedFence,
+                authority: { kind: "generation", publisherGeneration: 7n },
             },
         });
         expect(publishSessionPublisherClose).toHaveBeenCalledWith({
@@ -213,6 +213,53 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         expect(finalizeCallback).toHaveBeenCalledWith({
             v: 1,
             status: "closed",
+            sessionId: "s1",
+        });
+    });
+
+    it("round trips legacy heartbeat authority for pre-generation publishers", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const committedFence = new Date(1_234);
+        captureMachineSessionTerminal.mockResolvedValueOnce({
+            status: "captured",
+            target: {
+                binding: { accountId: "u1", machineId: "m1", sessionId: "s1" },
+                authority: { kind: "legacy-heartbeat", committedFence },
+            },
+        });
+        finalizeMachineSessionTerminal.mockResolvedValueOnce({ status: "already_inactive" });
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m1" },
+        });
+        machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions as any);
+
+        const captureCallback = vi.fn();
+        await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1)({
+            v: 1,
+            sessionId: "s1",
+        }, captureCallback);
+        expect(captureCallback).toHaveBeenCalledWith({
+            v: 1,
+            status: "captured",
+            sessionId: "s1",
+            authority: { kind: "legacy-heartbeat", committedFenceMs: 1_234 },
+        });
+
+        const finalizeCallback = vi.fn();
+        await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1)({
+            v: 1,
+            sessionId: "s1",
+            authority: { kind: "legacy-heartbeat", committedFenceMs: 1_234 },
+        }, finalizeCallback);
+        expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
+            target: {
+                binding: { accountId: "u1", machineId: "m1", sessionId: "s1" },
+                authority: { kind: "legacy-heartbeat", committedFence },
+            },
+        });
+        expect(finalizeCallback).toHaveBeenCalledWith({
+            v: 1,
+            status: "already_inactive",
             sessionId: "s1",
         });
     });
@@ -232,7 +279,7 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1)({
             v: 1,
             sessionId: "s1",
-            committedFenceMs: 1_234,
+            authority: { kind: "generation", publisherGeneration: "7" },
         }, callback);
 
         expect(publishSessionPublisherClose).not.toHaveBeenCalled();
@@ -275,7 +322,11 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         );
         const finalizeCallback = vi.fn();
         await getSocketHandler(socket, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1)(
-            { v: 1, sessionId: "s1", committedFenceMs: 1_234 },
+            {
+                v: 1,
+                sessionId: "s1",
+                authority: { kind: "generation", publisherGeneration: "7" },
+            },
             finalizeCallback,
         );
 

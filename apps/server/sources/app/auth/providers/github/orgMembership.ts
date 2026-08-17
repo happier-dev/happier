@@ -25,8 +25,8 @@ function parseInstallationMap(raw: string | undefined): Map<string, number> {
 }
 
 function resolveGithubAppConfigFromEnv(env: NodeJS.ProcessEnv): GithubAppConfig | null {
-    const appId = (env.AUTH_GITHUB_APP_ID ?? env.GITHUB_APP_ID ?? "").toString().trim();
-    const privateKey = (env.AUTH_GITHUB_APP_PRIVATE_KEY ?? env.GITHUB_PRIVATE_KEY ?? "").toString();
+    const appId = (env.AUTH_GITHUB_APP_ID ?? "").toString().trim();
+    const privateKey = (env.AUTH_GITHUB_APP_PRIVATE_KEY ?? "").toString();
     const mapRaw = (env.AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG ?? "").toString().trim();
     if (!appId || !privateKey || !mapRaw) return null;
 
@@ -77,7 +77,7 @@ export async function isGithubOrgMemberViaApp(params: {
 
     try {
         // https://docs.github.com/en/rest/orgs/members#check-organization-membership-for-a-user
-        await (octokit as any).request("GET /orgs/{org}/members/{username}", { org, username });
+        await octokit.request("GET /orgs/{org}/members/{username}", { org, username });
         return true;
     } catch (error: any) {
         const status = error?.status;
@@ -95,10 +95,11 @@ export async function isGithubOrgMemberViaUserToken(params: {
     const org = params.org.toString().trim().toLowerCase();
     const username = params.username.toString().trim();
     const accessToken = params.accessToken.toString();
-    const timeoutMs =
-        Number.isFinite(params.timeoutMs as any) && (params.timeoutMs as any) > 0
-            ? Number(params.timeoutMs)
-            : undefined;
+    const timeoutMs = typeof params.timeoutMs === "number"
+        && Number.isFinite(params.timeoutMs)
+        && params.timeoutMs > 0
+        ? params.timeoutMs
+        : undefined;
 
     const controller = typeof timeoutMs === "number" ? new AbortController() : null;
     const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;

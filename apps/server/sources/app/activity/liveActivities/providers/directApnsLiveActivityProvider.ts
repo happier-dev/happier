@@ -11,7 +11,7 @@ import {
 import type { AccountLiveActivityTarget } from "@prisma/client";
 
 import { decryptString, encryptString } from "@/modules/encrypt";
-import { db } from "@/storage/db";
+import { db, getActivePrismaRuntime } from "@/storage/db";
 import { recordLiveActivityTargetFailure } from "../recordLiveActivityTargetFailure";
 import type { LiveActivityDirectApnsConfig } from "../resolveLiveActivityRemoteTransport";
 import {
@@ -214,7 +214,7 @@ async function recordSuccess(targetId: string, now: Date, hash: string): Promise
             lastPayloadHash: hash,
             failureCount: 0,
             lastFailureCode: null,
-            diagnostics: null,
+            diagnostics: getActivePrismaRuntime().DbNull,
         },
     });
 }

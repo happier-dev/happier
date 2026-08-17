@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
 export function createAuthenticatedTestApp() {
     const app = Fastify();
@@ -13,6 +14,10 @@ export function createAuthenticatedTestApp() {
             return reply.code(401).send({ error: "Unauthorized" });
         }
         request.userId = userId;
+        request.authTokenKind = request.headers["x-test-auth-token-kind"] === "terminal"
+            ? "terminal"
+            : "account";
+        captureAccountStoredContentCompatibilityForHttpRequest(request);
     });
 
     return typed;

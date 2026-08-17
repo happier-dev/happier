@@ -35,6 +35,7 @@ export type AutomationScheduleKind = (typeof AutomationScheduleKind)[keyof typeo
 export const AutomationTargetType = {
     new_session: "new_session",
     existing_session: "existing_session",
+    execution_run: "execution_run",
 } as const;
 
 export type AutomationTargetType = (typeof AutomationTargetType)[keyof typeof AutomationTargetType];
@@ -47,9 +48,79 @@ export const AutomationRunState = {
     failed: "failed",
     cancelled: "cancelled",
     expired: "expired",
+    dispatch_failed: "dispatch_failed",
+    skipped: "skipped",
+    missed: "missed",
+    outcome_uncertain: "outcome_uncertain",
 } as const;
 
 export type AutomationRunState = (typeof AutomationRunState)[keyof typeof AutomationRunState];
+
+export const AutomationTriggerKind = {
+    schedule: "schedule",
+    manual: "manual",
+    pluginEvent: "pluginEvent",
+    conversation: "conversation",
+} as const;
+
+export type AutomationTriggerKind = (typeof AutomationTriggerKind)[keyof typeof AutomationTriggerKind];
+
+export const AutomationObservationTransport = {
+    checkpointedPull: "checkpointedPull",
+    durablePush: "durablePush",
+} as const;
+
+export type AutomationObservationTransport = (typeof AutomationObservationTransport)[keyof typeof AutomationObservationTransport];
+
+export const AutomationRunOriginKind = {
+    scheduled: "scheduled",
+    manual: "manual",
+    pluginEvent: "pluginEvent",
+    conversation: "conversation",
+} as const;
+
+export type AutomationRunOriginKind = (typeof AutomationRunOriginKind)[keyof typeof AutomationRunOriginKind];
+
+export const AutomationExecutionDispatchState = {
+    notStarted: "notStarted",
+    dispatchPermitted: "dispatchPermitted",
+    retryWaiting: "retryWaiting",
+    started: "started",
+    settled: "settled",
+    outcomeUnknown: "outcomeUnknown",
+} as const;
+
+export type AutomationExecutionDispatchState = (typeof AutomationExecutionDispatchState)[keyof typeof AutomationExecutionDispatchState];
+
+export const AutomationRunReplyHandoffState = {
+    none: "none",
+    awaitingResult: "awaitingResult",
+    ready: "ready",
+    handingOff: "handingOff",
+    accepted: "accepted",
+    suppressed: "suppressed",
+    blocked: "blocked",
+} as const;
+
+export type AutomationRunReplyHandoffState = (typeof AutomationRunReplyHandoffState)[keyof typeof AutomationRunReplyHandoffState];
+
+export const AutomationEventSourceStatusState = {
+    uninitialized: "uninitialized",
+    baselined: "baselined",
+    observing: "observing",
+    backingOff: "backingOff",
+    attention: "attention",
+} as const;
+
+export type AutomationEventSourceStatusState = (typeof AutomationEventSourceStatusState)[keyof typeof AutomationEventSourceStatusState];
+
+export const AutomationEventSourceCatalogStatusState = {
+    current: "current",
+    reconciling: "reconciling",
+    reconciliationLate: "reconciliationLate",
+} as const;
+
+export type AutomationEventSourceCatalogStatusState = (typeof AutomationEventSourceCatalogStatusState)[keyof typeof AutomationEventSourceCatalogStatusState];
 
 export const RelationshipStatus = {
     none: "none",

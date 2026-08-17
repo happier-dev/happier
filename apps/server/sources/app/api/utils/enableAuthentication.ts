@@ -2,13 +2,24 @@ import { Fastify } from "../types";
 import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
-import { enforceSessionSyncCompatibilityForHttpRequest } from "@/app/clientCompatibility/httpEnforcement";
-import { isSessionSyncHttpRoute } from "@/app/clientCompatibility/routeInventory";
+import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 function shouldLogAuthDecoratorDiagnostics(): boolean {
     return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
         || process.env.HAPPY_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1";
+}
+
+function resolveVerifiedAuthTokenKind(extras: unknown): "account" | "terminal" {
+    // Terminal authorization is minted only with the verified `{ session }` token
+    // extra. This is server-verified token provenance, never caller-provided HTTP
+    // metadata, so destructive routes can fail closed for daemon credentials.
+    if (typeof extras !== "object" || extras === null || Array.isArray(extras)) {
+        return "account";
+    }
+    return typeof (extras as Readonly<Record<string, unknown>>).session === "string"
+        ? "terminal"
+        : "account";
 }
 
 export function enableAuthentication(app: Fastify) {
@@ -54,11 +65,8 @@ export function enableAuthentication(app: Fastify) {
                 log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);
             }
             request.userId = verified.userId;
-            const routePath = request.routeOptions?.url ?? request.url.split('?', 1)[0];
-            if (typeof routePath === 'string' && isSessionSyncHttpRoute(routePath)) {
-                const accepted = await enforceSessionSyncCompatibilityForHttpRequest(request, reply, process.env);
-                if (!accepted) return;
-            }
+            request.authTokenKind = resolveVerifiedAuthTokenKind(verified.extras);
+            captureAccountStoredContentCompatibilityForHttpRequest(request);
         } catch (error) {
             return reply.code(401).send({ error: 'Authentication failed' });
         }

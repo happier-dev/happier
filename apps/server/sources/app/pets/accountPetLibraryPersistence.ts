@@ -9,15 +9,20 @@ import {
 } from "@happier-dev/protocol";
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
+import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 
 export type PersistedAccountPet = Readonly<{
     accountId: string;
-    entry: AccountPetLibraryEntryV1;
+    accountPetId: string;
+    contentMode: string;
+    entry: AccountPetLibraryEntryV1 | null;
     asset: {
+        contentMode: string;
         objectKey: string;
-    };
+    } | null;
 }>;
 
 export type PersistAccountPetParams = Readonly<{
@@ -40,7 +45,7 @@ export type AccountPetQuotaLimits = Readonly<{
 
 export type PersistAccountPetResult =
     | Readonly<{ ok: true }>
-    | Readonly<{ ok: false; error: "quota-exceeded" | "internal" }>;
+    | Readonly<{ ok: false; error: "plaintext-required" | "quota-exceeded" | "internal" }>;
 
 export type AccountPetLibraryPersistence = Readonly<{
     persistAccountPet(params: PersistAccountPetParams & { quotaLimits: AccountPetQuotaLimits }): Promise<PersistAccountPetResult>;
@@ -51,6 +56,7 @@ export type AccountPetLibraryPersistence = Readonly<{
 
 type AccountPetAssetRow = Readonly<{
     id: string;
+    contentMode: string;
     objectKey: string;
     byteLength: number;
     mediaType: string;
@@ -60,6 +66,7 @@ type AccountPetAssetRow = Readonly<{
 type AccountPetPackageRow = Readonly<{
     id: string;
     accountId: string;
+    contentMode: string;
     packageFormat: string;
     manifest: unknown;
     digest: string;
@@ -74,21 +81,41 @@ function toPrismaJson(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet | null {
+function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
     const asset = row.assets[0];
+    const persistedAsset = asset
+        ? {
+            contentMode: asset.contentMode,
+            objectKey: asset.objectKey,
+        }
+        : null;
     if (!asset || row.packageFormat !== PET_PACKAGE_FORMAT_CODEX_ATLAS_V1) {
-        return null;
+        return {
+            accountId: row.accountId,
+            accountPetId: row.id,
+            contentMode: row.contentMode,
+            entry: null,
+            asset: persistedAsset,
+        };
     }
 
     const mediaType = PetAssetMediaTypeV1Schema.safeParse(asset.mediaType);
     const manifest = PetPackageManifestV1Schema.safeParse(row.manifest);
     const origin = AccountPetOriginV1Schema.safeParse(row.origin);
     if (!mediaType.success || !manifest.success || !origin.success) {
-        return null;
+        return {
+            accountId: row.accountId,
+            accountPetId: row.id,
+            contentMode: row.contentMode,
+            entry: null,
+            asset: persistedAsset,
+        };
     }
 
     return {
         accountId: row.accountId,
+        accountPetId: row.id,
+        contentMode: row.contentMode,
         entry: {
             accountPetId: row.id,
             packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
@@ -105,17 +132,12 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet | null
             updatedAt: row.updatedAt.getTime(),
             origin: origin.data,
         },
-        asset: {
-            objectKey: asset.objectKey,
-        },
+        asset: persistedAsset,
     };
 }
 
-function compactRows(rows: AccountPetPackageRow[]): PersistedAccountPet[] {
-    return rows.flatMap((row) => {
-        const mapped = mapAccountPetRow(row);
-        return mapped ? [mapped] : [];
-    });
+function mapRows(rows: AccountPetPackageRow[]): PersistedAccountPet[] {
+    return rows.map(mapAccountPetRow);
 }
 
 export type PrismaAccountPetLibraryPersistenceOptions = Readonly<{
@@ -131,6 +153,27 @@ export function createPrismaAccountPetLibraryPersistence(
         async persistAccountPet(params) {
             try {
                 return await inTx(async (tx): Promise<PersistAccountPetResult> => {
+                    await acquireAccountSessionOwnerMetadataFenceInTx(tx, params.accountId);
+                    const account = await tx.account.findUnique({
+                        where: { id: params.accountId },
+                        select: {
+                            encryptionMode: true,
+                            publicKey: true,
+                            contentPublicKey: true,
+                            contentPublicKeySig: true,
+                        },
+                    });
+                    const accountCurrentness = account
+                        ? deriveAccountEncryptionCurrentnessFromRow(account)
+                        : null;
+                    if (
+                        !accountCurrentness
+                        || accountCurrentness.status !== "ready"
+                        || accountCurrentness.currentness.encryptionMode !== "plain"
+                    ) {
+                        return { ok: false, error: "plaintext-required" };
+                    }
+
                     const aggregate = await tx.accountPetPackage.aggregate({
                         where: {
                             accountId: params.accountId,
@@ -223,7 +266,7 @@ export function createPrismaAccountPetLibraryPersistence(
                     },
                 },
             });
-            return compactRows(rows);
+            return mapRows(rows);
         },
         async readAccountPet(accountId, petId) {
             const row = await db.accountPetPackage.findFirst({

@@ -1,6 +1,8 @@
 export type SessionDeleteTarget = Readonly<{
     id: string;
     accountId: string;
+    metadataLayoutVersion: number;
+    updatedAt: Date;
     shares: ReadonlyArray<Readonly<{ sharedWithUserId: string }>>;
 }>;
 
@@ -25,6 +27,8 @@ export async function loadSessionDeleteRecipients(
         select: {
             id: true,
             accountId: true,
+            metadataLayoutVersion: true,
+            updatedAt: true,
             shares: {
                 select: {
                     sharedWithUserId: true,

@@ -5,6 +5,10 @@ import {
 } from "@/app/events/eventRouter";
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import type { SessionReadyProjectionUpdate } from "@/app/session/sessionWriteService";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import { inTx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 
@@ -26,27 +30,36 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
         },
     }));
 
-    await Promise.all(participantCursors.map(async ({ accountId, cursor }) => {
-        const payload = buildUpdateSessionUpdate(
-            params.sessionId,
-            cursor,
-            randomKeyNaked(12),
-            undefined,
-            undefined,
-            {
-                latestReadyEventSeq: readyProjection.latestReadyEventSeq,
-                latestReadyEventAt: readyProjection.latestReadyEventAt,
-            },
-        );
-        eventRouter.emitUpdate({
-            userId: accountId,
-            payload,
-            recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
-            ...(params.skipSenderConnection && accountId === params.skipSenderAccountId
-                ? { skipSenderConnection: params.skipSenderConnection }
-                : {}),
-        });
-    }));
+    const session = await loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    if (session) {
+        await Promise.all(participantCursors.map(async ({ accountId, cursor }) => {
+            const projection = projectSessionTranscriptPublicationRealtimeProjection(
+                {
+                    latestReadyEventSeq: readyProjection.latestReadyEventSeq,
+                    latestReadyEventAt: readyProjection.latestReadyEventAt,
+                },
+                session,
+                accountId,
+            );
+            if (projection.kind === "suppress") return;
+            const payload = buildUpdateSessionUpdate(
+                params.sessionId,
+                cursor,
+                randomKeyNaked(12),
+                undefined,
+                undefined,
+                projection.value,
+            );
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
+                ...(params.skipSenderConnection && accountId === params.skipSenderAccountId
+                    ? { skipSenderConnection: params.skipSenderConnection }
+                    : {}),
+            });
+        }));
+    }
 
     return participantCursors;
 }

@@ -1,6 +1,10 @@
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
-import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import {
     buildSessionActivityEphemeral,
     buildUpdateSessionUpdate,
@@ -56,11 +60,9 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
         const session = await tx.session.findUnique({
             where: { id: params.sessionId },
             select: {
-                accountId: true,
                 archivedAt: true,
                 active: true,
                 lastActiveAt: true,
-                seq: true,
                 ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 pendingCount: true,
                 pendingBlockedCount: true,
@@ -167,15 +169,10 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
     if (result.activeChanged) {
         activityCache.markSessionInactive(params.sessionId, params.accountId, params.observedAt);
     }
-    await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-        eventRouter.emitUpdate({
-            userId: accountId,
-            payload: buildUpdateSessionUpdate(
-                params.sessionId,
-                cursor,
-                randomKeyNaked(12),
-                undefined,
-                undefined,
+    const session = await loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    if (session) {
+        await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+            const projection = projectSessionTranscriptPublicationRealtimeProjection(
                 {
                     ...(result.activeChanged ? { active: false, activeAt: result.activeAt } : {}),
                     ...(result.activityChanged ? result.activityProjection : {}),
@@ -186,13 +183,27 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
                         lastRuntimeIssue: result.lastRuntimeIssue,
                     } : {}),
                 },
-            ),
-            recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
-            ...(accountId === params.accountId && params.connection
-                ? { skipSenderConnection: params.connection }
-                : {}),
-        });
-    }));
+                session,
+                accountId,
+            );
+            if (projection.kind === "suppress") return;
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload: buildUpdateSessionUpdate(
+                    params.sessionId,
+                    cursor,
+                    randomKeyNaked(12),
+                    undefined,
+                    undefined,
+                    projection.value,
+                ),
+                recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
+                ...(accountId === params.accountId && params.connection
+                    ? { skipSenderConnection: params.connection }
+                    : {}),
+            });
+        }));
+    }
     await refreshSessionParticipantBadgePushes({
         badgeAttentionChanged: result.badgeAttentionChanged,
         participantCursors: result.participantCursors,

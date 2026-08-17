@@ -4,6 +4,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { createV2SessionListVisibilityWhere } from "@/app/api/routes/session/v2SessionListRows";
 import {
     createSessionOrganizationSnapshot,
@@ -118,6 +119,22 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
     accountId: string;
     request: SessionOrganizationSnapshotRequest;
 }>) {
+    const account = await db.account.findUnique({
+        where: { id: params.accountId },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
+    });
+    const accountCurrentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    const accountMode = accountCurrentness?.status === "ready"
+        ? accountCurrentness.currentness.encryptionMode
+        : null;
+
     const [
         checkpoint,
         pins,
@@ -229,11 +246,17 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
     return createSessionOrganizationSnapshot({
         version: checkpoint?.version ?? 0,
         pins: pins.map(mapSessionOrganizationPin),
-        folders: folders.map((folder) => mapSessionOrganizationFolder(folder, folder.parentKey ? folderIdsByKey.get(folder.parentKey) ?? null : null)),
+        folders: folders.map((folder) => mapSessionOrganizationFolder(
+            folder,
+            folder.parentKey
+                ? folderIdsByKey.get(folder.parentKey) ?? null
+                : null,
+            accountMode,
+        )),
         folderAssignments,
-        tags: tags.map(mapSessionOrganizationTag),
+        tags: tags.map((tag) => mapSessionOrganizationTag(tag, accountMode)),
         tagAssignments: [...groupedTagAssignments.entries()].map(([sessionId, tagIds]) => ({ sessionId, tagIds })),
         orderEntries: validOrderEntries.map(mapSessionOrganizationOrderEntry),
-        labels: labels.map(mapSessionOrganizationLabel),
+        labels: labels.map((label) => mapSessionOrganizationLabel(label, accountMode)),
     });
 }

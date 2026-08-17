@@ -48,6 +48,78 @@ export function createQualifiedConnectedAccountIdentityDigest(
     );
 }
 
+export type StoredQualifiedConnectedAccountIdentity = Readonly<{
+    servicePluginId: string;
+    serviceLocalId: string;
+    qualifiedServiceDigest: string;
+    connectedAccountId: string;
+    qualifiedIdentityDigest: string;
+}>;
+
+/**
+ * Parses the canonical qualified identity duplicated on a stored account row
+ * and verifies that both derived digests agree with the full structured tuple.
+ */
+export function parseStoredQualifiedConnectedAccountRef(
+    row: StoredQualifiedConnectedAccountIdentity,
+): QualifiedConnectedAccountRef {
+    const service = QualifiedConnectedAccountServiceRefSchema.parse({
+        pluginId: row.servicePluginId,
+        localId: row.serviceLocalId,
+    });
+    const ref = QualifiedConnectedAccountRefSchema.parse({
+        service,
+        accountId: row.connectedAccountId,
+    });
+    if (
+        row.qualifiedServiceDigest
+            !== createQualifiedConnectedAccountServiceDigest(service)
+        || row.qualifiedIdentityDigest
+            !== createQualifiedConnectedAccountIdentityDigest(ref)
+    ) {
+        throw new Error(
+            "Qualified Connected Account stored identity digest mismatch",
+        );
+    }
+    return ref;
+}
+
+export type StoredQualifiedConnectedAccountGroupIdentity = Readonly<{
+    servicePluginId: string;
+    serviceLocalId: string;
+    qualifiedServiceDigest: string;
+    qualifiedGroupDigest: string;
+    groupId: string;
+}>;
+
+/**
+ * Parses the canonical qualified identity duplicated on a stored group row
+ * and verifies that both derived digests agree with the full structured tuple.
+ */
+export function parseStoredQualifiedConnectedAccountGroupRef(
+    row: StoredQualifiedConnectedAccountGroupIdentity,
+): QualifiedConnectedAccountGroupRef {
+    const service = QualifiedConnectedAccountServiceRefSchema.parse({
+        pluginId: row.servicePluginId,
+        localId: row.serviceLocalId,
+    });
+    const ref = QualifiedConnectedAccountGroupRefSchema.parse({
+        service,
+        groupId: row.groupId,
+    });
+    if (
+        row.qualifiedServiceDigest
+            !== createQualifiedConnectedAccountServiceDigest(service)
+        || row.qualifiedGroupDigest
+            !== createQualifiedConnectedAccountGroupDigest(ref)
+    ) {
+        throw new Error(
+            "Qualified Connected Account stored group identity digest mismatch",
+        );
+    }
+    return ref;
+}
+
 export type ServiceAccountTokenIdentityFields = Readonly<{
     servicePluginId: string;
     serviceLocalId: string;

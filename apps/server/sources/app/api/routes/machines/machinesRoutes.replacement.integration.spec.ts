@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
@@ -154,7 +155,11 @@ describe("machinesRoutes machine replacement", () => {
         dbMocks.reset();
         txDbMocks.reset();
         getConnections.mockReturnValue(new Set());
-        dbMocks.db.account.findUnique.mockResolvedValue({ contentPublicKey: null });
+        dbMocks.db.account.findUnique.mockResolvedValue({
+            contentPublicKey: null,
+            publicKey: "account-signing-key",
+            encryptionMode: "e2ee",
+        });
         dbMocks.db.account.updateMany.mockResolvedValue({ count: 0 });
         dbMocks.db.machine.findFirst.mockResolvedValue(null);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
@@ -378,5 +383,64 @@ describe("machinesRoutes machine replacement", () => {
                 replacementActorUserId: null,
             }),
         }));
+    });
+
+    it("does not apply manual replacement for a marked Machine when the caller is legacy", async () => {
+        dbMocks.db.machine.findFirst.mockResolvedValueOnce({ id: "m2" });
+        txDbMocks.db.machine.findFirst
+            .mockResolvedValueOnce({
+                ...baseMachine,
+                dataEncryptionKey: new Uint8Array(
+                    Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+                ),
+            })
+            .mockResolvedValueOnce({
+                ...baseMachine,
+                id: "m2",
+                active: true,
+            });
+
+        const route = await createRoute("POST", "/v1/machines/:oldMachineId/replacement");
+        const { reply } = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                outcome: "legacy-missing",
+            },
+            params: { oldMachineId: "m1" },
+            body: { replacementMachineId: "m2", confirmActiveOldMachine: true },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(426);
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
+    });
+
+    it("does not undo replacement for a marked Machine when the caller is legacy", async () => {
+        const markedMachine = {
+            ...baseMachine,
+            replacedByMachineId: "m2",
+            replacementSource: "manual",
+            dataEncryptionKey: new Uint8Array(
+                Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+            ),
+        };
+        txDbMocks.db.machine.findFirst
+            .mockResolvedValueOnce(markedMachine)
+            .mockResolvedValueOnce(markedMachine);
+
+        const route = await createRoute("DELETE", "/v1/machines/:oldMachineId/replacement");
+        const { reply } = await route.invoke({
+            userId: "u1",
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: false,
+                outcome: "legacy-missing",
+            },
+            params: { oldMachineId: "m1" },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(426);
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 });

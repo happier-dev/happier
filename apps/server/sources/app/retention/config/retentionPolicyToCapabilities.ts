@@ -28,7 +28,6 @@ export function retentionPolicyToCapabilities(policy: RetentionPolicy): ServerRe
         enabled,
         sessions,
         accountChanges: toAgePolicyCapability(domains.accountChanges),
-        usageEvents: toAgePolicyCapability(domains.usageEvents),
         voiceSessionLeases: toAgePolicyCapability(domains.voiceSessionLeases),
         userFeedItems: toAgePolicyCapability(domains.userFeedItems),
         sessionShareAccessLogs: toAgePolicyCapability(domains.sessionShareAccessLogs),

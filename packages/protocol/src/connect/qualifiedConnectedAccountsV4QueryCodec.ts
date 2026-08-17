@@ -1,4 +1,6 @@
-import type { ProtocolComposableSchema } from "../plugins/actions/jsonSchemaValidation.js";
+type StructuredQueryValueParser<T> = Readonly<{
+  parse(value: unknown): T;
+}>;
 
 export const QUALIFIED_CONNECTED_ACCOUNT_V4_STRUCTURED_QUERY_MAX_LENGTH =
   16_384;
@@ -13,7 +15,7 @@ function readSingleQueryString(raw: unknown): string {
 }
 
 export function encodeQualifiedConnectedAccountV4StructuredQueryValue<T>(
-  schema: Pick<ProtocolComposableSchema<T>, "parse">,
+  schema: StructuredQueryValueParser<T>,
   value: unknown,
 ): string {
   const encoded = JSON.stringify(schema.parse(value));
@@ -28,7 +30,7 @@ export function encodeQualifiedConnectedAccountV4StructuredQueryValue<T>(
 }
 
 export function parseQualifiedConnectedAccountV4StructuredQueryValue<T>(
-  schema: Pick<ProtocolComposableSchema<T>, "parse">,
+  schema: StructuredQueryValueParser<T>,
   raw: unknown,
 ): T {
   const encoded = readSingleQueryString(raw);

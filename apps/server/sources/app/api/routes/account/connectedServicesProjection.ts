@@ -193,7 +193,12 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
         connectedServicesV2: Array.from(servicesById.values()),
         connectedServiceCredentialRevisionsV1:
             accountProjections.flatMap((projection) => {
-                if (!projection.publishLegacyCredentialRevision) return [];
+                if (
+                    !projection.publishLegacyCredentialRevision
+                    || projection.account.revisionSemantics !== "revisioned"
+                ) {
+                    return [];
+                }
                 const serviceId =
                     resolveLegacyServiceIdForQualifiedConnectedAccountService(
                         projection.account.ref.service,

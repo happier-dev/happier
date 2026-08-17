@@ -20,15 +20,13 @@ export function startRetentionWorker(): { stop: () => void } | null {
     const run = async (reason: 'startup' | 'interval') => {
         if (running || stopped) return;
         running = true;
-        const lock = await acquireRetentionSweepLock({
-            ttlMs: Math.max(RETENTION_SWEEP_LOCK_TTL_FLOOR_MS, policy.intervalMs),
-        });
-        if (!lock) {
-            running = false;
-            return;
-        }
+        let lock: Awaited<ReturnType<typeof acquireRetentionSweepLock>> = null;
 
         try {
+            lock = await acquireRetentionSweepLock({
+                ttlMs: Math.max(RETENTION_SWEEP_LOCK_TTL_FLOOR_MS, policy.intervalMs),
+            });
+            if (!lock) return;
             await maybeCaptureSentryMonitorCheckIn({
                 env: process.env,
                 monitorSlug: 'server.retentionWorker',
@@ -39,6 +37,7 @@ export function startRetentionWorker(): { stop: () => void } | null {
                         reason,
                         deleted: result.deleted,
                         byRule: result.byRule,
+                        details: result.details,
                         dryRun: policy.dryRun,
                     });
                 },
@@ -46,7 +45,7 @@ export function startRetentionWorker(): { stop: () => void } | null {
         } catch (error) {
             logRetentionSweepFailed({ reason, error });
         } finally {
-            await lock.release();
+            await lock?.release();
             running = false;
         }
     };

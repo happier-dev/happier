@@ -70,7 +70,7 @@ describe("accountPetLibraryRoutes", () => {
     });
 
     it("lists account pet metadata without spritesheet bytes", async () => {
-        listAccountPetsForAccount.mockResolvedValue([petMetadata()]);
+        listAccountPetsForAccount.mockResolvedValue({ ok: true, pets: [petMetadata()] });
         const { registerAccountPetLibraryRoutes } = await import("./accountPetLibraryRoutes");
         const route = createRouteTestBuilder({
             method: "GET",
@@ -87,8 +87,34 @@ describe("accountPetLibraryRoutes", () => {
         expect(JSON.stringify(response)).not.toContain("spritesheetBytes");
     });
 
+    it("returns a typed unavailable result instead of omitting pets for an incompatible account or row mode", async () => {
+        listAccountPetsForAccount.mockResolvedValue({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
+        const { registerAccountPetLibraryRoutes } = await import("./accountPetLibraryRoutes");
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v1/account/pets",
+            registerRoutes(app) {
+                registerWithRouteHarness(app, registerAccountPetLibraryRoutes);
+            },
+        });
+
+        const { reply, response } = await route.invoke({ userId: "account-1" });
+
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(response).toEqual({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
+    });
+
     it("reads spritesheet bytes only through account-owned asset lookup", async () => {
         readAccountPetAssetForAccount.mockResolvedValue({
+            ok: true,
             mediaType: "image/webp",
             bytes: Uint8Array.from([1, 2, 3]),
             digest: "sha256:asset",
@@ -143,6 +169,37 @@ describe("accountPetLibraryRoutes", () => {
         });
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(response).toEqual({ error: "not_found" });
+    });
+
+    it("returns a typed unavailable result without asset headers or bytes for an incompatible account or row mode", async () => {
+        readAccountPetAssetForAccount.mockResolvedValue({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
+        const { registerAccountPetLibraryRoutes } = await import("./accountPetLibraryRoutes");
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v1/account/pets/:petId/assets/:assetId",
+            registerRoutes(app) {
+                registerWithRouteHarness(app, registerAccountPetLibraryRoutes);
+            },
+        });
+
+        const request = route.createRequest({
+            userId: "account-1",
+            params: { petId: "pet-1", assetId: "asset-1" },
+        });
+        const reply = route.createReply();
+        const response = await route.handler(request, reply);
+
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(reply.header).not.toHaveBeenCalledWith("Content-Type", expect.anything());
+        expect(response).toEqual({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
     });
 
     it("rejects invalid package uploads before creating account pet storage", async () => {

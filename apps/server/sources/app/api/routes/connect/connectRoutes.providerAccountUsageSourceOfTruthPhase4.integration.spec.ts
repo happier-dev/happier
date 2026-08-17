@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
+import {
+    buildProviderAccountUsageRecordId,
+    readAccountScopedCiphertextKindByte,
+} from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
@@ -24,10 +27,14 @@ import {
     writeQualifiedProviderAccountUsageRecordFromLegacyBoundary,
 } from "./qualifiedConnectedAccounts/usageRepository";
 import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 async function createConnectedServiceProfileBinding(
     accountId: string,
-    params: Readonly<{ providerAccountId?: string | null }> = {},
+    params: Readonly<{
+        providerAccountId?: string | null;
+        legacyUnfenced?: boolean;
+    }> = {},
 ): Promise<void> {
     await db.serviceAccountToken.create({
         data: {
@@ -45,6 +52,12 @@ async function createConnectedServiceProfileBinding(
                 storage: "plain_json_v1",
                 kind: "oauth",
                 ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
+                ...(!params.legacyUnfenced
+                    ? {
+                        credentialRevision:
+                            "csr_abcdefghijklmnopqrstuvwxyz",
+                    }
+                    : {}),
             },
         },
     });
@@ -57,6 +70,7 @@ async function createConnectedServiceGroupMemberBinding(params: Readonly<{
     groupId?: string;
     generation?: number;
     providerAccountId?: string | null;
+    legacyUnfenced?: boolean;
 }>): Promise<void> {
     const serviceId = params.serviceId ?? "openai-codex";
     const profileId = params.profileId ?? "work";
@@ -78,6 +92,12 @@ async function createConnectedServiceGroupMemberBinding(params: Readonly<{
                 storage: "plain_json_v1",
                 kind: "oauth",
                 ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
+                ...(!params.legacyUnfenced
+                    ? {
+                        credentialRevision:
+                            "csr_abcdefghijklmnopqrstuvwxyz",
+                    }
+                    : {}),
             },
         },
         select: { id: true },
@@ -116,6 +136,38 @@ async function createConnectedServiceGroupMemberBinding(params: Readonly<{
         },
     });
 }
+
+async function createReadyE2eeAccount() {
+    return await db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
+        },
+        select: { id: true },
+    });
+}
+
+// server-v0.2.1 (4913c1e533c872a0712ba1c25b3104fd470aacc2) V3 quota body.
+// Keep this release-shaped rather than deriving it through current helpers.
+const releasedServerV021PlainQuotaSnapshot = {
+    v: 1,
+    serviceId: "openai-codex",
+    profileId: "work",
+    fetchedAt: 1_234,
+    staleAfterMs: 300_000,
+    planLabel: "preview-release",
+    accountLabel: "work",
+    meters: [{
+        meterId: "weekly",
+        label: "Weekly",
+        used: 42,
+        limit: 100,
+        unit: "credits",
+        utilizationPct: 42,
+        resetsAt: null,
+        status: "ok",
+    }],
+} as const;
 
 describe("connectRoutes provider-account usage source-of-truth phase 4 contract", () => {
     it("resolves exact source metadata without exposing snapshot payload bytes", async () => {
@@ -678,7 +730,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         expect(quotaRead.json()).toEqual({ error: "connect_quotas_not_found" });
     });
 
-    it("rejects v3 connected-service quota writes so clients cannot mint provider-account usage from quota payloads", async () => {
+    it("projects the server-v0.2.1 V3 plain quota write through the canonical provider-account usage record", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -686,8 +738,17 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
         });
         const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_deleted_credential_source" });
-        const snapshot = createLegacyQuotaSnapshot({ fetchedAt: Date.now(), planLabel: "legacy-write-retired" });
+        await createConnectedServiceProfileBinding(user.id, {
+            providerAccountId: "acct_released_preview_v3",
+            legacyUnfenced: true,
+        });
+        const recordKey = {
+            providerId: "openai-codex",
+            accountSubjectId: "acct_released_preview_v3",
+            subjectKind: "account",
+            quotaScope: "account",
+        } as const;
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
 
         const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
@@ -698,19 +759,62 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             url: "/v3/connect/openai-codex/profiles/work/quotas",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
-                content: { t: "plain", v: snapshot },
+                content: { t: "plain", v: releasedServerV021PlainQuotaSnapshot },
                 metadata: {
-                    fetchedAt: snapshot.fetchedAtMs,
-                    staleAfterMs: snapshot.staleAfterMs,
+                    fetchedAt: releasedServerV021PlainQuotaSnapshot.fetchedAt,
+                    staleAfterMs: releasedServerV021PlainQuotaSnapshot.staleAfterMs,
                     status: "ok",
-                    materialFingerprint: "usage:v3:retired-quota-write",
                 },
             },
         });
-        // SD-1: the v3 quotas POST write surface was retired (it only ever returned 400). With the
-        // route removed, a client write can no longer reach a handler at all — Fastify answers 404 —
-        // so provider-account usage still cannot be minted from a quota payload.
-        expect(write.statusCode).toBe(404);
+        expect(write.statusCode, write.body).toBe(200);
+        expect(write.json()).toEqual({ success: true });
+
+        const staleWrite = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                content: {
+                    t: "plain",
+                    v: {
+                        ...releasedServerV021PlainQuotaSnapshot,
+                        fetchedAt: releasedServerV021PlainQuotaSnapshot.fetchedAt - 1,
+                        planLabel: "stale-release-write",
+                    },
+                },
+                metadata: {
+                    fetchedAt: releasedServerV021PlainQuotaSnapshot.fetchedAt - 1,
+                    staleAfterMs: releasedServerV021PlainQuotaSnapshot.staleAfterMs,
+                    status: "ok",
+                },
+            },
+        });
+        expect(staleWrite.statusCode, staleWrite.body).toBe(200);
+        expect(staleWrite.json()).toEqual({ success: true });
+        expect(await db.providerAccountUsageRecord.findUnique({
+            where: {
+                accountId_recordId: {
+                    accountId: user.id,
+                    recordId,
+                },
+            },
+            select: {
+                providerId: true,
+                accountSubjectId: true,
+                subjectKind: true,
+                quotaScope: true,
+                fetchedAt: true,
+                staleAfterMs: true,
+            },
+        })).toEqual({
+            providerId: "openai-codex",
+            accountSubjectId: "acct_released_preview_v3",
+            subjectKind: "account",
+            quotaScope: "account",
+            fetchedAt: new Date(releasedServerV021PlainQuotaSnapshot.fetchedAt),
+            staleAfterMs: releasedServerV021PlainQuotaSnapshot.staleAfterMs,
+        });
         expect(await db.connectedServiceUsageSource.findFirst({
             where: {
                 accountId: user.id,
@@ -718,7 +822,60 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
                 profileId: "work",
             },
             select: { id: true },
-        })).toBeNull();
+        })).toEqual({ id: expect.any(String) });
+
+        const read = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toMatchObject({
+            content: {
+                t: "plain",
+                v: releasedServerV021PlainQuotaSnapshot,
+            },
+            metadata: {
+                fetchedAt: releasedServerV021PlainQuotaSnapshot.fetchedAt,
+                staleAfterMs: releasedServerV021PlainQuotaSnapshot.staleAfterMs,
+                status: "ok",
+            },
+        });
+
+        const refresh = await app.inject({
+            method: "POST",
+            url: "/v3/connect/openai-codex/profiles/work/quotas/refresh",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(refresh.statusCode, refresh.body).toBe(200);
+        expect(refresh.json()).toEqual({ success: true });
+
+        const refreshedRead = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(refreshedRead.statusCode, refreshedRead.body).toBe(200);
+        expect(refreshedRead.json()).toMatchObject({
+            metadata: { refreshRequestedAt: expect.any(Number) },
+        });
+
+        const deleted = await app.inject({
+            method: "DELETE",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(deleted.statusCode, deleted.body).toBe(200);
+        expect(deleted.json()).toEqual({ success: true });
+        expect(await db.providerAccountUsageRecord.findUnique({
+            where: {
+                accountId_recordId: {
+                    accountId: user.id,
+                    recordId,
+                },
+            },
+            select: { id: true },
+        })).toEqual({ id: expect.any(String) });
     });
 
     it("rejects client-authored aliases on v2 sealed provider-account usage writes", async () => {
@@ -727,7 +884,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "public-key", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         const snapshot = createUsageSnapshot({ fetchedAt: Date.now() });
 
         const app = createProviderAccountUsageTestApp();
@@ -774,7 +931,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         })).toBeNull();
     });
 
-    it("reports skipped v3 source links when the source binding is unavailable but the provider usage write succeeds", async () => {
+    it("rejects v3 provider-account usage writes before persisting when the source binding is unavailable", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -806,10 +963,10 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             },
         });
 
-        expect(write.statusCode, write.body).toBe(200);
+        expect(write.statusCode, write.body).toBe(400);
         expect(write.json()).toEqual({
-            success: true,
-            source: { status: "skipped", reason: "binding_unavailable" },
+            error: "invalid-params",
+            reason: "connected_service_usage_source_invalid",
         });
         expect(await db.providerAccountUsageRecord.findUnique({
             where: {
@@ -819,7 +976,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
                 },
             },
             select: { id: true },
-        })).toEqual({ id: expect.any(String) });
+        })).toBeNull();
     });
 
     it("creates sealed provider-account usage records from canonical v2 writes with recordKey and source context", async () => {
@@ -828,7 +985,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "pk-v2-canonical-source", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_canonical_v2_source" });
         const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_canonical_v2_source" });
         const recordId = buildProviderAccountUsageRecordId(recordKey);
@@ -1052,7 +1209,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "pk-v2-wrong-source", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_deleted_credential_source" });
         const recordKey = createProviderAccountUsageRecordKey({
             providerId: "claude",
@@ -1118,7 +1275,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "pk-v2-wrong-provider-account-source", encryptionMode: "e2ee" }, select: { id: true } });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_connected_profile_v2_source" });
         const recordKey = createProviderAccountUsageRecordKey({
             providerId: "openai-codex",
@@ -1186,7 +1343,38 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
         });
         const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_deleted_credential_source" });
+        const ref = {
+            service:
+                resolveLegacyQualifiedConnectedAccountService(
+                    "openai-codex",
+                ),
+            accountId: "work",
+        };
+        const credential =
+            await mutateQualifiedConnectedServiceCredential({
+                accountId: user.id,
+                ref,
+                expectedCredentialRevision: null,
+                authenticationModeId: "oauth",
+                content: {
+                    t: "plain",
+                    v: { token: "delete-credential-source-token" },
+                },
+                metadata: {
+                    displayName: "Delete credential source",
+                    scopes: ["quota.read"],
+                    providerIdentity: {
+                        accountId: "acct_deleted_credential_source",
+                    },
+                },
+                legacyIdentity: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                },
+            });
+        if (credential.status !== "written") {
+            throw new Error("Expected qualified credential create");
+        }
         const snapshot = createUsageSnapshot({
             fetchedAt: Date.now(),
             recordKey: createProviderAccountUsageRecordKey({ accountSubjectId: "acct_deleted_credential_source" }),
@@ -1202,13 +1390,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             materialFingerprint: "usage:delete-credential-source",
             snapshot,
             source: {
-                ref: {
-                    service:
-                        resolveLegacyQualifiedConnectedAccountService(
-                            "openai-codex",
-                        ),
-                    accountId: "work",
-                },
+                ref,
                 bindingKind: "account",
             },
         });
@@ -1226,7 +1408,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
 
         const deleted = await app.inject({
             method: "DELETE",
-            url: "/v3/connect/openai-codex/profiles/work/credential",
+            url: `/v3/connect/openai-codex/profiles/work/credential?expectedCredentialRevision=${encodeURIComponent(credential.credentialRevision)}`,
             headers: { "x-test-user-id": user.id },
         });
         expect(deleted.statusCode).toBe(200);
@@ -1248,18 +1430,143 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         })).toBeNull();
     });
 
-    it("rejects v2 connected-service quota writes so clients cannot mint fallback provider-account usage records", async () => {
+    it("projects the server-v0.2.1 V2 sealed quota write for a current ready E2EE account", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({ data: { publicKey: "pk-v2-adapter", encryptionMode: "e2ee" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id);
-        const expectedRecordId = buildProviderAccountUsageRecordId({
+        const user = await createReadyE2eeAccount();
+        await createConnectedServiceProfileBinding(user.id, {
+            providerAccountId: "acct_released_preview_v2",
+            legacyUnfenced: true,
+        });
+        const recordKey = {
             providerId: "openai-codex",
-            accountSubjectId: "legacy-connected-service:openai-codex:work",
-            subjectKind: "unknown",
+            accountSubjectId: "acct_released_preview_v2",
+            subjectKind: "account",
+            quotaScope: "account",
+        } as const;
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        // This is a valid account-scoped ciphertext kind-4 boundary vector; the
+        // release route accepts opaque per-account ciphertext and cannot publish
+        // a reusable release artifact vector.
+        const ciphertext = "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=";
+        expect(readAccountScopedCiphertextKindByte(ciphertext)).toBe(4);
+
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const write = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext },
+                metadata: {
+                    fetchedAt: 1_234,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                },
+            },
+        });
+        expect(write.statusCode, write.body).toBe(200);
+        expect(write.json()).toEqual({ success: true });
+        expect(await db.providerAccountUsageRecord.findUnique({
+            where: {
+                accountId_recordId: {
+                    accountId: user.id,
+                    recordId,
+                },
+            },
+            select: {
+                providerId: true,
+                accountSubjectId: true,
+                subjectKind: true,
+                quotaScope: true,
+            },
+        })).toEqual({
+            providerId: "openai-codex",
+            accountSubjectId: "acct_released_preview_v2",
+            subjectKind: "account",
+            quotaScope: "account",
+        });
+
+        const read = await app.inject({
+            method: "GET",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toEqual({
+            sealed: { format: "account_scoped_v1", ciphertext },
+            metadata: {
+                fetchedAt: 1_234,
+                staleAfterMs: 300_000,
+                status: "ok",
+            },
+        });
+
+        const refresh = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(refresh.statusCode, refresh.body).toBe(200);
+        expect(refresh.json()).toEqual({ success: true });
+
+        const refreshedRead = await app.inject({
+            method: "GET",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(refreshedRead.statusCode, refreshedRead.body).toBe(200);
+        expect(refreshedRead.json()).toMatchObject({
+            metadata: { refreshRequestedAt: expect.any(Number) },
+        });
+
+        const deleted = await app.inject({
+            method: "DELETE",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(deleted.statusCode, deleted.body).toBe(200);
+        expect(deleted.json()).toEqual({ success: true });
+        expect(await db.providerAccountUsageRecord.findUnique({
+            where: {
+                accountId_recordId: {
+                    accountId: user.id,
+                    recordId,
+                },
+            },
+            select: { id: true },
+        })).toEqual({ id: expect.any(String) });
+    });
+
+    it("fails closed for the server-v0.2.1 V2 sealed quota write when E2EE lacks a signed content binding", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const releasedSigningBinding = createSignedAccountContentBinding();
+        const user = await db.account.create({
+            data: {
+                publicKey: releasedSigningBinding.publicKey,
+                encryptionMode: "e2ee",
+                contentPublicKey: null,
+                contentPublicKeySig: null,
+            },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, {
+            providerAccountId: "acct_unbound_e2ee_v2",
+        });
+        const recordId = buildProviderAccountUsageRecordId({
+            providerId: "openai-codex",
+            accountSubjectId: "acct_unbound_e2ee_v2",
+            subjectKind: "account",
             quotaScope: "account",
         });
 
@@ -1272,22 +1579,24 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             url: "/v2/connect/openai-codex/profiles/work/quotas",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
-                sealed: { format: "account_scoped_v1", ciphertext: "sealed-legacy-quota" },
+                sealed: {
+                    format: "account_scoped_v1",
+                    ciphertext: "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=",
+                },
                 metadata: {
                     fetchedAt: 1_234,
                     staleAfterMs: 300_000,
                     status: "ok",
-                    materialFingerprint: "legacy:v2:phase4",
                 },
             },
         });
-        expect(write.statusCode).toBe(400);
+        expect(write.statusCode, write.body).toBe(400);
         expect(write.json()).toEqual({ error: "invalid-params" });
         expect(await db.providerAccountUsageRecord.findUnique({
             where: {
                 accountId_recordId: {
                     accountId: user.id,
-                    recordId: expectedRecordId,
+                    recordId,
                 },
             },
             select: { id: true },

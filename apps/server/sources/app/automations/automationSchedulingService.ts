@@ -1,8 +1,15 @@
-import type { AutomationRunState, AutomationScheduleKind } from "./automationTypes";
+import {
+    isTerminalAutomationRunState,
+    type AutomationRunState,
+    type AutomationScheduleKind,
+} from "./automationTypes";
 import { CronExpressionParser } from "cron-parser";
 
-export function shouldEnqueueNextRunForTerminalState(state: AutomationRunState): boolean {
-    return state === "succeeded" || state === "failed" || state === "cancelled" || state === "expired";
+/**
+ * Retained scheduling-facing alias for the server-domain terminality owner.
+ */
+export function isFinalAutomationRunStatus(state: AutomationRunState): boolean {
+    return isTerminalAutomationRunState(state);
 }
 
 export function computeNextDueAtForAutomation(params: {

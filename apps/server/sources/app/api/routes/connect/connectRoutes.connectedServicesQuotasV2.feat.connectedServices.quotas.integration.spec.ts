@@ -24,6 +24,7 @@ import {
     createLegacyGroupFixtureIdentity,
     createLegacyGroupMemberFixtureIdentity,
 } from "./testkit/qualifiedConnectedAccountFixtureIdentity";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 async function readConnectedServiceUsageSource(params: Readonly<{
     accountId: string;
@@ -74,8 +75,19 @@ async function createConnectedServiceProfileBinding(
                 v: 2,
                 format: "account_scoped_v1",
                 kind: "oauth",
+                credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
                 ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
             },
+        },
+        select: { id: true },
+    });
+}
+
+async function createReadyE2eeAccount() {
+    return await db.account.create({
+        data: {
+            ...createSignedAccountContentBinding(),
+            encryptionMode: "e2ee",
         },
         select: { id: true },
     });
@@ -169,10 +181,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_projection" });
 
         const app = createProviderAccountUsageTestApp();
@@ -283,10 +292,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2-source-mismatch", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_connected_profile_subject" });
 
         const app = createProviderAccountUsageTestApp();
@@ -333,10 +339,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2-source-incompatible", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
 
         const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
@@ -377,10 +380,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2-refresh", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_refresh" });
         const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_refresh" });
         const recordId = buildProviderAccountUsageRecordId(recordKey);
@@ -443,10 +443,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2-group", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_group_member" });
         await createConnectedServiceGroupMember({ accountId: user.id, profileId: "work", groupId: "team", generation: 4 });
 
@@ -508,10 +505,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
         });
-        const user = await db.account.create({
-            data: { publicKey: "pk-quota-v2-stale-generation", encryptionMode: "e2ee" },
-            select: { id: true },
-        });
+        const user = await createReadyE2eeAccount();
         await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_stale_generation" });
         await createConnectedServiceGroupMember({ accountId: user.id, profileId: "work", groupId: "team", generation: 4 });
 

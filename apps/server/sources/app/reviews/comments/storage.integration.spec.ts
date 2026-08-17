@@ -4,7 +4,12 @@ import tweetnacl from "tweetnacl";
 
 import { createFakeRouteApp, createReplyStub, getRouteHandler } from "@/app/api/testkit/routeHarness";
 import { registerApiRoutes } from "@/app/api/api";
+import {
+    acquireAccountEncryptionTransitionFenceInTx,
+    applyAccountEncryptionTransitionInTx,
+} from "@/app/encryption/accountEncryptionTransition";
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
     createPluginInstallationManifestPublisherSigningInputV1,
@@ -22,10 +27,34 @@ import {
     type ReviewCommentCurrentIntentV1,
 } from "@happier-dev/protocol";
 import { buildReviewCommentTextSnapshotHashes } from "./snapshots";
+import { createReviewCommentOperations } from "./operations";
 import { registerReviewCommentRoutes } from "./routes";
+import {
+    createSqlReviewCommentStore,
+    type ReviewCommentStore,
+} from "./store";
 
 const CODERABBIT_PLUGIN_ID = "happier.review.coderabbit";
 const EXTERNAL_PLUGIN_ID = "acme.reviewbot";
+
+function e2eeAccountFields(seedByte: number) {
+    const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(seedByte));
+    const content = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(seedByte + 1));
+    const contentPublicKey = new Uint8Array(content.publicKey);
+    const contentPublicKeySig = tweetnacl.sign.detached(
+        Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(contentPublicKey),
+        ]),
+        signing.secretKey,
+    );
+    return {
+        publicKey: Buffer.from(signing.publicKey).toString("hex"),
+        encryptionMode: "e2ee" as const,
+        contentPublicKey: Buffer.from(contentPublicKey),
+        contentPublicKeySig: Buffer.from(contentPublicKeySig),
+    };
+}
 
 function textSnapshot() {
     const lines = {
@@ -47,6 +76,17 @@ function textSnapshot() {
         hasBidiControls: false,
         likelyMinified: false,
     };
+}
+
+function deferred(): Readonly<{
+    promise: Promise<void>;
+    resolve: () => void;
+}> {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
 }
 
 function registerDefaultRoutes() {
@@ -143,8 +183,6 @@ function createCurrentIntent(params: Readonly<{
         projectId: String(params.body.projectId),
         workspaceId: String(params.body.workspaceId),
         immutableGenerationId: "generation-1",
-        packageDigest: `sha256:${"b".repeat(64)}`,
-        manifestDigest: `sha256:${"c".repeat(64)}`,
     };
 }
 
@@ -220,6 +258,7 @@ describe("review comment durable storage", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-review-comments-storage-",
             initAuth: false,
+            sqliteConnectionLimit: 2,
         });
     }, 120_000);
 
@@ -319,6 +358,148 @@ describe("review comment durable storage", () => {
         expect(trailingSpaceDistinct.comment.id).not.toBe(parsed[0]!.comment.id);
         expect(await db.reviewComment.count({ where: { accountId: account.id } })).toBe(3);
         expect(await db.reviewCommentEvent.count({ where: { accountId: account.id } })).toBe(3);
+    });
+
+    it("refuses a stale plain create after the Account transition commits E2EE before persistence", async () => {
+        const binding = e2eeAccountFields(31);
+        const account = await db.account.create({
+            data: {
+                id: "account-review-comments-transition-race",
+                ...binding,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const writerReachedPersistence = deferred();
+        const releaseWriter = deferred();
+        const sqlStore = createSqlReviewCommentStore();
+        const latchedStore: ReviewCommentStore = {
+            ...sqlStore,
+            async create(params) {
+                writerReachedPersistence.resolve();
+                await releaseWriter.promise;
+                return await sqlStore.create(params);
+            },
+        };
+        let id = 0;
+        const operations = createReviewCommentOperations(latchedStore, {
+            now: () => 1_000,
+            createId: (prefix) => `${prefix}-${++id}`,
+        });
+        const app = createFakeRouteApp();
+        registerReviewCommentRoutes(app as any, { operations });
+        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
+        const reply = createReplyStub();
+        const pendingCreate = create({
+            userId: account.id,
+            body: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" },
+                snapshot: textSnapshot(),
+                body: "This stale plain write must not survive the transition.",
+                clientMutationId: "mutation-transition-race",
+            },
+        }, reply);
+        await writerReachedPersistence.promise;
+
+        await inTx(async (tx) => {
+            const fence = await acquireAccountEncryptionTransitionFenceInTx(
+                tx,
+                account.id,
+            );
+            expect(fence.status).toBe("ready");
+            if (fence.status !== "ready") return;
+            await applyAccountEncryptionTransitionInTx(tx, {
+                accountId: account.id,
+                expectedVersion: fence.account.version,
+                toMode: "e2ee",
+                contentKey: { kind: "preserve" },
+            });
+        });
+
+        releaseWriter.resolve();
+        await expect(pendingCreate).resolves.toMatchObject({
+            error: "review_comment_encryption_mode_mismatch",
+        });
+        expect(reply.statusCode).toBe(400);
+        await expect(db.reviewComment.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+        await expect(db.reviewCommentEvent.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+    });
+
+    it("refuses an E2EE create when the Account key binding changes after route resolution", async () => {
+        const originalBinding = e2eeAccountFields(41);
+        const replacementBinding = e2eeAccountFields(43);
+        const account = await db.account.create({
+            data: {
+                id: "account-review-comments-binding-race",
+                ...originalBinding,
+            },
+            select: { id: true },
+        });
+        const writerReachedPersistence = deferred();
+        const releaseWriter = deferred();
+        const sqlStore = createSqlReviewCommentStore();
+        const latchedStore: ReviewCommentStore = {
+            ...sqlStore,
+            async create(params) {
+                writerReachedPersistence.resolve();
+                await releaseWriter.promise;
+                return await sqlStore.create(params);
+            },
+        };
+        let id = 0;
+        const operations = createReviewCommentOperations(latchedStore, {
+            now: () => 2_000,
+            createId: (prefix) => `${prefix}-${++id}`,
+        });
+        const app = createFakeRouteApp();
+        registerReviewCommentRoutes(app as any, { operations });
+        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
+        const reply = createReplyStub();
+        const pendingCreate = create({
+            userId: account.id,
+            body: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" },
+                snapshot: { t: "encrypted", c: "snapshot-ciphertext" },
+                body: { t: "encrypted", c: "body-ciphertext" },
+                eventEnvelope: { t: "encrypted", c: "event-ciphertext" },
+                clientMutationId: "mutation-binding-race",
+            },
+        }, reply);
+        await writerReachedPersistence.promise;
+
+        await inTx(async (tx) => {
+            const fence = await acquireAccountEncryptionTransitionFenceInTx(
+                tx,
+                account.id,
+            );
+            expect(fence.status).toBe("ready");
+            await tx.account.update({
+                where: { id: account.id },
+                data: {
+                    publicKey: replacementBinding.publicKey,
+                    contentPublicKey: replacementBinding.contentPublicKey,
+                    contentPublicKeySig: replacementBinding.contentPublicKeySig,
+                },
+            });
+        });
+
+        releaseWriter.resolve();
+        await expect(pendingCreate).resolves.toMatchObject({
+            error: "review_comment_encryption_mode_mismatch",
+        });
+        expect(reply.statusCode).toBe(400);
+        await expect(db.reviewComment.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+        await expect(db.reviewCommentEvent.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
     });
 
     it("allows the same create client mutation in distinct accounts", async () => {
@@ -443,6 +624,9 @@ describe("review comment durable storage", () => {
             userId: account.id,
             params: { commentId: created.comment.id },
             body: {
+                projectId: "project-1",
+                expectedState: "proposed",
+                expectedServerRevision: 1,
                 toState: "open",
                 clientMutationId: "mutation-transition",
             },
@@ -484,8 +668,20 @@ describe("review comment durable storage", () => {
         });
         expect(Number(events[0]!.client_lamport)).toBe(7);
         expect(JSON.parse(events[0]!.event_envelope_json)).toMatchObject({
-            t: "plain",
-            v: { comment: { id: created.comment.id } },
+            v: 1,
+            binding: {
+                eventKind: "created",
+                commentId: created.comment.id,
+                accountId: account.id,
+                clientMutationId: "mutation-create",
+            },
+            sensitive: {
+                t: "plain",
+                v: {
+                    v: 1,
+                    details: { comment: { id: created.comment.id } },
+                },
+            },
         });
     });
 
@@ -968,8 +1164,7 @@ describe("review comment durable storage", () => {
         const account = await db.account.create({
             data: {
                 id: "account-review-comments-e2ee",
-                publicKey: "pk-review-comments-e2ee",
-                encryptionMode: "e2ee",
+                ...e2eeAccountFields(20),
             },
             select: { id: true },
         });
@@ -1004,15 +1199,23 @@ describe("review comment durable storage", () => {
             event_envelope_json: string;
         }>>`SELECT event_envelope_json FROM review_comment_events WHERE account_id = ${account.id}`;
         expect(events).toHaveLength(1);
-        expect(JSON.parse(events[0]!.event_envelope_json)).toEqual({ t: "encrypted", c: "created-event-ciphertext" });
+        expect(JSON.parse(events[0]!.event_envelope_json)).toMatchObject({
+            v: 1,
+            binding: {
+                eventKind: "created",
+                commentId: created.comment.id,
+                accountId: account.id,
+                clientMutationId: "mutation-create",
+            },
+            sensitive: { t: "encrypted", c: "created-event-ciphertext" },
+        });
     });
 
     it("keeps e2ee redaction writes envelope-compatible when the server cannot synthesize ciphertext", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-review-comments-e2ee-redact",
-                publicKey: "pk-review-comments-e2ee-redact",
-                encryptionMode: "e2ee",
+                ...e2eeAccountFields(22),
             },
             select: { id: true },
         });
@@ -1036,6 +1239,8 @@ describe("review comment durable storage", () => {
             userId: account.id,
             params: { commentId: created.comment.id },
             body: {
+                projectId: "project-1",
+                expectedServerRevision: 1,
                 redactBody: true,
                 eventEnvelope: { t: "encrypted", c: "redacted-event-ciphertext" },
                 clientMutationId: "mutation-redact",
@@ -1061,8 +1266,7 @@ describe("review comment durable storage", () => {
         const account = await db.account.create({
             data: {
                 id: "account-review-comments-e2ee-mixed",
-                publicKey: "pk-review-comments-e2ee-mixed",
-                encryptionMode: "e2ee",
+                ...e2eeAccountFields(24),
             },
             select: { id: true },
         });

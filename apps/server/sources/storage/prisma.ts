@@ -48,10 +48,21 @@ function loadDefaultPrismaClientModule(): typeof import("@prisma/client") {
  * Prisma and cannot rely on named-import interop from its generated module.
  */
 export const prismaRuntime: typeof import("@prisma/client").Prisma = loadDefaultPrismaClientModule().Prisma;
+let activePrismaRuntime: typeof import("@prisma/client").Prisma | null = null;
 
-function createDefaultPrismaClient(): PrismaClientType {
+/** Provider-matched Prisma namespace for sentinels such as `DbNull`. */
+export function getActivePrismaRuntime(): typeof import("@prisma/client").Prisma {
+    if (!activePrismaRuntime) {
+        throw new Error("Database client is not initialized. Prisma runtime sentinel is unavailable.");
+    }
+    return activePrismaRuntime;
+}
+
+function createDefaultPrismaClient(databaseUrl?: string): PrismaClientType {
     const { PrismaClient } = loadDefaultPrismaClientModule();
-    return new PrismaClient();
+    return databaseUrl
+        ? new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+        : new PrismaClient();
 }
 
 export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: NodeJS.ProcessEnv): string {
@@ -146,6 +157,7 @@ export function initDbPostgres(): void {
         process.env.DATABASE_URL = applyConfiguredDatabaseConnectionLimit(process.env.DATABASE_URL, process.env);
     }
     _db = createDefaultPrismaClient();
+    activePrismaRuntime = prismaRuntime;
 }
 
 async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
@@ -177,10 +189,18 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
         throw new Error("Database client is already initialized.");
     }
     _provider = provider;
-    _db = await createGeneratedPrismaClient(provider);
+    const generated = await createGeneratedPrismaClient(provider);
+    _db = generated.client;
+    activePrismaRuntime = generated.prisma;
 }
 
-async function createGeneratedPrismaClient(provider: "mysql" | "sqlite"): Promise<PrismaClientType> {
+async function createGeneratedPrismaClient(
+    provider: "mysql" | "sqlite",
+    databaseUrl?: string,
+): Promise<Readonly<{
+    client: PrismaClientType;
+    prisma: typeof import("@prisma/client").Prisma;
+}>> {
     const entrypoint =
         provider === "mysql"
             ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
@@ -202,11 +222,35 @@ async function createGeneratedPrismaClient(provider: "mysql" | "sqlite"): Promis
     if (!mod?.PrismaClient) {
         throw new Error(`Invalid generated Prisma client module: ${entrypoint}`);
     }
-    return new mod.PrismaClient() as PrismaClientType;
+    if (!mod?.Prisma) {
+        throw new Error(`Invalid generated Prisma runtime module: ${entrypoint}`);
+    }
+    return {
+        // Generated provider clients share the repository's Prisma client contract.
+        client: (databaseUrl
+            ? new mod.PrismaClient({ datasources: { db: { url: databaseUrl } } })
+            : new mod.PrismaClient()) as PrismaClientType,
+        prisma: mod.Prisma as typeof import("@prisma/client").Prisma,
+    };
+}
+
+/**
+ * Creates an isolated migration/maintenance client without changing the
+ * process-wide runtime DB owner. Deployment maintenance must release this
+ * client before normal server initialization starts.
+ */
+export async function createDbMaintenanceClient(
+    provider: DbProvider,
+    databaseUrl?: string,
+): Promise<PrismaClientType> {
+    if (provider === "postgres" || provider === "pglite") {
+        return createDefaultPrismaClient(databaseUrl);
+    }
+    return (await createGeneratedPrismaClient(provider, databaseUrl)).client;
 }
 
 export async function createDbSqliteMaintenanceClient(): Promise<PrismaClientType> {
-    return createGeneratedPrismaClient("sqlite");
+    return (await createGeneratedPrismaClient("sqlite")).client;
 }
 
 export async function initDbMysql(): Promise<void> {
@@ -284,6 +328,7 @@ export async function initDbPglite(): Promise<void> {
             _pgliteServer = server;
             _provider = "pglite";
             _db = prismaClient;
+            activePrismaRuntime = prismaRuntime;
             _releasePgliteDirLock = releaseLock;
         } catch (e) {
             if (server) {
@@ -411,6 +456,7 @@ export async function shutdownDbPglite(): Promise<void> {
     const client = _db;
     _db = null;
     _provider = null;
+    activePrismaRuntime = null;
     if (client) {
         await client.$disconnect();
     }

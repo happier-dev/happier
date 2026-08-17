@@ -1,4 +1,5 @@
 import { type Fastify } from "../../types";
+import { registerSessionAgentTransitionRoute } from "./registerSessionAgentTransitionRoute";
 import { registerSessionCreateOrLoadRoute } from "./registerSessionCreateOrLoadRoute";
 import { registerSessionDeleteRoute } from "./registerSessionDeleteRoute";
 import { registerSessionArchiveRoutes } from "./registerSessionArchiveRoutes";
@@ -20,6 +21,7 @@ export function sessionRoutes(app: Fastify) {
     registerSessionArchiveRoutes(app);
     registerSessionMessageRoutes(app);
     registerSessionPatchRoute(app);
+    registerSessionAgentTransitionRoute(app);
     registerSessionSystemRecordRoutes(app);
     registerSessionSubagentCustodyRoutes(app);
     registerSessionTurnMutationRoute(app);

@@ -4,6 +4,7 @@ import {
     buildDeleteSessionUpdate,
     buildNewMachineUpdate,
     buildNewMessageUpdate,
+    buildPendingResolvedMessageUpdate,
     buildNewSessionUpdate,
     buildPublicShareCreatedUpdate,
     buildPublicShareDeletedUpdate,
@@ -41,6 +42,55 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).message.messageRole).toBe("user");
         expect((payload.body as any).message.deliveryResolution).toEqual({ v: 1, kind: "manual_handled" });
         expect(Object.prototype.hasOwnProperty.call((payload.body as any).message ?? {}, "sidechainId")).toBe(false);
+    });
+
+    it("buildPendingResolvedMessageUpdate always projects explicit user attention", () => {
+        const message = {
+            id: "m-pending",
+            seq: 7,
+            localId: "pending-user-message",
+            sidechainId: null,
+            messageRole: "user" as const,
+            content: {
+                t: "plain" as const,
+                v: {
+                    role: "agent" as const,
+                    content: {
+                        type: "event" as const,
+                        id: "quota-wait-event",
+                        data: {
+                            type: "provider-quota-wait" as const,
+                            serviceId: "openai-codex",
+                            groupId: "main",
+                            resetAtMs: 1_900_000,
+                            reason: "connected_service_group_quota_exhausted" as const,
+                        },
+                    },
+                },
+            },
+            createdAt: new Date(1),
+            updatedAt: new Date(2),
+        };
+
+        for (const eventKind of ["new-message", "message-updated"] as const) {
+            const payload = buildPendingResolvedMessageUpdate(
+                message,
+                "s1",
+                101,
+                `upd-${eventKind}`,
+                eventKind,
+            );
+
+            expect(payload.body).toMatchObject({
+                t: eventKind,
+                message: {
+                    attentionImpact: {
+                        affectsUnread: true,
+                        affectsMeaningfulActivity: true,
+                    },
+                },
+            });
+        }
     });
 
     it("buildNewSessionUpdate emits a full container", () => {
@@ -168,8 +218,10 @@ describe("eventRouter payloads (protocol container)", () => {
                 metadata: "shared-safe",
                 metadataVersion: 5,
                 metadataLayoutVersion: 1,
-                ownerMetadata:
-                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: {
+                    t: "encrypted",
+                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                },
                 agentState: "owner-state",
                 agentStateVersion: 9,
             },
@@ -192,8 +244,10 @@ describe("eventRouter payloads (protocol container)", () => {
             metadata: { value: "shared-safe", version: 5 },
             metadataLayoutVersion: 1,
             ownerMetadata: {
-                value:
-                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                value: {
+                    t: "encrypted",
+                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                },
             },
             agentState: { value: "owner-state", version: 9 },
         });
@@ -210,14 +264,15 @@ describe("eventRouter payloads (protocol container)", () => {
             "s1",
             106,
             "upd-invalid-owner",
-            // @ts-expect-error Intentionally malformed input proves the runtime
-            // parser rejects a partial owner projection.
+            // @ts-expect-error Missing Agent state is the malformed contract.
             {
                 metadata: "shared-safe",
                 metadataVersion: 5,
                 metadataLayoutVersion: 1,
-                ownerMetadata:
-                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: {
+                    t: "encrypted",
+                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                },
             },
         )).toThrow();
     });

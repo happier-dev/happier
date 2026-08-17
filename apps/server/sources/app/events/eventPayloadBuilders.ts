@@ -2,12 +2,15 @@ import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
 import {
+    SESSION_MESSAGE_USER_ATTENTION_IMPACT,
     parseSessionRuntimeActivityProjectionFields,
+    type AutomationRunStateV3,
     SessionMetadataRecipientProjectionV1Schema,
     type PrimaryTurnStatusV1,
     type SessionMessageDeliveryResolutionV1,
     type SessionMessageAttentionImpact,
     type SessionMetadataRecipientProjectionV1,
+    type SessionOwnerMetadataEnvelopeV1,
     type SessionMessageRole,
     type SessionRuntimeIssueV1,
     type SessionTranscriptObservationProvenanceV1,
@@ -78,7 +81,15 @@ export function buildNewSessionUpdate(session: {
     createdAt: Date;
     updatedAt: Date;
     meaningfulActivityAt?: Date | null;
-}, updateSeq: number, updateId: string): UpdatePayload {
+}, updateSeq: number, updateId: string, metadataProjection?: Readonly<{
+    metadata: string;
+    metadataVersion: number;
+    metadataLayoutVersion?: number;
+    ownerMetadata?: SessionOwnerMetadataEnvelopeV1;
+    agentState: string | null;
+    agentStateVersion: number;
+}>): UpdatePayload {
+    const projected = metadataProjection ?? session;
     return {
         id: updateId,
         seq: updateSeq,
@@ -88,16 +99,18 @@ export function buildNewSessionUpdate(session: {
             // Compatibility: some clients use `sid` for sessionId.
             sid: session.id,
             seq: applySessionTranscriptPublicationCeiling(session.seq, session),
-            metadata: session.metadata,
-            metadataVersion: session.metadataVersion,
-            ...(typeof session.metadataLayoutVersion === "number"
-                ? { metadataLayoutVersion: session.metadataLayoutVersion }
+            metadata: projected.metadata,
+            metadataVersion: projected.metadataVersion,
+            ...(typeof projected.metadataLayoutVersion === "number"
+                ? { metadataLayoutVersion: projected.metadataLayoutVersion }
                 : {}),
-            ...(typeof session.ownerMetadata === "string"
-                ? { ownerMetadata: session.ownerMetadata }
+            ...(
+                "ownerMetadata" in projected
+                && projected.ownerMetadata !== undefined
+                ? { ownerMetadata: projected.ownerMetadata }
                 : {}),
-            agentState: session.agentState,
-            agentStateVersion: session.agentStateVersion,
+            agentState: projected.agentState,
+            agentStateVersion: projected.agentStateVersion,
             dataEncryptionKey: session.dataEncryptionKey ? Buffer.from(session.dataEncryptionKey).toString('base64') : null,
             encryptionMode: normalizeSessionEncryptionMode(session.encryptionMode),
             active: session.active,
@@ -150,6 +163,25 @@ export function buildMessageUpdatedUpdate(
         },
         createdAt: Date.now()
     };
+}
+
+export function buildPendingResolvedMessageUpdate(
+    message: UpdateMessagePayloadInput,
+    sessionId: string,
+    updateSeq: number,
+    updateId: string,
+    eventKind: "new-message" | "message-updated" = "new-message",
+): UpdatePayload {
+    const buildMessageUpdate = eventKind === "message-updated"
+        ? buildMessageUpdatedUpdate
+        : buildNewMessageUpdate;
+    return buildMessageUpdate(
+        message,
+        sessionId,
+        updateSeq,
+        updateId,
+        { attentionImpact: SESSION_MESSAGE_USER_ATTENTION_IMPACT },
+    );
 }
 
 export function buildUpdateSessionUpdate(
@@ -265,7 +297,6 @@ export function buildSessionMetadataRecipientUpdate(
             : undefined;
     const ownerMetadata =
         "ownerMetadata" in recipientProjection
-        && typeof recipientProjection.ownerMetadata === "string"
             ? {
                 ownerMetadata: {
                     value: recipientProjection.ownerMetadata,
@@ -374,12 +405,13 @@ export function buildAutomationRunUpdatedUpdate(
     data: {
         runId: string;
         automationId: string;
-        state: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        state: AutomationRunStateV3;
         scheduledAt: number;
         startedAt?: number | null;
         finishedAt?: number | null;
         updatedAt: number;
         machineId?: string | null;
+        attempt?: number;
     },
     updateSeq: number,
     updateId: string,
@@ -397,6 +429,7 @@ export function buildAutomationRunUpdatedUpdate(
             finishedAt: data.finishedAt ?? null,
             updatedAt: data.updatedAt,
             machineId: data.machineId ?? null,
+            ...(typeof data.attempt === "number" ? { attempt: data.attempt } : {}),
         },
         createdAt: Date.now(),
     };
@@ -446,6 +479,20 @@ export function buildUpdateAccountUpdate(userId: string, profile: Partial<Accoun
             avatar: profile.avatar ? { ...profile.avatar, url: getPublicUrl(profile.avatar.path) } : undefined
         },
         createdAt: Date.now()
+    };
+}
+
+/**
+ * Content-free post-commit hint to read the canonical AccountChange feed.
+ * The cursor remains the sole durable ordering authority; this wake carries no
+ * changed entity, settings, availability, or plugin payload.
+ */
+export function buildAccountChangeWakeUpdate(changeCursor: number, updateId: string): UpdatePayload {
+    return {
+        id: updateId,
+        seq: changeCursor,
+        body: { t: 'account-change' },
+        createdAt: Date.now(),
     };
 }
 

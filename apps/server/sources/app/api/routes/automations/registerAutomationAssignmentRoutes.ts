@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { type Fastify } from "../../types";
 import { updateAutomation } from "@/app/automations/automationCrudService";
-import { toAutomationApiDto } from "@/app/automations/automationTypes";
+import { toAutomationV2ApiDto } from "@/app/automations/automationApiProjection";
 import { AutomationValidationError } from "@/app/automations/automationValidation";
 
 export function registerAutomationAssignmentRoutes(app: Fastify): void {
@@ -26,11 +26,13 @@ export function registerAutomationAssignmentRoutes(app: Fastify): void {
                 input: {
                     assignments: request.body.assignments,
                 },
+                expectedTriggerKind: "schedule",
+                requireV2DefinitionRepresentability: true,
             });
             if (!updated) {
                 return reply.code(404).send({ error: 'automation_not_found' });
             }
-            return reply.send(toAutomationApiDto(updated));
+            return reply.send(toAutomationV2ApiDto(updated));
         } catch (error) {
             if (!(error instanceof AutomationValidationError)) {
                 return reply.code(500).send({ error: "automation_assignment_update_failed" });

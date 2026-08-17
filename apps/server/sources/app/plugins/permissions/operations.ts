@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
     PluginPermissionGrantActorV1,
     PluginPermissionGrantAuditEventV1,
@@ -12,6 +13,7 @@ import type {
     PluginPermissionGrantRequestActionInputV1,
     PluginPermissionGrantRequestActionOutputV1,
     PluginPermissionGrantRequestV1,
+    PluginPermissionSubjectV1,
     PluginPermissionGrantRevokeActionInputV1,
     PluginPermissionGrantRevokeActionOutputV1,
     PluginPermissionGrantV1,
@@ -86,6 +88,7 @@ function buildEvent(params: Readonly<{
     pluginId: string;
     capability: PluginPermissionGrantAuditEventV1["capability"];
     targetScope: PluginPermissionGrantAuditEventV1["targetScope"];
+    subject: PluginPermissionSubjectV1;
     authoritySource: PluginPermissionGrantAuthoritySourceV1;
     actor: PluginPermissionGrantActorV1;
     requestId?: string;
@@ -101,6 +104,7 @@ function buildEvent(params: Readonly<{
         pluginId: params.pluginId,
         capability: params.capability,
         targetScope: params.targetScope,
+        subject: params.subject,
         authoritySource: params.authoritySource,
         eventKind: params.eventKind,
         actor: params.actor,
@@ -151,6 +155,7 @@ async function findActiveGrantForRequest(
         pluginId: request.pluginId,
         capability: request.capability,
         targetScope: request.targetScope,
+        subject: request.subject,
         authoritySource: request.authoritySource,
         includeRevoked: false,
         includeResolvedRequests: false,
@@ -165,6 +170,7 @@ async function findPendingRequestForIdentity(
         pluginId: PluginPermissionGrantRequestV1["pluginId"];
         capability: PluginPermissionGrantRequestV1["capability"];
         targetScope: PluginPermissionGrantRequestV1["targetScope"];
+        subject: PluginPermissionGrantRequestV1["subject"];
         authoritySource: PluginPermissionGrantRequestV1["authoritySource"];
     }>,
 ): Promise<PluginPermissionGrantRequestV1 | null> {
@@ -173,6 +179,7 @@ async function findPendingRequestForIdentity(
         pluginId: params.pluginId,
         capability: params.capability,
         targetScope: params.targetScope,
+        subject: params.subject,
         authoritySource: params.authoritySource,
         includeRevoked: false,
         includeResolvedRequests: false,
@@ -195,12 +202,9 @@ async function readGrantedRequestOutcome(
     return grant ? { grant, pendingRequest: request } : null;
 }
 
-async function assertTrustedOptionalGrantAuthority(params: Readonly<{
+async function assertTrustedGrantAuthoritySource(params: Readonly<{
     accountId: string;
     authoritySource?: PluginPermissionGrantAuthoritySourceV1;
-    pluginId: string;
-    capability: PluginPermissionGrantAuditEventV1["capability"];
-    targetScope: PluginPermissionGrantAuditEventV1["targetScope"];
     resolveAuthority: ResolvePluginPermissionGrantAuthority;
 }>): Promise<PluginPermissionGrantAuthoritySourceV1> {
     const expectedAuthoritySource = params.authoritySource;
@@ -214,14 +218,11 @@ async function assertTrustedOptionalGrantAuthority(params: Readonly<{
         accountId: params.accountId,
         machineId: expectedAuthoritySource.machineId,
         installationId: expectedAuthoritySource.installationId,
-        pluginId: params.pluginId,
-        capability: params.capability,
-        targetScope: params.targetScope,
     });
-    if (!authority || authority.pluginId !== params.pluginId) {
+    if (!authority) {
         throw new PluginPermissionGrantOperationError(
-            "plugin_permission_grant_plugin_not_trusted",
-            "Plugin is not trusted for optional permission grants",
+            "plugin_permission_grant_authority_not_trusted",
+            "Plugin permission grant authority source is not trusted",
         );
     }
     if (
@@ -230,7 +231,7 @@ async function assertTrustedOptionalGrantAuthority(params: Readonly<{
         || authority.source.installationId !== expectedAuthoritySource.installationId
     ) {
         throw new PluginPermissionGrantOperationError(
-            "plugin_permission_grant_plugin_not_trusted",
+            "plugin_permission_grant_authority_not_trusted",
             "Plugin permission grant authority source is no longer trusted",
         );
     }
@@ -244,11 +245,28 @@ export function createPluginPermissionGrantOperations(
 ): PluginPermissionGrantOperations {
     return {
         async list(params) {
+            if (params.input.grantId) {
+                const grant = await store.getGrant({
+                    accountId: params.accountId,
+                    grantId: params.input.grantId,
+                });
+                const matches = grant !== null
+                    && (params.input.pluginId === undefined || grant.pluginId === params.input.pluginId)
+                    && (params.input.capability === undefined || grant.capability === params.input.capability)
+                    && (params.input.targetScope === undefined || isDeepStrictEqual(grant.targetScope, params.input.targetScope))
+                    && (params.input.subject === undefined || isDeepStrictEqual(grant.subject, params.input.subject))
+                    && (params.input.includeRevoked || grant.status !== "revoked");
+                return PluginPermissionGrantListActionOutputV1Schema.parse({
+                    grants: matches ? [grant] : [],
+                    pendingRequests: [],
+                });
+            }
             const result = await store.list({
                 accountId: params.accountId,
                 pluginId: params.input.pluginId,
                 capability: params.input.capability,
                 targetScope: params.input.targetScope,
+                subject: params.input.subject,
                 includeRevoked: params.input.includeRevoked,
                 includeResolvedRequests: params.input.includeResolvedRequests,
                 limit: params.input.limit,
@@ -257,12 +275,9 @@ export function createPluginPermissionGrantOperations(
         },
         async request(params) {
             assertRequestIdentity(params.input);
-            const authoritySource = await assertTrustedOptionalGrantAuthority({
+            const authoritySource = await assertTrustedGrantAuthoritySource({
                 accountId: params.accountId,
                 authoritySource: params.publisher,
-                pluginId: params.input.pluginId,
-                capability: params.input.capability,
-                targetScope: params.input.targetScope,
                 resolveAuthority,
             });
             const existingPendingRequest = await findPendingRequestForIdentity(store, {
@@ -270,6 +285,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: params.input.pluginId,
                 capability: params.input.capability,
                 targetScope: params.input.targetScope,
+                subject: params.input.subject,
                 authoritySource,
             });
             if (existingPendingRequest) {
@@ -285,6 +301,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: params.input.pluginId,
                 capability: params.input.capability,
                 targetScope: params.input.targetScope,
+                subject: params.input.subject,
                 authoritySource,
                 requester: params.input.requester,
                 reason: params.input.reason,
@@ -300,6 +317,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: pendingRequest.pluginId,
                 capability: pendingRequest.capability,
                 targetScope: pendingRequest.targetScope,
+                subject: pendingRequest.subject,
                 authoritySource: pendingRequest.authoritySource,
                 actor: pendingRequest.requester,
                 requestId: pendingRequest.id,
@@ -317,6 +335,7 @@ export function createPluginPermissionGrantOperations(
                     pluginId: params.input.pluginId,
                     capability: params.input.capability,
                     targetScope: params.input.targetScope,
+                    subject: params.input.subject,
                     authoritySource,
                 });
                 if (!racedPendingRequest) {
@@ -338,12 +357,9 @@ export function createPluginPermissionGrantOperations(
                 return PluginPermissionGrantGrantActionOutputV1Schema.parse(terminalOutcome);
             }
             const existing = assertPendingRequest(storedRequest);
-            await assertTrustedOptionalGrantAuthority({
+            await assertTrustedGrantAuthoritySource({
                 accountId: params.accountId,
                 authoritySource: existing.authoritySource,
-                pluginId: existing.pluginId,
-                capability: existing.capability,
-                targetScope: existing.targetScope,
                 resolveAuthority,
             });
             const now = runtime.now();
@@ -364,6 +380,7 @@ export function createPluginPermissionGrantOperations(
                     pluginId: existingActiveGrant.pluginId,
                     capability: existingActiveGrant.capability,
                     targetScope: existingActiveGrant.targetScope,
+                    subject: existingActiveGrant.subject,
                     authoritySource: existingActiveGrant.authoritySource,
                     actor: userActor(params.userId),
                     requestId: existing.id,
@@ -385,6 +402,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: existing.pluginId,
                 capability: existing.capability,
                 targetScope: existing.targetScope,
+                subject: existing.subject,
                 authoritySource: existing.authoritySource,
                 status: "active",
                 requestId: existing.id,
@@ -408,6 +426,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: grant.pluginId,
                 capability: grant.capability,
                 targetScope: grant.targetScope,
+                subject: grant.subject,
                 authoritySource: grant.authoritySource,
                 actor: userActor(params.userId),
                 requestId: existing.id,
@@ -448,6 +467,7 @@ export function createPluginPermissionGrantOperations(
                     pluginId: racedActiveGrant.pluginId,
                     capability: racedActiveGrant.capability,
                     targetScope: racedActiveGrant.targetScope,
+                    subject: racedActiveGrant.subject,
                     authoritySource: racedActiveGrant.authoritySource,
                     actor: userActor(params.userId),
                     requestId: existing.id,
@@ -504,6 +524,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: grant.pluginId,
                 capability: grant.capability,
                 targetScope: grant.targetScope,
+                subject: grant.subject,
                 authoritySource: grant.authoritySource,
                 actor: userActor(params.userId),
                 requestId: grant.requestId,
@@ -554,6 +575,7 @@ export function createPluginPermissionGrantOperations(
                 pluginId: pendingRequest.pluginId,
                 capability: pendingRequest.capability,
                 targetScope: pendingRequest.targetScope,
+                subject: pendingRequest.subject,
                 authoritySource: pendingRequest.authoritySource,
                 actor: userActor(params.userId),
                 requestId: pendingRequest.id,

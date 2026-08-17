@@ -3,7 +3,20 @@ import {
     type SessionOrganizationContentEnvelope,
 } from "@happier-dev/protocol";
 
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
 import type { SessionOrganizationTx } from "./types";
+
+export type SessionOrganizationDisplayEnvelopeParseResult =
+    | Readonly<{
+        status: "ready";
+        display: SessionOrganizationContentEnvelope | null;
+    }>
+    | Readonly<{
+        status: "unreadable";
+        reason: "invalid_stored_display";
+    }>;
 
 export async function isSessionOrganizationDisplayEnvelopeAllowedForAccount(params: Readonly<{
     tx: SessionOrganizationTx;
@@ -22,13 +35,30 @@ export async function areSessionOrganizationDisplayEnvelopesAllowedForAccount(pa
     accountId: string;
     displays: readonly (SessionOrganizationContentEnvelope | null)[];
 }>): Promise<boolean> {
-    if (!params.displays.some((display) => display?.t === "plain")) return true;
+    if (!params.displays.some((display) => display !== null)) {
+        return true;
+    }
 
     const account = await params.tx.account.findUnique({
         where: { id: params.accountId },
-        select: { encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
-    return account?.encryptionMode === "plain";
+    if (!account) return false;
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") return false;
+    const expectedEnvelopeType =
+        currentness.currentness.encryptionMode === "plain"
+            ? "plain"
+            : "encrypted";
+    return params.displays.every((display) => (
+        display === null || display.t === expectedEnvelopeType
+    ));
 }
 
 export function serializeSessionOrganizationDisplayEnvelope(
@@ -40,8 +70,28 @@ export function serializeSessionOrganizationDisplayEnvelope(
 
 export function parseSessionOrganizationDisplayEnvelope(
     value: string | null,
-): SessionOrganizationContentEnvelope | null {
-    if (!value) return null;
-    const parsed = SessionOrganizationContentEnvelopeSchema.safeParse(JSON.parse(value));
-    return parsed.success ? parsed.data : null;
+): SessionOrganizationDisplayEnvelopeParseResult {
+    if (!value) {
+        return {
+            status: "ready",
+            display: null,
+        };
+    }
+    try {
+        const parsed =
+            SessionOrganizationContentEnvelopeSchema.safeParse(
+                JSON.parse(value),
+            );
+        return parsed.success
+            ? { status: "ready", display: parsed.data }
+            : {
+                status: "unreadable",
+                reason: "invalid_stored_display",
+            };
+    } catch {
+        return {
+            status: "unreadable",
+            reason: "invalid_stored_display",
+        };
+    }
 }

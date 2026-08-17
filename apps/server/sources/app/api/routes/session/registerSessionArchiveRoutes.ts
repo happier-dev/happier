@@ -7,7 +7,11 @@ import { clearSessionRuntimeActivityProjectionInTx } from "@/app/session/session
 import { inTx } from "@/storage/inTx";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
-import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    loadSessionTranscriptPublicationRecipientProjection,
+    projectSessionTranscriptPublicationRealtimeProjection,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { type Fastify } from "../../types";
 
@@ -37,7 +41,6 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 where: { id: sessionId },
                 select: {
                     id: true,
-                    seq: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -62,12 +65,15 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             });
             const runtimeActivityClear = await clearSessionRuntimeActivityProjectionInTx({ tx, sessionId });
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
-
             const archivedAt = updated.archivedAt?.getTime();
             if (!archivedAt) {
                 return { ok: false as const, error: "not-found" as const };
             }
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                hint: { archivedAt },
+            });
             return {
                 ok: true as const,
                 archivedAt,
@@ -93,26 +99,35 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             badgeAttentionChanged: res.badgeAttentionChanged,
             participantCursors: res.participantCursors,
         });
-        await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
-            const payload = buildUpdateSessionUpdate(
-                sessionId,
-                cursor,
-                randomKeyNaked(12),
-                undefined,
-                undefined,
-                res.projection,
-            );
-            eventRouter.emitUpdate({
-                userId: accountId,
-                payload,
-                recipientFilter: { type: "all-interested-in-session", sessionId },
-            });
-            eventRouter.emitUpdate({
-                userId: accountId,
-                payload,
-                recipientFilter: { type: "user-machine-scoped-only" },
-            });
-        }));
+        const session = await loadSessionTranscriptPublicationRecipientProjection(sessionId);
+        if (session) {
+            await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
+                const projection = projectSessionTranscriptPublicationRealtimeProjection(
+                    res.projection,
+                    session,
+                    accountId,
+                );
+                if (projection.kind === "suppress") return;
+                const payload = buildUpdateSessionUpdate(
+                    sessionId,
+                    cursor,
+                    randomKeyNaked(12),
+                    undefined,
+                    undefined,
+                    projection.value,
+                );
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: "all-interested-in-session", sessionId },
+                });
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: "user-machine-scoped-only" },
+                });
+            }));
+        }
         return reply.send({ success: true, archivedAt: res.archivedAt });
     });
 
@@ -140,7 +155,6 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 where: { id: sessionId },
                 select: {
                     id: true,
-                    seq: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -161,7 +175,11 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 select: { id: true },
             });
 
-            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                hint: { archivedAt: null },
+            });
             return {
                 ok: true as const,
                 participantCursors,
@@ -180,14 +198,21 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             badgeAttentionChanged: res.badgeAttentionChanged,
             participantCursors: res.participantCursors,
         });
-        await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
+        const session = await loadSessionTranscriptPublicationRecipientProjection(sessionId);
+        if (session) await Promise.all(res.participantCursors.map(async ({ accountId, cursor }) => {
+            const projection = projectSessionTranscriptPublicationRealtimeProjection(
+                { archivedAt: null },
+                session,
+                accountId,
+            );
+            if (projection.kind === "suppress") return;
             const payload = buildUpdateSessionUpdate(
                 sessionId,
                 cursor,
                 randomKeyNaked(12),
                 undefined,
                 undefined,
-                { archivedAt: null },
+                projection.value,
             );
             eventRouter.emitUpdate({
                 userId: accountId,

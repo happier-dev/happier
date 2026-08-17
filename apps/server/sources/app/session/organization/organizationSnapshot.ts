@@ -1,4 +1,6 @@
 import {
+    type SessionOrganizationContentEnvelope,
+    type SessionOrganizationDisplayState,
     type SessionFolderAssignment,
     type SessionOrganizationFolder,
     type SessionOrganizationLabel,
@@ -9,6 +11,7 @@ import {
     type SessionTagAssignment,
 } from "@happier-dev/protocol";
 
+import type { EffectiveAccountEncryptionMode } from "@/app/encryption/accountEncryptionMode";
 import { parseSessionOrganizationDisplayEnvelope } from "./contentEnvelope";
 import type {
     SessionOrganizationFolderRecord,
@@ -17,6 +20,46 @@ import type {
     SessionOrganizationPinRecord,
     SessionOrganizationTagRecord,
 } from "./types";
+
+type SessionOrganizationDisplayProjection = Readonly<{
+    display: SessionOrganizationContentEnvelope | null;
+    displayState?: SessionOrganizationDisplayState;
+}>;
+
+function projectSessionOrganizationDisplay(
+    value: string | null,
+    expectedMode?: EffectiveAccountEncryptionMode | null,
+): SessionOrganizationDisplayProjection {
+    const parsed = parseSessionOrganizationDisplayEnvelope(value);
+    if (parsed.status === "unreadable") {
+        return {
+            display: null,
+            displayState: {
+                status: "unavailable",
+                reason: parsed.reason,
+            },
+        };
+    }
+    if (
+        parsed.display !== null
+        && expectedMode !== undefined
+        && (
+            expectedMode === null
+            || parsed.display.t !== (
+                expectedMode === "plain" ? "plain" : "encrypted"
+            )
+        )
+    ) {
+        return {
+            display: null,
+            displayState: {
+                status: "unavailable",
+                reason: "storage_mode_mismatch",
+            },
+        };
+    }
+    return { display: parsed.display };
+}
 
 export function mapSessionOrganizationPin(row: SessionOrganizationPinRecord): SessionOrganizationPin {
     return {
@@ -29,6 +72,7 @@ export function mapSessionOrganizationPin(row: SessionOrganizationPinRecord): Se
 export function mapSessionOrganizationFolder(
     row: SessionOrganizationFolderRecord,
     parentFolderId: string | null = null,
+    expectedMode?: EffectiveAccountEncryptionMode | null,
 ): SessionOrganizationFolder {
     return {
         folderId: row.id,
@@ -36,19 +80,28 @@ export function mapSessionOrganizationFolder(
         parentFolderId,
         parentFolderKey: row.parentKey,
         sortKey: row.sortKey,
-        display: parseSessionOrganizationDisplayEnvelope(row.displayDbValue),
+        ...projectSessionOrganizationDisplay(
+            row.displayDbValue,
+            expectedMode,
+        ),
         archivedAt: row.archivedAt?.getTime() ?? null,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
     };
 }
 
-export function mapSessionOrganizationTag(row: SessionOrganizationTagRecord): SessionOrganizationTag {
+export function mapSessionOrganizationTag(
+    row: SessionOrganizationTagRecord,
+    expectedMode?: EffectiveAccountEncryptionMode | null,
+): SessionOrganizationTag {
     return {
         tagId: row.id,
         tagKey: row.tagKey,
         sortKey: row.sortKey,
-        display: parseSessionOrganizationDisplayEnvelope(row.displayDbValue),
+        ...projectSessionOrganizationDisplay(
+            row.displayDbValue,
+            expectedMode,
+        ),
         archivedAt: row.archivedAt?.getTime() ?? null,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
@@ -65,11 +118,17 @@ export function mapSessionOrganizationOrderEntry(row: SessionOrganizationOrderEn
     };
 }
 
-export function mapSessionOrganizationLabel(row: SessionOrganizationLabelRecord): SessionOrganizationLabel {
+export function mapSessionOrganizationLabel(
+    row: SessionOrganizationLabelRecord,
+    expectedMode?: EffectiveAccountEncryptionMode | null,
+): SessionOrganizationLabel {
     return {
         labelKind: row.labelKind as SessionOrganizationLabel["labelKind"],
         scopeKey: row.scopeKey,
-        display: parseSessionOrganizationDisplayEnvelope(row.displayDbValue),
+        ...projectSessionOrganizationDisplay(
+            row.displayDbValue,
+            expectedMode,
+        ),
         archivedAt: row.archivedAt?.getTime() ?? null,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),

@@ -19,8 +19,8 @@ INSERT INTO `_QualifiedLegacyServiceMap` VALUES
     ('anthropic', 'happier.agent.claude', 'anthropic', '749d2df955d1d61572285abffa1d2324101c1433c355946eba65bb121a63987a', 'api-key', NULL, 'api-key'),
     ('claude-subscription', 'happier.agent.claude', 'claude-subscription', '40a8a0ad2615b95f046a13632ac3d0aae5da32ef634dd11053ecad6e1884675e', 'setup-token', 'oauth', 'setup-token'),
     ('gemini', 'happier.agent.gemini', 'gemini-account', '38b3ec1a4e87b7ce2a5bd41838eb0e5155170df35d937709d8db4836442f9e23', 'api-key', 'legacy-oauth-unsupported', 'api-key'),
-    ('github', 'happier.scm.hosting.github', 'github-account', '03ad8b4a04133593442bf812f290228b91135d6fb7787a38367e84546095134b', 'fine-grained-pat', NULL, 'fine-grained-pat'),
-    ('bitbucket', 'happier.scm.hosting.bitbucket', 'bitbucket-account', 'c7a33c85f3d1bc96fd34ec2c7faf2170e49b5b36c2744fa997e3239174febe60', 'manual', NULL, 'manual');
+    ('github', 'happier.scm.forge.github', 'github-account', 'bafdd80f57f752d0867fef33b99a3750286f07a2c2dc4896c3b7f7bb7c707ebd', 'fine-grained-pat', NULL, 'fine-grained-pat'),
+    ('bitbucket', 'happier.scm.forge.bitbucket', 'bitbucket-account', '4b276e5f5b66a036ede597b0926d7f7991772bfe891698b76fd7be0e52fa2616', 'manual', NULL, 'manual');
 
 DROP TEMPORARY TABLE IF EXISTS `_QualifiedActivationGuard`;
 CREATE TEMPORARY TABLE `_QualifiedActivationGuard` (`guardValue` INTEGER PRIMARY KEY);

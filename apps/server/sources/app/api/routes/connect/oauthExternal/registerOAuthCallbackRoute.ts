@@ -16,7 +16,7 @@ import { log } from "@/utils/logging/log";
 import { readAuthOauthKeylessFeatureEnv, readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
 import {
     buildRedirectUrl,
@@ -92,11 +92,26 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 : fallbackWebAppUrl;
 
         const flow = oauthState.flow;
+        const isFirstKeyStepUp =
+            oauthState.purpose
+            === "account_encryption_first_key";
         const authMode = flow === "auth" && oauthState.publicKey ? "keyed" : flow === "auth" ? "keyless" : null;
         const redirectBaseParams: Record<string, string> =
-            flow === "auth" && authMode === "keyless" ? { flow, mode: "keyless" } : { flow };
+            isFirstKeyStepUp
+                ? {
+                    flow,
+                    mode: "keyless",
+                    purpose: "account_encryption_first_key",
+                }
+                : flow === "auth" && authMode === "keyless"
+                    ? { flow, mode: "keyless" }
+                    : { flow };
 
-        if (flow === "auth" && authMode === "keyless") {
+        if (
+            flow === "auth"
+            && authMode === "keyless"
+            && !isFirstKeyStepUp
+        ) {
             const policy = resolveAuthPolicyFromEnv(process.env);
             const keyedAllowed = policy.signupProviders.includes(providerId);
 
@@ -119,11 +134,27 @@ export function registerOAuthCallbackRoute(app: Fastify) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: oauthError }));
         }
 
-        const userId = flow === "connect" ? oauthState.userId : null;
+        const userId =
+            flow === "connect" || isFirstKeyStepUp
+                ? oauthState.userId
+                : null;
         const publicKeyHex = flow === "auth" ? oauthState.publicKey : null;
         const proofHash = flow === "auth" ? oauthState.proofHash : null;
         if (flow === "connect" && !userId) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_state" }));
+        }
+        if (
+            isFirstKeyStepUp
+            && (
+                !userId
+                || !oauthState.requestDigest
+                || !proofHash
+            )
+        ) {
+            return reply.redirect(buildRedirectUrl(webAppUrl, {
+                ...redirectBaseParams,
+                error: "invalid_state",
+            }));
         }
         if (flow === "auth" && authMode === "keyed" && !publicKeyHex) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_state" }));
@@ -147,6 +178,59 @@ export function registerOAuthCallbackRoute(app: Fastify) {
             });
             const profile = await provider.fetchProfile({ env: process.env, accessToken, idToken, idTokenClaims });
             const login = provider.getLogin(profile) ?? "";
+
+            if (isFirstKeyStepUp) {
+                const providerUserId =
+                    provider.getProviderUserId(profile);
+                if (!providerUserId) {
+                    return reply.redirect(buildRedirectUrl(webAppUrl, {
+                        ...redirectBaseParams,
+                        error: "invalid_profile",
+                    }));
+                }
+                const linkedIdentity =
+                    await db.accountIdentity.findFirst({
+                        where: {
+                            accountId: userId!,
+                            provider: providerId,
+                            providerUserId,
+                        },
+                        select: { id: true },
+                    });
+                if (!linkedIdentity) {
+                    return reply.redirect(buildRedirectUrl(webAppUrl, {
+                        ...redirectBaseParams,
+                        error: "wrong_identity",
+                    }));
+                }
+                const pendingKey =
+                    `oauth_pending_${randomKeyNaked(24)}`;
+                const ttlMs =
+                    resolveOAuthPendingTtlMsFromEnv(process.env);
+                await db.repeatKey.create({
+                    data: {
+                        key: pendingKey,
+                        value: JSON.stringify({
+                            v: 3,
+                            flow: "auth",
+                            purpose:
+                                "account_encryption_first_key",
+                            provider: providerId,
+                            userId: userId!,
+                            providerUserId,
+                            proofHash: proofHash!,
+                            requestDigest:
+                                oauthState.requestDigest!,
+                        }),
+                        expiresAt:
+                            new Date(Date.now() + ttlMs),
+                    },
+                });
+                return reply.redirect(buildRedirectUrl(webAppUrl, {
+                    ...redirectBaseParams,
+                    pending: pendingKey,
+                }));
+            }
 
             if (flow === "auth") {
                 const providerUserId = provider.getProviderUserId(profile);
@@ -278,10 +362,23 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                     if (isAlreadyLinked && alreadyLinked?.accountId) {
                         const account = await db.account.findUnique({
                             where: { id: alreadyLinked.accountId },
-                            select: { publicKey: true, encryptionMode: true },
+                            select: {
+                                publicKey: true,
+                                encryptionMode: true,
+                                contentPublicKey: true,
+                                contentPublicKeySig: true,
+                            },
                         });
                         if (account) {
-                            redirectParams.accountMode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+                            const currentness =
+                                deriveAccountEncryptionCurrentnessFromRow(
+                                    account,
+                                );
+                            redirectParams.accountMode =
+                                currentness.status === "ready"
+                                    ? currentness.currentness
+                                        .encryptionMode
+                                    : "e2ee";
                         }
                     }
 

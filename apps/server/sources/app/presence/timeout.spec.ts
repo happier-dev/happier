@@ -9,9 +9,25 @@ const { emitEphemeral, emitUpdate, expireSessionPublisherCandidates, refreshSess
     refreshSessionParticipantBadgePushes: vi.fn(),
 }));
 const dbMocks = createDbMocks({
-    session: ["findMany", "updateMany", "updateManyAndReturn"],
+    session: ["findMany", "findUnique", "updateMany", "updateManyAndReturn"],
     machine: ["findMany", "updateMany", "updateManyAndReturn"],
 } as const);
+
+const HOSTED_RECIPIENT_PROJECTION = {
+    currentStorageState: "hosted",
+    acceptedThroughServerSeq: null,
+    materializationPublicationId: null,
+    materializedThroughSourceAt: null,
+    publishedThroughServerSeq: null,
+    seq: 0,
+    lastViewedSessionSeq: null,
+    latestReadyEventSeq: null,
+    latestReadyEventAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    meaningfulActivityAt: null,
+    lastActiveAt: new Date(0),
+} as const;
 
 installDbModuleMock({ db: dbMocks.db });
 
@@ -38,6 +54,7 @@ beforeEach(() => {
     vi.setSystemTime(new Date("2026-01-01T00:20:00.000Z"));
     dbMocks.reset();
     dbMocks.db.session.findMany.mockResolvedValue([]);
+    dbMocks.db.session.findUnique.mockResolvedValue(HOSTED_RECIPIENT_PROJECTION);
     dbMocks.db.machine.findMany.mockResolvedValue([]);
     dbMocks.db.session.updateMany.mockResolvedValue({ count: 0 });
     dbMocks.db.machine.updateMany.mockResolvedValue({ count: 0 });

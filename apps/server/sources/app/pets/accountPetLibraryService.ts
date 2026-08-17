@@ -7,6 +7,8 @@ import {
     type AccountPetCreateResponseV1,
     type AccountPetDeleteResponseV1,
     type AccountPetLibraryEntryV1,
+    type AccountPetListResponseV1,
+    type AccountPetSyncUnavailableResponseV1,
     type PetAssetMediaTypeV1,
 } from "@happier-dev/protocol";
 
@@ -23,10 +25,11 @@ import type {
 } from "./accountPetLibraryPersistence";
 
 export type AccountPetAssetReadResult = Readonly<{
+    ok: true;
     mediaType: PetAssetMediaTypeV1;
     bytes: Uint8Array;
     digest: string;
-}>;
+}> | AccountPetSyncUnavailableResponseV1;
 
 export type CreateAccountPetForAccountParams = Readonly<{
     accountId: string;
@@ -37,10 +40,12 @@ export type CreateAccountPetForAccountParams = Readonly<{
 
 export type ListAccountPetsForAccountParams = Readonly<{
     accountId: string;
+    accountEncryptionMode: "plain" | "e2ee";
 }>;
 
 export type ReadAccountPetAssetForAccountParams = Readonly<{
     accountId: string;
+    accountEncryptionMode: "plain" | "e2ee";
     petId: string;
     assetId: string | null;
 }>;
@@ -52,7 +57,7 @@ export type DeleteAccountPetForAccountParams = Readonly<{
 
 export type AccountPetLibraryServices = Readonly<{
     createAccountPetForAccount(params: CreateAccountPetForAccountParams): Promise<AccountPetCreateResponseV1>;
-    listAccountPetsForAccount(params: ListAccountPetsForAccountParams): Promise<AccountPetLibraryEntryV1[]>;
+    listAccountPetsForAccount(params: ListAccountPetsForAccountParams): Promise<AccountPetListResponseV1>;
     readAccountPetAssetForAccount(params: ReadAccountPetAssetForAccountParams): Promise<AccountPetAssetReadResult | null>;
     deleteAccountPetForAccount(params: DeleteAccountPetForAccountParams): Promise<AccountPetDeleteResponseV1>;
 }>;
@@ -72,8 +77,11 @@ export type AccountPetLibraryServiceOptions = Readonly<{
 
 type StoredAccountPet = Readonly<{
     accountId: string;
+    accountPetId: string;
+    contentMode: "plain";
     entry: AccountPetLibraryEntryV1;
     asset: {
+        contentMode: "plain";
         objectKey: string;
     };
 }>;
@@ -156,6 +164,14 @@ function customPetSyncRequiresPlaintextResponse(): AccountPetCreateResponseV1 {
     };
 }
 
+function customPetSyncUnavailableResponse(): AccountPetSyncUnavailableResponseV1 {
+    return {
+        ok: false,
+        errorCode: "custom_pet_sync_unavailable",
+        error: "custom_pet_sync_unavailable",
+    };
+}
+
 function isCustomPetSyncStorageAllowed(params: Pick<CreateAccountPetForAccountParams, "accountEncryptionMode" | "storagePolicy">): boolean {
     if (params.accountEncryptionMode === "e2ee") {
         return false;
@@ -203,8 +219,13 @@ function createInMemoryAccountPetLibraryPersistence(): AccountPetLibraryPersiste
 
             recordsByPetId.set(params.entry.accountPetId, {
                 accountId: params.accountId,
+                accountPetId: params.entry.accountPetId,
+                contentMode: "plain",
                 entry: params.entry,
-                asset: { objectKey: params.objectKey },
+                asset: {
+                    contentMode: "plain",
+                    objectKey: params.objectKey,
+                },
             });
             return { ok: true } as const;
         },
@@ -323,7 +344,10 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                 }
 
                 const maxImportedPetBytesPerAccount = options.maxImportedPetBytesPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount;
-                const existingBytes = existingRecords.reduce((sum, record) => sum + record.entry.sizeBytes, 0);
+                const existingBytes = existingRecords.reduce(
+                    (sum, record) => sum + (record.entry?.sizeBytes ?? 0),
+                    0,
+                );
                 if (existingBytes + entry.sizeBytes > maxImportedPetBytesPerAccount) {
                     return quotaExceededResponse();
                 }
@@ -349,13 +373,17 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                                 error: "internal_error",
                             };
                         }
-                        return persisted.error === "quota-exceeded"
-                            ? quotaExceededResponse()
-                            : {
-                                ok: false,
-                                errorCode: "internal_error",
-                                error: "internal_error",
-                            };
+                        if (persisted.error === "quota-exceeded") {
+                            return quotaExceededResponse();
+                        }
+                        if (persisted.error === "plaintext-required") {
+                            return customPetSyncRequiresPlaintextResponse();
+                        }
+                        return {
+                            ok: false,
+                            errorCode: "internal_error",
+                            error: "internal_error",
+                        };
                     }
                 } catch {
                     try {
@@ -378,13 +406,42 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             });
         },
         async listAccountPetsForAccount(params) {
+            if (params.accountEncryptionMode !== "plain") {
+                return customPetSyncUnavailableResponse();
+            }
             const records = await persistence.listAccountPets(params.accountId);
-            return records.map((record) => record.entry);
+            const pets: AccountPetLibraryEntryV1[] = [];
+            for (const record of records) {
+                if (
+                    !record.entry
+                    || !record.asset
+                    || record.contentMode !== "plain"
+                    || record.asset.contentMode !== "plain"
+                ) {
+                    return customPetSyncUnavailableResponse();
+                }
+                pets.push(record.entry);
+            }
+            return {
+                ok: true,
+                pets,
+            };
         },
         async readAccountPetAssetForAccount(params) {
+            if (params.accountEncryptionMode !== "plain") {
+                return customPetSyncUnavailableResponse();
+            }
             const record = await persistence.readAccountPet(params.accountId, params.petId);
             if (!record) {
                 return null;
+            }
+            if (
+                !record.entry
+                || !record.asset
+                || record.contentMode !== "plain"
+                || record.asset.contentMode !== "plain"
+            ) {
+                return customPetSyncUnavailableResponse();
             }
             const assetRef = record.entry.spritesheetAssetRef;
             if (params.assetId !== null && params.assetId !== assetRef.assetId) {
@@ -392,6 +449,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             }
             const bytes = await options.privateFiles.readPrivateFile(record.asset.objectKey);
             return {
+                ok: true,
                 mediaType: assetRef.mediaType,
                 bytes,
                 digest: assetRef.digest,
@@ -405,10 +463,12 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             if (!existingRecord) {
                 return notFoundDeleteResponse();
             }
-            try {
-                await deletePrivateFileOrThrow(options.privateFiles, existingRecord.asset.objectKey);
-            } catch {
-                return internalDeleteResponse();
+            if (existingRecord.asset) {
+                try {
+                    await deletePrivateFileOrThrow(options.privateFiles, existingRecord.asset.objectKey);
+                } catch {
+                    return internalDeleteResponse();
+                }
             }
             const deleted = await persistence.deleteAccountPet(params.accountId, params.petId);
             if (!deleted.ok) {

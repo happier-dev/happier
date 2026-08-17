@@ -1,6 +1,8 @@
 import type { AccountPetCreateResponseV1, AccountPetDeleteResponseV1 } from "@happier-dev/protocol";
 
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import {
+    deriveAccountEncryptionCurrentnessFromRow,
+} from "@/app/encryption/accountContentKeyAdmission";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { db } from "@/storage/db";
 
@@ -12,7 +14,12 @@ export async function createAccountPetForAccount(
 ): Promise<AccountPetCreateResponseV1> {
     const account = await db.account.findUnique({
         where: { id: params.accountId },
-        select: { publicKey: true, encryptionMode: true },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
     if (!account) {
         return {
@@ -21,10 +28,20 @@ export async function createAccountPetForAccount(
             error: "invalid_request",
         };
     }
+    const currentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") {
+        return {
+            ok: false,
+            errorCode: "custom_pet_sync_requires_plaintext",
+            error: "custom_pet_sync_requires_plaintext",
+        };
+    }
     const encryptionEnv = readEncryptionFeatureEnv(process.env);
     return await getDefaultAccountPetLibraryServices().createAccountPetForAccount({
         ...params,
-        accountEncryptionMode: resolveEffectiveAccountEncryptionModeFromAccountRow(account),
+        accountEncryptionMode:
+            currentness.currentness.encryptionMode,
         storagePolicy: encryptionEnv.storagePolicy,
     });
 }

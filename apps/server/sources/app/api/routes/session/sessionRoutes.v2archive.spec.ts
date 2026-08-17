@@ -8,6 +8,7 @@ import {
     getSessionParticipantUserIds,
     buildUpdateSessionUpdate,
     emitUpdate,
+    sessionFindUnique,
     txSessionFindUnique,
     txSessionUpdate,
     markAccountChanged,
@@ -24,6 +25,34 @@ describe("sessionRoutes v2 archive", () => {
         getSessionParticipantUserIds.mockResolvedValue(["owner", "u2"]);
         txSessionFindUnique.mockResolvedValue({ id: "s1", active: false, archivedAt: null });
         txSessionUpdate.mockResolvedValue({ id: "s1", archivedAt: now });
+        clearSessionRuntimeActivityProjectionInTx.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            projection: {
+                runtimeActivityState: "unknown",
+                runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: null,
+                runtimeActivityRevision: 9,
+            },
+            participantCursors: [],
+            badgeAttentionChanged: false,
+        });
+        sessionFindUnique.mockResolvedValue({
+            accountId: "owner",
+            currentStorageState: "snapshot_complete",
+            acceptedThroughServerSeq: 4,
+            materializationPublicationId: "archive-publication-v1",
+            materializedThroughSourceAt: 42_000n,
+            publishedThroughServerSeq: 4,
+            seq: 9,
+            lastViewedSessionSeq: 9,
+            latestReadyEventSeq: null,
+            latestReadyEventAt: null,
+            createdAt: new Date(10_000),
+            updatedAt: new Date(90_000),
+            meaningfulActivityAt: new Date(90_000),
+            lastActiveAt: new Date(90_000),
+        });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
         const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
@@ -45,7 +74,7 @@ describe("sessionRoutes v2 archive", () => {
                 runtimeActivityState: "unknown",
                 runtimeActivityActiveCount: 0,
                 runtimeActivityObservedAt: null,
-                runtimeActivityRevision: 0,
+                runtimeActivityRevision: 9,
             },
         );
         expect(emitUpdate).toHaveBeenCalledTimes(4);

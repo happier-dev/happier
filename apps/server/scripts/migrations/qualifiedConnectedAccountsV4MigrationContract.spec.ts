@@ -63,18 +63,18 @@ const SERVER_V021_CREDENTIAL_VECTORS = {
 } as const;
 const PROSPECTIVE_REMOTE_CREDENTIAL_VECTORS = {
     github: {
-        service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
-        serviceDigest: '03ad8b4a04133593442bf812f290228b91135d6fb7787a38367e84546095134b',
-        identityDigest: '0bc722dbab3b95a42cc57a84845dc5cd38a9428950d3a91be884a7ed0969737f',
+        service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+        serviceDigest: 'bafdd80f57f752d0867fef33b99a3750286f07a2c2dc4896c3b7f7bb7c707ebd',
+        identityDigest: '84d661cc1ac10b954399ffb8a470834a35cda24a5d4c579262efccd41a4ebf68',
         defaultAuthenticationModeId: 'fine-grained-pat',
         authenticationModeByCredentialKind: { token: 'fine-grained-pat' },
     },
 } as const;
 const DEV_PREACTIVATION_CREDENTIAL_VECTORS = {
     bitbucket: {
-        service: { pluginId: 'happier.scm.hosting.bitbucket', localId: 'bitbucket-account' },
-        serviceDigest: 'c7a33c85f3d1bc96fd34ec2c7faf2170e49b5b36c2744fa997e3239174febe60',
-        identityDigest: '516a9a73bd53de94b82a865bcdad2aa063ce5d8eb65b2e5e51d3cd01bf253823',
+        service: { pluginId: 'happier.scm.forge.bitbucket', localId: 'bitbucket-account' },
+        serviceDigest: '4b276e5f5b66a036ede597b0926d7f7991772bfe891698b76fd7be0e52fa2616',
+        identityDigest: '6b07d92ad31e3b77c5cf2988646293dee2d378bf7230ec02d17afb839fbf67da',
         defaultAuthenticationModeId: 'manual',
         authenticationModeByCredentialKind: { token: 'manual' },
     },

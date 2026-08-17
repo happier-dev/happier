@@ -67,10 +67,14 @@ const activeAccessKey = vi.hoisted(() => ({
     },
 }));
 const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<typeof activeAccessKey | null> => activeAccessKey));
+const sessionFindUnique = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", () => ({
     db: {
         accessKey: {
             findUnique: accessKeyFindUnique,
+        },
+        session: {
+            findUnique: sessionFindUnique,
         },
     },
 }));
@@ -127,6 +131,23 @@ describe("sessionUpdateHandler (transcript-stream-segment relay)", () => {
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
         accessKeyFindUnique.mockResolvedValue(activeAccessKey);
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue({
+            accountId: "u1",
+            currentStorageState: "hosted",
+            acceptedThroughServerSeq: null,
+            materializationPublicationId: null,
+            materializedThroughSourceAt: null,
+            publishedThroughServerSeq: null,
+            seq: 0,
+            lastViewedSessionSeq: null,
+            latestReadyEventSeq: null,
+            latestReadyEventAt: null,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+            meaningfulActivityAt: null,
+            lastActiveAt: new Date(0),
+        });
         checkSessionAccess.mockImplementation(async (userId, sessionId) => ({
             userId,
             sessionId,
@@ -215,6 +236,55 @@ describe("sessionUpdateHandler (transcript-stream-segment relay)", () => {
             .map((call) => call[0])
             .find((payload) => payload?.userId === "u1");
         expect(ownerCall?.skipSenderConnection).toBe(connection);
+    });
+
+    it("does not relay finite snapshot or delta stream observations to a collaborator", async () => {
+        sessionFindUnique.mockResolvedValue({
+            accountId: "u1",
+            currentStorageState: "snapshot_complete",
+            acceptedThroughServerSeq: 4,
+            materializationPublicationId: "stream-publication-v1",
+            materializedThroughSourceAt: 42_000n,
+            publishedThroughServerSeq: 4,
+            seq: 9,
+            lastViewedSessionSeq: 9,
+            latestReadyEventSeq: 9,
+            latestReadyEventAt: new Date(90_000),
+            createdAt: new Date(10_000),
+            updatedAt: new Date(90_000),
+            meaningfulActivityAt: new Date(90_000),
+            lastActiveAt: new Date(90_000),
+        });
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+        const socket = createOwnerSessionSocket();
+        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any;
+        sessionUpdateHandler("u1", socket as any, connection);
+
+        await getSocketHandler(socket, "transcript-stream-segment")({
+            sid: "s1",
+            message: {
+                localId: "finite-segment",
+                messageRole: "agent",
+                tick: 1,
+                content: { t: "encrypted", c: "finite-cipher" },
+                createdAt: 90_000,
+                updatedAt: 90_000,
+            },
+        });
+        await getSocketHandler(socket, "transcript-stream-segment-delta")({
+            sid: "s1",
+            message: {
+                localId: "finite-segment",
+                messageRole: "agent",
+                tick: 2,
+                baseLength: 4,
+                content: { t: "encrypted", c: "finite-delta" },
+                createdAt: 90_000,
+                updatedAt: 90_000,
+            },
+        });
+
+        expect(emitEphemeral.mock.calls.map(([event]) => event?.userId)).not.toContain("u2");
     });
 
     it("drops transcript-stream-segment-delta payloads missing chaining fields", async () => {

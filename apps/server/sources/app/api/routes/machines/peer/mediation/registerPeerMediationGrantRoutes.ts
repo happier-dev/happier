@@ -29,6 +29,7 @@ import {
     createServerFeatureGatePreHandler,
     isPeerMediationGrantSigningAdvertisedForRequest,
 } from "@/app/features/catalog/serverFeatureGate";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import {
     mintDirectRouteGrantV1,
     mintDirectRouteGrantV2,
@@ -316,6 +317,9 @@ export function registerPeerMediationGrantRoutes(
     }
 
     app.post("/v1/machines/peer/mediation/route-grants", {
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(env, "machines.peerMediation.routeGrant"),
+        },
         preHandler: [
             createPeerMediationGrantSigningGatePreHandler(env),
             createPeerMediationGrantFeatureGatePreHandler(env),

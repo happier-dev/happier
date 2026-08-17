@@ -1,15 +1,18 @@
-import type { Server } from "socket.io";
+import type { Server, Socket } from "socket.io";
 
+import {
+    isPlainMachineDataKeyMarker,
+    type AnyClientUpgradeRequiredV1,
+} from "@happier-dev/protocol";
 import {
     RPC_ERROR_CODES,
     RPC_ERROR_MESSAGES,
-    resolveSocketRpcProviderStartingMethod,
     type SocketRpcAuthorizationContext,
 } from "@happier-dev/protocol/rpc";
-import type { ClientUpgradeRequiredV1 } from "@happier-dev/protocol";
 import {
     SOCKET_RPC_EVENTS,
     SocketRpcTransportResponseEnvelopeV1Schema,
+    type SocketRpcRequestPayload,
     type SocketRpcTransportAcknowledgementV1,
 } from "@happier-dev/protocol/socketRpc";
 
@@ -21,10 +24,13 @@ import {
     recordRpcSelfCallRejection,
 } from "@/app/monitoring/metrics/index";
 import {
-    readSessionSyncSocketCompatibility,
-    revalidateSessionSyncSocketCompatibility,
-} from "@/app/clientCompatibility/socketEnforcement";
-import { readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+    buildAccountStoredContentSocketUpgradeError,
+    readAccountStoredContentCompatibilityForSocket,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import {
+    classifyMachineAvailabilityState,
+} from "@/app/machines/machineStateGuards";
+import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 
 import { waitForRpcTargetAvailability } from "./rpcAvailabilityWait";
@@ -43,8 +49,12 @@ export type RpcForwardResult =
         result: unknown;
         transportAcknowledgement?: SocketRpcTransportAcknowledgementV1;
       }>
-    | Readonly<{ ok: false; error: string; errorCode?: string }>
-    | Readonly<{ ok: false } & ClientUpgradeRequiredV1>;
+    | Readonly<{
+        ok: false;
+        error: string;
+        errorCode?: string;
+      }>
+    | Readonly<{ ok: false } & AnyClientUpgradeRequiredV1>;
 
 function recordMethodUnavailable(params: Readonly<{
     method: string;
@@ -94,7 +104,20 @@ export async function forwardRpcCall(params: Readonly<{
     authorization?: SocketRpcAuthorizationContext;
     transportResponseEnvelopeVersion?: 1;
     callerSocketId?: string;
+    callerSocket?: Pick<Socket, "data">;
     targetGuard?: RpcForwardTargetGuard;
+    cancellation?: Readonly<{
+        /** Server-minted correlation that is safe to expose to the exact target. */
+        targetRequestId: string;
+        signal: AbortSignal;
+        /** Records the selected target before its request is emitted. */
+        onTargetSelected: (target: RpcAckResponseEmitter) => void;
+    }>;
+    /**
+     * Internal classification for callers that own an idempotent creation key.
+     * The normal Socket-RPC result remains backward-compatible.
+     */
+    onSubmittedUnknown?: () => void;
 }>): Promise<RpcForwardResult> {
     const callStartedAt = Date.now();
     const lookupStartedAt = Date.now();
@@ -148,18 +171,52 @@ export async function forwardRpcCall(params: Readonly<{
         );
     }
 
-    if (resolveSocketRpcProviderStartingMethod(params.method)) {
-        const targetData = selection.target.data ?? {};
-        const clientType = typeof targetData.clientType === "string" ? targetData.clientType : "";
-        const machineId = typeof targetData.machineId === "string" ? targetData.machineId.trim() : "";
-        if (clientType === "machine-scoped" && machineId) {
-            const state = await readMachineAvailabilityState({
+    const targetData = selection.target.data ?? {};
+    const targetClientType =
+        typeof targetData.clientType === "string"
+            ? targetData.clientType
+            : "";
+    const targetMachineId =
+        typeof targetData.machineId === "string"
+            ? targetData.machineId.trim()
+            : "";
+    if (targetClientType === "machine-scoped" && targetMachineId) {
+        const machine = await db.machine.findFirst({
+            where: {
                 accountId: params.targetUserId,
-                machineId,
+                id: targetMachineId,
+            },
+            select: {
+                dataEncryptionKey: true,
+                revokedAt: true,
+                replacedByMachineId: true,
+            },
+        });
+        if (classifyMachineAvailabilityState(machine) !== "available") {
+            return recordMethodUnavailable({
+                method: params.method,
+                callStartedAt,
             });
-            if (state !== "available") {
-                recordRpcMethodNotAvailable(params.method);
-                recordRpcCallFailure(params.method, "method_not_available");
+        }
+        if (isPlainMachineDataKeyMarker(machine?.dataEncryptionKey)) {
+            const callerCompatibility = params.callerSocket
+                ? readAccountStoredContentCompatibilityForSocket(
+                    params.callerSocket,
+                )
+                : null;
+            const targetCompatibility =
+                readAccountStoredContentCompatibilityForSocket(
+                    selection.target,
+                );
+            const blockingCompatibility =
+                callerCompatibility
+                && !callerCompatibility.supportsCurrentProtocol
+                    ? callerCompatibility
+                    : !targetCompatibility.supportsCurrentProtocol
+                        ? targetCompatibility
+                        : null;
+            if (blockingCompatibility) {
+                recordRpcCallFailure(params.method, "request_error");
                 observeRpcCall({
                     method: params.method,
                     durationMs: Date.now() - callStartedAt,
@@ -167,47 +224,45 @@ export async function forwardRpcCall(params: Readonly<{
                 });
                 return {
                     ok: false,
-                    error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                    errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                    ...buildAccountStoredContentSocketUpgradeError(
+                        blockingCompatibility,
+                    ).data,
                 };
             }
         }
-
-        const compatibility = readSessionSyncSocketCompatibility({ data: targetData });
-        const currentCompatibility = revalidateSessionSyncSocketCompatibility(
-            compatibility?.parseResult ?? { status: "missing" },
-            process.env,
-            "machine-scoped",
-        );
-        if (!currentCompatibility.accepted && currentCompatibility.upgradeRequired) {
-            recordRpcCallFailure(params.method, "request_error");
-            observeRpcCall({
-                method: params.method,
-                durationMs: Date.now() - callStartedAt,
-                result: "error",
-            });
-            return {
-                ok: false,
-                ...currentCompatibility.upgradeRequired,
-            };
-        }
-
     }
 
+    let requestSubmitted = false;
     try {
+        if (params.cancellation?.signal.aborted) {
+            throw new Error("RPC request cancelled by caller");
+        }
         const timeoutMs = resolveRpcForwardTimeoutMs(params.method, params.timeoutMs);
-        const operation = async () => await selection.target.timeout(timeoutMs).emitWithAck(
-            SOCKET_RPC_EVENTS.REQUEST,
-            {
-                method: params.method,
-                params: params.callParams,
-                timeoutMs,
-                ...(params.authorization ? { authorization: params.authorization } : {}),
-                ...(params.transportResponseEnvelopeVersion === 1
-                    ? { transportResponseEnvelopeVersion: 1 as const }
-                    : {}),
-            },
-        );
+        const request: SocketRpcRequestPayload = {
+            method: params.method,
+            params: params.callParams,
+            timeoutMs,
+            ...(params.cancellation ? { requestId: params.cancellation.targetRequestId } : {}),
+            ...(params.authorization ? { authorization: params.authorization } : {}),
+            ...(params.transportResponseEnvelopeVersion === 1
+                ? { transportResponseEnvelopeVersion: 1 as const }
+                : {}),
+        };
+        const operation = async () => {
+            if (params.cancellation?.signal.aborted) {
+                throw new Error("RPC request cancelled by caller");
+            }
+            params.cancellation?.onTargetSelected(selection.target);
+            if (params.cancellation?.signal.aborted) {
+                throw new Error("RPC request cancelled by caller");
+            }
+            const targetEmitter = selection.target.timeout(timeoutMs);
+            requestSubmitted = true;
+            return await targetEmitter.emitWithAck(
+                SOCKET_RPC_EVENTS.REQUEST,
+                request,
+            );
+        };
         const guarded = params.targetGuard
             ? await params.targetGuard.runOperation({
                 target: selection.target,
@@ -220,6 +275,13 @@ export async function forwardRpcCall(params: Readonly<{
             })
             : { status: "current" as const, value: await operation() };
         if (guarded.status === "unavailable") {
+            if (requestSubmitted) {
+                params.onSubmittedUnknown?.();
+                return recordMethodUnavailable({
+                    method: params.method,
+                    callStartedAt,
+                });
+            }
             return recordMethodUnavailable({
                 method: params.method,
                 callStartedAt,
@@ -240,6 +302,7 @@ export async function forwardRpcCall(params: Readonly<{
                 : {}),
         };
     } catch (error) {
+        if (requestSubmitted) params.onSubmittedUnknown?.();
         recordRpcCallFailure(params.method, "request_error");
         observeRpcCall({
             method: params.method,

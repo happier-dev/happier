@@ -1,4 +1,9 @@
-import type { PendingProviderAction, PendingRequestedActionV1, SessionMessageDeliveryResolutionV1 } from "@happier-dev/protocol";
+import type {
+    PendingProviderAction,
+    PendingRequestedActionV1,
+    SessionInputAdmissionReceiptV1,
+    SessionMessageDeliveryResolutionV1,
+} from "@happier-dev/protocol";
 
 type MaterializedPendingMessage = Readonly<{
     id: string | null;
@@ -8,6 +13,7 @@ type MaterializedPendingMessage = Readonly<{
     content: PrismaJson.SessionMessageContent;
     requestedAction?: PendingRequestedActionV1;
     providerAction?: PendingProviderAction;
+    inputAdmissionReceipt?: SessionInputAdmissionReceiptV1 | null;
     deliveryResolution?: SessionMessageDeliveryResolutionV1 | null;
     createdAt: Date;
     updatedAt: Date;
@@ -22,6 +28,7 @@ export function serializePendingMaterializedMessage(message: MaterializedPending
         content: message.content,
         ...(message.requestedAction ? { requestedAction: message.requestedAction } : {}),
         ...(message.providerAction ? { providerAction: message.providerAction } : {}),
+        ...(message.inputAdmissionReceipt ? { inputAdmissionReceipt: message.inputAdmissionReceipt } : {}),
         ...(message.deliveryResolution ? { deliveryResolution: message.deliveryResolution } : {}),
         createdAt: message.createdAt.getTime(),
         updatedAt: message.updatedAt.getTime(),

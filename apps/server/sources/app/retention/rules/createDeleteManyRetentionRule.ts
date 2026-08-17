@@ -14,6 +14,7 @@ type CreateDeleteManyRetentionRuleParams = Readonly<{
 }>;
 
 export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionRuleParams): RetentionRule {
+    let dryRunOffset = 0;
     return {
         id: params.id,
         run: async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, now }) => {
@@ -34,15 +35,22 @@ export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionR
                 where,
                 orderBy: { [params.cutoffField]: 'asc' },
                 take: limit,
+                ...(dryRun && dryRunOffset > 0 ? { skip: dryRunOffset } : null),
                 select: {
                     [params.primaryField]: true,
                 },
             });
             if (dryRun) {
-                return { id: params.id, deleted: rows.length };
+                dryRunOffset += rows.length;
+                return {
+                    id: params.id,
+                    deleted: rows.length,
+                    candidatesExamined: rows.length,
+                    hasMore: rows.length === limit,
+                };
             }
             if (rows.length === 0) {
-                return { id: params.id, deleted: 0 };
+                return { id: params.id, deleted: 0, candidatesExamined: 0, hasMore: false };
             }
 
             const identifiers = rows.map((row: Record<string, unknown>) => row[params.primaryField]);
@@ -53,7 +61,12 @@ export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionR
                     ...(params.extraWhere ? params.extraWhere(cutoff) : null),
                 },
             });
-            return { id: params.id, deleted: result.count };
+            return {
+                id: params.id,
+                deleted: result.count,
+                candidatesExamined: rows.length,
+                hasMore: rows.length === limit,
+            };
         },
     };
 }

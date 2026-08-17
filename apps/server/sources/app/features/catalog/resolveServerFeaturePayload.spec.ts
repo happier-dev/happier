@@ -1,19 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
 import { resolveMachineLiveStreamFeature } from "../machineLiveStreamFeature";
-import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
 import { resolveSharingFeature } from "../sharingFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
-import type { ServerFeatureResolver } from "./serverFeatureRegistry";
+import { serverFeatureRegistry, type ServerFeatureResolver } from "./serverFeatureRegistry";
 import type { FeaturesPayloadDelta } from "../types";
 import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
 import { accountUsageRoutePaths } from "@/app/api/routes/account/accountUsageRoutePaths";
+import {
+    initializeSessionSystemRecordsProtocolV1Activation,
+    resetSessionSystemRecordsProtocolV1ActivationForTests,
+    SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION,
+} from "@/app/session/systemRecords/sessionSystemRecordProtocolContract";
+
+// Prisma is the system boundary; this feature fixture exposes only the audited findMany operation.
+type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecordsProtocolV1Activation>[0];
 
 function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
     return () => partial;
@@ -56,6 +63,10 @@ async function loadSessionFoldersFeatureModule(): Promise<Record<string, any> | 
 }
 
 describe("resolveServerFeaturePayload", () => {
+    beforeEach(() => {
+        resetSessionSystemRecordsProtocolV1ActivationForTests();
+    });
+
     it("throws when resolvers list is empty", () => {
         expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
     });
@@ -239,10 +250,25 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
     });
 
-    it("advertises indexed session message role query support", () => {
+    it("advertises Session System Records v1 after the final current-version contract is active", async () => {
+        await initializeSessionSystemRecordsProtocolV1Activation({
+            $queryRawUnsafe: async () => [{
+                migration_name: SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION,
+            }],
+            sessionSystemRecord: {
+                findMany: async () => [],
+            },
+        } as unknown as ProtocolActivationDatabase);
         const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSessionHandoffFeature]);
 
         expect(payload.capabilities.session.messages.role).toBe(true);
+        expect(payload.capabilities.session.systemRecords).toEqual({ protocolVersions: [1] });
+    });
+
+    it("keeps Session System Records v1 absent until its database contract is activated", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSessionHandoffFeature]);
+
+        expect(payload.capabilities.session.systemRecords).toBeUndefined();
     });
 
     it("enables session folders by default so the UI toggle can appear", async () => {
@@ -263,6 +289,30 @@ describe("resolveServerFeaturePayload", () => {
         } as NodeJS.ProcessEnv, [mod!.resolveSessionFoldersFeature]);
 
         expect(readOptionalPath(payload, ["features", "sessions", "folders", "enabled"])).toBe(false);
+    });
+
+    it("enables agent switching from the server registry by default so the in-Session Agent rail can appear", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(readOptionalPath(payload, ["features", "sessions", "agentSwitching", "enabled"])).toBe(true);
+    });
+
+    it("supports disabling agent switching through the feature env", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: "0",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(readOptionalPath(payload, ["features", "sessions", "agentSwitching", "enabled"])).toBe(false);
+    });
+
+    it("keeps agent switching disabled when its `sessions` dependency is disabled", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [...serverFeatureRegistry, fromPartial({ features: { sessions: { enabled: false } } })],
+        );
+
+        expect(readOptionalPath(payload, ["features", "sessions", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "sessions", "agentSwitching", "enabled"])).toBe(false);
     });
 
     it("keeps server-routed tunnel relay disabled by default while advertising capped diagnostics", async () => {
@@ -287,34 +337,16 @@ describe("resolveServerFeaturePayload", () => {
         });
     });
 
-    it("enables channel bridges by default so the experimental UI toggle can appear", () => {
-        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveChannelBridgesFeature]);
-        expect(payload.features.channelBridges.enabled).toBe(true);
-        expect(payload.features.channelBridges.telegram.enabled).toBe(true);
-    });
-
-    it("disables channel bridges (and all providers) when the env toggle is off", () => {
+    it("does not emit retired channel bridge gates when historic env keys are set", () => {
         const payload = resolveServerFeaturePayload(
             {
                 HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: "0",
-            } as NodeJS.ProcessEnv,
-            [resolveChannelBridgesFeature],
-        );
-
-        expect(payload.features.channelBridges.enabled).toBe(false);
-        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
-    });
-
-    it("disables only telegram provider when the env toggle is off", () => {
-        const payload = resolveServerFeaturePayload(
-            {
                 HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: "0",
             } as NodeJS.ProcessEnv,
-            [resolveChannelBridgesFeature],
+            serverFeatureRegistry,
         );
 
-        expect(payload.features.channelBridges.enabled).toBe(true);
-        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
+        expect(payload.features).not.toHaveProperty("channelBridges");
     });
 
     it("disables only generic server-routed transfer when the env toggle is off", () => {

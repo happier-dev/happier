@@ -82,8 +82,8 @@ describe("featuresRoutes", () => {
     it("publishes the external-session import publication fence in the live feature payload", async () => {
         const { payload } = await getFeaturesPayload();
 
-        expect(payload.capabilities.compatibility.externalSessionImport).toEqual({
-            currentPublicationFenceVersion: 3,
+        expect(payload.capabilities.session.externalImport).toEqual({
+            publicationFenceVersion: 3,
         });
     });
 

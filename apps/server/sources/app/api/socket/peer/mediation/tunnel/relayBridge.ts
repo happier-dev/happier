@@ -13,6 +13,9 @@ type RelayBridgeIoTarget = Readonly<{
 
 type RelayBridgeIo = Readonly<{
     to(room: string): RelayBridgeIoTarget;
+    local: Readonly<{
+        to(room: string): RelayBridgeIoTarget;
+    }>;
 }>;
 
 type LocalRelayListener = (envelope: PeerTcpTunnelRelayEnvelope) => void;
@@ -56,6 +59,17 @@ export function createPeerTcpTunnelRelayBridge(realIo: RelayBridgeIo): PeerTcpTu
                     return result;
                 },
             };
+        },
+        local: {
+            to(room) {
+                return {
+                    emit(event, payload) {
+                        const result = realIo.local.to(room).emit(event, payload);
+                        publishLocal(room, event, payload);
+                        return result;
+                    },
+                };
+            },
         },
     };
 

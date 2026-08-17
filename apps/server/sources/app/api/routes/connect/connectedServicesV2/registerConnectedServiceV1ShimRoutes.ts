@@ -69,7 +69,12 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       incomingIdentity: metadata,
       allowProviderIdentityChange: false,
     });
-    if (result.status === "storage_mode_mismatch") return reply.code(400).send({ error: "connect_credential_invalid" });
+    if (
+      result.status === "storage_mode_mismatch"
+      || result.status === "revision_required"
+    ) {
+      return reply.code(400).send({ error: "connect_credential_invalid" });
+    }
     if (result.status === "provider_identity_mismatch") return reply.code(409).send({ error: "connect_reconnect_provider_identity_mismatch" });
     if (result.status !== "written") throw new Error(`Unexpected V1 credential mutation result: ${result.status}`);
 
@@ -84,7 +89,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       }),
       response: {
         200: z.object({
-          credentialRevision: z.string(),
+          credentialRevision: z.string().optional(),
           sealed: SealedConnectedServiceCredentialV1Schema,
           metadata: z.object({
             kind: z.enum(["oauth", "token"]),
@@ -140,10 +145,9 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
       return reply.code(409).send({ error: "connect_credential_unsupported_format" });
     }
 
-    return reply.send({
-      credentialRevision: snapshot.credentialRevision,
+    const response = {
       sealed: {
-        format: "account_scoped_v1",
+        format: "account_scoped_v1" as const,
         ciphertext: snapshot.content.c,
       },
       metadata: {
@@ -154,6 +158,10 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
           snapshot.metadata.providerIdentity?.accountId ?? null,
         expiresAt: snapshot.expiresAt,
       },
-    });
+    };
+    return snapshot.revisionSemantics === "revisioned"
+      && snapshot.credentialRevision !== null
+      ? reply.send({ ...response, credentialRevision: snapshot.credentialRevision })
+      : reply.send(response);
   });
 }

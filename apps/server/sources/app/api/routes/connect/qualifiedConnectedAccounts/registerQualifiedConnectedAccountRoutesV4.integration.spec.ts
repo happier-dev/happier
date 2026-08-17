@@ -145,6 +145,234 @@ describe("qualified Connected Account V4 route family (integration)", () => {
         })).resolves.toEqual({ refreshRequestedAt: null });
     });
 
+    it("maps a fail-closed credential storage-mode mismatch without exposing a server error", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const account = await db.account.create({
+            data: {
+                publicKey: null,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const headers = { "x-test-user-id": account.id };
+
+        await withAuthenticatedTestApp(
+            registerQualifiedConnectedAccountCredentialRoutesV4,
+            async (app) => {
+                const createdCredential = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/credential",
+                    headers,
+                    payload: {
+                        ref,
+                        authenticationModeId: "api-key",
+                        expectedCredentialRevision: null,
+                        content: {
+                            t: "plain",
+                            v: { token: "credential-secret" },
+                        },
+                        initialConfiguration: {
+                            expectedConfigurationRevision: null,
+                            replacementContentEnvelope: {
+                                t: "plain",
+                                v: { region: "eu" },
+                            },
+                        },
+                        metadata: {
+                            scopes: [],
+                        },
+                    },
+                });
+                expect(
+                    createdCredential.statusCode,
+                    createdCredential.body,
+                ).toBe(200);
+
+                await db.account.update({
+                    where: { id: account.id },
+                    data: {
+                        publicKey: "e2ee-public-key",
+                        encryptionMode: "e2ee",
+                    },
+                });
+
+                const encodedRef =
+                    encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                        QualifiedConnectedAccountRefSchema,
+                        ref,
+                    );
+                const response = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/credential?ref="
+                        + encodeURIComponent(encodedRef),
+                    headers,
+                });
+
+                expect(response.statusCode, response.body).toBe(400);
+                expect(response.json()).toEqual({
+                    error: "invalid-params",
+                });
+
+                const target = {
+                    kind: "account" as const,
+                    ref,
+                };
+                const encodedTarget =
+                    encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                        QualifiedConnectedAccountConfigurationTargetV4Schema,
+                        target,
+                    );
+                const configurationResponse = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/configuration?target="
+                        + encodeURIComponent(encodedTarget),
+                    headers,
+                });
+                expect(
+                    configurationResponse.statusCode,
+                    configurationResponse.body,
+                ).toBe(400);
+                expect(configurationResponse.json()).toEqual({
+                    error: "invalid-params",
+                });
+
+                const created = createdCredential.json();
+                const deleteResponse = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v4/connect/qualified/credential?ref="
+                        + encodeURIComponent(encodedRef)
+                        + `&expectedCredentialRevision=${encodeURIComponent(created.credentialRevision)}`
+                        + "&cleanupGroupReferences=true",
+                    headers,
+                });
+                expect(deleteResponse.statusCode, deleteResponse.body).toBe(400);
+                expect(deleteResponse.json()).toEqual({
+                    error: "invalid-params",
+                });
+            },
+        );
+
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+    });
+
+    it("rejects a pre-incarnation delete after the group id is recreated at the same counters", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST:
+                "none",
+        });
+        const account = await db.account.create({
+            data: {
+                publicKey: null,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const headers = { "x-test-user-id": account.id };
+
+        await withAuthenticatedTestApp(
+            registerQualifiedConnectedAccountCredentialRoutesV4,
+            async (app) => {
+                const original = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/groups",
+                    headers,
+                    payload: {
+                        service,
+                        group: { groupId: groupRef.groupId },
+                    },
+                });
+                expect(original.statusCode, original.body).toBe(200);
+                expect(original.json()).toMatchObject({
+                    group: {
+                        ref: groupRef,
+                        generation: 0,
+                        runtimeStateRevision: 0,
+                    },
+                });
+
+                // Simulate the original lifetime being deleted before its
+                // delayed request reaches the API. A replacement starts with
+                // the same resettable counters and logical ref.
+                await db.connectedServiceAuthGroup.deleteMany({
+                    where: {
+                        accountId: account.id,
+                        groupId: groupRef.groupId,
+                    },
+                });
+
+                const recreated = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/groups",
+                    headers,
+                    payload: {
+                        service,
+                        group: { groupId: groupRef.groupId },
+                    },
+                });
+                expect(recreated.statusCode, recreated.body).toBe(200);
+                expect(recreated.json()).toMatchObject({
+                    group: {
+                        ref: groupRef,
+                        generation: 0,
+                        runtimeStateRevision: 0,
+                    },
+                });
+
+                const encodedGroup =
+                    encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                        QualifiedConnectedAccountGroupRefSchema,
+                        groupRef,
+                    );
+                const staleDelete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v4/connect/qualified/group?group="
+                        + encodeURIComponent(encodedGroup)
+                        + "&expectedRuntimeStateRevision=0",
+                    headers,
+                });
+
+                expect(staleDelete.statusCode, staleDelete.body).toBe(409);
+                expect(staleDelete.json()).toEqual({
+                    error: "connect_group_incarnation_conflict",
+                });
+
+                const listed = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/groups?service="
+                        + encodeURIComponent(
+                            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                                QualifiedConnectedAccountServiceRefSchema,
+                                service,
+                            ),
+                        ),
+                    headers,
+                });
+                expect(listed.statusCode, listed.body).toBe(200);
+                expect(listed.json()).toMatchObject({
+                    groups: [{
+                        ref: groupRef,
+                        generation: 0,
+                        runtimeStateRevision: 0,
+                    }],
+                });
+            },
+        );
+    });
+
     it("serves every advertised operation through the canonical qualified repositories", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -379,6 +607,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         priority: 10,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -395,6 +624,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation - 1,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -414,6 +644,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -430,6 +661,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                         expectedSource: {
@@ -456,6 +688,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                         expectedSource: {
@@ -480,6 +713,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         service,
                         groupId: groupRef.groupId,
                         displayName: "Renamed",
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -495,6 +729,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     payload: {
                         service,
                         groupId: groupRef.groupId,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                         runtimeState: {
@@ -524,6 +759,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -543,6 +779,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         expectedGeneration: group.generation,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                         overrideRuntimeCooldown: true,
@@ -560,6 +797,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         connectedAccountId: ref.accountId,
                         priority: 20,
                         enabled: true,
+                        expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
                     },
@@ -598,6 +836,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 const memberDelete = {
                     group: groupRef,
                     connectedAccountId: ref.accountId,
+                    expectedIncarnation: group.incarnation,
                     expectedRuntimeStateRevision:
                         group.runtimeStateRevision,
                 };
@@ -622,7 +861,9 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         "/v4/connect/qualified/group?group="
                         + encodeURIComponent(encodedGroup)
                         + "&expectedRuntimeStateRevision="
-                        + group.runtimeStateRevision,
+                        + group.runtimeStateRevision
+                        + "&expectedIncarnation="
+                        + encodeURIComponent(group.incarnation),
                     headers,
                 });
                 expect(deletedGroup.statusCode).toBe(200);
@@ -749,7 +990,10 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     headers,
                     payload: { ref },
                 });
-                expect(refreshedQuota.statusCode).toBe(200);
+                expect(
+                    refreshedQuota.statusCode,
+                    refreshedQuota.body,
+                ).toBe(200);
 
                 const refreshedUsageRecord = await app.inject({
                     method: "POST",

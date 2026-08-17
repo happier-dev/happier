@@ -12,6 +12,13 @@ import {
   splitMigrationStatements,
 } from '@/migrations/missingMigrationReconciliation';
 import { prepareSqliteMigration } from './qualifiedConnectedAccountsV4SqliteMigration';
+import {
+  hasSessionSystemRecordContractMigration,
+  runSessionSystemRecordFinalContractBackfill,
+} from '@/app/session/systemRecords/sessionSystemRecordBackfillExecution';
+import {
+  runSessionSystemRecordMigrationDeployment,
+} from '@/app/session/systemRecords/sessionSystemRecordMigrationDeployment';
 
 type SqliteMigration = Readonly<{
   name: string;
@@ -71,6 +78,13 @@ function isLikelyNestedTransactionWrapperError(error: unknown): boolean {
     message.includes('cannot start a transaction within a transaction') ||
     message.includes('already a transaction') ||
     message.includes('transaction is active')
+  );
+}
+
+function migrationTemporarilyDisablesForeignKeys(sql: string): boolean {
+  return (
+    /^\s*PRAGMA\s+foreign_keys\s*=\s*OFF\s*;\s*$/im.test(sql) &&
+    /^\s*PRAGMA\s+foreign_keys\s*=\s*ON\s*;\s*$/im.test(sql)
   );
 }
 
@@ -359,44 +373,57 @@ export async function applySqliteMigrations(params: Readonly<{
       ensureAppliedMigrationChecksum(migration, appliedChecksums);
       continue;
     }
-    await params.executor.exec('BEGIN');
+    const temporarilyDisablesForeignKeys = migrationTemporarilyDisablesForeignKeys(migration.sql);
+    if (temporarilyDisablesForeignKeys) {
+      // SQLite ignores PRAGMA foreign_keys changes inside a transaction. Honor
+      // the migration's explicit table-rebuild directive before BEGIN, then
+      // restore its requested ON state after the transaction is settled.
+      await params.executor.exec('PRAGMA foreign_keys=OFF');
+    }
     try {
-      const migrationSql = await prepareSqliteMigration(
-        migration.name,
-        migration.sql,
-        params.executor,
-      );
-      await params.executor.exec(migrationSql);
-      await params.executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
-      await params.executor.exec('COMMIT');
-      appliedNow.push(migration.name);
-      applied.add(migration.name);
-      appliedChecksums.set(migration.name, migration.checksum);
-    } catch (error) {
+      await params.executor.exec('BEGIN');
       try {
-        await params.executor.exec('ROLLBACK');
-      } catch {
-        // ignore only a transaction that the migration SQL already ended
-      }
-      const canBackfillMissingMigrationRecord = legacyMode || applied.size > 0;
-      if (
-        canBackfillMissingMigrationRecord &&
-        (isLikelyAlreadyAppliedError(error) || isLikelyNestedTransactionWrapperError(error))
-      ) {
-        const safeMissingRecordBackfill = await canSafelyRecordAlreadyAppliedMigration({
-          migration,
-          executor: params.executor,
-        });
-        if (!safeMissingRecordBackfill) {
-          throw createUnsafeAlreadyAppliedMigrationError(migration, error);
-        }
+        const migrationSql = await prepareSqliteMigration(
+          migration.name,
+          migration.sql,
+          params.executor,
+        );
+        await params.executor.exec(migrationSql);
         await params.executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
+        await params.executor.exec('COMMIT');
         appliedNow.push(migration.name);
         applied.add(migration.name);
         appliedChecksums.set(migration.name, migration.checksum);
-        continue;
+      } catch (error) {
+        try {
+          await params.executor.exec('ROLLBACK');
+        } catch {
+          // ignore only a transaction that the migration SQL already ended
+        }
+        const canBackfillMissingMigrationRecord = legacyMode || applied.size > 0;
+        if (
+          canBackfillMissingMigrationRecord &&
+          (isLikelyAlreadyAppliedError(error) || isLikelyNestedTransactionWrapperError(error))
+        ) {
+          const safeMissingRecordBackfill = await canSafelyRecordAlreadyAppliedMigration({
+            migration,
+            executor: params.executor,
+          });
+          if (!safeMissingRecordBackfill) {
+            throw createUnsafeAlreadyAppliedMigrationError(migration, error);
+          }
+          await params.executor.insertAppliedMigration({ name: migration.name, checksum: migration.checksum });
+          appliedNow.push(migration.name);
+          applied.add(migration.name);
+          appliedChecksums.set(migration.name, migration.checksum);
+          continue;
+        }
+        throw error;
       }
-      throw error;
+    } finally {
+      if (temporarilyDisablesForeignKeys) {
+        await params.executor.exec('PRAGMA foreign_keys=ON');
+      }
     }
   }
 
@@ -421,15 +448,35 @@ export async function applySqliteMigrationsFromEnvironment(params: Readonly<{
   }
   await mkdir(dirname(dbPath), { recursive: true }).catch(() => {});
 
-  const executor = await createBunSqliteExecutor({
-    databasePath: dbPath,
-    busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
+  const deploy = async (stageMigrationsDir: string): Promise<{ applied: string[] }> => {
+    const executor = await createBunSqliteExecutor({
+      databasePath: dbPath,
+      busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
+    });
+    try {
+      return await applySqliteMigrations({ executor, migrationsDir: stageMigrationsDir });
+    } finally {
+      executor.close();
+    }
+  };
+  const result = await runSessionSystemRecordMigrationDeployment({
+    migrationsDir,
+    isContractApplied: async () => await hasSessionSystemRecordContractMigration({
+      provider: 'sqlite',
+      databaseUrl,
+    }),
+    deploy: async (stage) => await deploy(stage.migrationsDir),
+    runFinalContractBackfill: async () => {
+      await runSessionSystemRecordFinalContractBackfill({ provider: 'sqlite', databaseUrl });
+    },
   });
-  try {
-    return await applySqliteMigrations({ executor, migrationsDir });
-  } finally {
-    executor.close();
-  }
+  return {
+    applied: [
+      ...(result.expand?.applied ?? []),
+      ...(result.contract?.applied ?? []),
+      ...result.final.applied,
+    ],
+  };
 }
 
 export async function applySqliteMigrationsIfNeeded(params: Readonly<{

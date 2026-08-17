@@ -7,6 +7,7 @@ import * as privacyKit from "privacy-kit";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { db } from "@/storage/db";
+import { enableAuthentication } from "../../utils/enableAuthentication";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -175,6 +176,90 @@ describe("connectRoutes (external auth params)", () => {
 
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: "Invalid proof" });
+
+        await app.close();
+    });
+
+    it("requires the current bearer and binds first-key step-up state to its Account and request digest", async () => {
+        applyGithubExternalAuthParamsEnv(harness, {
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.accountIdentity.create({
+            data: {
+                accountId: account.id,
+                provider: "github",
+                providerUserId: "provider-user-1",
+                profile: {},
+            },
+        });
+        const token = await auth.createToken(account.id);
+        const proofHash = "c".repeat(64);
+        const requestDigest = `aemrb1_${"A".repeat(43)}`;
+        const url =
+            `/v1/auth/external/github/params?mode=keyless`
+            + `&proofHash=${proofHash}`
+            + `&purpose=account_encryption_first_key`
+            + `&requestDigest=${encodeURIComponent(requestDigest)}`;
+
+        const app = createTestApp();
+        enableAuthentication(app);
+        connectRoutes(app);
+        await app.ready();
+
+        const missingBearer = await app.inject({ method: "GET", url });
+        expect(missingBearer.statusCode).toBe(401);
+
+        const response = await app.inject({
+            method: "GET",
+            url,
+            headers: { authorization: `Bearer ${token}` },
+        });
+        expect(response.statusCode, response.body).toBe(200);
+        const authorizeUrl = new URL(response.json().url);
+        const state = authorizeUrl.searchParams.get("state");
+        expect(state).toBeTruthy();
+        await expect(auth.verifyOauthStateToken(state!)).resolves.toMatchObject({
+            flow: "auth",
+            provider: "github",
+            userId: account.id,
+            proofHash,
+            purpose: "account_encryption_first_key",
+            requestDigest,
+        });
+
+        await db.account.update({
+            where: { id: account.id },
+            data: {
+                contentPublicKey:
+                    new Uint8Array(32).fill(7),
+                contentPublicKeySig:
+                    new Uint8Array(64).fill(8),
+            },
+        });
+        const retainedKeyMaterial =
+            await app.inject({
+                method: "GET",
+                url,
+                headers: {
+                    authorization:
+                        `Bearer ${token}`,
+                },
+            });
+        expect(
+            retainedKeyMaterial.statusCode,
+            retainedKeyMaterial.body,
+        ).toBe(403);
+        expect(retainedKeyMaterial.json()).toEqual({
+            error: "step-up-not-eligible",
+        });
 
         await app.close();
     });

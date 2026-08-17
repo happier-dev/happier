@@ -65,12 +65,23 @@ model Account {
     ServiceAccountToken    ServiceAccountToken[]
     ProviderAccountUsageRecord    ProviderAccountUsageRecord[]
     ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
+    ConnectedServiceAuthGroupLegacyV3MutationFence ConnectedServiceAuthGroupLegacyV3MutationFence[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
     Artifact               Artifact[]
+    AccountPluginIntent    AccountPluginIntent[]
+    AccountPluginRelease   AccountPluginRelease[]
+    PluginMachineMaterialization PluginMachineMaterialization[]
+    PluginWebhookEndpoint  PluginWebhookEndpoint[]
+    PluginWebhookEndpointOperation PluginWebhookEndpointOperation[]
+    PluginWebhookDelivery  PluginWebhookDelivery[]
     AccessKey              AccessKey[]
     UserFeedItem           UserFeedItem[]
     UserKVStore            UserKVStore[]
+    PluginCollectionRows   PluginCollectionRow[]
+    PluginCollectionIndexStates PluginCollectionIndexState[]
+    PluginCollectionRelations PluginCollectionRelation[]
+    PluginCollectionCandidatePreparationStages PluginCollectionCandidatePreparationStage[]
     SharedBySessions       SessionShare[]             @relation("SharedBySessions")
     SharedWithSessions     SessionShare[]             @relation("SharedWithSessions")
     SessionShareAccessLogs SessionShareAccessLog[]    @relation("SessionShareAccessLogs")
@@ -78,6 +89,7 @@ model Account {
     PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
     AccountChanges         AccountChange[]
     AccountSettingsSnapshots AccountSettingsSnapshot[]
+    AccountEncryptionTransitions AccountEncryptionTransition[]
     SessionPendingMessage  SessionPendingMessage[]
     SessionSystemRecord    SessionSystemRecord[]
     SessionSubagentCustody SessionSubagentCustody[]
@@ -91,6 +103,8 @@ model Account {
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
+    automationEventCatalogState AutomationEventCatalogState?
+    automationEventSourceCatalogStatuses AutomationEventSourceCatalogStatus[]
     SessionFolderAssignment SessionFolderAssignment[]
     SessionPin                    SessionPin[]
     SessionOrganizationFolder     SessionOrganizationFolder[]
@@ -115,6 +129,128 @@ model AccountSettingsSnapshot {
     @@unique([accountId, version])
     @@index([accountId, version])
     @@index([createdAt])
+}
+
+/// The Account-owned preparation record for a bounded encryption transition. It is not a
+/// Collection coordinator: participants keep their own source revision and envelope facts.
+model AccountEncryptionTransition {
+    /// V5's public transition identity is a UUID and must be persisted without
+    /// truncation on every provider.
+    id                         String   @id @default(uuid())
+    accountId                  String
+    fromEncryptionMode         String
+    toEncryptionMode           String
+    sourceAccountVersion       Int
+    sourceSettingsVersion      Int
+    sourceSigningKeyFingerprint String?
+    sourceContentKeyFingerprint String?
+    targetSigningKeyFingerprint String?
+    targetContentKeyFingerprint String?
+    /// Public target key material is retained only while activation needs it
+    /// after a process restart; private source/target payloads remain in the
+    /// Collection owner and are never duplicated here.
+    targetAccountPublicKey      String?
+    targetContentPublicKey      Bytes?
+    targetContentPublicKeySig   Bytes?
+    /// `activeAccountId` is present only while this row is preparing or authorized.
+    status                     String
+    activeAccountId            String?  @unique
+    preparedAt                 DateTime
+    authorizedAt               DateTime?
+    expiresAt                  DateTime
+    activatedAt                DateTime?
+    /// Exact committed activation response for loss/retry rejoin. These facts
+    /// are written atomically with the Account mode flip and are not derived
+    /// from a later Account state.
+    activatedAccountVersion    Int?
+    activatedAccountUpdatedAt  DateTime?
+    activatedAccountCursor     Int?
+    cancelledAt                DateTime?
+    expiredAt                  DateTime?
+    censusParticipantCount     Int      @default(0)
+    censusSourceBytes          BigInt   @default(0)
+    censusTargetBytes          BigInt   @default(0)
+    stagedParticipantCount     Int      @default(0)
+    stagedSourceBytes          BigInt   @default(0)
+    stagedTargetBytes          BigInt   @default(0)
+    reservedCapacityBytes      BigInt   @default(0)
+    /// Measured limits are intentionally nullable: schema presence never activates a ceiling.
+    measuredParticipantLimit   Int?
+    measuredEncodedByteLimit   BigInt?
+    createdAt                  DateTime @default(now())
+    updatedAt                  DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    stages  AccountEncryptionTransitionCollectionStage[]
+    automationStageState AccountEncryptionTransitionAutomationStageState?
+    automationStages AccountEncryptionTransitionAutomationStage[]
+
+    @@index([accountId, status, expiresAt], map: "AccountEncryptionTransition_account_status_expiry_idx")
+}
+
+/// Exact immutable Collection facts staged under the Account transition. These rows never own
+/// Collection lifecycle and are removed only with their parent transition.
+model AccountEncryptionTransitionCollectionStage {
+    id                 String   @id @default(cuid())
+    transitionId       String
+    pluginId           String
+    collectionId       String
+    rowId              String
+    sourceRevision     Int
+    sourceEnvelope     Json
+    /// A prepare record reserves every exact source participant before a
+    /// client derives its target. Target facts become non-null only on stage.
+    targetEnvelope     Json?
+    schemaVersion      Int
+    contractDigest     String
+    sourceEncodedBytes BigInt
+    targetEncodedBytes BigInt?
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+
+    transition AccountEncryptionTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
+
+    @@unique([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_identity_key")
+    @@index([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_transition_page_idx")
+}
+
+/// Account-owned source/target census facts for the closed Automation participant.
+/// Its presence is the explicit ready marker, including a zero-source census.
+model AccountEncryptionTransitionAutomationStageState {
+    transitionId              String   @id
+    sourceParticipantCount    Int
+    sourceRunCount            Int
+    sourceEncodedBytes        BigInt
+    stagedParticipantCount    Int
+    stagedRunCount            Int
+    stagedSourceBytes         BigInt
+    stagedTargetBytes         BigInt
+    createdAt                 DateTime @default(now())
+    updatedAt                 DateTime @updatedAt
+
+    transition AccountEncryptionTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
+}
+
+/// Exact immutable Automation source/target facts staged by the one Account transition.
+/// This is a closed Definition|Run participant union, not a generic participant registry.
+model AccountEncryptionTransitionAutomationStage {
+    id                 String   @id @default(uuid())
+    transitionId       String
+    participantKind    String
+    participantId      String
+    automationId       String
+    sourceRevision     Int
+    sourceContent      String
+    targetContent      String?
+    sourceEncodedBytes BigInt
+    targetEncodedBytes BigInt?
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+
+    transition AccountEncryptionTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
+
+    @@unique([transitionId, participantKind, participantId], map: "AccountEncryptionTransitionAutomationStage_identity_key")
+    @@index([transitionId, participantKind, participantId], map: "AccountEncryptionTransitionAutomationStage_transition_page_idx")
 }
 
 enum AccountIdentityEligibilityStatus {
@@ -398,6 +534,8 @@ model Session {
     active            Boolean             @default(false)
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())
+    publisherGeneration BigInt             @default(0)
+    publisherGenerationLastActiveAt DateTime?
     meaningfulActivityAt DateTime?
     createdAt         DateTime            @default(now())
     updatedAt         DateTime            @updatedAt
@@ -439,6 +577,9 @@ model SessionTurn {
     terminalAt              BigInt?
     lastRuntimeIssueJson    String?
     transcriptAnchorsJson   String?
+    transcriptAnchorProjectionVersion Int @default(0)
+    transcriptAnchorMinSeq            Int?
+    transcriptAnchorMaxSeq            Int?
     rollbackState           String?
     rollbackReason          String?
     agentRollbackOrdinal    Int?
@@ -451,6 +592,7 @@ model SessionTurn {
     @@index([sessionId, status])
     @@index([sessionId, rollbackState])
     @@index([sessionId, agentId, agentTurnId])
+    @@index([sessionId, transcriptAnchorProjectionVersion, transcriptAnchorMaxSeq, transcriptAnchorMinSeq], map: "SessionTurn_transcript_anchor_range_idx")
 }
 
 model SessionTurnMutationReceipt {
@@ -614,16 +756,23 @@ model SessionSystemRecord {
     namespace String
     kind      String
     localId   String
+    permissionTurnId String?
+    permissionRequestId String?
     content   Json
+    ownerKind String
+    pluginId String?
+    namespaceAddressKey Bytes
+    recordAddressKey Bytes
+    version Int @default(1)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
     session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-    @@unique([accountId, sessionId, namespace, localId])
-    @@index([accountId, sessionId, namespace, kind, updatedAt(sort: Desc), id(sort: Desc)], map: "SessionSystemRecord_account_kind_updated_idx")
-    @@index([sessionId, namespace, kind, updatedAt(sort: Desc), id(sort: Desc)])
+    @@unique([accountId, sessionId, recordAddressKey], map: "SessionSystemRecord_account_session_record_key")
+    @@index([accountId, sessionId, namespaceAddressKey, kind, updatedAt(sort: Desc), id(sort: Desc)], map: "SessionSystemRecord_account_namespace_kind_updated_idx")
+    @@index([sessionId], map: "SessionSystemRecord_sessionId_idx")
 }
 
 model SessionSubagentCustody {
@@ -705,12 +854,18 @@ model SessionMessage {
     messageRole String?
     /// [SessionMessageContent]
     content   Json
+    /// [SessionInputAdmissionReceiptV1]
+    inputAdmissionReceipt Json?
+    /// [SessionInputRequestEqualityEvidenceV1]
+    requestEqualityEvidenceV1 Json?
     sourceCreatedAt DateTime?
     sourceUpdatedAt DateTime?
     /// [SessionTranscriptObservationProvenanceV1]
     transcriptObservationProvenance Json?
     /// [SessionMessageDeliveryResolutionV1]
     deliveryResolution Json?
+    /// Private currentness fact for host-issued Message Action references.
+    rowRevision BigInt @default(0)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -748,6 +903,14 @@ model SessionPendingMessage {
     content          Json
     /// [PendingRequestedActionV1]
     requestedAction  Json
+    /// [SessionInputAdmissionReceiptV1]
+    inputAdmissionReceipt Json?
+    /// [SessionInputRequestEqualityEvidenceV1]
+    requestEqualityEvidenceV1 Json?
+    /// The immediately preceding local id for one exact response-loss rejoin.
+    predecessorLocalId String?
+    /// [PendingMessageMutationFingerprintV1]
+    replacementMutationFingerprint String?
     /// Frozen provider operation for a claimed Pending row.
     providerAction   PendingProviderAction?
     status           SessionPendingMessageStatus @default(queued)
@@ -889,6 +1052,12 @@ model Machine {
     installationId     String?
     installationPublicKey Bytes?
     contentPublicKeyFingerprint String?
+    /// [MachineOperationProtocolCapabilitiesV1]
+    operationProtocolCapabilities Json?
+    /// Monotonic only across accepted complete capability projections.
+    operationProtocolCapabilitiesRevision Int?
+    /// Null means this machine has not accepted a complete plugin-materialization snapshot.
+    pluginMaterializationRevision BigInt?
     replacedByMachineId String?
     replacedAt         DateTime?
     replacementReason  String?
@@ -904,6 +1073,7 @@ model Machine {
     accountChanges     AccountChange[] @relation("AccountChangeMachine")
     automationAssignments AutomationAssignment[]
     automationClaimedRuns AutomationRun[] @relation("AutomationRunClaimedByMachine")
+    pluginMaterializations PluginMachineMaterialization[]
 
     @@unique([accountId, id])
     @@index([accountId])
@@ -921,6 +1091,7 @@ enum AutomationScheduleKind {
 enum AutomationTargetType {
     new_session
     existing_session
+    execution_run
 }
 
 enum AutomationRunState {
@@ -931,6 +1102,62 @@ enum AutomationRunState {
     failed
     cancelled
     expired
+    dispatch_failed
+    skipped
+    missed
+    outcome_uncertain
+}
+
+enum AutomationTriggerKind {
+    schedule
+    manual
+    pluginEvent
+    conversation
+}
+
+enum AutomationObservationTransport {
+    checkpointedPull
+    durablePush
+}
+
+enum AutomationRunOriginKind {
+    scheduled
+    manual
+    pluginEvent
+    conversation
+}
+
+enum AutomationExecutionDispatchState {
+    notStarted
+    dispatchPermitted
+    retryWaiting
+    started
+    settled
+    outcomeUnknown
+}
+
+enum AutomationRunReplyHandoffState {
+    none
+    awaitingResult
+    ready
+    handingOff
+    accepted
+    suppressed
+    blocked
+}
+
+enum AutomationEventSourceStatusState {
+    uninitialized
+    baselined
+    observing
+    backingOff
+    attention
+}
+
+enum AutomationEventSourceCatalogStatusState {
+    current
+    reconciling
+    reconciliationLate
 }
 
 model Automation {
@@ -940,22 +1167,39 @@ model Automation {
     name             String
     description      String?
     enabled          Boolean                @default(true)
-    scheduleKind     AutomationScheduleKind
+    deletedAt        DateTime?
+    scheduleKind     AutomationScheduleKind?
     scheduleExpr     String?
     everyMs          Int?
     timezone         String?
     targetType       AutomationTargetType
     templateCiphertext String
     templateVersion  Int                    @default(0)
+    triggerKind                    AutomationTriggerKind @default(schedule)
+    triggerEventPluginId           String?
+    triggerEventLocalId            String?
+    triggerSourceSelectorId        String?
+    triggerSourceContractVersion   Int?
+    triggerObservationTransport    AutomationObservationTransport?
+    triggerWebhookEndpointId       String?
+    triggerObservationStartsAt     DateTime?
+    watcherMachineId               String?
+    watcherMachineInstallationId   String?
+    watcherPluginId                String?
+    watcherMaterializationId       String?
+    triggerDefinitionEnvelope      String?
     nextRunAt        DateTime?
     lastRunAt        DateTime?
     createdAt        DateTime               @default(now())
     updatedAt        DateTime               @updatedAt
     assignments      AutomationAssignment[]
     runs             AutomationRun[]
+    eventSourceStatuses AutomationEventSourceStatus[]
 
     @@index([accountId, enabled, updatedAt(sort: Desc)])
     @@index([accountId, nextRunAt])
+    @@index([accountId, enabled, triggerKind, triggerEventPluginId, triggerEventLocalId], map: "Automation_event_trigger_lookup_idx")
+    @@index([accountId, enabled, watcherMachineId, watcherMaterializationId], map: "Automation_watcher_materialization_lookup_idx")
 }
 
 model AutomationAssignment {
@@ -977,10 +1221,37 @@ model AutomationAssignment {
 model AutomationRun {
     id                 String             @id @default(cuid())
     automationId       String
-    automation         Automation         @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    automation         Automation         @relation(fields: [automationId], references: [id], onDelete: Restrict)
     accountId          String
     account            Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
     state              AutomationRunState @default(queued)
+    originKind         AutomationRunOriginKind @default(scheduled)
+    originOccurredAt   DateTime?
+    occurrenceKey      String?
+    legacyManualIdempotencyKey String? @map("idempotencyKey")
+    occurrenceEvidenceEqualityTag String?
+    originSourceSelectorId String?
+    triggerEvidenceEnvelope String?
+    executionInputEnvelope String?
+    executionDispatchState AutomationExecutionDispatchState?
+    executionAttempt   Int                @default(0)
+    executionDispatchCommittedAt DateTime?
+    executionDispatchDueAt DateTime?
+    executionNativeRunId String?
+    executionNativeCallId String?
+    executionNativeSidechainId String?
+    resultEnvelope     String?
+    replyContextEnvelope String?
+    replyHandoffActionPluginId String?
+    replyHandoffActionLocalId String?
+    replyHandoffTargetMachineId String?
+    replyHandoffTargetMachineInstallationId String?
+    replyHandoffTargetMaterializationId String?
+    replyHandoffId     String?
+    replyHandoffState  AutomationRunReplyHandoffState @default(none)
+    replyHandoffAttempt Int @default(0)
+    replyHandoffDueAt  DateTime?
+    replyHandoffReceiptEnvelope String?
     scheduledAt        DateTime
     dueAt              DateTime
     claimedAt          DateTime?
@@ -990,6 +1261,7 @@ model AutomationRun {
     claimedByMachine   Machine?           @relation("AutomationRunClaimedByMachine", fields: [claimedByMachineId], references: [id], onDelete: SetNull)
     leaseExpiresAt     DateTime?
     attempt            Int                @default(0)
+    revision           Int                @default(0)
     summaryCiphertext  String?
     errorCode          String?
     errorMessage       String?
@@ -1000,9 +1272,14 @@ model AutomationRun {
     events             AutomationRunEvent[]
 
     @@index([accountId, state, dueAt])
+    @@index([accountId, originKind, state])
     @@index([automationId, dueAt])
     @@index([claimedByMachineId, leaseExpiresAt])
     @@index([state, finishedAt])
+    @@index([state, dueAt])
+    @@index([replyHandoffState, replyHandoffDueAt])
+    @@unique([automationId, occurrenceKey])
+    @@unique([automationId, legacyManualIdempotencyKey], map: "AutomationRun_automationId_idempotencyKey_key")
 }
 
 model AutomationRunEvent {
@@ -1015,6 +1292,57 @@ model AutomationRunEvent {
 
     @@index([runId, ts])
     @@index([ts])
+}
+
+model AutomationEventCatalogState {
+    accountId                       String @id
+    account                         Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    eventSourceDefinitionsRevision  BigInt @default(0)
+}
+
+model AutomationEventSourceStatus {
+    automationId                    String
+    automation                      Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    eventPluginId                   String
+    eventLocalId                    String
+    sourceSelectorId                String
+    templateVersion                 Int
+    reporterMachineId               String
+    reporterMachineInstallationId   String
+    reporterMaterializationId       String
+    reporterImmutableGenerationId   String?
+    state                           AutomationEventSourceStatusState
+    code                            String?
+    lastObservedAt                  DateTime?
+    lastDispositionAt               DateTime?
+    nextRetryAt                     DateTime?
+    observedCount                   Int @default(0)
+    admittedCount                   Int @default(0)
+    skippedCount                    Int @default(0)
+    revision                        Int @default(0)
+
+    @@id([automationId, eventPluginId, eventLocalId, sourceSelectorId])
+    @@index([state, nextRetryAt])
+}
+
+model AutomationEventSourceCatalogStatus {
+    accountId                       String
+    account                         Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    eventPluginId                   String
+    reporterMachineId               String
+    reporterMachineInstallationId   String
+    reporterMaterializationId       String
+    scopeKey                        String
+    observedRevision                BigInt
+    adoptedRevision                 BigInt?
+    state                           AutomationEventSourceCatalogStatusState
+    scanStartedAt                   DateTime?
+    nextRetryAt                     DateTime?
+    reportedAt                      DateTime
+    revision                        Int @default(0)
+
+    @@id([accountId, eventPluginId, reporterMaterializationId, scopeKey])
+    @@index([state, reportedAt])
 }
 
 model UploadedFile {
@@ -1201,6 +1529,20 @@ model ConnectedServiceAuthGroup {
     @@index([accountId, vendor])
 }
 
+/// The one group incarnation that released V3 clients may mutate without
+/// carrying an incarnation token. The row intentionally survives group
+/// deletion so a delayed V3 write cannot target a recreated group.
+model ConnectedServiceAuthGroupLegacyV3MutationFence {
+    accountId                     String @map("account_id")
+    qualifiedGroupDigest          String @map("qualified_group_digest")
+    legacyV3EligibleIncarnation   String @map("legacy_v3_eligible_incarnation")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "csag_legacy_v3_fence_account_fkey")
+
+    @@id([accountId, qualifiedGroupDigest], map: "csag_legacy_v3_fence_pkey")
+    @@map("connected_service_auth_group_legacy_v3_mutation_fence")
+}
+
 model ConnectedServiceAuthGroupMember {
     id        String   @id @default(cuid())
     groupDbId String
@@ -1245,9 +1587,282 @@ model Artifact {
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
     accountChanges    AccountChange[] @relation("AccountChangeArtifact")
+    pluginUiArtifact  AccountPluginUiArtifact?
+    packageAssetRelease AccountPluginRelease? @relation("AccountPluginReleasePackageAsset")
 
     @@index([accountId])
     @@index([accountId, updatedAt(sort: Desc)])
+}
+
+//
+// Account plugin availability / Artifact classification
+//
+
+/// Present-user selection and writable collection policy for one plugin on one Account.
+model AccountPluginIntent {
+    id                  String   @id @default(cuid())
+    accountId           String
+    account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId            String
+    desiredVersion      String?
+    enabled             Boolean  @default(false)
+    offlineUiHosting    String   @default("disabled")
+    writableCollections Json
+    revision            BigInt   @default(0)
+    createdAt           DateTime @default(now())
+    updatedAt           DateTime @updatedAt
+
+    @@unique([accountId, pluginId])
+}
+
+/// Immutable accepted portable release facts. Its database ID is deliberately internal;
+/// public release identity remains the qualified pluginId@version coordinate.
+model AccountPluginRelease {
+    id                  String   @id @default(cuid())
+    accountId           String
+    account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId            String
+    version             String
+    archiveDigestSha256 String
+    normalizedManifest  Json
+    collectionContracts Json
+    uiSlots             Json
+    packageAssetArchive Json?
+    packageAssetArtifactId String? @unique
+    packageAssetArtifact Artifact? @relation("AccountPluginReleasePackageAsset", fields: [packageAssetArtifactId], references: [id], onDelete: Restrict)
+    createdAt           DateTime @default(now())
+    uiArtifacts         AccountPluginUiArtifact[]
+
+    @@unique([accountId, pluginId, version])
+}
+
+/// The sole classification link from one generic Artifact to one immutable plugin UI slot.
+model AccountPluginUiArtifact {
+    id             String   @id @default(cuid())
+    releaseId      String
+    release        AccountPluginRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+    contributionId String
+    tier           String
+    platform       String
+    artifactId     String
+    artifact       Artifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+    artifactDigest String
+    compatibility  Json
+    createdAt      DateTime @default(now())
+
+    @@unique([releaseId, contributionId, tier, platform], map: "AccountPluginUiArtifact_release_slot_key")
+    @@unique([artifactId])
+}
+
+/// Current machine installation epochs. A nullable Machine high-watermark distinguishes
+/// “no snapshot yet” from a complete accepted empty inventory without a fifth snapshot row.
+model PluginMachineMaterialization {
+    id                String   @id @default(cuid())
+    accountId         String
+    account           Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    serverIdentityId  String
+    machineId         String
+    machine           Machine  @relation(fields: [accountId, machineId], references: [accountId, id], onDelete: Cascade)
+    materializationId String
+    pluginId          String
+    version           String
+    sourceClass       String
+    portableRelease   Boolean
+    archiveDigestSha256 String?
+    uiArtifacts       Json
+    enabled           Boolean
+    trustState        String
+    observedAt        DateTime
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    @@unique([machineId, materializationId])
+    @@index([accountId, serverIdentityId, machineId], map: "PluginMachineMaterialization_account_server_machine_idx")
+    @@index([accountId, pluginId])
+}
+
+//
+// Plugin webhook ingress
+//
+
+/// Server-owned public-route custody. Account-owned routes point at their one endpoint;
+/// shared routes instead carry the operator-qualified contribution allowed to use them.
+model PluginWebhookRoute {
+    id                            String   @id @default(cuid())
+    opaqueRouteId                 String   @unique
+    verifierKind                  String
+    routingKind                   String
+    operatorPluginId              String?
+    operatorWebhookContributionId String?
+    accountEndpointId             String?  @unique
+    accountEndpoint               PluginWebhookEndpoint? @relation("PluginWebhookRouteAccountEndpoint", fields: [accountEndpointId], references: [id], onDelete: SetNull)
+    enabled                       Boolean  @default(true)
+    revokedAt                     DateTime?
+    policyVersion                 Int      @default(1)
+    currentCredentialId           String?  @unique
+    currentCredential             PluginWebhookCredential? @relation("PluginWebhookRouteCurrentCredential", fields: [currentCredentialId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    previousCredentialId          String?  @unique
+    previousCredential            PluginWebhookCredential? @relation("PluginWebhookRoutePreviousCredential", fields: [previousCredentialId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    createdAt                     DateTime @default(now())
+    updatedAt                     DateTime @updatedAt
+
+    endpoints   PluginWebhookEndpoint[]   @relation("PluginWebhookRouteEndpoints")
+    credentials PluginWebhookCredential[] @relation("PluginWebhookRouteCredentials")
+    deliveries  PluginWebhookDelivery[]
+
+    @@unique([operatorPluginId, operatorWebhookContributionId], map: "plugin_webhook_route_operator_contribution_key")
+}
+
+/// Account endpoint binding. The canonical Account deletion owner explicitly detaches a shared
+/// provider-installation binding into its bounded replay-isolation tombstone before deleting.
+model PluginWebhookEndpoint {
+    id                                String   @id
+    accountId                         String?
+    account                           Account? @relation(fields: [accountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    pluginId                          String?
+    webhookContributionId             String?
+    handlerActionId                   String?
+    sourceInstanceId                  String?
+    ensureIdempotencyKey              String?
+    ensureRequestFingerprint          String?
+    setupKind                         String?
+    routeId                           String
+    route                             PluginWebhookRoute @relation("PluginWebhookRouteEndpoints", fields: [routeId], references: [id], onDelete: Restrict)
+    accountRoute                      PluginWebhookRoute? @relation("PluginWebhookRouteAccountEndpoint")
+    routingKind                       String
+    providerInstallationId            String?
+    enabled                           Boolean  @default(true)
+    revision                          Int      @default(1)
+    revokedAt                         DateTime?
+    releasedAt                        DateTime?
+    tombstoneExpiresAt                DateTime?
+    targetMachineId                   String?
+    targetMachineInstallationId       String?
+    targetMaterializationId           String?
+    targetPluginVersion               String?
+    previousTargetMachineId           String?
+    previousTargetMachineInstallationId String?
+    previousTargetMaterializationId   String?
+    previousTargetPluginVersion       String?
+    createdAt                         DateTime @default(now())
+    updatedAt                         DateTime @updatedAt
+
+    deliveries PluginWebhookDelivery[]
+    operations PluginWebhookEndpointOperation[]
+
+    @@unique([accountId, ensureIdempotencyKey])
+    @@unique([accountId, pluginId, webhookContributionId, sourceInstanceId], map: "plugin_webhook_endpoint_account_contribution_source_key")
+    @@unique([routeId, providerInstallationId])
+    @@index([tombstoneExpiresAt])
+}
+
+/// Immutable result facts for the bounded revoke/retarget endpoint operations. This is not a
+/// generic Action idempotency table: it makes response-loss retries rejoin their closed endpoint
+/// operation without persisting raw requests, fingerprints, credentials, or server identity.
+model PluginWebhookEndpointOperation {
+    id                                  String   @id @default(cuid())
+    accountId                           String
+    account                             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    endpointId                          String
+    endpoint                            PluginWebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+    operationKind                       String
+    idempotencyKey                      String
+    expectedRevision                    Int
+    requestTargetMachineId              String?
+    requestTargetMaterializationId      String?
+    requestTargetPluginId               String?
+    resultKind                          String
+    resultRevision                      Int
+    resultPreviousTargetMachineId       String?
+    resultPreviousTargetMaterializationId String?
+    resultPreviousTargetPluginId        String?
+    resultTargetMachineId               String?
+    resultTargetMaterializationId       String?
+    resultTargetPluginId                String?
+    createdAt                           DateTime @default(now())
+
+    @@unique([endpointId, idempotencyKey])
+    @@index([accountId])
+}
+
+/// At-rest encrypted verifier material. Route pointers select at most current and previous
+/// versions; credential rotation remains a single transactional owner.
+model PluginWebhookCredential {
+    id                  String   @id @default(cuid())
+    routeId             String
+    route               PluginWebhookRoute @relation("PluginWebhookRouteCredentials", fields: [routeId], references: [id], onDelete: Cascade)
+    credentialVersionId String   @unique
+    verifierKind        String
+    encryptedSecret     Bytes
+    state               String
+    acceptUntil         DateTime?
+    createdAt           DateTime @default(now())
+    updatedAt           DateTime @updatedAt
+
+    currentForRoute  PluginWebhookRoute? @relation("PluginWebhookRouteCurrentCredential")
+    previousForRoute PluginWebhookRoute? @relation("PluginWebhookRoutePreviousCredential")
+}
+
+/// Durable, deduplicated webhook delivery custody. Provider facts remain inside `payload`;
+/// all target facts are frozen on receipt rather than re-reading a mutable endpoint binding.
+model PluginWebhookDelivery {
+    id                          String   @id @default(cuid())
+    endpointId                  String
+    endpoint                    PluginWebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Restrict)
+    accountId                   String
+    account                     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    routeId                     String
+    route                       PluginWebhookRoute @relation(fields: [routeId], references: [id], onDelete: Restrict)
+    deliveryIdentityDigest      String   @unique
+    verifierKind                String
+    targetMachineId             String
+    targetMachineInstallationId String
+    targetMaterializationId     String
+    targetPluginId              String
+    targetPluginVersion         String
+    endpointRevision            Int
+    endpointWebhookContributionId String
+    endpointHandlerActionId      String
+    endpointSourceInstanceId     String
+    payloadKind                 String
+    payload                     Json?
+    payloadBytes                BigInt   @default(0)
+    wireVersion                 Int
+    payloadVersion              Int
+    state                       String
+    attemptCount                Int      @default(0)
+    replayCount                 Int      @default(0)
+    nextAttemptAt               DateTime
+    offlineSinceAt              DateTime?
+    leaseId                     String?
+    claimedByMachineId          String?
+    claimedByMachineInstallationId String?
+    firstClaimAt                DateTime?
+    executionStartedAt          DateTime?
+    leaseExpiresAt              DateTime?
+    revision                    Int      @default(0)
+    lastErrorCode               String?
+    automationAdmissionUnresolved Json?
+    terminalDisposition         String?
+    succeededAt                 DateTime?
+    deadLetteredAt              DateTime?
+    discardedAt                 DateTime?
+    discardedByUserId           String?
+    discardReasonCode           String?
+    payloadPurgeAt              DateTime?
+    metadataDeleteAt            DateTime
+    receivedAt                  DateTime
+    createdAt                   DateTime @default(now())
+    updatedAt                   DateTime @updatedAt
+
+    @@index([targetMachineId, targetMachineInstallationId, targetMaterializationId, state, nextAttemptAt], map: "plugin_webhook_delivery_target_claim_idx")
+    @@index([state, leaseExpiresAt])
+    @@index([endpointId, state])
+    @@index([accountId, state])
+    @@index([accountId, state, payloadBytes])
+    @@index([endpointId, state, payloadBytes])
+    @@index([payloadPurgeAt])
+    @@index([metadataDeleteAt])
 }
 
 //
@@ -1341,6 +1956,187 @@ model UserKVStore {
 }
 
 //
+// Plugin Account Collections
+//
+
+/// Immutable normalized collection contract. Plugin package/release identity is intentionally
+/// absent: rows retain the semantic contract that owns their schema, projections, and indexes.
+model PluginCollectionContract {
+    id                String   @id @default(cuid())
+    pluginId          String
+    collectionId      String
+    schemaVersion     Int
+    contractDigest    String
+    normalizedSchema  Json
+    indexes           Json
+    relations         Json
+    privacyProjection Json
+    createdAt         DateTime @default(now())
+
+    rows        PluginCollectionRow[]
+    indexStates PluginCollectionIndexState[]
+    candidatePreparationSourceStages PluginCollectionCandidatePreparationStage[] @relation("PluginCollectionCandidatePreparationSourceContract")
+    candidatePreparationTargetStages PluginCollectionCandidatePreparationStage[] @relation("PluginCollectionCandidatePreparationTargetContract")
+
+    @@unique([pluginId, collectionId, schemaVersion], map: "PluginCollectionContract_identity_schema_key")
+    @@unique([pluginId, collectionId, contractDigest], map: "PluginCollectionContract_identity_digest_key")
+    @@index([pluginId, collectionId], map: "PluginCollectionContract_identity_idx")
+}
+
+/// A non-authoritative target row prepared by a candidate host. The canonical
+/// Collection row, its derived relations, and its index entries remain the
+/// only ordinary read/write surface until Availability promotes a complete
+/// candidate stage set inside its intent transaction.
+model PluginCollectionCandidatePreparationStage {
+    id                      String   @id @default(cuid())
+    accountId               String
+    account                 Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId                String
+    collectionId            String
+    rowId                   String
+    /// Internal fixed-width identity for the exact source/target/candidate
+    /// binding. It prevents provider-specific oversized composite keys while
+    /// all original binding facts remain persisted below.
+    candidateIdentity       String
+    sourceRowDbId           String
+    sourceRow               PluginCollectionRow @relation("PluginCollectionCandidatePreparationSourceRow", fields: [sourceRowDbId], references: [id], onDelete: Cascade)
+    sourceContractId        String
+    sourceContract          PluginCollectionContract @relation("PluginCollectionCandidatePreparationSourceContract", fields: [sourceContractId], references: [id], onDelete: Restrict)
+    sourceSchemaVersion     Int
+    sourceContractDigest    String
+    sourceRevision          Int
+    targetContractId        String
+    targetContract          PluginCollectionContract @relation("PluginCollectionCandidatePreparationTargetContract", fields: [targetContractId], references: [id], onDelete: Restrict)
+    targetSchemaVersion     Int
+    targetContractDigest    String
+    candidateReleaseVersion String
+    candidateArtifactDigest String
+    /// [PluginCollectionContentEnvelopeV1]
+    targetContentEnvelope   Json
+    /// [PluginCollectionProjectionV1]
+    targetProjection        Json
+    createdAt               DateTime @default(now())
+    updatedAt               DateTime @updatedAt
+
+    @@unique([accountId, candidateIdentity, sourceRowDbId, targetContractId], map: "PluginCollectionCandidatePreparationStage_identity_key")
+    @@index([accountId, pluginId], map: "PluginCollectionCandidatePreparationStage_candidate_idx")
+    @@index([accountId, sourceRowDbId], map: "PluginCollectionCandidatePreparationStage_source_idx")
+}
+
+/// One logical collection row. Its private envelope and server-readable projections are split so
+/// encrypted Accounts never duplicate a declared projection inside private content.
+model PluginCollectionRow {
+    id             String   @id @default(cuid())
+    accountId      String
+    account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId       String
+    collectionId   String
+    rowId          String
+    schemaVersion  Int
+    revision       Int
+    contractId     String
+    contract       PluginCollectionContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+    contractDigest String
+    /// [PluginCollectionContentEnvelopeV1]
+    contentEnvelope Json
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @updatedAt
+    deletedAt      DateTime?
+
+    projections      PluginCollectionProjection[]
+    sourceRelations  PluginCollectionRelation[]
+    candidatePreparationStages PluginCollectionCandidatePreparationStage[] @relation("PluginCollectionCandidatePreparationSourceRow")
+
+    @@unique([accountId, pluginId, collectionId, rowId], map: "PluginCollectionRow_account_identity_key")
+    @@index([accountId, pluginId, collectionId, deletedAt], map: "PluginCollectionRow_account_live_idx")
+    @@index([accountId, pluginId, collectionId, contractDigest], map: "PluginCollectionRow_account_contract_idx")
+}
+
+/// The authoritative server-readable values for a collection row. Index and relation records are
+/// derived transactionally from this projection rather than independently authored.
+model PluginCollectionProjection {
+    id                String   @id @default(cuid())
+    rowDbId           String
+    row               PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
+    accountId         String
+    pluginId          String
+    collectionId      String
+    rowId             String
+    fieldId           String
+    typedEncodedValue String
+    rowRevision       Int
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    @@unique([rowDbId, fieldId], map: "PluginCollectionProjection_row_field_key")
+    @@index([accountId, pluginId, collectionId, fieldId], map: "PluginCollectionProjection_field_idx")
+    @@index([accountId, pluginId, collectionId, rowId], map: "PluginCollectionProjection_row_idx")
+}
+
+/// Per-Account index build/readiness state. The internal fixed-width id keeps the physical
+/// index-entry key portable while public cursors retain the logical contract/index identity.
+model PluginCollectionIndexState {
+    id                    String   @id @default(cuid())
+    accountId             String
+    account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId              String
+    collectionId          String
+    indexId               String
+    contractId            String
+    contract              PluginCollectionContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+    contractDigest        String
+    buildState            String
+    indexedThroughRevision Int?
+    createdAt             DateTime @default(now())
+    updatedAt             DateTime @updatedAt
+
+    entries PluginCollectionIndexEntry[]
+
+    @@unique([accountId, pluginId, collectionId, indexId, contractDigest], map: "PluginCollectionIndexState_identity_key")
+    @@index([accountId, pluginId, collectionId, buildState], map: "PluginCollectionIndexState_build_idx")
+}
+
+/// One derived keyset entry. `encodedSortKey` contains the logical row-id tie-breaker as the
+/// Protocol-owned raw ordinal bytes; only query transport cursors encode it as text.
+model PluginCollectionIndexEntry {
+    id             String   @id @default(cuid())
+    indexStateId   String
+    indexState     PluginCollectionIndexState @relation(fields: [indexStateId], references: [id], onDelete: Cascade)
+    encodedSortKey Bytes
+    rowId          String
+    rowRevision    Int
+    createdAt      DateTime @default(now())
+
+    @@unique([indexStateId, encodedSortKey], map: "PluginCollectionIndexEntry_sort_key")
+    @@index([indexStateId, rowId], map: "PluginCollectionIndexEntry_row_idx")
+}
+
+/// A server-readable logical relation edge. It grants no target-domain authority and has no
+/// physical foreign key across plugin/domain boundaries.
+model PluginCollectionRelation {
+    id                 String   @id @default(cuid())
+    accountId          String
+    account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    sourceRowDbId      String
+    sourceRow          PluginCollectionRow @relation(fields: [sourceRowDbId], references: [id], onDelete: Cascade)
+    sourcePluginId     String
+    sourceCollectionId String
+    sourceRowId        String
+    relationId         String
+    targetKind         String
+    targetPluginId     String?
+    targetCollectionId String?
+    targetRowId        String?
+    sourceRevision     Int
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+    deletedAt          DateTime?
+
+    @@index([accountId, sourcePluginId, sourceCollectionId, sourceRowId, deletedAt], map: "PluginCollectionRelation_source_idx")
+    @@index([accountId, targetKind, targetPluginId, targetCollectionId, targetRowId, deletedAt], map: "PluginCollectionRelation_target_idx")
+}
+
+//
 // Review Comments
 //
 
@@ -1425,6 +2221,7 @@ model PluginPermissionGrant {
     scopeKind         String  @map("scope_kind")
     scopeProjectId    String? @map("scope_project_id")
     scopeWorkspaceId  String? @map("scope_workspace_id")
+    subjectJson       String  @map("subject_json")
     authorityKind     String  @default("bundled") @map("authority_kind")
     authorityMachineId String? @map("authority_machine_id")
     authorityInstallationId String? @map("authority_installation_id")
@@ -1454,6 +2251,7 @@ model PluginPermissionGrantRequest {
     scopeKind         String  @map("scope_kind")
     scopeProjectId    String? @map("scope_project_id")
     scopeWorkspaceId  String? @map("scope_workspace_id")
+    subjectJson       String  @map("subject_json")
     authorityKind     String  @default("bundled") @map("authority_kind")
     authorityMachineId String? @map("authority_machine_id")
     authorityInstallationId String? @map("authority_installation_id")
@@ -1484,6 +2282,7 @@ model PluginPermissionGrantEvent {
     scopeKind         String  @map("scope_kind")
     scopeProjectId    String? @map("scope_project_id")
     scopeWorkspaceId  String? @map("scope_workspace_id")
+    subjectJson       String  @map("subject_json")
     authorityKind     String  @default("bundled") @map("authority_kind")
     authorityMachineId String? @map("authority_machine_id")
     authorityInstallationId String? @map("authority_installation_id")

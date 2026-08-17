@@ -6,8 +6,8 @@ import {
     createSessionRouteTestBuilder,
     emitUpdate,
     resetSessionRouteMocks,
-    sessionFindUnique,
-    sessionTurnFindMany,
+    txSessionFindFirst,
+    txSessionTurnFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes session turns", () => {
@@ -118,11 +118,11 @@ describe("sessionRoutes session turns", () => {
     });
 
     it("returns a bounded session turns projection from server-readable rows", async () => {
-        sessionFindUnique.mockResolvedValue({
+        txSessionFindFirst.mockResolvedValue({
             latestTurnId: "turn-1",
             updatedAt: new Date(200),
         });
-        sessionTurnFindMany.mockResolvedValue([
+        txSessionTurnFindMany.mockResolvedValue([
             {
                 turnId: "turn-1",
                 agentId: "codex",
@@ -147,8 +147,11 @@ describe("sessionRoutes session turns", () => {
             params: { sessionId: "s1" },
         });
 
-        expect(sessionTurnFindMany).toHaveBeenCalledWith({
-            where: { sessionId: "s1" },
+        expect(txSessionTurnFindMany).toHaveBeenCalledWith({
+            where: expect.objectContaining({
+                sessionId: "s1",
+                session: expect.objectContaining({ id: "s1" }),
+            }),
             orderBy: [{ updatedAt: "asc" }, { createdAt: "asc" }],
         });
         expect(res).toEqual({

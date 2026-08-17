@@ -4,28 +4,41 @@ import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { log } from "@/utils/logging/log";
+import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
-    SESSION_MESSAGE_USER_ATTENTION_IMPACT,
+    ACCOUNT_ENCRYPTION_MIGRATE_SESSIONS_MAX_ITEMS,
+    AccountEncryptionMigrateSessionsDirectiveSchema,
     VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
-    agentEventAttentionImpact,
     agentEventLocalIdAttentionImpact,
     ExactSessionTurnEndMutationV1Schema,
     PrimaryTurnStatusV1Schema,
     SessionRuntimeActivityProjectionSchema,
     SessionRuntimeActivitySnapshotSchema,
-    TranscriptRawAgentEventV1Schema,
     TranscriptRawRecordV1Schema,
     SessionTurnMutationActionV1Schema,
     SessionTurnMutationV1Schema,
     SessionTranscriptObservationProvenanceV1Schema,
+    SessionStoredMessageContentSchema,
+    isRecoveredHistoryTranscriptObservationProvenance,
     sanitizeSessionRuntimeIssueV1,
-    isSessionOwnerMetadataCiphertextV1,
+    createPlainSessionOwnerMetadataEnvelopeV1,
+    createSessionOwnerMetadataV1,
+    encodeSessionOwnerMetadataEnvelopeV1,
+    projectSessionSharedMetadataV1,
+    validateSessionOwnerMetadataEnvelopeForAccountModeV1,
+    SessionOwnerMetadataEnvelopeV1Schema,
+    SessionSharedMetadataV1Schema,
     SESSION_METADATA_LAYOUT_VERSION_V1,
     type PrimaryTurnStatusV1,
+    type AccountEncryptionMigrateSessionsDirective,
     type SessionMetadataInactiveModelIntentExpectationV1,
+    type SessionOwnerMetadataEnvelopeV1,
     type SessionMetadataOwnerMigrationPatchV1,
+    type SessionMetadataOwnerPatchV1,
+    type SessionMetadataInactiveModelIntentOwnerPatchV1,
+    type SessionMetadataPublisherPreconditionV1,
     type SessionMessageRole,
     type SessionRuntimeIssueV1,
     type SessionMessageAttentionImpact,
@@ -47,19 +60,33 @@ import {
 import { parseSessionMessageRole, resolveSessionMessageRole } from "./messageRole/resolveSessionMessageRole";
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
-import { hasExactCurrentPublisherAuthorityInTx } from "./pending/hasExactCurrentPublisherAuthorityInTx";
 import {
+    fenceExactCurrentPublisherAuthorityInTx,
+    hasExactCurrentPublisherAuthorityInTx,
+} from "./pending/hasExactCurrentPublisherAuthorityInTx";
+import {
+    compareSessionMessageContentAndRole,
+    validateSessionTranscriptWriteAuthorityInTx,
+    validateSessionTranscriptStoredContent,
     writeSessionTranscriptMessageInTx,
+    type SessionTranscriptStoragePolicy,
     type SessionTranscriptWriteRejectionCode,
 } from "./sessionTranscriptWrite";
 import { parseStoredSessionTurnTranscriptAnchors } from "./turns/parseSessionTurnState";
+import { deriveSessionTurnTranscriptAnchorProjection } from "./turns/sessionTurnTranscriptAnchorProjection";
 import {
     applySessionTranscriptPublicationCeilingToProjection,
     buildSessionMessagePublicationWhere,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     type SessionTranscriptPublicationFields,
 } from "./sessionTranscriptPublicationPolicy";
+import { resolveMessageAttentionImpact } from "./messageAttentionImpact";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import {
+    parsePersistedSessionOwnerMetadataEnvelopeV1,
+} from "@/app/session/metadata/sessionOwnerMetadataPersistence";
 
 export {
     writeHistoricalSessionMessageBatch,
@@ -69,6 +96,360 @@ export {
 
 type ParticipantCursor = SessionParticipantCursor;
 const JSON_PARSE_FAILED = Symbol("json-parse-failed");
+
+type AccountEncryptionMigrationSessionRow = Readonly<{
+    id: string;
+    accountId: string;
+    metadata: string;
+    metadataVersion: number;
+    metadataLayoutVersion: number;
+    ownerMetadata: string | null;
+    agentState: string | null;
+    agentStateVersion: number;
+    archivedAt: Date | null;
+}>;
+
+export class SessionAccountEncryptionMigrationConflictError
+    extends Error {
+    constructor() {
+        super(
+            "Session account-encryption migration lost its tuple precondition",
+        );
+        this.name =
+            "SessionAccountEncryptionMigrationConflictError";
+    }
+}
+
+export type SessionAccountEncryptionMigrationResult =
+    | Readonly<{
+        status: "applied";
+        sessions: readonly Readonly<{
+            session: AccountEncryptionMigrationSessionRow;
+            ownerCursor: number;
+        }>[];
+      }>
+    | Readonly<{ status: "not_empty" }>
+    | Readonly<{ status: "migration_incomplete" }>
+    | Readonly<{ status: "invalid_content" }>;
+
+export type SessionAccountEncryptionMigrationPostStateResult =
+    | Readonly<{ status: "matched" }>
+    | Readonly<{ status: "mismatch" }>;
+
+async function readAccountEncryptionMigrationSessionRows(
+    tx: Tx,
+    accountId: string,
+): Promise<readonly AccountEncryptionMigrationSessionRow[]> {
+    return await tx.session.findMany({
+        where: {
+            accountId,
+            OR: [
+                { metadataLayoutVersion: { not: 0 } },
+                { ownerMetadata: { not: null } },
+            ],
+        },
+        orderBy: { id: "asc" },
+        take:
+            ACCOUNT_ENCRYPTION_MIGRATE_SESSIONS_MAX_ITEMS
+            + 1,
+        select: {
+            id: true,
+            accountId: true,
+            metadata: true,
+            metadataVersion: true,
+            metadataLayoutVersion: true,
+            ownerMetadata: true,
+            agentState: true,
+            agentStateVersion: true,
+            archivedAt: true,
+        },
+    });
+}
+
+function classifySessionAccountEncryptionMigrationInventory(
+    params: Readonly<{
+        rows: readonly AccountEncryptionMigrationSessionRow[];
+        mode: "plain" | "e2ee";
+        directive: AccountEncryptionMigrateSessionsDirective;
+        envelopeSide: "source" | "target";
+    }>,
+):
+    | Readonly<{
+        status: "ready";
+        itemsById: ReadonlyMap<
+            string,
+            Extract<
+                AccountEncryptionMigrateSessionsDirective,
+                Readonly<{ action: "migrate" }>
+            >["items"][number]
+        >;
+      }>
+    | Readonly<{
+        status:
+            | "not_empty"
+            | "migration_incomplete"
+            | "invalid_content";
+      }> {
+    if (
+        params.rows.length
+        > ACCOUNT_ENCRYPTION_MIGRATE_SESSIONS_MAX_ITEMS
+    ) {
+        return { status: "migration_incomplete" };
+    }
+    if (params.directive.action === "assert_empty") {
+        return params.rows.length === 0
+            ? { status: "ready", itemsById: new Map() }
+            : { status: "not_empty" };
+    }
+    const parsedRows = params.rows.map((row) => ({
+        row,
+        ownerMetadata:
+            parsePersistedSessionOwnerMetadataEnvelopeV1({
+                metadataLayoutVersion: row.metadataLayoutVersion,
+                accountMode: params.mode,
+                ownerMetadata: row.ownerMetadata,
+                allowRetainedDevelopmentCiphertext:
+                    params.envelopeSide === "source",
+            }),
+    }));
+    if (
+        parsedRows.some(({ row, ownerMetadata }) =>
+            row.metadataLayoutVersion
+                !== SESSION_METADATA_LAYOUT_VERSION_V1
+            || ownerMetadata === null
+            || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                accountMode: params.mode,
+                envelope: ownerMetadata,
+            }).ok)
+    ) {
+        return { status: "invalid_content" };
+    }
+    const itemsById = new Map(
+        params.directive.items.map((item) => [
+            item.sessionId,
+            item,
+        ]),
+    );
+    if (
+        itemsById.size !== params.directive.items.length
+        || itemsById.size !== params.rows.length
+    ) {
+        return { status: "migration_incomplete" };
+    }
+    for (const { row } of parsedRows) {
+        const item = itemsById.get(row.id);
+        const encodedEnvelopeInput = item?.[
+            params.envelopeSide === "source"
+                ? "expectedOwnerMetadata"
+                : "ownerMetadata"
+        ];
+        const envelopeResult =
+            SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+                encodedEnvelopeInput,
+            );
+        if (
+            !item
+            || item.expectedMetadataLayoutVersion
+                !== SESSION_METADATA_LAYOUT_VERSION_V1
+            || item.expectedMetadataVersion
+                !== row.metadataVersion
+            || item.expectedAgentStateVersion
+                !== row.agentStateVersion
+        ) {
+            return { status: "migration_incomplete" };
+        }
+        if (!envelopeResult.success) {
+            return { status: "invalid_content" };
+        }
+        if (
+            !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                accountMode: params.mode,
+                envelope: envelopeResult.data,
+            }).ok
+            || !doesStoredSessionOwnerMetadataMatchEnvelope({
+                stored: row.ownerMetadata,
+                envelope: envelopeResult.data,
+                accountMode: params.mode,
+                allowRetainedEncrypted:
+                    params.envelopeSide === "source"
+                    && params.mode === "e2ee",
+            })
+        ) {
+            return { status: "migration_incomplete" };
+        }
+    }
+    return { status: "ready", itemsById };
+}
+
+function doesStoredSessionOwnerMetadataMatchEnvelope(
+    params: Readonly<{
+        stored: string | null;
+        envelope: SessionOwnerMetadataEnvelopeV1;
+        accountMode: "plain" | "e2ee";
+        allowRetainedEncrypted: boolean;
+    }>,
+): boolean {
+    const storedEnvelope =
+        parsePersistedSessionOwnerMetadataEnvelopeV1({
+            metadataLayoutVersion:
+                SESSION_METADATA_LAYOUT_VERSION_V1,
+            accountMode: params.accountMode,
+            ownerMetadata: params.stored,
+            allowRetainedDevelopmentCiphertext:
+                params.allowRetainedEncrypted,
+        });
+    return storedEnvelope !== null
+        && isDeepStrictEqual(storedEnvelope, params.envelope);
+}
+
+/**
+ * Canonical Session tuple owner for Account-mode owner-envelope rewrites.
+ *
+ * The Account transition already holds the shared Account-first fence. This
+ * owner inventories active and archived layout-1 Sessions, validates the exact
+ * source tuple, changes only ownerMetadata, and advances the owner's canonical
+ * Account Session-change cursor. Shared recipients are not published because
+ * their visible Session bytes do not change.
+ */
+export async function migrateSessionAccountEncryptionInTx(
+    params: Readonly<{
+        tx: Tx;
+        accountId: string;
+        fromMode: "plain" | "e2ee";
+        toMode: "plain" | "e2ee";
+        directive: unknown;
+    }>,
+): Promise<SessionAccountEncryptionMigrationResult> {
+    const directiveResult =
+        AccountEncryptionMigrateSessionsDirectiveSchema.safeParse(
+            params.directive,
+        );
+    if (!directiveResult.success) {
+        return { status: "invalid_content" };
+    }
+    const directive = directiveResult.data;
+    const rows =
+        await readAccountEncryptionMigrationSessionRows(
+            params.tx,
+            params.accountId,
+        );
+    const sourceInventory =
+        classifySessionAccountEncryptionMigrationInventory({
+            rows,
+            mode: params.fromMode,
+            directive,
+            envelopeSide: "source",
+        });
+    if (sourceInventory.status !== "ready") {
+        return sourceInventory;
+    }
+    if (directive.action === "assert_empty") {
+        return { status: "applied", sessions: [] };
+    }
+    for (const item of directive.items) {
+        if (!validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+            accountMode: params.toMode,
+            envelope: item.ownerMetadata,
+        }).ok) {
+            return { status: "invalid_content" };
+        }
+    }
+
+    const rowsById = new Map(
+        rows.map((row) => [row.id, row]),
+    );
+    const sessions: Array<{
+        session: AccountEncryptionMigrationSessionRow;
+        ownerCursor: number;
+    }> = [];
+    for (const item of directive.items) {
+        const row = rowsById.get(item.sessionId);
+        if (!row) {
+            return { status: "migration_incomplete" };
+        }
+        const targetEnvelope =
+            SessionOwnerMetadataEnvelopeV1Schema.parse(
+                item.ownerMetadata,
+            );
+        const nextOwnerMetadata =
+            encodeSessionOwnerMetadataEnvelopeV1(
+                targetEnvelope,
+            );
+        const updated = await params.tx.session.updateMany({
+            where: {
+                accountId: params.accountId,
+                id: item.sessionId,
+                metadataLayoutVersion:
+                    SESSION_METADATA_LAYOUT_VERSION_V1,
+                metadataVersion:
+                    item.expectedMetadataVersion,
+                ownerMetadata: row.ownerMetadata,
+                agentStateVersion:
+                    item.expectedAgentStateVersion,
+            },
+            data: {
+                ownerMetadata: nextOwnerMetadata,
+            },
+        });
+        if (updated.count !== 1) {
+            throw new
+                SessionAccountEncryptionMigrationConflictError();
+        }
+        const ownerCursor = await markAccountChanged(
+            params.tx,
+            {
+                accountId: params.accountId,
+                kind: "session",
+                entityId: item.sessionId,
+            });
+        sessions.push({
+            session: {
+                ...row,
+                ownerMetadata: nextOwnerMetadata,
+            },
+            ownerCursor,
+        });
+    }
+    return { status: "applied", sessions };
+}
+
+/**
+ * Read-only exact post-state matcher used by Account-transition replay.
+ */
+export async function matchSessionAccountEncryptionMigrationPostStateInTx(
+    params: Readonly<{
+        tx: Tx;
+        accountId: string;
+        toMode: "plain" | "e2ee";
+        directive: unknown;
+    }>,
+): Promise<SessionAccountEncryptionMigrationPostStateResult> {
+    const directiveResult =
+        AccountEncryptionMigrateSessionsDirectiveSchema.safeParse(
+            params.directive,
+        );
+    if (!directiveResult.success) {
+        return { status: "mismatch" };
+    }
+    const rows =
+        await readAccountEncryptionMigrationSessionRows(
+            params.tx,
+            params.accountId,
+        );
+    const inventory =
+        classifySessionAccountEncryptionMigrationInventory({
+            rows,
+            mode: params.toMode,
+            directive: directiveResult.data,
+            envelopeSide: "target",
+        });
+    return {
+        status:
+            inventory.status === "ready"
+                ? "matched"
+                : "mismatch",
+    };
+}
 
 function parseJsonForComparison(
     value: string,
@@ -108,6 +489,15 @@ type SessionMessageWriteRow = {
     transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1 | null;
 };
 
+type SessionMessageWriteRowInput = Omit<
+    SessionMessageWriteRow,
+    "messageRole" | "transcriptObservationProvenance"
+> & Readonly<{
+    messageRole: unknown;
+    transcriptObservationProvenance: unknown;
+    rowRevision?: bigint;
+}>;
+
 const SESSION_MESSAGE_WRITE_SELECT = {
     id: true,
     seq: true,
@@ -120,10 +510,42 @@ const SESSION_MESSAGE_WRITE_SELECT = {
     sourceCreatedAt: true,
     sourceUpdatedAt: true,
     transcriptObservationProvenance: true,
+    rowRevision: true,
 } as const;
 
-function toSessionMessageWriteRow(row: Omit<SessionMessageWriteRow, "messageRole" | "transcriptObservationProvenance"> & { messageRole: unknown; transcriptObservationProvenance: unknown }): SessionMessageWriteRow {
-    const { transcriptObservationProvenance: rawProvenance, ...rest } = row;
+class SessionMessageRowRevisionRaceError extends Error {
+    constructor() {
+        super("Session Message mutation lost its row-revision precondition");
+        this.name = "SessionMessageRowRevisionRaceError";
+    }
+}
+
+async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly<{
+    tx: Tx;
+    id: string;
+    rowRevision: bigint;
+    data: Prisma.SessionMessageUpdateInput;
+}>) {
+    try {
+        return await params.tx.sessionMessage.update({
+            where: { id: params.id, rowRevision: params.rowRevision },
+            data: params.data,
+            select: SESSION_MESSAGE_WRITE_SELECT,
+        });
+    } catch (error) {
+        if (isPrismaErrorCode(error, "P2025")) {
+            throw new SessionMessageRowRevisionRaceError();
+        }
+        throw error;
+    }
+}
+
+function toSessionMessageWriteRow(row: SessionMessageWriteRowInput): SessionMessageWriteRow {
+    const {
+        transcriptObservationProvenance: rawProvenance,
+        rowRevision: _rowRevision,
+        ...rest
+    } = row;
     const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(rawProvenance);
     return {
         ...rest,
@@ -192,26 +614,6 @@ export function resolveReadyProjectionEventType(params: Readonly<{
         : undefined;
 }
 
-type StoredPlainAgentEvent = ReturnType<typeof TranscriptRawAgentEventV1Schema.parse>;
-
-function resolvePlainStoredAgentEvent(content: PrismaJson.SessionMessageContent): StoredPlainAgentEvent | null {
-    if (content.t !== "plain") return null;
-    const parsed = TranscriptRawRecordV1Schema.safeParse(content.v);
-    if (!parsed.success) return null;
-    if (parsed.data.role !== "agent" || parsed.data.content.type !== "event") return null;
-    const event = TranscriptRawAgentEventV1Schema.safeParse(parsed.data.content.data);
-    return event.success ? event.data : null;
-}
-
-function resolveMessageAttentionImpact(params: Readonly<{
-    content: PrismaJson.SessionMessageContent;
-    explicitAttentionImpact?: SessionMessageAttentionImpact;
-}>): SessionMessageAttentionImpact {
-    if (params.explicitAttentionImpact) return params.explicitAttentionImpact;
-    const event = resolvePlainStoredAgentEvent(params.content);
-    return event ? agentEventAttentionImpact(event) : SESSION_MESSAGE_USER_ATTENTION_IMPACT;
-}
-
 function resolveSessionOwnedAttentionImpact(sessionTag: string): SessionMessageAttentionImpact | null {
     return sessionTag === VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG
         ? SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT
@@ -241,29 +643,15 @@ function maxReadSeq(left: number | null, right: number | null): number | null {
     return Math.max(left, right);
 }
 
-function resolveStoredSessionMessageAttentionImpact(row: Readonly<{
-    localId?: string | null;
-    messageRole?: unknown;
-    content: PrismaJson.SessionMessageContent;
-}>): SessionMessageAttentionImpact {
-    const trustedLocalIdAttentionImpact = parseSessionMessageRole(row.messageRole) === "event"
-        ? agentEventLocalIdAttentionImpact(row.localId)
-        : null;
-    return resolveMessageAttentionImpact({
-        content: row.content,
-        explicitAttentionImpact: trustedLocalIdAttentionImpact ?? undefined,
-    });
-}
-
 async function findLatestUnreadAffectingMainTranscriptMessageSeq(
-    tx: Tx,
     sessionId: string,
     publication: SessionTranscriptPublicationFields,
 ): Promise<number | null> {
-    const pageSize = 100;
+    const metadataPageSize = 100;
+    const contentBatchSize = 100;
     let beforeSeq: number | null = null;
     for (;;) {
-        const messages = await tx.sessionMessage.findMany({
+        const metadataRows = await db.sessionMessage.findMany({
             where: buildSessionMessagePublicationWhere({
                 where: {
                     sessionId,
@@ -273,40 +661,60 @@ async function findLatestUnreadAffectingMainTranscriptMessageSeq(
                 publication,
             }),
             orderBy: { seq: "desc" },
-            take: pageSize,
+            take: metadataPageSize,
             select: {
+                id: true,
                 seq: true,
-                localId: true,
-                messageRole: true,
-                content: true,
+                transcriptObservationProvenance: true,
             },
         });
-        if (!Array.isArray(messages) || messages.length === 0) return null;
-        for (const message of messages) {
-            if (resolveStoredSessionMessageAttentionImpact(message).affectsUnread) {
-                return normalizeReadSeq(message.seq);
+        if (!Array.isArray(metadataRows) || metadataRows.length === 0) return null;
+
+        const contentRequiredRows = metadataRows.filter(
+            (row) => !isRecoveredHistoryTranscriptObservationProvenance(
+                row.transcriptObservationProvenance,
+            ),
+        );
+        for (let offset = 0; offset < contentRequiredRows.length; offset += contentBatchSize) {
+            const batch = contentRequiredRows.slice(offset, offset + contentBatchSize);
+            const contentRows = await db.sessionMessage.findMany({
+                where: buildSessionMessagePublicationWhere({
+                    where: {
+                        sessionId,
+                        sidechainId: null,
+                        id: { in: batch.map((row) => row.id) },
+                    },
+                    publication,
+                }),
+                select: { id: true, content: true },
+            });
+            const contentById = new Map(contentRows.map((row) => [row.id, row.content]));
+            for (const row of batch) {
+                const content = SessionStoredMessageContentSchema.safeParse(contentById.get(row.id));
+                if (!content.success) return normalizeReadSeq(row.seq);
+                if (resolveMessageAttentionImpact({ content: content.data }).affectsUnread) {
+                    return normalizeReadSeq(row.seq);
+                }
             }
         }
-        if (messages.length < pageSize) return null;
-        beforeSeq = normalizeReadSeq(messages[messages.length - 1]?.seq);
+        if (metadataRows.length < metadataPageSize) return null;
+        beforeSeq = normalizeReadSeq(metadataRows[metadataRows.length - 1]?.seq);
         if (beforeSeq === null) return null;
     }
 }
 
-async function resolveManualUnreadReadableSessionSeq(
-    tx: Tx,
-    sessionId: string,
+function resolveManualUnreadReadableSessionSeq(
+    latestMainMessageSeq: number | null,
     session: Readonly<{
         seq?: number | null;
         latestReadyEventSeq?: number | null;
         latestTurnStatus?: unknown;
     }> & SessionTranscriptPublicationFields,
-): Promise<number> {
+): number {
     const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
         seq: normalizeReadSeq(session.seq) ?? 0,
         latestReadyEventSeq: normalizeReadSeq(session.latestReadyEventSeq),
     }, session);
-    const latestMainMessageSeq = await findLatestUnreadAffectingMainTranscriptMessageSeq(tx, sessionId, session);
     let readableSeq = maxReadSeq(latestMainMessageSeq, normalizeReadSeq(publicationProjection.latestReadyEventSeq));
     if (readableSeq === null && isTerminalPrimaryTurnStatus(parseStoredPrimaryTurnStatus(session.latestTurnStatus))) {
         readableSeq = publicationProjection.seq;
@@ -316,7 +724,6 @@ async function resolveManualUnreadReadableSessionSeq(
 
 function selectSessionActivityBadgeInputs() {
     return {
-        seq: true,
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         latestReadyEventSeq: true,
         pendingCount: true,
@@ -409,7 +816,7 @@ function buildLegacyThinkingProjectionWriteData(params: Readonly<{
     return {};
 }
 
-type EnsureSessionEditAccessResult =
+export type EnsureSessionEditAccessResult =
     | {
         ok: true;
         sessionOwnerId: string;
@@ -435,11 +842,10 @@ function extractSessionParticipantUserIds(session: {
     return Array.from(participantUserIds);
 }
 
-async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
+export async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
         select: {
-            accountId: true,
             tag: true,
             encryptionMode: true,
             ...selectSessionActivityBadgeInputs(),
@@ -502,10 +908,6 @@ async function ensureSessionOwnerAccess(tx: Tx, params: { actorUserId: string; s
         return { ok: false, error: "forbidden" };
     }
     return access;
-}
-
-async function ensureSessionEditAccessNoTx(params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
-    return await ensureSessionEditAccess(db as unknown as Tx, params);
 }
 
 function isSessionMessageLocalIdConstraintTarget(target: unknown): boolean {
@@ -598,33 +1000,15 @@ type CreateSessionMessageParamsBase = Readonly<{
     trustedTranscriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
 }>;
 
+type CreateSessionMessageParams = CreateSessionMessageParamsBase & (
+    | Readonly<{ ciphertext: string; content?: never }>
+    | Readonly<{ content: PrismaJson.SessionMessageContent; ciphertext?: never }>
+);
+
 export type SessionReadyProjectionUpdate = Readonly<{
     latestReadyEventSeq: number;
     latestReadyEventAt: number;
 }>;
-
-async function fenceTrustedTranscriptObservationPublisherInTx(
-    tx: Tx,
-    authority: CurrentSessionPublisherAuthority,
-    actorUserId: string,
-    sessionId: string,
-): Promise<boolean> {
-    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, actorUserId, sessionId)) {
-        return false;
-    }
-    // The conditional no-op update is intentional: it takes the same session-row lock used by
-    // publisher replacement and keeps the authority check linear with the trusted provenance write.
-    const fenced = await tx.session.updateMany({
-        where: {
-            id: sessionId,
-            active: true,
-            archivedAt: null,
-            lastActiveAt: authority.committedFence,
-        },
-        data: { lastActiveAt: authority.committedFence },
-    });
-    return fenced.count === 1;
-}
 
 type SuccessfulSessionEditAccess = Extract<EnsureSessionEditAccessResult, { ok: true }>;
 
@@ -670,10 +1054,11 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     sourceCreatedAt: Date;
     sourceUpdatedAt: Date;
     provenance: SessionTranscriptObservationProvenanceV1;
+    storagePolicy: SessionTranscriptStoragePolicy;
 }>): Promise<TrustedLocalIdReconciliation> {
     if (
         !params.publisherAuthority
-        || !await fenceTrustedTranscriptObservationPublisherInTx(
+        || !await fenceExactCurrentPublisherAuthorityInTx(
             params.tx,
             params.publisherAuthority,
             params.actorUserId,
@@ -695,6 +1080,25 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     });
     if (!access.ok) {
         return { status: "reconciled", result: { ok: false, error: access.error } };
+    }
+
+    // Existing trusted local-id rows can advance their source watermark or
+    // backfill role without traversing the insert writer. Delegate their
+    // content admission to that same canonical owner before either mutation.
+    const storageAdmission = validateSessionTranscriptStoredContent({
+        content: params.content,
+        sessionEncryptionMode: access.sessionEncryptionMode,
+        storagePolicy: params.storagePolicy,
+    });
+    if (!storageAdmission.ok) {
+        return {
+            status: "reconciled",
+            result: {
+                ok: false,
+                error: "invalid-params",
+                code: storageAdmission.code,
+            },
+        };
     }
 
     const resolvedRole = resolveSessionMessageRoleForWrite({
@@ -727,6 +1131,31 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         };
     }
 
+    // A pre-provenance writer may already have committed this deterministic
+    // history local id before transcript-observation metadata existed. The
+    // local id remains the idempotency authority: acknowledge that exact
+    // recovered-history effect without rewriting randomized ciphertext or
+    // allowing a live observation to cross the compatibility seam.
+    if (
+        existing.transcriptObservationProvenance == null
+        && isRecoveredHistoryTranscriptObservationProvenance(params.provenance)
+    ) {
+        if ((existing.sidechainId ?? null) !== params.sidechainId) {
+            return { status: "reconciled", result: { ok: false, error: "invalid-params" } };
+        }
+        return {
+            status: "reconciled",
+            result: {
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                badgeAttentionChanged: false,
+                message: toSessionMessageWriteRow(existing),
+                participantCursors: [],
+            },
+        };
+    }
+
     const parsedExistingProvenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(
         existing.transcriptObservationProvenance,
     );
@@ -741,30 +1170,23 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         return { status: "reconciled", result: { ok: false, error: "invalid-params" } };
     }
 
-    if (isDeepStrictEqual(existing.content, params.content)) {
-        const advancesWatermark = params.sourceUpdatedAt.getTime() > existing.sourceUpdatedAt.getTime();
-        const backfillsRole = existing.messageRole === null && resolvedRole !== null;
-        if (!advancesWatermark && !backfillsRole) {
-            return {
-                status: "reconciled",
-                result: {
-                    ok: true,
-                    didWrite: false,
-                    didUpdate: false,
-                    badgeAttentionChanged: false,
-                    message: toSessionMessageWriteRow(existing),
-                    participantCursors: [],
-                },
-            };
-        }
-        const updated = await params.tx.sessionMessage.update({
-            where: { id: existing.id },
-            data: {
-                ...(advancesWatermark ? { sourceUpdatedAt: params.sourceUpdatedAt } : {}),
-                ...(backfillsRole ? { messageRole: resolvedRole } : {}),
+    const contentRoleComparison = compareSessionMessageContentAndRole({
+        existing,
+        candidate: { content: params.content, messageRole: resolvedRole },
+    });
+    if (contentRoleComparison.kind === "role-conflict") {
+        return {
+            status: "reconciled",
+            result: {
+                ok: false,
+                error: "invalid-params",
+                code: "session_message_role_conflict",
             },
-            select: SESSION_MESSAGE_WRITE_SELECT,
-        });
+        };
+    }
+    const advancesWatermark = params.sourceUpdatedAt.getTime() > existing.sourceUpdatedAt.getTime();
+    const backfillsRole = contentRoleComparison.kind === "match" && contentRoleComparison.backfillsRole;
+    if (contentRoleComparison.kind === "match" && !advancesWatermark && !backfillsRole) {
         return {
             status: "reconciled",
             result: {
@@ -772,21 +1194,82 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
                 didWrite: false,
                 didUpdate: false,
                 badgeAttentionChanged: false,
-                message: toSessionMessageWriteRow(updated),
+                message: toSessionMessageWriteRow(existing),
                 participantCursors: [],
             },
         };
     }
 
-    const updated = await params.tx.sessionMessage.update({
-        where: { id: existing.id },
+    const writeAuthority = await validateSessionTranscriptWriteAuthorityInTx(params.tx, {
+        sessionId: params.sessionId,
+        writeAuthority: "hosted",
+    });
+    if (!writeAuthority.ok) {
+        return {
+            status: "reconciled",
+            result: {
+                ok: false,
+                error: "invalid-params",
+                code: writeAuthority.code,
+            },
+        };
+    }
+
+    if (contentRoleComparison.kind === "match") {
+        const updated = await updateSessionMessageAtCurrentRevisionInTx({
+            tx: params.tx,
+            id: existing.id,
+            rowRevision: existing.rowRevision,
+            data: {
+                ...(advancesWatermark ? { sourceUpdatedAt: params.sourceUpdatedAt } : {}),
+                ...(backfillsRole ? { messageRole: resolvedRole } : {}),
+                rowRevision: { increment: BigInt(1) },
+            },
+        });
+        if (!backfillsRole) {
+            return {
+                status: "reconciled",
+                result: {
+                    ok: true,
+                    didWrite: false,
+                    didUpdate: false,
+                    badgeAttentionChanged: false,
+                    message: toSessionMessageWriteRow(updated),
+                    participantCursors: [],
+                },
+            };
+        }
+        const participantCursors = await markSessionParticipantsChanged({
+            tx: params.tx,
+            sessionId: params.sessionId,
+            hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
+            participantUserIds: access.participantUserIds,
+        });
+        return {
+            status: "reconciled",
+            result: {
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                badgeAttentionChanged: false,
+                attentionImpact,
+                message: toSessionMessageWriteRow(updated),
+                participantCursors,
+            },
+        };
+    }
+
+    const updated = await updateSessionMessageAtCurrentRevisionInTx({
+        tx: params.tx,
+        id: existing.id,
+        rowRevision: existing.rowRevision,
         data: {
             content: params.content,
             sidechainId: params.sidechainId,
             messageRole: resolvedRole,
             sourceUpdatedAt: params.sourceUpdatedAt,
+            rowRevision: { increment: BigInt(1) },
         },
-        select: SESSION_MESSAGE_WRITE_SELECT,
     });
     const participantCursors = await markSessionParticipantsChanged({
         tx: params.tx,
@@ -808,12 +1291,13 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     };
 }
 
-export async function createSessionMessage(
-    params: CreateSessionMessageParamsBase &
-        (
-            | Readonly<{ ciphertext: string; content?: never }>
-            | Readonly<{ content: PrismaJson.SessionMessageContent; ciphertext?: never }>
-        ),
+export async function createSessionMessage(params: CreateSessionMessageParams): Promise<CreateSessionMessageResult> {
+    return await createSessionMessageAttempt(params, true);
+}
+
+async function createSessionMessageAttempt(
+    params: CreateSessionMessageParams,
+    retryOnRowRevisionRace: boolean,
 ): Promise<CreateSessionMessageResult> {
     const totalStartedAt = Date.now();
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
@@ -860,6 +1344,8 @@ export async function createSessionMessage(
         return { ok: false, error: "invalid-params" };
     }
 
+    const encryptionPolicy = readEncryptionFeatureEnv(process.env);
+
     const resolveRoleForStorageMode = (storageMode: "e2ee" | "plain") =>
         resolveSessionMessageRoleForWrite({
             content,
@@ -894,6 +1380,7 @@ export async function createSessionMessage(
                     sourceCreatedAt,
                     sourceUpdatedAt,
                     provenance: params.trustedTranscriptObservationProvenance,
+                    storagePolicy: encryptionPolicy.storagePolicy,
                 });
                 if (reconciliation.status === "reconciled") {
                     if (!reconciliation.result.ok) {
@@ -909,7 +1396,7 @@ export async function createSessionMessage(
             } else {
                 if (hasTrustedProvenance && (
                     !params.publisherAuthority
-                    || !await fenceTrustedTranscriptObservationPublisherInTx(tx, params.publisherAuthority, actorUserId, sessionId)
+                    || !await fenceExactCurrentPublisherAuthorityInTx(tx, params.publisherAuthority, actorUserId, sessionId)
                 )) {
                     return { ok: false, error: "forbidden" };
                 }
@@ -942,8 +1429,6 @@ export async function createSessionMessage(
                         ?? undefined,
                 });
             }
-
-            const encryptionPolicy = readEncryptionFeatureEnv(process.env);
 
             const persistStartedAt = Date.now();
             const persisted = await writeSessionTranscriptMessageInTx(tx, {
@@ -1051,6 +1536,12 @@ export async function createSessionMessage(
             };
         }, { isolationLevel: "ReadCommitted" });
     } catch (e) {
+        if (e instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
+            // The conditional update did not mutate or publish. Restart through
+            // the same owner once so access, publisher currentness, authority,
+            // and the winner comparison are all evaluated from current rows.
+            return await createSessionMessageAttempt(params, false);
+        }
         if (localId && isSessionMessageLocalIdConflict(e)) {
             const metadata = readPrismaErrorMetadata(e);
             const target = metadata.target ?? metadata.message;
@@ -1086,143 +1577,209 @@ export async function createSessionMessage(
                             sourceCreatedAt,
                             sourceUpdatedAt,
                             provenance: params.trustedTranscriptObservationProvenance,
+                            storagePolicy: encryptionPolicy.storagePolicy,
                         });
                         return reconciliation.status === "reconciled"
                             ? reconciliation.result
                             : { ok: false, error: "invalid-params" };
                     }, { isolationLevel: "ReadCommitted" });
-                } catch {
+                } catch (error) {
+                    if (error instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
+                        return await createSessionMessageAttempt(params, false);
+                    }
                     return { ok: false, error: "internal" };
                 }
             }
-            const access = await ensureSessionEditAccessNoTx({ actorUserId, sessionId });
-            if (!access.ok) {
-                observeCreateSessionMessageStage({
-                    stage: "total",
-                    durationMs: Date.now() - totalStartedAt,
-                    result: "error",
-                });
-                return { ok: false, error: access.error };
-            }
-            const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
-            const trustedLocalIdAttentionImpact = access.sessionOwnerId === actorUserId && resolvedRole === "event"
-                ? agentEventLocalIdAttentionImpact(localId)
-                : null;
-            const attentionImpact = resolveMessageAttentionImpact({
-                content,
-                explicitAttentionImpact: params.trustedAttentionImpact ?? trustedLocalIdAttentionImpact ?? undefined,
-            });
-            const existing = await db.sessionMessage.findUnique({
-                where: { sessionId_localId: { sessionId, localId } },
-                select: SESSION_MESSAGE_WRITE_SELECT,
-            });
-            if (existing) {
-                if ((existing.sidechainId ?? null) !== sidechainId) {
+            try {
+                return await inTx(async (tx) => {
+                    const accessStartedAt = Date.now();
+                    const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
                     observeCreateSessionMessageStage({
-                        stage: "total",
-                        durationMs: Date.now() - totalStartedAt,
-                        result: "error",
+                        stage: "access",
+                        durationMs: Date.now() - accessStartedAt,
+                        result: access.ok ? "ok" : "error",
                     });
-                    return { ok: false, error: "invalid-params" };
-                }
-
-                if (isDeepStrictEqual(existing.content, content)) {
-                    if (existing.messageRole === null && resolvedRole !== null) {
-                        try {
-                            return await inTx(async (tx) => {
-                                const duplicateRoleUpdateStartedAt = Date.now();
-                                const updatedRole = await tx.sessionMessage.update({
-                                    where: { id: existing.id },
-                                    data: { messageRole: resolvedRole },
-                                    select: SESSION_MESSAGE_WRITE_SELECT,
-                                });
-                                observeCreateSessionMessageStage({
-                                    stage: "persist",
-                                    durationMs: Date.now() - duplicateRoleUpdateStartedAt,
-                                    result: "ok",
-                                });
-                                observeCreateSessionMessageStage({
-                                    stage: "total",
-                                    durationMs: Date.now() - totalStartedAt,
-                                    result: "ok",
-                                });
-                                return {
-                                    ok: true,
-                                    didWrite: false,
-                                    didUpdate: false,
-                                    badgeAttentionChanged: false,
-                                    message: toSessionMessageWriteRow(updatedRole),
-                                    participantCursors: [],
-                                };
-                            }, { isolationLevel: "ReadCommitted" });
-                        } catch {
-                            observeCreateSessionMessageStage({
-                                stage: "total",
-                                durationMs: Date.now() - totalStartedAt,
-                                result: "error",
-                            });
-                            return { ok: false, error: "internal" };
-                        }
+                    if (!access.ok) {
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
+                        });
+                        return { ok: false as const, error: access.error };
                     }
-                    observeCreateSessionMessageStage({
-                        stage: "total",
-                        durationMs: Date.now() - totalStartedAt,
-                        result: "ok",
+
+                    const existing = await tx.sessionMessage.findUnique({
+                        where: { sessionId_localId: { sessionId, localId } },
+                        select: SESSION_MESSAGE_WRITE_SELECT,
                     });
-                    return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: toSessionMessageWriteRow(existing), participantCursors: [] };
-                }
-
-                try {
-                    return await inTx(async (tx) => {
-                        const duplicateUpdateStartedAt = Date.now();
-                        const updated = await tx.sessionMessage.update({
-                            where: { id: existing.id },
-                            data: { content, sidechainId, messageRole: resolvedRole },
-                            select: SESSION_MESSAGE_WRITE_SELECT,
-                        });
+                    if (!existing) {
                         observeCreateSessionMessageStage({
-                            stage: "persist",
-                            durationMs: Date.now() - duplicateUpdateStartedAt,
-                            result: "ok",
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
                         });
-
-                        const duplicateChangeTrackingStartedAt = Date.now();
-                        const participantCursors = await markSessionParticipantsChanged({
-                            tx,
-                            sessionId,
-                            hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
-                            participantUserIds: access.participantUserIds,
-                        });
+                        return { ok: false as const, error: "internal" as const };
+                    }
+                    if ((existing.sidechainId ?? null) !== sidechainId) {
                         observeCreateSessionMessageStage({
-                            stage: "change_tracking",
-                            durationMs: Date.now() - duplicateChangeTrackingStartedAt,
-                            result: "ok",
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
                         });
+                        return { ok: false as const, error: "invalid-params" as const };
+                    }
 
+                    const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
+                    const trustedLocalIdAttentionImpact = access.sessionOwnerId === actorUserId && resolvedRole === "event"
+                        ? agentEventLocalIdAttentionImpact(localId)
+                        : null;
+                    const attentionImpact = resolveMessageAttentionImpact({
+                        content,
+                        explicitAttentionImpact:
+                            resolveSessionOwnedAttentionImpact(access.sessionTag)
+                            ?? params.trustedAttentionImpact
+                            ?? trustedLocalIdAttentionImpact
+                            ?? undefined,
+                    });
+                    const contentRoleComparison = compareSessionMessageContentAndRole({
+                        existing,
+                        candidate: { content, messageRole: resolvedRole },
+                    });
+                    if (contentRoleComparison.kind === "role-conflict") {
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
+                        });
+                        return {
+                            ok: false as const,
+                            error: "invalid-params" as const,
+                            code: "session_message_role_conflict" as const,
+                        };
+                    }
+                    if (contentRoleComparison.kind === "match" && !contentRoleComparison.backfillsRole) {
                         observeCreateSessionMessageStage({
                             stage: "total",
                             durationMs: Date.now() - totalStartedAt,
                             result: "ok",
                         });
-
                         return {
-                            ok: true,
-                            didWrite: false,
-                            didUpdate: true,
-                            badgeAttentionChanged: false,
-                            attentionImpact,
-                            message: toSessionMessageWriteRow(updated),
-                            participantCursors,
+                            ok: true as const,
+                            didWrite: false as const,
+                            didUpdate: false as const,
+                            badgeAttentionChanged: false as const,
+                            message: toSessionMessageWriteRow(existing),
+                            participantCursors: [],
                         };
-                    }, { isolationLevel: "ReadCommitted" });
-                } catch {
+                    }
+
+                    const duplicateStorageAdmission = validateSessionTranscriptStoredContent({
+                        content,
+                        sessionEncryptionMode: access.sessionEncryptionMode,
+                        storagePolicy: encryptionPolicy.storagePolicy,
+                    });
+                    if (!duplicateStorageAdmission.ok) {
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
+                        });
+                        return {
+                            ok: false as const,
+                            error: "invalid-params" as const,
+                            code: duplicateStorageAdmission.code,
+                        };
+                    }
+                    const duplicateWriteAuthority = await validateSessionTranscriptWriteAuthorityInTx(tx, {
+                        sessionId,
+                        writeAuthority: "hosted",
+                    });
+                    if (!duplicateWriteAuthority.ok) {
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
+                        });
+                        return {
+                            ok: false as const,
+                            error: "invalid-params" as const,
+                            code: duplicateWriteAuthority.code,
+                        };
+                    }
+
+                    const duplicateUpdateStartedAt = Date.now();
+                    const updated = await updateSessionMessageAtCurrentRevisionInTx({
+                        tx,
+                        id: existing.id,
+                        rowRevision: existing.rowRevision,
+                        data: contentRoleComparison.kind === "match"
+                            ? {
+                                ...(contentRoleComparison.backfillsRole ? { messageRole: resolvedRole } : {}),
+                                rowRevision: { increment: BigInt(1) },
+                            }
+                            : {
+                                content,
+                                sidechainId,
+                                messageRole: resolvedRole,
+                                rowRevision: { increment: BigInt(1) },
+                            },
+                    });
+                    observeCreateSessionMessageStage({
+                        stage: "persist",
+                        durationMs: Date.now() - duplicateUpdateStartedAt,
+                        result: "ok",
+                    });
+
+                    if (contentRoleComparison.kind === "match" && !contentRoleComparison.backfillsRole) {
+                        return {
+                            ok: true as const,
+                            didWrite: false as const,
+                            didUpdate: false as const,
+                            badgeAttentionChanged: false as const,
+                            message: toSessionMessageWriteRow(updated),
+                            participantCursors: [],
+                        };
+                    }
+
+                    const duplicateChangeTrackingStartedAt = Date.now();
+                    const participantCursors = await markSessionParticipantsChanged({
+                        tx,
+                        sessionId,
+                        hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
+                        participantUserIds: access.participantUserIds,
+                    });
+                    observeCreateSessionMessageStage({
+                        stage: "change_tracking",
+                        durationMs: Date.now() - duplicateChangeTrackingStartedAt,
+                        result: "ok",
+                    });
+
                     observeCreateSessionMessageStage({
                         stage: "total",
                         durationMs: Date.now() - totalStartedAt,
-                        result: "error",
+                        result: "ok",
                     });
-                    return { ok: false, error: "internal" };
+
+                    return {
+                        ok: true as const,
+                        didWrite: false as const,
+                        didUpdate: true as const,
+                        badgeAttentionChanged: false as const,
+                        attentionImpact,
+                        message: toSessionMessageWriteRow(updated),
+                        participantCursors,
+                    };
+                }, { isolationLevel: "ReadCommitted" });
+            } catch (error) {
+                if (error instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
+                    return await createSessionMessageAttempt(params, false);
                 }
+                observeCreateSessionMessageStage({
+                    stage: "total",
+                    durationMs: Date.now() - totalStartedAt,
+                    result: "error",
+                });
+                return { ok: false, error: "internal" };
             }
         }
         observeCreateSessionMessageStage({
@@ -1236,7 +1793,7 @@ export async function createSessionMessage(
 
 export type UpdateSessionMetadataResult =
     | { ok: true; version: number; metadata: string; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; lastViewedSessionSeq?: number }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "metadata_privacy_upgrade_required" | "internal"; current?: { version: number; metadata: string } };
+    | { ok: false; error: "invalid-params" | "forbidden" | "publisher-superseded" | "session-not-found" | "version-mismatch" | "metadata_privacy_upgrade_required" | "internal"; current?: { version: number; metadata: string } };
 
 export async function updateSessionMetadata(params: {
     actorUserId: string;
@@ -1244,6 +1801,7 @@ export async function updateSessionMetadata(params: {
     expectedVersion: number;
     metadataCiphertext: string;
     readCursorHintV1?: { lastViewedSessionSeq: number };
+    publisherAuthority?: CurrentSessionPublisherAuthority;
 }): Promise<UpdateSessionMetadataResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -1260,9 +1818,23 @@ export async function updateSessionMetadata(params: {
 
     try {
         return await inTx(async (tx) => {
-            const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+            const access = await ensureSessionOwnerAccess(tx, {
+                actorUserId,
+                sessionId,
+            });
             if (!access.ok) {
                 return { ok: false, error: access.error };
+            }
+            if (
+                params.publisherAuthority
+                && !await fenceExactCurrentPublisherAuthorityInTx(
+                    tx,
+                    params.publisherAuthority,
+                    actorUserId,
+                    sessionId,
+                )
+            ) {
+                return { ok: false, error: "publisher-superseded" };
             }
 
             const session = await tx.session.findUnique({
@@ -1556,6 +2128,36 @@ export async function clearSessionRuntimeActivityProjectionInTx(params: {
     throw new Error("Invalid Runtime Activity clear request");
 }
 
+/**
+ * Clears the CURRENT runtime's request/thinking projections when the runtime
+ * that published them is being replaced.
+ *
+ * These are plaintext projections derived from a live Agent process, not Session
+ * history: once that process is gone they describe nothing, and a stale nonzero
+ * count keeps a permission badge lit against a runtime that no longer exists.
+ * `agentState` is cleared by the caller's own metadata write; these columns are
+ * its derived siblings and must go with it.
+ *
+ * This is deliberately a server-side backstop rather than a bet on a caller
+ * precondition. The Agent transition's strict-idle gate already implies all
+ * three are clear, but that gate lives in the daemon, and a projection left
+ * stale by a crashed source would otherwise survive the cutover.
+ */
+export async function clearSessionSourceRuntimeRequestProjectionsInTx(params: {
+    tx: Tx;
+    sessionId: string;
+}): Promise<void> {
+    await params.tx.session.updateMany({
+        where: { id: params.sessionId },
+        data: {
+            thinking: false,
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+            pendingRequestObservedAt: null,
+        },
+    });
+}
+
 export async function writeSessionRuntimeActivityProjectionInTx(params: {
     tx: Tx;
     sessionId: string;
@@ -1742,7 +2344,10 @@ export async function updateSessionAgentState(params: {
 
     try {
         return await inTx(async (tx) => {
-            const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+            const access = await ensureSessionOwnerAccess(tx, {
+                actorUserId,
+                sessionId,
+            });
             if (!access.ok) {
                 return { ok: false, error: access.error };
             }
@@ -1897,7 +2502,12 @@ export type ApplySessionTurnMutationResult =
         participantCursors: ParticipantCursor[];
         badgeAttentionChanged: boolean;
       }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+    | {
+        ok: false;
+        error: "invalid-params";
+        code?: SessionTranscriptWriteRejectionCode;
+      }
+    | { ok: false; error: "forbidden" | "session-not-found" | "internal" };
 
 type SessionTurnApplicationRow = Readonly<{
     id: string;
@@ -1963,7 +2573,12 @@ function sessionTurnRowRuntimeIssue(row: SessionTurnApplicationRow | null): Sess
 }
 
 function buildTranscriptAnchorsJson(mutation: SessionTurnMutationV1): string | undefined {
-    if (mutation.action !== "append_transcript_anchors" && mutation.action !== "mark_rollback_eligible") {
+    if (
+        mutation.action !== "begin"
+        && mutation.action !== "append_transcript_anchors"
+        && mutation.action !== "mark_rollback_eligible"
+        && mutation.action !== "complete"
+    ) {
         return undefined;
     }
     return mutation.transcriptAnchors ? JSON.stringify(mutation.transcriptAnchors) : undefined;
@@ -1994,7 +2609,12 @@ function mergeTranscriptAnchorsJson(
     currentJson: string | null | undefined,
     mutation: SessionTurnMutationV1,
 ): string | undefined {
-    if (mutation.action !== "append_transcript_anchors" && mutation.action !== "mark_rollback_eligible") {
+    if (
+        mutation.action !== "begin"
+        && mutation.action !== "append_transcript_anchors"
+        && mutation.action !== "mark_rollback_eligible"
+        && mutation.action !== "complete"
+    ) {
         return undefined;
     }
     if (!mutation.transcriptAnchors) return undefined;
@@ -2010,6 +2630,44 @@ function mergeTranscriptAnchorsJson(
         merged.userMessageSeqs = [...new Set(userMessageSeqs)].sort((a, b) => a - b);
     }
     return JSON.stringify(merged);
+}
+
+class InvalidSessionTurnCompletionAnchorError extends Error {}
+
+async function assertValidFinalAssistantAnchor(params: Readonly<{
+    tx: Tx;
+    mutation: SessionTurnMutationV1;
+    transcriptAnchorsJson: string | null | undefined;
+}>): Promise<void> {
+    if (params.mutation.action !== "complete" || !params.mutation.transcriptAnchors) return;
+    if (!Object.prototype.hasOwnProperty.call(params.mutation.transcriptAnchors, "finalAssistantMessageSeq")) return;
+    const finalSeq = params.mutation.transcriptAnchors.finalAssistantMessageSeq;
+    if (finalSeq === null || finalSeq === undefined) return;
+    const anchors = parseTranscriptAnchorsJson(params.transcriptAnchorsJson);
+    const startSeqInclusive = readFiniteNumber(anchors.startSeqInclusive);
+    const endSeqInclusive = readFiniteNumber(anchors.endSeqInclusive);
+    if (
+        startSeqInclusive === undefined
+        || endSeqInclusive === undefined
+        || finalSeq < startSeqInclusive
+        || finalSeq > endSeqInclusive
+    ) {
+        throw new InvalidSessionTurnCompletionAnchorError("Final assistant anchor is outside the turn transcript range");
+    }
+    const row = await params.tx.sessionMessage.findFirst({
+        where: {
+            sessionId: params.mutation.sessionId,
+            seq: finalSeq,
+        },
+        select: {
+            seq: true,
+            messageRole: true,
+            sidechainId: true,
+        },
+    });
+    if (!row || row.seq !== finalSeq || row.messageRole !== "agent" || row.sidechainId !== null) {
+        throw new InvalidSessionTurnCompletionAnchorError("Final assistant anchor does not identify one main-chain assistant row");
+    }
 }
 
 function resolveSessionTurnTerminalStatus(mutation: SessionTurnMutationV1): PrimaryTurnStatusV1 | null {
@@ -2417,6 +3075,21 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             return { ok: false, error: access.error };
         }
 
+        const writeAuthority = await tx.session.findFirst({
+            where: {
+                id: params.turnMutation.sessionId,
+                currentStorageState: "hosted",
+            },
+            select: { id: true },
+        });
+        if (!writeAuthority) {
+            return {
+                ok: false,
+                error: "invalid-params",
+                code: "session_storage_authority_mismatch",
+            };
+        }
+
         const existingReceipt = await tx.sessionTurnMutationReceipt.findUnique({
             where: {
                 sessionId_mutationId: {
@@ -2599,6 +3272,14 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
         const transcriptAnchorsJson = currentTurn
             ? mergeTranscriptAnchorsJson(currentTurn.transcriptAnchorsJson, params.turnMutation)
             : buildTranscriptAnchorsJson(params.turnMutation);
+        const transcriptAnchorProjection = deriveSessionTurnTranscriptAnchorProjection(
+            transcriptAnchorsJson ?? currentTurn?.transcriptAnchorsJson,
+        );
+        await assertValidFinalAssistantAnchor({
+            tx,
+            mutation: params.turnMutation,
+            transcriptAnchorsJson,
+        });
         const lastRuntimeIssue = resolveSessionTurnLastRuntimeIssue(params.turnMutation);
         const lastRuntimeIssueJson = lastRuntimeIssue === null ? null : JSON.stringify(lastRuntimeIssue);
 
@@ -2627,6 +3308,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                         terminalAt: null,
                         lastRuntimeIssueJson: null,
                         transcriptAnchorsJson: transcriptAnchorsJson ?? null,
+                        ...transcriptAnchorProjection,
                         rollbackState: null,
                         rollbackReason: null,
                         agentRollbackOrdinal: null,
@@ -2663,6 +3345,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                     ...(isRecoveryBegin ? { terminalAt: null } : terminalStatus ? { terminalAt: observedAt } : {}),
                     ...(isRecoveryBegin || terminalStatus ? { lastRuntimeIssueJson } : {}),
                     ...(transcriptAnchorsJson !== undefined ? { transcriptAnchorsJson } : {}),
+                    ...transcriptAnchorProjection,
                     ...(params.turnMutation.action === "mark_rollback_eligible"
                         ? {
                             rollbackState: "eligible",
@@ -2791,6 +3474,9 @@ export async function applySessionTurnMutation(params: {
     try {
         return await applySessionTurnMutationWithOwnerAccess({ actorUserId, turnMutation });
     } catch (error) {
+        if (error instanceof InvalidSessionTurnCompletionAnchorError) {
+            return { ok: false, error: "invalid-params" };
+        }
         if (isDuplicateSessionTurnMutationRace(error)) {
             try {
                 return await applySessionTurnMutationWithOwnerAccess({ actorUserId, turnMutation });
@@ -2874,6 +3560,39 @@ export async function applySessionReadCursorOperation(params: {
     }
 
     try {
+        let latestMainMessageSeq: number | null | undefined;
+        let initialPublishedSessionSeq: number | undefined;
+        if (operation.kind === "mark-unread") {
+            const initial = await inTx(async (tx) => {
+                const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+                if (!access.ok) return access;
+                const session = await tx.session.findUnique({
+                    where: { id: sessionId },
+                    select: {
+                        ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                    },
+                });
+                if (!session) return { ok: false, error: "session-not-found" } as const;
+                const projection = applySessionTranscriptPublicationCeilingToProjection(
+                    { seq: session.seq },
+                    session,
+                );
+                return {
+                    ok: true,
+                    publication: session,
+                    publishedSessionSeq: normalizeReadSeq(projection.seq) ?? 0,
+                } as const;
+            });
+            if (!initial.ok) {
+                return { ok: false, error: initial.error };
+            }
+            initialPublishedSessionSeq = initial.publishedSessionSeq;
+            latestMainMessageSeq = await findLatestUnreadAffectingMainTranscriptMessageSeq(
+                sessionId,
+                initial.publication,
+            );
+        }
+
         return await inTx(async (tx) => {
             const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
             if (!access.ok) {
@@ -2893,8 +3612,14 @@ export async function applySessionReadCursorOperation(params: {
                 latestReadyEventSeq: session.latestReadyEventSeq,
             }, session);
 
+            const finalPublishedSessionSeq = normalizeReadSeq(publicationProjection.seq) ?? 0;
+            const conservativeMainMessageSeq = operation.kind === "mark-unread"
+                && typeof initialPublishedSessionSeq === "number"
+                && finalPublishedSessionSeq > initialPublishedSessionSeq
+                ? finalPublishedSessionSeq
+                : latestMainMessageSeq ?? null;
             const readableSessionSeq = operation.kind === "mark-unread" && session.lastViewedSessionSeq !== null
-                ? await resolveManualUnreadReadableSessionSeq(tx, sessionId, session)
+                ? resolveManualUnreadReadableSessionSeq(conservativeMainMessageSeq, session)
                 : undefined;
             const resolved = resolveSessionReadCursorOperation({
                 sessionSeq: publicationProjection.seq,
@@ -2959,6 +3684,7 @@ export async function applySessionReadCursorOperation(params: {
                 tx,
                 sessionId,
                 participantUserIds: access.participantUserIds,
+                hint: { lastViewedSessionSeq: nextCursor },
             });
             const visibleBadgeInputs = toSessionActivityBadgeInputs({
                 ...session,
@@ -2994,12 +3720,32 @@ export type PatchSessionResult =
       }
     | {
         ok: false;
-        error: "invalid-params" | "forbidden" | "session-not-found" | "session_active" | "version-mismatch" | "metadata_privacy_upgrade_required" | "internal";
+        error: "invalid-params" | "forbidden" | "session-not-found" | "session_active" | "session_archived" | "version-mismatch" | "metadata_privacy_upgrade_required" | "internal";
         current?: {
             metadata?: { version: number; value: string | null };
             agentState?: { version: number; value: string | null };
         };
       };
+
+/**
+ * Opt-in row precondition for a metadata write whose operation is meaningless on
+ * an archived Session.
+ *
+ * Archive is user intent, and ordinary metadata writers — `setSessionModel`, the
+ * Action executor, the patch route — are deliberately still allowed on an
+ * archived row. So this is a per-call CAS precondition rather than a property of
+ * the `inactive_model_intent` expectation those writers share. It exists because
+ * a caller that pre-reads `archivedAt` cannot close the window between that read
+ * and its write: the archive route updates the same inactive row with no version
+ * of its own, so without the predicate both operations commit and unarchiving
+ * later reveals a change the user never saw happen.
+ *
+ * It is deliberately NOT part of the wire input: the patch route spreads a
+ * client body into the tuple owner, and no client may select this precondition.
+ */
+export type SessionMetadataWritePreconditionsV1 = Readonly<{
+    requireUnarchivedSession?: boolean;
+}>;
 
 function isExactInactiveModelIntentExpectation(
     value: unknown,
@@ -3018,6 +3764,27 @@ export async function patchSession(params: {
     agentState?: { ciphertext: string | null; expectedVersion: number };
     sessionExpectation?: SessionMetadataInactiveModelIntentExpectationV1;
 }): Promise<PatchSessionResult> {
+    try {
+        return await inTx(async (tx) => await patchSessionInTx(tx, params));
+    } catch {
+        return { ok: false, error: "internal" };
+    }
+}
+
+/**
+ * Transaction-local layout-zero metadata/AgentState CAS core. `patchSession`
+ * wraps it in its own transaction; the Agent-transition current-view commit
+ * reuses it so the metadata write and the runtime-projection clears land in ONE
+ * transaction. There is no second layout-zero CAS, inactive predicate, or
+ * currentness check.
+ */
+export async function patchSessionInTx(tx: Tx, params: {
+    actorUserId: string;
+    sessionId: string;
+    metadata?: { ciphertext: string; expectedVersion: number };
+    agentState?: { ciphertext: string | null; expectedVersion: number };
+    sessionExpectation?: SessionMetadataInactiveModelIntentExpectationV1;
+}, preconditions?: SessionMetadataWritePreconditionsV1): Promise<PatchSessionResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const metadata = params.metadata;
@@ -3046,219 +3813,225 @@ export async function patchSession(params: {
         return { ok: false, error: "invalid-params" };
     }
 
-    try {
-        return await inTx(async (tx) => {
-            const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
-            if (!access.ok) {
-                return { ok: false, error: access.error };
-            }
+    const access = await ensureSessionOwnerAccess(tx, {
+        actorUserId,
+        sessionId,
+    });
+    if (!access.ok) {
+        return { ok: false, error: access.error };
+    }
 
-            const current = await tx.session.findUnique({
-                where: { id: sessionId },
-                select: {
-                    active: true,
-                    metadataLayoutVersion: true,
-                    ownerMetadata: true,
-                    metadataVersion: true,
-                    metadata: true,
-                    encryptionMode: true,
-                    agentStateVersion: true,
-                    agentState: true,
-                },
-            });
-            if (!current) {
-                return { ok: false, error: "session-not-found" };
-            }
-            if (sessionExpectation && current.active) {
-                return { ok: false, error: "session_active" };
-            }
-            if (
-                (current.metadataLayoutVersion ?? 0) !== 0
-                || current.ownerMetadata !== null
-            ) {
-                return { ok: false, error: "metadata_privacy_upgrade_required" };
-            }
+    const current = await tx.session.findUnique({
+        where: { id: sessionId },
+        select: {
+            active: true,
+            metadataLayoutVersion: true,
+            ownerMetadata: true,
+            metadataVersion: true,
+            metadata: true,
+            encryptionMode: true,
+            agentStateVersion: true,
+            agentState: true,
+        },
+    });
+    if (!current) {
+        return { ok: false, error: "session-not-found" };
+    }
+    if (sessionExpectation && current.active) {
+        return { ok: false, error: "session_active" };
+    }
+    if (
+        (current.metadataLayoutVersion ?? 0) !== 0
+        || current.ownerMetadata !== null
+    ) {
+        return { ok: false, error: "metadata_privacy_upgrade_required" };
+    }
 
-            const mismatchMetadata =
-                metadata && current.metadataVersion !== metadata.expectedVersion;
-            const mismatchAgentState =
-                agentState && current.agentStateVersion !== agentState.expectedVersion;
-            if (mismatchMetadata || mismatchAgentState) {
-                return {
-                    ok: false,
-                    error: "version-mismatch",
-                    current: {
-                        ...(metadata
-                            ? {
-                                metadata: {
-                                    version: current.metadataVersion,
-                                    value: current.metadata,
-                                },
-                            }
-                            : {}),
-                        ...(agentState
-                            ? {
-                                agentState: {
-                                    version: current.agentStateVersion,
-                                    value: current.agentState,
-                                },
-                            }
-                            : {}),
-                    },
-                };
-            }
-
-            const metadataChanged = metadata
-                ? !isSessionMetadataNoOp({
-                    currentMetadata: current.metadata,
-                    nextMetadata: metadata.ciphertext,
-                    encryptionMode: current.encryptionMode,
-                })
-                : false;
-            const agentStateChanged = agentState
-                ? current.agentState !== agentState.ciphertext
-                : false;
-            if (!metadataChanged && !agentStateChanged) {
-                return {
-                    ok: true,
-                    participantCursors: [],
-                    ...(metadata
-                        ? {
-                            metadata: {
-                                version: current.metadataVersion,
-                                value: current.metadata,
-                            },
-                        }
-                        : {}),
-                    ...(agentState
-                        ? {
-                            agentState: {
-                                version: current.agentStateVersion,
-                                value: current.agentState,
-                            },
-                        }
-                        : {}),
-                };
-            }
-
-            const updateData = {
-                ...(metadataChanged && metadata
-                    ? {
-                        metadata: metadata.ciphertext,
-                        metadataVersion: metadata.expectedVersion + 1,
-                    }
-                    : {}),
-                ...(agentStateChanged && agentState
-                    ? {
-                        agentState: agentState.ciphertext,
-                        agentStateVersion: agentState.expectedVersion + 1,
-                    }
-                    : {}),
-            };
-            const { count } = await tx.session.updateMany({
-                where: {
-                    id: sessionId,
-                    ...(sessionExpectation ? { active: false } : {}),
-                    ...(metadata
-                        ? { metadataVersion: metadata.expectedVersion }
-                        : {}),
-                    ...(agentState
-                        ? { agentStateVersion: agentState.expectedVersion }
-                        : {}),
-                    metadataLayoutVersion: 0,
-                    ownerMetadata: null,
-                },
-                data: updateData,
-            });
-            if (count === 0) {
-                const fresh = await tx.session.findUnique({
-                    where: { id: sessionId },
-                    select: {
-                        active: true,
-                        metadataLayoutVersion: true,
-                        ownerMetadata: true,
-                        metadataVersion: true,
-                        metadata: true,
-                        agentStateVersion: true,
-                        agentState: true,
-                    },
-                });
-                if (!fresh) {
-                    return { ok: false, error: "session-not-found" };
-                }
-                if (sessionExpectation && fresh.active) {
-                    return { ok: false, error: "session_active" };
-                }
-                if (
-                    (fresh.metadataLayoutVersion ?? 0) !== 0
-                    || fresh.ownerMetadata !== null
-                ) {
-                    return {
-                        ok: false,
-                        error: "metadata_privacy_upgrade_required",
-                    };
-                }
-                return {
-                    ok: false,
-                    error: "version-mismatch",
-                    current: {
-                        ...(metadata
-                            ? {
-                                metadata: {
-                                    version: fresh.metadataVersion,
-                                    value: fresh.metadata,
-                                },
-                            }
-                            : {}),
-                        ...(agentState
-                            ? {
-                                agentState: {
-                                    version: fresh.agentStateVersion,
-                                    value: fresh.agentState,
-                                },
-                            }
-                            : {}),
-                    },
-                };
-            }
-
-            const participantCursors = await markSessionParticipantsChanged({
-                tx,
-                sessionId,
-                participantUserIds: access.participantUserIds,
-            });
-            return {
-                ok: true,
-                participantCursors,
+    const mismatchMetadata =
+        metadata && current.metadataVersion !== metadata.expectedVersion;
+    const mismatchAgentState =
+        agentState && current.agentStateVersion !== agentState.expectedVersion;
+    if (mismatchMetadata || mismatchAgentState) {
+        return {
+            ok: false,
+            error: "version-mismatch",
+            current: {
                 ...(metadata
                     ? {
                         metadata: {
-                            version: metadataChanged
-                                ? metadata.expectedVersion + 1
-                                : current.metadataVersion,
-                            value: metadataChanged
-                                ? metadata.ciphertext
-                                : current.metadata,
+                            version: current.metadataVersion,
+                            value: current.metadata,
                         },
                     }
                     : {}),
                 ...(agentState
                     ? {
                         agentState: {
-                            version: agentStateChanged
-                                ? agentState.expectedVersion + 1
-                                : current.agentStateVersion,
-                            value: agentStateChanged
-                                ? agentState.ciphertext
-                                : current.agentState,
+                            version: current.agentStateVersion,
+                            value: current.agentState,
                         },
                     }
                     : {}),
-            };
-        });
-    } catch {
-        return { ok: false, error: "internal" };
+            },
+        };
     }
+
+    const metadataChanged = metadata
+        ? !isSessionMetadataNoOp({
+            currentMetadata: current.metadata,
+            nextMetadata: metadata.ciphertext,
+            encryptionMode: current.encryptionMode,
+        })
+        : false;
+    const agentStateChanged = agentState
+        ? current.agentState !== agentState.ciphertext
+        : false;
+    if (!metadataChanged && !agentStateChanged) {
+        return {
+            ok: true,
+            participantCursors: [],
+            ...(metadata
+                ? {
+                    metadata: {
+                        version: current.metadataVersion,
+                        value: current.metadata,
+                    },
+                }
+                : {}),
+            ...(agentState
+                ? {
+                    agentState: {
+                        version: current.agentStateVersion,
+                        value: current.agentState,
+                    },
+                }
+                : {}),
+        };
+    }
+
+    const updateData = {
+        ...(metadataChanged && metadata
+            ? {
+                metadata: metadata.ciphertext,
+                metadataVersion: metadata.expectedVersion + 1,
+            }
+            : {}),
+        ...(agentStateChanged && agentState
+            ? {
+                agentState: agentState.ciphertext,
+                agentStateVersion: agentState.expectedVersion + 1,
+            }
+            : {}),
+    };
+    const requireUnarchivedSession = preconditions?.requireUnarchivedSession === true;
+    const { count } = await tx.session.updateMany({
+        where: {
+            id: sessionId,
+            ...(sessionExpectation ? { active: false } : {}),
+            ...(requireUnarchivedSession ? { archivedAt: null } : {}),
+            ...(metadata
+                ? { metadataVersion: metadata.expectedVersion }
+                : {}),
+            ...(agentState
+                ? { agentStateVersion: agentState.expectedVersion }
+                : {}),
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
+        },
+        data: updateData,
+    });
+    if (count === 0) {
+        const fresh = await tx.session.findUnique({
+            where: { id: sessionId },
+            select: {
+                active: true,
+                archivedAt: true,
+                metadataLayoutVersion: true,
+                ownerMetadata: true,
+                metadataVersion: true,
+                metadata: true,
+                agentStateVersion: true,
+                agentState: true,
+            },
+        });
+        if (!fresh) {
+            return { ok: false, error: "session-not-found" };
+        }
+        if (sessionExpectation && fresh.active) {
+            return { ok: false, error: "session_active" };
+        }
+        // Losing to a concurrent archive is a distinct state from losing the
+        // version CAS: nothing about this write is stale, the Session simply
+        // stopped being a legal target for it.
+        if (requireUnarchivedSession && fresh.archivedAt !== null) {
+            return { ok: false, error: "session_archived" };
+        }
+        if (
+            (fresh.metadataLayoutVersion ?? 0) !== 0
+            || fresh.ownerMetadata !== null
+        ) {
+            return {
+                ok: false,
+                error: "metadata_privacy_upgrade_required",
+            };
+        }
+        return {
+            ok: false,
+            error: "version-mismatch",
+            current: {
+                ...(metadata
+                    ? {
+                        metadata: {
+                            version: fresh.metadataVersion,
+                            value: fresh.metadata,
+                        },
+                    }
+                    : {}),
+                ...(agentState
+                    ? {
+                        agentState: {
+                            version: fresh.agentStateVersion,
+                            value: fresh.agentState,
+                        },
+                    }
+                    : {}),
+            },
+        };
+    }
+
+    const participantCursors = await markSessionParticipantsChanged({
+        tx,
+        sessionId,
+        participantUserIds: access.participantUserIds,
+    });
+    return {
+        ok: true,
+        participantCursors,
+        ...(metadata
+            ? {
+                metadata: {
+                    version: metadataChanged
+                        ? metadata.expectedVersion + 1
+                        : current.metadataVersion,
+                    value: metadataChanged
+                        ? metadata.ciphertext
+                        : current.metadata,
+                },
+            }
+            : {}),
+        ...(agentState
+            ? {
+                agentState: {
+                    version: agentStateChanged
+                        ? agentState.expectedVersion + 1
+                        : current.agentStateVersion,
+                    value: agentStateChanged
+                        ? agentState.ciphertext
+                        : current.agentState,
+                },
+            }
+            : {}),
+    };
 }
 
 export type UpdateSessionMetadataEnvelopeTupleInput =
@@ -3266,28 +4039,14 @@ export type UpdateSessionMetadataEnvelopeTupleInput =
         actorUserId: string;
         sessionId: string;
       }>)
-    | Readonly<{
-        mode: "owner";
+    | (SessionMetadataOwnerPatchV1 & Readonly<{
         actorUserId: string;
         sessionId: string;
-        metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
-        expectedOwnerMetadataCiphertext: string;
-        sharedMetadata: Readonly<{ ciphertext: string; expectedVersion: number }>;
-        ownerMetadata: Readonly<{ ciphertext: string }>;
-        agentState: Readonly<{ ciphertext: string | null; expectedVersion: number }>;
-      }>
-    | Readonly<{
-        mode: "owner_inactive_model_intent";
+      }>)
+    | (SessionMetadataInactiveModelIntentOwnerPatchV1 & Readonly<{
         actorUserId: string;
         sessionId: string;
-        metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
-        sessionExpectation:
-            SessionMetadataInactiveModelIntentExpectationV1;
-        expectedOwnerMetadataCiphertext: string;
-        sharedMetadata: Readonly<{ ciphertext: string; expectedVersion: number }>;
-        ownerMetadata: Readonly<{ ciphertext: string }>;
-        agentState: Readonly<{ ciphertext: string | null; expectedVersion: number }>;
-      }>
+      }>)
     | Readonly<{
         mode: "shared_editor";
         actorUserId: string;
@@ -3300,11 +4059,13 @@ export type UpdateSessionMetadataEnvelopeTupleResult =
     | Readonly<{
         ok: true;
         participantCursors: ParticipantCursor[];
+        sessionOwnerId: string;
+        ownerAccountMode: "plain" | "e2ee";
         metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
         sharedMetadata: Readonly<{ version: number; value: string }>;
         agentStateVersion: number;
-        ownerMetadata?: Readonly<{ value: string }>;
-        agentState?: Readonly<{ version: number; value: string | null }>;
+        ownerMetadata: Readonly<{ value: string }>;
+        agentState: Readonly<{ version: number; value: string | null }>;
       }>
     | Readonly<{
         ok: false;
@@ -3313,8 +4074,10 @@ export type UpdateSessionMetadataEnvelopeTupleResult =
             | "forbidden"
             | "session-not-found"
             | "session_active"
+            | "session_archived"
             | "version-mismatch"
             | "metadata_privacy_upgrade_required"
+            | "publisher-superseded"
             | "internal";
         current?: Readonly<{
             metadataLayoutVersion: number;
@@ -3355,34 +4118,115 @@ function isExactMetadataEnvelopeTupleRetry(
         return false;
     }
     if (params.mode === "shared_editor") return true;
-    return current.ownerMetadata === params.ownerMetadata.ciphertext
+    return current.ownerMetadata ===
+            encodeSessionOwnerMetadataEnvelopeV1(params.ownerMetadata)
         && current.agentStateVersion === params.agentState.expectedVersion + 1
         && current.agentState === params.agentState.ciphertext;
+}
+
+function isExactOwnerMigrationRetry(
+    current: StoredSessionMetadataEnvelopeTuple,
+    params: SessionMetadataOwnerMigrationPatchV1,
+    target: Readonly<{
+        sharedMetadata: string;
+        ownerMetadata: string;
+        agentState: string | null;
+    }>,
+): boolean {
+    return (
+        current.metadataLayoutVersion
+            === SESSION_METADATA_LAYOUT_VERSION_V1
+        && current.metadataVersion
+            === params.source.metadata.version + 1
+        && current.metadata === target.sharedMetadata
+        && current.ownerMetadata === target.ownerMetadata
+        && current.agentStateVersion
+            === params.source.agentState.version + 1
+        && current.agentState === target.agentState
+    );
+}
+
+function toOwnerMigrationSuccess(
+    current: StoredSessionMetadataEnvelopeTuple,
+    participantCursors: ParticipantCursor[],
+    sessionOwnerId: string,
+    ownerAccountMode: "plain" | "e2ee",
+): UpdateSessionMetadataEnvelopeTupleResult {
+    return {
+        ok: true,
+        participantCursors,
+        sessionOwnerId,
+        ownerAccountMode,
+        metadataLayoutVersion:
+            SESSION_METADATA_LAYOUT_VERSION_V1,
+        sharedMetadata: {
+            version: current.metadataVersion,
+            value: current.metadata,
+        },
+        agentStateVersion: current.agentStateVersion,
+        ownerMetadata: { value: current.ownerMetadata! },
+        agentState: {
+            version: current.agentStateVersion,
+            value: current.agentState,
+        },
+    };
+}
+
+function toOwnerMigrationConflict(
+    current: StoredSessionMetadataEnvelopeTuple,
+): UpdateSessionMetadataEnvelopeTupleResult {
+    return {
+        ok: false,
+        error:
+            current.metadataLayoutVersion
+                === SESSION_METADATA_LAYOUT_VERSION_V1
+                ? "version-mismatch"
+                : "metadata_privacy_upgrade_required",
+        current: {
+            metadataLayoutVersion:
+                current.metadataLayoutVersion,
+            sharedMetadata: {
+                version: current.metadataVersion,
+                value: current.metadata,
+            },
+            ...(typeof current.ownerMetadata === "string"
+                ? {
+                    ownerMetadata: {
+                        value: current.ownerMetadata,
+                    },
+                }
+                : {}),
+            agentState: {
+                version: current.agentStateVersion,
+                value: current.agentState,
+            },
+        },
+    };
 }
 
 function toMetadataEnvelopeTupleSuccess(
     current: StoredSessionMetadataEnvelopeTuple,
     params: ActiveSessionMetadataEnvelopeTupleInput,
     participantCursors: ParticipantCursor[],
+    sessionOwnerId: string,
+    ownerAccountMode: "plain" | "e2ee",
 ): UpdateSessionMetadataEnvelopeTupleResult {
     return {
         ok: true,
         participantCursors,
+        sessionOwnerId,
+        ownerAccountMode,
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         sharedMetadata: {
             version: current.metadataVersion,
             value: current.metadata,
         },
         agentStateVersion: current.agentStateVersion,
-        ...(params.mode !== "shared_editor"
-            ? {
-                ownerMetadata: { value: current.ownerMetadata! },
-                agentState: {
-                    version: current.agentStateVersion,
-                    value: current.agentState,
-                },
-            }
-            : {}),
+        ownerMetadata: { value: current.ownerMetadata! },
+        agentState: {
+            version: current.agentStateVersion,
+            value: current.agentState,
+        },
     };
 }
 
@@ -3425,6 +4269,14 @@ function isValidSessionMetadataEnvelopeTupleInput(
         && "sessionExpectation" in params
         ? params.sessionExpectation
         : undefined;
+    const hasPublisherPrecondition = Object.prototype.hasOwnProperty.call(
+        params,
+        "publisherPrecondition",
+    );
+    const publisherPrecondition = hasPublisherPrecondition
+        && "publisherPrecondition" in params
+        ? params.publisherPrecondition
+        : undefined;
     if (
         params.mode === "owner_inactive_model_intent"
             ? (
@@ -3432,6 +4284,24 @@ function isValidSessionMetadataEnvelopeTupleInput(
                 || !isExactInactiveModelIntentExpectation(sessionExpectation)
             )
             : hasSessionExpectation
+    ) {
+        return false;
+    }
+    if (
+        params.mode === "owner"
+            ? (
+                hasPublisherPrecondition
+                && (
+                    !publisherPrecondition
+                    || typeof publisherPrecondition.machineId !== "string"
+                    || publisherPrecondition.machineId.trim().length === 0
+                    || publisherPrecondition.machineId.length > 256
+                    || !isNonNegativeInteger(
+                        publisherPrecondition.committedFenceMs,
+                    )
+                )
+            )
+            : hasPublisherPrecondition
     ) {
         return false;
     }
@@ -3445,8 +4315,12 @@ function isValidSessionMetadataEnvelopeTupleInput(
                 params.expectedAccountEncryptionMode === "plain"
                 || params.expectedAccountEncryptionMode === "e2ee"
             )
-            && /^content-public-key-sha256:[0-9a-f]{64}$/u.test(
-                params.expectedAccountContentPublicKeyFingerprint,
+            && (
+                params.expectedAccountEncryptionMode === "plain"
+                    ? params.expectedAccountContentPublicKeyFingerprint === null
+                    : /^content-public-key-sha256:[0-9a-f]{64}$/u.test(
+                        params.expectedAccountContentPublicKeyFingerprint,
+                    )
             )
             && params.source.metadataLayoutVersion === 0
             && typeof params.source.metadata.ciphertext === "string"
@@ -3464,9 +4338,9 @@ function isValidSessionMetadataEnvelopeTupleInput(
                 === SESSION_METADATA_LAYOUT_VERSION_V1
             && typeof params.target.sharedMetadata.ciphertext === "string"
             && params.target.sharedMetadata.ciphertext.length > 0
-            && isSessionOwnerMetadataCiphertextV1(
-                params.target.ownerMetadata.ciphertext,
-            )
+            && SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+                params.target.ownerMetadata,
+            ).success
             && (
                 typeof params.target.agentState.ciphertext === "string"
                 || params.target.agentState.ciphertext === null
@@ -3490,12 +4364,12 @@ function isValidSessionMetadataEnvelopeTupleInput(
         && (
             params.mode === "shared_editor"
             || (
-                typeof params.expectedOwnerMetadataCiphertext === "string"
-                && isSessionOwnerMetadataCiphertextV1(
-                    params.expectedOwnerMetadataCiphertext,
-                )
-                && typeof params.ownerMetadata?.ciphertext === "string"
-                && isSessionOwnerMetadataCiphertextV1(params.ownerMetadata.ciphertext)
+                SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+                    params.expectedOwnerMetadata,
+                ).success
+                && SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+                    params.ownerMetadata,
+                ).success
                 && (
                     typeof params.agentState?.ciphertext === "string"
                     || params.agentState?.ciphertext === null
@@ -3506,29 +4380,177 @@ function isValidSessionMetadataEnvelopeTupleInput(
     );
 }
 
+function parseJsonValue(value: string): unknown | typeof JSON_PARSE_FAILED {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return JSON_PARSE_FAILED;
+    }
+}
+
+function isValidLayoutOneSessionPayload(params: Readonly<{
+    encryptionMode: string | null;
+    sharedMetadata: string;
+    agentState: string | null;
+}>): boolean {
+    if (params.encryptionMode !== "plain") return true;
+    const sharedMetadata = parseJsonValue(params.sharedMetadata);
+    if (
+        sharedMetadata === JSON_PARSE_FAILED
+        || !SessionSharedMetadataV1Schema.safeParse(sharedMetadata).success
+    ) {
+        return false;
+    }
+    if (params.agentState === null) return true;
+    const agentState = parseJsonValue(params.agentState);
+    return agentState !== JSON_PARSE_FAILED
+        && typeof agentState === "object"
+        && agentState !== null
+        && !Array.isArray(agentState);
+}
+
+function validatePlainOwnerMigrationProjection(
+    params: SessionMetadataOwnerMigrationPatchV1,
+): Readonly<{
+    ownerMetadata: string;
+    sharedMetadata: string;
+    agentState: string | null;
+}> | null {
+    if (
+        params.expectedAccountEncryptionMode !== "plain"
+        || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+            accountMode: "plain",
+            envelope: params.target.ownerMetadata,
+        }).ok
+    ) {
+        return null;
+    }
+    const legacyMetadata = parseJsonValue(
+        params.source.metadata.ciphertext,
+    );
+    const legacyAgentState =
+        params.source.agentState.ciphertext === null
+            ? null
+            : parseJsonValue(params.source.agentState.ciphertext);
+    if (
+        legacyMetadata === JSON_PARSE_FAILED
+        || legacyAgentState === JSON_PARSE_FAILED
+    ) {
+        return null;
+    }
+    const ownerProjection = createSessionOwnerMetadataV1({
+        metadata: legacyMetadata,
+    });
+    if (!ownerProjection.ok) return null;
+    const canonicalOwnerEnvelope =
+        createPlainSessionOwnerMetadataEnvelopeV1(
+            ownerProjection.ownerMetadata,
+        );
+    const canonicalSharedMetadata = projectSessionSharedMetadataV1({
+        metadata: legacyMetadata,
+        agentState: legacyAgentState ?? undefined,
+    });
+    const targetSharedMetadata = parseJsonValue(
+        params.target.sharedMetadata.ciphertext,
+    );
+    const targetAgentState =
+        params.target.agentState.ciphertext === null
+            ? null
+            : parseJsonValue(params.target.agentState.ciphertext);
+    if (
+        targetSharedMetadata === JSON_PARSE_FAILED
+        || targetAgentState === JSON_PARSE_FAILED
+        || !isDeepStrictEqual(
+            canonicalOwnerEnvelope,
+            params.target.ownerMetadata,
+        )
+        || !isDeepStrictEqual(
+            canonicalSharedMetadata,
+            targetSharedMetadata,
+        )
+        || !isDeepStrictEqual(legacyAgentState, targetAgentState)
+    ) {
+        return null;
+    }
+    return {
+        ownerMetadata:
+            encodeSessionOwnerMetadataEnvelopeV1(canonicalOwnerEnvelope),
+        sharedMetadata: JSON.stringify(canonicalSharedMetadata),
+        agentState:
+            targetAgentState === null
+                ? null
+                : JSON.stringify(targetAgentState),
+    };
+}
+
 /**
  * Canonical Session-row/CAS owner for the CPX-R26 safe/private envelope tuple.
- * The owner-migration wire remains strict while layout-one activation is
- * frozen. Ordinary owner and shared-editor writes remain closed until layout
- * v1 exists. Shared editors cannot observe or mutate owner metadata or full
- * Agent state.
+ * The owner-migration wire remains strict, and layout-one owner and
+ * shared-editor writes use this same Account-current tuple/CAS path. Legacy
+ * layout-zero writers are fenced once layout one exists. Shared editors cannot
+ * observe or mutate owner metadata or full Agent state.
  */
 export async function updateSessionMetadataEnvelopeTupleInTx(
     tx: Tx,
     params: UpdateSessionMetadataEnvelopeTupleInput,
+    preconditions?: SessionMetadataWritePreconditionsV1,
 ): Promise<UpdateSessionMetadataEnvelopeTupleResult> {
     if (!isValidSessionMetadataEnvelopeTupleInput(params)) {
         return { ok: false, error: "invalid-params" };
     }
 
-    if (params.mode === "owner_migration") {
-        return {
-            ok: false,
-            error: "metadata_privacy_upgrade_required",
-        };
-    }
-
     if (params.mode !== "shared_editor") {
+        const preflightAccount = await tx.account.findUnique({
+            where: { id: params.actorUserId },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        });
+        const preflightCurrentness = preflightAccount
+            ? deriveAccountEncryptionCurrentnessFromRow(
+                preflightAccount,
+            )
+            : null;
+        if (preflightCurrentness?.status !== "ready") {
+            return { ok: false, error: "invalid-params" };
+        }
+        const preflightMode =
+            preflightCurrentness.currentness.encryptionMode;
+        if (params.mode === "owner_migration") {
+            if (
+                preflightMode
+                    !== params.expectedAccountEncryptionMode
+                || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                    accountMode: preflightMode,
+                    envelope: params.target.ownerMetadata,
+                }).ok
+                || (
+                    preflightMode === "e2ee"
+                    && preflightCurrentness.currentness
+                        .contentPublicKeyFingerprint
+                        !== params.expectedAccountContentPublicKeyFingerprint
+                )
+            ) {
+                return {
+                    ok: false,
+                    error: "metadata_privacy_upgrade_required",
+                };
+            }
+        } else if (
+            !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                accountMode: preflightMode,
+                envelope: params.expectedOwnerMetadata,
+            }).ok
+            || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                accountMode: preflightMode,
+                envelope: params.ownerMetadata,
+            }).ok
+        ) {
+            return { ok: false, error: "invalid-params" };
+        }
         await acquireAccountSessionOwnerMetadataFenceInTx(
             tx,
             params.actorUserId,
@@ -3539,6 +4561,250 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         ? await ensureSessionOwnerAccess(tx, params)
         : await ensureSessionEditAccess(tx, params);
     if (!access.ok) return { ok: false, error: access.error };
+
+    const account = await tx.account.findUnique({
+        where: { id: access.sessionOwnerId },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
+    });
+    if (!account) {
+        return { ok: false, error: "forbidden" };
+    }
+    const accountCurrentness =
+        deriveAccountEncryptionCurrentnessFromRow(account);
+    if (accountCurrentness.status !== "ready") {
+        return { ok: false, error: "invalid-params" };
+    }
+
+    if (params.mode === "owner_migration") {
+        if (
+            accountCurrentness?.status !== "ready"
+            || (
+                accountCurrentness.currentness.encryptionMode
+                !== params.expectedAccountEncryptionMode
+            )
+            || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                accountMode:
+                    accountCurrentness.currentness.encryptionMode,
+                envelope: params.target.ownerMetadata,
+            }).ok
+            || (
+                params.expectedAccountEncryptionMode === "e2ee"
+                && (
+                    accountCurrentness.currentness
+                        .contentPublicKeyFingerprint
+                    !==
+                        params.expectedAccountContentPublicKeyFingerprint
+                )
+            )
+        ) {
+            return {
+                ok: false,
+                error: "metadata_privacy_upgrade_required",
+            };
+        }
+        const plainProjection =
+            params.expectedAccountEncryptionMode === "plain"
+                ? validatePlainOwnerMigrationProjection(params)
+                : null;
+        if (
+            params.expectedAccountEncryptionMode === "plain"
+                ? plainProjection === null
+                : !isValidLayoutOneSessionPayload({
+                    encryptionMode: access.sessionEncryptionMode,
+                    sharedMetadata:
+                        params.target.sharedMetadata.ciphertext,
+                    agentState: params.target.agentState.ciphertext,
+                })
+        ) {
+            return { ok: false, error: "invalid-params" };
+        }
+        const nextSharedMetadata =
+            plainProjection?.sharedMetadata
+            ?? params.target.sharedMetadata.ciphertext;
+        const nextOwnerMetadata =
+            plainProjection?.ownerMetadata
+            ?? encodeSessionOwnerMetadataEnvelopeV1(
+                params.target.ownerMetadata,
+            );
+        const nextAgentState =
+            plainProjection?.agentState
+            ?? params.target.agentState.ciphertext;
+        const nextMetadataVersion =
+            params.source.metadata.version + 1;
+        const nextAgentStateVersion =
+            params.source.agentState.version + 1;
+        const target = {
+            sharedMetadata: nextSharedMetadata,
+            ownerMetadata: nextOwnerMetadata,
+            agentState: nextAgentState,
+        };
+        const current = await tx.session.findUnique({
+            where: { id: params.sessionId },
+            select: {
+                active: true,
+                metadataLayoutVersion: true,
+                metadataVersion: true,
+                metadata: true,
+                ownerMetadata: true,
+                agentStateVersion: true,
+                agentState: true,
+            },
+        });
+        if (!current) return { ok: false, error: "session-not-found" };
+        if (isExactOwnerMigrationRetry(current, params, target)) {
+            return toOwnerMigrationSuccess(
+                current,
+                [],
+                access.sessionOwnerId,
+                accountCurrentness.currentness.encryptionMode,
+            );
+        }
+        if (
+            current.metadataLayoutVersion !== 0
+            || current.ownerMetadata !== null
+            || current.metadataVersion
+                !== params.source.metadata.version
+            || current.metadata
+                !== params.source.metadata.ciphertext
+            || current.agentStateVersion
+                !== params.source.agentState.version
+            || current.agentState
+                !== params.source.agentState.ciphertext
+        ) {
+            return toOwnerMigrationConflict(current);
+        }
+        const updated = await tx.session.updateMany({
+            where: {
+                id: params.sessionId,
+                metadataLayoutVersion: 0,
+                metadataVersion: params.source.metadata.version,
+                metadata: params.source.metadata.ciphertext,
+                ownerMetadata: null,
+                agentStateVersion:
+                    params.source.agentState.version,
+                agentState: params.source.agentState.ciphertext,
+            },
+            data: {
+                metadataLayoutVersion:
+                    SESSION_METADATA_LAYOUT_VERSION_V1,
+                metadata: nextSharedMetadata,
+                metadataVersion: nextMetadataVersion,
+                ownerMetadata: nextOwnerMetadata,
+                agentState: nextAgentState,
+                agentStateVersion: nextAgentStateVersion,
+            },
+        });
+        if (updated.count !== 1) {
+            const fresh = await tx.session.findUnique({
+                where: { id: params.sessionId },
+                select: {
+                    active: true,
+                    metadataLayoutVersion: true,
+                    metadataVersion: true,
+                    metadata: true,
+                    ownerMetadata: true,
+                    agentStateVersion: true,
+                    agentState: true,
+                },
+            });
+            if (!fresh) {
+                return {
+                    ok: false,
+                    error: "session-not-found",
+                };
+            }
+            if (isExactOwnerMigrationRetry(
+                fresh,
+                params,
+                target,
+            )) {
+                return toOwnerMigrationSuccess(
+                    fresh,
+                    [],
+                    access.sessionOwnerId,
+                    accountCurrentness.currentness.encryptionMode,
+                );
+            }
+            return toOwnerMigrationConflict(fresh);
+        }
+        const participantCursors =
+            await markSessionParticipantsChanged({
+                tx,
+                sessionId: params.sessionId,
+                participantUserIds: access.participantUserIds,
+            });
+        return toOwnerMigrationSuccess(
+            {
+                active: current.active,
+                metadataLayoutVersion:
+                    SESSION_METADATA_LAYOUT_VERSION_V1,
+                metadataVersion: nextMetadataVersion,
+                metadata: nextSharedMetadata,
+                ownerMetadata: nextOwnerMetadata,
+                agentStateVersion: nextAgentStateVersion,
+                agentState: nextAgentState,
+            },
+            participantCursors,
+            access.sessionOwnerId,
+            accountCurrentness.currentness.encryptionMode,
+        );
+    }
+
+    if (
+        params.mode !== "shared_editor"
+        && accountCurrentness?.status === "ready"
+        && (
+                !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                    accountMode:
+                        accountCurrentness.currentness.encryptionMode,
+                    envelope: params.expectedOwnerMetadata,
+                }).ok
+                || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+                    accountMode:
+                        accountCurrentness.currentness.encryptionMode,
+                    envelope: params.ownerMetadata,
+                }).ok
+        )
+    ) {
+        return { ok: false, error: "invalid-params" };
+    }
+    if (
+        !isValidLayoutOneSessionPayload({
+            encryptionMode: access.sessionEncryptionMode,
+            sharedMetadata: params.sharedMetadata.ciphertext,
+            agentState:
+                params.mode === "shared_editor"
+                    ? null
+                    : params.agentState.ciphertext,
+        })
+    ) {
+        return { ok: false, error: "invalid-params" };
+    }
+
+    if (
+        params.mode === "owner"
+        && params.publisherPrecondition
+        && !await fenceExactCurrentPublisherAuthorityInTx(
+            tx,
+            {
+                accountId: params.actorUserId,
+                machineId: params.publisherPrecondition.machineId,
+                sessionId: params.sessionId,
+                committedFence: new Date(
+                    params.publisherPrecondition.committedFenceMs,
+                ),
+            },
+            params.actorUserId,
+            params.sessionId,
+        )
+    ) {
+        return { ok: false, error: "publisher-superseded" };
+    }
 
     const current = await tx.session.findUnique({
         where: { id: params.sessionId },
@@ -3556,6 +4822,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
 
     const requiresInactiveSession =
         params.mode === "owner_inactive_model_intent";
+    const requireUnarchivedSession = preconditions?.requireUnarchivedSession === true;
     if (
         current.metadataLayoutVersion
         !== SESSION_METADATA_LAYOUT_VERSION_V1
@@ -3565,8 +4832,32 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
             error: "metadata_privacy_upgrade_required",
         };
     }
+    const currentOwnerMetadata =
+        parsePersistedSessionOwnerMetadataEnvelopeV1({
+            metadataLayoutVersion: current.metadataLayoutVersion,
+            accountMode:
+                accountCurrentness.currentness.encryptionMode,
+            ownerMetadata: current.ownerMetadata,
+            allowRetainedDevelopmentCiphertext: true,
+        });
+    if (!validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+        accountMode:
+            accountCurrentness.currentness.encryptionMode,
+        envelope: currentOwnerMetadata,
+    }).ok) {
+        return {
+            ok: false,
+            error: "metadata_privacy_upgrade_required",
+        };
+    }
     if (isExactMetadataEnvelopeTupleRetry(current, params)) {
-        return toMetadataEnvelopeTupleSuccess(current, params, []);
+        return toMetadataEnvelopeTupleSuccess(
+            current,
+            params,
+            [],
+            access.sessionOwnerId,
+            accountCurrentness.currentness.encryptionMode,
+        );
     }
     if (requiresInactiveSession && current.active) {
         return { ok: false, error: "session_active" };
@@ -3576,8 +4867,15 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         || (
             params.mode !== "shared_editor"
             && (
-                current.ownerMetadata
-                    !== params.expectedOwnerMetadataCiphertext
+                !doesStoredSessionOwnerMetadataMatchEnvelope({
+                    stored: current.ownerMetadata,
+                    envelope: params.expectedOwnerMetadata,
+                    accountMode:
+                        accountCurrentness.currentness.encryptionMode,
+                    allowRetainedEncrypted:
+                        accountCurrentness.currentness.encryptionMode
+                        === "e2ee",
+                })
                 || current.agentStateVersion
                     !== params.agentState.expectedVersion
             )
@@ -3595,7 +4893,10 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         ? {
             metadata: params.sharedMetadata.ciphertext,
             metadataVersion: nextMetadataVersion,
-            ownerMetadata: params.ownerMetadata.ciphertext,
+            ownerMetadata:
+                encodeSessionOwnerMetadataEnvelopeV1(
+                    params.ownerMetadata,
+                ),
             metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
             agentState: params.agentState.ciphertext,
             agentStateVersion: nextAgentStateVersion,
@@ -3608,12 +4909,12 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         where: {
             id: params.sessionId,
             ...(requiresInactiveSession ? { active: false } : {}),
+            ...(requireUnarchivedSession ? { archivedAt: null } : {}),
             metadataLayoutVersion: current.metadataLayoutVersion,
             metadataVersion: params.sharedMetadata.expectedVersion,
             ...(params.mode !== "shared_editor"
                 ? {
-                    ownerMetadata:
-                        params.expectedOwnerMetadataCiphertext,
+                    ownerMetadata: current.ownerMetadata,
                     agentStateVersion: params.agentState.expectedVersion,
                 }
                 : {
@@ -3639,7 +4940,9 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         metadataVersion: nextMetadataVersion,
         metadata: params.sharedMetadata.ciphertext,
         ownerMetadata: params.mode !== "shared_editor"
-            ? params.ownerMetadata.ciphertext
+            ? encodeSessionOwnerMetadataEnvelopeV1(
+                params.ownerMetadata,
+            )
             : current.ownerMetadata,
         agentStateVersion: nextAgentStateVersion,
         agentState: params.mode !== "shared_editor"
@@ -3651,6 +4954,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
             where: { id: params.sessionId },
             select: {
                 active: true,
+                archivedAt: true,
                 metadataLayoutVersion: true,
                 metadataVersion: true,
                 metadata: true,
@@ -3670,10 +4974,22 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
             };
         }
         if (isExactMetadataEnvelopeTupleRetry(fresh, params)) {
-            return toMetadataEnvelopeTupleSuccess(fresh, params, []);
+            return toMetadataEnvelopeTupleSuccess(
+                fresh,
+                params,
+                [],
+                access.sessionOwnerId,
+                accountCurrentness.currentness.encryptionMode,
+            );
         }
         if (requiresInactiveSession && fresh.active) {
             return { ok: false, error: "session_active" };
+        }
+        // Losing to a concurrent archive is a distinct state from losing the
+        // version CAS: nothing about this write is stale, the Session simply
+        // stopped being a legal target for it.
+        if (requireUnarchivedSession && fresh.archivedAt !== null) {
+            return { ok: false, error: "session_archived" };
         }
         if (params.mode === "shared_editor") {
             const freshAccess = await ensureSessionEditAccess(tx, params);
@@ -3688,11 +5004,14 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         tx,
         sessionId: params.sessionId,
         participantUserIds: access.participantUserIds,
+        hint: { sharedMetadataVersion: nextMetadataVersion },
     });
     return toMetadataEnvelopeTupleSuccess(
         nextTuple,
         params,
         participantCursors,
+        access.sessionOwnerId,
+        accountCurrentness.currentness.encryptionMode,
     );
 }
 

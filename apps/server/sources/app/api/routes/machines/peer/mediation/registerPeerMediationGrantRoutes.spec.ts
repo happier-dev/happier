@@ -3,6 +3,7 @@ import tweetnacl from "tweetnacl";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
 import { createRouteTestBuilder } from "../../../../testkit/routeTestBuilder";
+import { getRouteEntry } from "../../../../testkit/routeHarness";
 import {
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     PeerTcpTunnelRelayAuthorizationV2Schema,
@@ -74,6 +75,18 @@ function createRouteWithOwnership(
 }
 
 describe("registerPeerMediationGrantRoutes", () => {
+    it("registers the canonical authenticated request throttle before minting signed grants", () => {
+        const route = createRoute();
+
+        expect(getRouteEntry(route.app, "POST", "/v1/machines/peer/mediation/route-grants").opts.config?.rateLimit).toEqual(
+            expect.objectContaining({
+                max: 60,
+                timeWindow: "1 minute",
+                keyGenerator: expect.any(Function),
+            }),
+        );
+    });
+
     it("mints V2 only for an explicit strict ephemeral proof request", async () => {
         const route = createRoute();
         const ephemeralKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
@@ -468,6 +481,13 @@ describe("registerPeerMediationGrantRoutes", () => {
                         if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) forwarded.push(payload);
                     },
                 }),
+                local: {
+                    to: () => ({
+                        emit: (event: string, payload: unknown) => {
+                            if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) forwarded.push(payload);
+                        },
+                    }),
+                },
             },
             nowMs: () => 1_000,
             serverRoutedEnabled: true,

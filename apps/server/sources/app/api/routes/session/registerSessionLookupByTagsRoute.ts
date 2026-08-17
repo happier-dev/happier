@@ -1,4 +1,5 @@
 import {
+    SESSION_METADATA_LAYOUT_VERSION_V1,
     SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
     SessionLookupByTagsRequestV2Schema,
     SessionLookupByTagsResponseV2Schema,
@@ -14,7 +15,11 @@ import {
 import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
+    readSessionMetadataOwnerAccountMode,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
 export function registerSessionLookupByTagsRoute(app: Fastify) {
     app.post("/v2/sessions/lookup-by-tags", {
@@ -27,6 +32,7 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
                     error: z.literal("Session metadata privacy upgrade required"),
                     code: z.literal("metadata_privacy_upgrade_required"),
                 }),
+                426: z.unknown(),
             },
         },
     }, async (request, reply) => {
@@ -40,10 +46,35 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
             take: SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
             select: createV2SessionOwnerRowSelect(),
         });
+        if (
+            sessions.some((session) =>
+                session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1)
+            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                request,
+                reply,
+            )
+        ) {
+            return;
+        }
 
         try {
+            const requiresOwnerAccountMode = sessions.some(
+                (session) => session.metadataLayoutVersion
+                    === SESSION_METADATA_LAYOUT_VERSION_V1,
+            );
+            const ownerAccountMode = requiresOwnerAccountMode
+                ? await readSessionMetadataOwnerAccountMode(
+                    db,
+                    userId,
+                )
+                : undefined;
             return reply.send({
-                sessions: sessions.map(mapV2SessionOwnerRow),
+                sessions: sessions.map((session) =>
+                    mapV2SessionOwnerRow(
+                        session,
+                        ownerAccountMode,
+                    )),
             });
         } catch (error) {
             if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {

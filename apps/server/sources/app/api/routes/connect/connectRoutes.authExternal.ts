@@ -11,12 +11,20 @@ import { oauthExternalRateLimitAuthParamsPerIp } from "./oauthExternal/oauthExte
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternal/oauthExternalErrors";
 import { registerExternalAuthFinalizeRoute } from "./oauthExternal/registerExternalAuthFinalizeRoute";
 import { registerExternalAuthFinalizeKeylessRoute } from "./oauthExternal/registerExternalAuthFinalizeKeylessRoute";
-import { authPendingSchema } from "./oauthExternal/oauthExternalSchemas";
+import { oauthAuthPendingSchema } from "./oauthExternal/oauthExternalSchemas";
 import { deleteOAuthPendingBestEffort, loadValidOAuthPending } from "./connectRoutes.oauthPending";
-import { ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } from "@happier-dev/protocol";
+import {
+    AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+    ExternalOAuthErrorResponseSchema,
+    ExternalOAuthParamsResponseSchema,
+} from "@happier-dev/protocol";
 import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveWebAppOAuthReturnUrlFromRequestHeaders } from "./oauthExternal/oauthExternalConfig";
+import { db } from "@/storage/db";
+import {
+    isTrulyKeylessPlainAccountRow,
+} from "@/app/encryption/accountEncryptionMode";
 
 export function connectAuthExternalRoutes(app: Fastify) {
     //
@@ -24,6 +32,14 @@ export function connectAuthExternalRoutes(app: Fastify) {
     //
 
     app.get("/v1/auth/external/:provider/params", {
+        preHandler: async (request, reply) => {
+            if (
+                (request.query as { purpose?: unknown }).purpose
+                === "account_encryption_first_key"
+            ) {
+                return await app.authenticate(request, reply);
+            }
+        },
         config: { rateLimit: oauthExternalRateLimitAuthParamsPerIp() },
         schema: {
             params: z.object({ provider: z.string() }),
@@ -32,13 +48,25 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     publicKey: z.string().optional(),
                     mode: z.enum(["keyed", "keyless"]).optional(),
                     proofHash: z.string().optional(),
+                    purpose:
+                        z.literal("account_encryption_first_key")
+                            .optional(),
+                    requestDigest:
+                        AccountEncryptionMigrateExternalAuthBindingDigestV1Schema
+                            .optional(),
                 })
                 .refine((q) => {
+                    if (q.purpose === "account_encryption_first_key") {
+                        return q.mode === "keyless"
+                            && Boolean(q.proofHash)
+                            && Boolean(q.requestDigest)
+                            && !q.publicKey;
+                    }
                     if (q.mode === "keyless") return Boolean(q.proofHash);
                     if (typeof q.proofHash === "string" && q.proofHash.trim()) return true;
                     return Boolean(q.publicKey);
                 }, {
-                    message: "Expected publicKey (legacy keyed) or proofHash (keyed or keyless)",
+                    message: "Expected a valid external-auth challenge binding",
                 }),
             response: {
                 200: ExternalOAuthParamsResponseSchema,
@@ -51,6 +79,89 @@ export function connectAuthExternalRoutes(app: Fastify) {
         const providerId = request.params.provider.toString().trim().toLowerCase();
         const provider = findOAuthProviderById(process.env, providerId);
         if (!provider) return reply.code(404).send({ error: "unsupported-provider" });
+
+        const isFirstKeyStepUp =
+            request.query.purpose
+            === "account_encryption_first_key";
+        if (isFirstKeyStepUp) {
+            const proofHash = request.query.proofHash!
+                .toString()
+                .trim()
+                .toLowerCase();
+            const requestDigest = request.query.requestDigest!
+                .toString()
+                .trim();
+            if (!/^[0-9a-f]{64}$/.test(proofHash)) {
+                return reply.code(400).send({ error: "Invalid proof" });
+            }
+            const [account, identity] = await Promise.all([
+                db.account.findUnique({
+                    where: { id: request.userId },
+                    select: {
+                        publicKey: true,
+                        encryptionMode: true,
+                        contentPublicKey: true,
+                        contentPublicKeySig: true,
+                    },
+                }),
+                db.accountIdentity.findFirst({
+                    where: {
+                        accountId: request.userId,
+                        provider: providerId,
+                    },
+                    select: { id: true },
+                }),
+            ]);
+            if (
+                !account
+                || !isTrulyKeylessPlainAccountRow(
+                    account,
+                )
+                || !identity
+            ) {
+                return reply
+                    .code(403)
+                    .send({ error: "step-up-not-eligible" });
+            }
+            try {
+                const webAppOAuthReturnUrl =
+                    resolveWebAppOAuthReturnUrlFromRequestHeaders({
+                        env: process.env,
+                        providerId,
+                        headers: request.headers as Record<string, unknown>,
+                    });
+                const url = await createExternalAuthorizeUrl({
+                    flow: "auth",
+                    env: process.env,
+                    providerId,
+                    provider,
+                    publicKeyHex: null,
+                    proofHash,
+                    purpose: "account_encryption_first_key",
+                    userId: request.userId,
+                    requestDigest,
+                    ...(webAppOAuthReturnUrl
+                        ? { webAppOAuthReturnUrl }
+                        : {}),
+                });
+                if (!url) {
+                    return reply
+                        .code(400)
+                        .send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
+                }
+                return reply.send({ url });
+            } catch (error) {
+                if (
+                    error instanceof Error
+                    && error.message === OAUTH_NOT_CONFIGURED_ERROR
+                ) {
+                    return reply
+                        .code(400)
+                        .send({ error: OAUTH_NOT_CONFIGURED_ERROR });
+                }
+                throw error;
+            }
+        }
 
         const mode = (request.query as any)?.mode === "keyless" ? "keyless" : "keyed";
         const policy = resolveAuthPolicyFromEnv(process.env);
@@ -157,7 +268,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
         const pending = await loadValidOAuthPending(pendingKey);
         if (!pending) return reply.send({ success: true });
         try {
-            const parsed = authPendingSchema.safeParse(JSON.parse(pending.value));
+            const parsed = oauthAuthPendingSchema.safeParse(JSON.parse(pending.value));
             if (!parsed.success) return reply.send({ success: true });
             if (parsed.data.provider.toString().trim().toLowerCase() !== providerId) return reply.send({ success: true });
         } catch {

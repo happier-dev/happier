@@ -3,15 +3,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const deletePendingMessage = vi.fn();
+const sessionFindUnique = vi.fn();
+
+const HOSTED_RECIPIENT_PROJECTION = {
+    currentStorageState: "hosted",
+    acceptedThroughServerSeq: null,
+    materializationPublicationId: null,
+    materializedThroughSourceAt: null,
+    publishedThroughServerSeq: null,
+    seq: 0,
+    lastViewedSessionSeq: null,
+    latestReadyEventSeq: null,
+    latestReadyEventAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    meaningfulActivityAt: null,
+    lastActiveAt: new Date(0),
+} as const;
 
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     deletePendingMessage,
+}));
+vi.mock("@/storage/db", () => ({
+    db: { session: { findUnique: sessionFindUnique } },
 }));
 
 describe("sessionPendingRoutes (delete) (status mapping)", () => {
     beforeEach(() => {
         vi.resetModules();
         deletePendingMessage.mockReset();
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(HOSTED_RECIPIENT_PROJECTION);
     });
 
     it("returns success when pending localId is already absent", async () => {

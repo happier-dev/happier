@@ -15,8 +15,9 @@ import { authPendingSchema } from "./oauthExternalSchemas";
 import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
-import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
+import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 
 function sha256Hex(value: string): string {
     return createHash("sha256").update(value, "utf8").digest("hex");
@@ -127,11 +128,22 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
         if (existingIdentity) {
             const existingAccount = await db.account.findUnique({
                 where: { id: existingIdentity.accountId },
-                select: { publicKey: true, encryptionMode: true },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
             });
-            const requiresRestore = existingAccount
-                ? resolveEffectiveAccountEncryptionModeFromAccountRow(existingAccount) === "e2ee"
-                : false;
+            const currentness = existingAccount
+                ? deriveAccountEncryptionCurrentnessFromRow(
+                    existingAccount,
+                )
+                : null;
+            const requiresRestore =
+                currentness?.status === "inconsistent"
+                || currentness?.currentness.encryptionMode
+                    === "e2ee";
             if (requiresRestore) {
                 await db.repeatKey.deleteMany({ where: { key: pendingKey } });
                 return reply.code(409).send({ error: "restore-required" });
@@ -205,7 +217,7 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
             });
             await db.repeatKey.deleteMany({ where: { key: pendingKey } });
         } catch (error) {
-            await db.account.delete({ where: { id: account.id } }).catch(() => {});
+            await deleteAccountForErasure({ accountId: account.id }).catch(() => {});
             await db.repeatKey.deleteMany({ where: { key: pendingKey } });
             if (error instanceof Error && error.message === "not-eligible") {
                 return reply.code(403).send({ error: "not-eligible" });

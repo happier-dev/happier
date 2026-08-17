@@ -13,6 +13,7 @@ import {
     QualifiedConnectedAccountRefSchema,
     QualifiedConnectedAccountRefreshLeaseV4Schema,
     QualifiedConnectedAccountRefreshLeaseResponseV4Schema,
+    QualifiedConnectedAccountQuotaQueryV4Schema,
     QualifiedConnectedAccountQuotaResponseV4Schema,
     QualifiedConnectedAccountGroupCreateV4Schema,
     QualifiedConnectedAccountGroupPatchV4Schema,
@@ -20,6 +21,7 @@ import {
     QualifiedConnectedAccountGroupMemberMutationV4Schema,
     QualifiedConnectedAccountGroupMemberDeleteV4Schema,
     QualifiedConnectedAccountGroupActiveAccountV4Schema,
+    QualifiedConnectedAccountGroupIncarnationV4Schema,
     QualifiedConnectedAccountGroupRefSchema,
     QualifiedConnectedAccountGroupListResponseV4Schema,
     QualifiedConnectedAccountGroupResponseV4Schema,
@@ -112,6 +114,11 @@ const StructuredGroupQuerySchema = z.object({
     group: z.union([z.string(), z.array(z.string())]),
     expectedRuntimeStateRevision: z.string().optional(),
 }).strict();
+const StructuredGroupDeleteQuerySchema = z.object({
+    group: z.union([z.string(), z.array(z.string())]),
+    expectedRuntimeStateRevision: z.string().optional(),
+    expectedIncarnation: z.string().optional(),
+}).strict();
 const StructuredGroupMemberDeleteQuerySchema = z.object({
     mutation: z.union([z.string(), z.array(z.string())]),
 }).strict();
@@ -139,6 +146,7 @@ const GroupConflictResponseSchema = z.object({
     error: z.enum([
         "connect_group_already_exists",
         "connect_group_generation_conflict",
+        "connect_group_incarnation_conflict",
         "connect_group_runtime_state_revision_conflict",
         "connect_group_member_already_exists",
         "connect_group_member_not_found",
@@ -163,6 +171,14 @@ function parseOptionalCanonicalInteger(
         throw new Error("Expected safe integer");
     }
     return parsed;
+}
+
+function parseOptionalQualifiedGroupIncarnation(
+    value: string | undefined,
+): string | undefined {
+    return value === undefined
+        ? undefined
+        : QualifiedConnectedAccountGroupIncarnationV4Schema.parse(value);
 }
 
 export function registerQualifiedConnectedAccountCredentialRoutesV4(
@@ -226,6 +242,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "storage_mode_mismatch") {
             return reply.code(400).send({ error: "invalid-params" });
         }
+        if (result.status === "revision_required") {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "provider_identity_mismatch") {
             return reply.code(409).send({
                 error: "connect_reconnect_provider_identity_mismatch",
@@ -263,6 +282,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 404: z.object({
                     error: z.literal("connect_credential_not_found"),
                 }).strict(),
+                409: QualifiedConnectedAccountCredentialErrorV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -275,17 +295,25 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         } catch {
             return reply.code(400).send({ error: "invalid-params" });
         }
-        const credential =
+        const result =
             await routeDependencies.readQualifiedConnectedServiceCredential({
                 accountId: request.userId,
                 ref,
             });
-        if (!credential) {
+        if (result.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_credential_not_found",
             });
         }
-        return reply.send({ ref, ...credential });
+        if (result.status === "storage_mode_mismatch") {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
+        if (result.status === "unsupported_format") {
+            return reply.code(409).send({
+                error: "connect_credential_unsupported_format",
+            });
+        }
+        return reply.send({ ref, ...result.credential });
     });
 
     app.get("/v4/connect/qualified/configuration", {
@@ -322,6 +350,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(404).send({
                 error: "connect_credential_not_found",
             });
+        }
+        if ("status" in configuration) {
+            return reply.code(400).send({ error: "invalid-params" });
         }
         return reply.send(configuration);
     });
@@ -361,7 +392,10 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     }
                     : {}),
             });
-        if (result.status === "storage_mode_mismatch") {
+        if (
+            result.status === "storage_mode_mismatch"
+            || result.status === "revision_required"
+        ) {
             return reply.code(400).send({ error: "invalid-params" });
         }
         if (result.status === "not_found") {
@@ -391,6 +425,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             response: {
                 200:
                     QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
+                400: z.object({
+                    error: z.literal("invalid-params"),
+                }).strict(),
                 404: z.object({
                     error: z.literal("connect_credential_not_found"),
                 }).strict(),
@@ -409,6 +446,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     expectedConfigurationRevision:
                         request.body.expectedConfigurationRevision,
                 });
+        if (
+            result.status === "storage_mode_mismatch"
+            || result.status === "revision_required"
+        ) {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_credential_not_found",
@@ -416,7 +459,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         }
         if (result.status === "unsupported_format") {
             return reply.code(409).send({
-                error: "connect_credential_not_found",
+                error: "connect_credential_unsupported_format",
             });
         }
         if (result.status === "superseded") {
@@ -463,6 +506,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             cleanupGroupReferences:
                 request.query.cleanupGroupReferences === "true",
         });
+        if (result.status === "storage_mode_mismatch") {
+            return reply.code(400).send({ error: "invalid-params" });
+        }
         if (result.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_credential_not_found",
@@ -491,6 +537,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             response: {
                 200:
                     QualifiedConnectedAccountRefreshLeaseResponseV4Schema,
+                400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: NotFoundResponseSchema,
             },
         },
@@ -508,6 +555,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(404).send({
                 error: "connect_credential_not_found",
             });
+        }
+        if (result.status === "revision_required") {
+            return reply.code(400).send({ error: "invalid-params" });
         }
         return reply.send({
             acquired: result.acquired,
@@ -584,9 +634,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
     app.post("/v4/connect/qualified/quotas/refresh", {
         preHandler: app.authenticate,
         schema: {
-            body: z.object({
-                ref: QualifiedConnectedAccountRefSchema,
-            }).strict(),
+            body: QualifiedConnectedAccountQuotaQueryV4Schema,
             response: {
                 200: QualifiedConnectedAccountSuccessV4Schema,
                 404: NotFoundResponseSchema,
@@ -646,10 +694,16 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         const result = await createQualifiedConnectedAccountGroup({
             accountId: request.userId,
             ...request.body,
+            legacyV3Mutation: false,
         });
         if (result.status === "already_exists") {
             return reply.code(409).send({
                 error: "connect_group_already_exists",
+            });
+        }
+        if (result.status === "source_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_source_revision_conflict",
             });
         }
         if (result.status !== "written") {
@@ -726,16 +780,28 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         const result = await patchQualifiedConnectedAccountGroup({
             accountId: request.userId,
             patch: request.body,
+            expectedIncarnation:
+                request.body.expectedIncarnation ?? null,
         });
         if (result.status === "not_found") {
             return reply.code(404).send({
                 error: "connect_group_not_found",
             });
         }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
         if (result.status === "member_not_found"
             || result.status === "member_disabled") {
             return reply.code(409).send({
                 error: "connect_group_active_profile_not_member",
+            });
+        }
+        if (result.status === "source_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_source_revision_conflict",
             });
         }
         if (result.status !== "written") {
@@ -753,7 +819,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
     app.delete("/v4/connect/qualified/group", {
         preHandler: app.authenticate,
         schema: {
-            querystring: StructuredGroupQuerySchema,
+            querystring: StructuredGroupDeleteQuerySchema,
             response: {
                 200: QualifiedConnectedAccountSuccessV4Schema,
                 400: z.object({ error: z.literal("invalid-params") }).strict(),
@@ -764,6 +830,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
     }, async (request, reply) => {
         let group;
         let expectedRuntimeStateRevision;
+        let expectedIncarnation;
         try {
             group = parseQualifiedConnectedAccountV4StructuredQueryValue(
                 QualifiedConnectedAccountGroupRefSchema,
@@ -771,6 +838,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             );
             expectedRuntimeStateRevision = parseOptionalCanonicalInteger(
                 request.query.expectedRuntimeStateRevision,
+            );
+            expectedIncarnation = parseOptionalQualifiedGroupIncarnation(
+                request.query.expectedIncarnation,
             );
         } catch {
             return reply.code(400).send({ error: "invalid-params" });
@@ -782,6 +852,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             ...(expectedRuntimeStateRevision !== undefined
                 ? { expectedRuntimeStateRevision }
                 : {}),
+            expectedIncarnation: expectedIncarnation ?? null,
         });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -792,6 +863,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(409).send({
                 error: "connect_group_runtime_state_revision_conflict",
                 runtimeStateRevision: result.runtimeStateRevision,
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         return reply.send({ success: true });
@@ -812,6 +888,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             await patchQualifiedConnectedAccountGroupRuntimeState({
                 accountId: request.userId,
                 patch: request.body,
+                expectedIncarnation:
+                    request.body.expectedIncarnation ?? null,
             });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -821,6 +899,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "member_not_found") {
             return reply.code(409).send({
                 error: "connect_group_member_not_found",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         if (result.status !== "written") {
@@ -850,6 +933,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             await createQualifiedConnectedAccountGroupMember({
                 accountId: request.userId,
                 mutation: request.body,
+                expectedIncarnation:
+                    request.body.expectedIncarnation ?? null,
             });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -864,6 +949,16 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "member_not_found") {
             return reply.code(409).send({
                 error: "connect_group_member_not_found",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (result.status === "source_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_source_revision_conflict",
             });
         }
         if (result.status !== "written") {
@@ -893,6 +988,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             await updateQualifiedConnectedAccountGroupMember({
                 accountId: request.userId,
                 mutation: request.body,
+                expectedIncarnation:
+                    request.body.expectedIncarnation ?? null,
             });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -902,6 +999,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "member_not_found") {
             return reply.code(409).send({
                 error: "connect_group_member_not_found",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         if (result.status !== "written") {
@@ -941,6 +1043,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             await deleteQualifiedConnectedAccountGroupMember({
                 accountId: request.userId,
                 mutation,
+                expectedIncarnation:
+                    mutation.expectedIncarnation ?? null,
             });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -950,6 +1054,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "member_not_found") {
             return reply.code(409).send({
                 error: "connect_group_member_not_found",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         if (result.status !== "written") {
@@ -979,6 +1088,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             await setQualifiedConnectedAccountGroupActiveAccount({
                 accountId: request.userId,
                 mutation: request.body,
+                expectedIncarnation:
+                    request.body.expectedIncarnation ?? null,
             });
         if (result.status === "not_found") {
             return reply.code(404).send({
@@ -991,6 +1102,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         ) {
             return reply.code(409).send({
                 error: "connect_group_active_profile_not_member",
+            });
+        }
+        if (result.status === "incarnation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_incarnation_conflict",
             });
         }
         if (result.status === "generation_superseded") {

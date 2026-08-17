@@ -1,7 +1,10 @@
 import Fastify from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { io as ioClient } from 'socket.io-client';
-import { buildClientCompatibilitySocketAuthV1 } from '@happier-dev/protocol';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    buildAccountStoredContentCompatibilitySocketAuthV1,
+} from '@happier-dev/protocol';
 
 import { auth } from '@/app/auth/auth';
 import { startSocket } from './socket';
@@ -200,126 +203,62 @@ describe('startSocket handshake compatibility', () => {
     }, 30_000);
 
     it.each([
-        ['undeclared', {}],
-        ['out-of-date', buildClientCompatibilitySocketAuthV1({
-            v: 1,
-            clientKind: 'daemon',
-            appVersion: '0.2.9',
-            sessionSyncProtocolVersion: 2,
-        })],
-    ] as const)('rejects an %s daemon before machine ownership and admits its compatible reconnect', async (_case, compatibilityAuth) => {
-        harness.resetEnv({
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT: 'required',
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION: '2',
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON: JSON.stringify({ daemon: '0.2.10' }),
-        });
+        ['user-scoped', null],
+        ['machine-scoped', 'm-account-content-compat'],
+    ] as const)('admits %s sockets before operation-scoped stored-content checks', async (clientType, machineId) => {
         const account = await db.account.create({
-            data: { publicKey: `pk-daemon-compat-${Date.now()}` },
+            data: { publicKey: `pk-account-content-compat-${clientType}` },
             select: { id: true },
         });
-        await db.machine.create({
-            data: {
-                id: 'm-daemon-compat',
-                accountId: account.id,
-                metadata: 'metadata',
-                metadataVersion: 1,
-                daemonState: null,
-                daemonStateVersion: 0,
-                active: false,
-            },
-            select: { id: true },
-        });
+        if (machineId) {
+            await db.machine.create({
+                data: {
+                    id: machineId,
+                    accountId: account.id,
+                    metadata: 'metadata',
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    active: false,
+                },
+            });
+        }
         const token = await auth.createToken(account.id);
-
+        const baseAuth = {
+            token,
+            clientType,
+            ...(machineId ? { machineId } : null),
+        };
         const { app, port } = await startSocketApp();
-        const socket = ioClient(`http://127.0.0.1:${port}`, {
+        const legacy = ioClient(`http://127.0.0.1:${port}`, {
             path: '/v1/updates',
             transports: ['websocket'],
             reconnection: false,
-            auth: {
-                token,
-                clientType: 'machine-scoped',
-                machineId: 'm-daemon-compat',
-                ...compatibilityAuth,
-            },
+            auth: baseAuth,
         });
-
-        let payload: ConnectErrorPayload;
         try {
-            payload = await waitForConnectionFailure(socket);
+            await waitForConnectionSuccess(legacy);
         } finally {
-            socket.close();
+            legacy.close();
         }
 
-        expect(payload.message).toBe('client-upgrade-required');
-        expect(payload.data?.error).toBe('client-upgrade-required');
-
-        const compatible = ioClient(`http://127.0.0.1:${port}`, {
+        const current = ioClient(`http://127.0.0.1:${port}`, {
             path: '/v1/updates',
             transports: ['websocket'],
             reconnection: false,
             auth: {
-                token,
-                clientType: 'machine-scoped',
-                machineId: 'm-daemon-compat',
-                ...buildClientCompatibilitySocketAuthV1({
-                    v: 1,
-                    clientKind: 'daemon',
-                    appVersion: '0.2.10',
-                    sessionSyncProtocolVersion: 2,
-                }),
+                ...baseAuth,
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(
+                    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+                ),
             },
         });
         try {
-            await waitForConnectionSuccess(compatible);
+            await waitForConnectionSuccess(current);
         } finally {
-            compatible.close();
+            current.close();
             await app.close();
         }
-    }, 30_000);
-
-    it('rejects an out-of-date session runner before resolving its session binding', async () => {
-        harness.resetEnv({
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT: 'required',
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION: '2',
-            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON: JSON.stringify({
-                daemon: '0.2.10',
-                'session-runner': '0.2.10',
-            }),
-        });
-        const account = await db.account.create({
-            data: { publicKey: `pk-runner-compat-${Date.now()}` },
-            select: { id: true },
-        });
-        const token = await auth.createToken(account.id);
-        const { app, port } = await startSocketApp();
-        const socket = ioClient(`http://127.0.0.1:${port}`, {
-            path: '/v1/updates',
-            transports: ['websocket'],
-            reconnection: false,
-            auth: {
-                token,
-                clientType: 'session-scoped',
-                sessionId: 'session-does-not-exist',
-                ...buildClientCompatibilitySocketAuthV1({
-                    v: 1,
-                    clientKind: 'session-runner',
-                    appVersion: '0.2.9',
-                    sessionSyncProtocolVersion: 2,
-                }),
-            },
-        });
-
-        let payload: ConnectErrorPayload;
-        try {
-            payload = await waitForConnectionFailure(socket);
-        } finally {
-            socket.close();
-            await app.close();
-        }
-
-        expect(payload.message).toBe('client-upgrade-required');
-        expect(payload.data?.error).toBe('client-upgrade-required');
     }, 30_000);
 
     it('treats unknown client types as user-scoped for mixed-version compatibility', async () => {

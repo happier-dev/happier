@@ -1,8 +1,13 @@
 import { applyMachineReplacement, clearMachineReplacement } from "@/app/machines/applyMachineReplacement";
+import {
+    enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
+    readAccountStoredContentCompatibilityForHttpRequest,
+} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { serializeMachineRow } from "@/app/machines/machineSerialization";
 import { hasExactMachineReadiness } from "@/app/machines/machineSocketReadiness";
 import { validateMachineReplacement } from "@/app/machines/validateMachineReplacement";
 import { inTx } from "@/storage/inTx";
+import { isPlainMachineDataKeyMarker } from "@happier-dev/protocol";
 import { z } from "zod";
 import type { Fastify } from "../../types";
 
@@ -22,6 +27,9 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
         const userId = request.userId;
         const { oldMachineId } = request.params;
         const { replacementMachineId, confirmActiveOldMachine } = request.body;
+        const supportsCurrentStoredContentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         if (!(await hasExactMachineReadiness(userId, replacementMachineId))) {
             return reply.code(409).send({ error: "machine_not_ready", reason: "replacement_machine_not_connected" });
@@ -34,6 +42,12 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             const replacementMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: replacementMachineId },
             });
+            if (
+                isPlainMachineDataKeyMarker(oldMachine?.dataEncryptionKey)
+                && !supportsCurrentStoredContentProtocol
+            ) {
+                return { kind: "upgrade_required" as const };
+            }
 
             const validation = validateMachineReplacement({
                 accountId: userId,
@@ -67,6 +81,10 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
         if (result.kind === "error") {
             return reply.code(result.validation.statusCode).send({ error: "invalid-params", reason: result.validation.reason });
         }
+        if (result.kind === "upgrade_required") {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(request, reply);
+            return;
+        }
         if (!result.machine) {
             return reply.code(404).send({ error: "machine_not_found" });
         }
@@ -84,6 +102,9 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
     }, async (request, reply) => {
         const userId = request.userId;
         const { oldMachineId } = request.params;
+        const supportsCurrentStoredContentProtocol =
+            readAccountStoredContentCompatibilityForHttpRequest(request)
+                .supportsCurrentProtocol;
 
         const result = await inTx(async (tx) => {
             const machine = await tx.machine.findFirst({
@@ -91,6 +112,12 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             });
             if (!machine) {
                 return { kind: "not_found" as const };
+            }
+            if (
+                isPlainMachineDataKeyMarker(machine.dataEncryptionKey)
+                && !supportsCurrentStoredContentProtocol
+            ) {
+                return { kind: "upgrade_required" as const };
             }
 
             await clearMachineReplacement({ tx, accountId: userId, oldMachineId });
@@ -102,6 +129,10 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             return { kind: "ok" as const, machine: updatedMachine };
         });
 
+        if (result.kind === "upgrade_required") {
+            await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(request, reply);
+            return;
+        }
         if (result.kind === "not_found" || !result.machine) {
             return reply.code(404).send({ error: "machine_not_found" });
         }

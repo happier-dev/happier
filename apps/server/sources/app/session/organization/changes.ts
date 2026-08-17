@@ -86,6 +86,44 @@ export async function markSessionOrganizationChanged(
     });
 }
 
+export async function markSessionOrganizationDisplayMigrationChanged(
+    tx: Tx,
+    params: Readonly<{
+        accountId: string;
+        folderIds: readonly string[];
+        tagIds: readonly string[];
+        scopeKeys: readonly string[];
+    }>,
+): Promise<void> {
+    await markAccountChanged(tx, {
+        accountId: params.accountId,
+        kind: "account",
+        entityId: "session-organization-folders",
+        hint: buildSessionOrganizationHint({
+            scope: "folders",
+            folderIds: params.folderIds,
+        }),
+    });
+    await markAccountChanged(tx, {
+        accountId: params.accountId,
+        kind: "account",
+        entityId: "session-organization-tags",
+        hint: buildSessionOrganizationHint({
+            scope: "tags",
+            tagIds: params.tagIds,
+        }),
+    });
+    await markAccountChanged(tx, {
+        accountId: params.accountId,
+        kind: "account",
+        entityId: "session-organization-labels",
+        hint: buildSessionOrganizationHint({
+            scope: "labels",
+            scopeKeys: params.scopeKeys,
+        }),
+    });
+}
+
 export async function markSessionFolderAssignmentChanged(
     tx: Tx,
     params: Readonly<{

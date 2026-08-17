@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 const CREDENTIAL_REVISION_PATTERN = /^csr_[A-Za-z0-9_-]{22,64}$/;
 
@@ -11,18 +11,13 @@ export function createConnectedServiceCredentialRevision(): string {
 }
 
 export function resolveConnectedServiceCredentialRevision(params: Readonly<{
-    rowId: string;
     metadata: unknown;
-}>): string {
+}>): string | null {
     if (params.metadata && typeof params.metadata === "object" && !Array.isArray(params.metadata)) {
         const revision = (params.metadata as Record<string, unknown>).credentialRevision;
         if (isConnectedServiceCredentialRevision(revision)) return revision;
     }
-    const digest = createHash("sha256")
-        .update("happier-connected-service-credential-revision-v1\0")
-        .update(params.rowId)
-        .digest("base64url");
-    return `csr_${digest}`;
+    return null;
 }
 
 export function withConnectedServiceCredentialRevision<T extends Readonly<Record<string, unknown>>>(

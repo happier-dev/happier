@@ -1,5 +1,8 @@
 import * as privacyKit from "privacy-kit";
 import { createHash } from "node:crypto";
+import {
+    AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+} from "@happier-dev/protocol";
 import { log } from "@/utils/logging/log";
 import { LRUTtlMap } from "@/utils/collections/lru";
 import {
@@ -37,6 +40,8 @@ type OAuthStatePayload = Readonly<{
     userId?: string | null;
     publicKey?: string | null;
     proofHash?: string | null;
+    purpose?: "account_encryption_first_key" | null;
+    requestDigest?: string | null;
 }>;
 
 class AuthModule {
@@ -299,6 +304,33 @@ class AuthModule {
         const userId = payload.userId?.toString().trim() || null;
         const publicKey = payload.publicKey?.toString().trim() || null;
         const proofHash = payload.proofHash?.toString().trim() || null;
+        const purpose =
+            payload.purpose === "account_encryption_first_key"
+                ? payload.purpose
+                : null;
+        const requestDigestCandidate =
+            AccountEncryptionMigrateExternalAuthBindingDigestV1Schema
+                .safeParse(
+                    payload.requestDigest
+                        ?.toString()
+                        .trim(),
+                );
+        const requestDigest =
+            requestDigestCandidate.success
+                ? requestDigestCandidate.data
+                : null;
+        if (
+            purpose === "account_encryption_first_key"
+            && (
+                flow !== "auth"
+                || !userId
+                || !proofHash
+                || !requestDigest
+                || publicKey !== null
+            )
+        ) {
+            throw new Error("Invalid OAuth first-key step-up binding");
+        }
 
         return await oauthStateTokens.oauthStateGenerator.new({
             user: "oauth-state",
@@ -309,6 +341,8 @@ class AuthModule {
                 userId,
                 publicKey,
                 proofHash,
+                purpose,
+                requestDigest,
             },
         });
     }
@@ -320,6 +354,8 @@ class AuthModule {
         userId: string | null;
         publicKey: string | null;
         proofHash: string | null;
+        purpose?: "account_encryption_first_key";
+        requestDigest?: string;
     } | null> {
         if (!this.tokens) {
             throw new Error("Auth module not initialized");
@@ -337,20 +373,56 @@ class AuthModule {
             const provider = typeof extras.provider === "string" ? extras.provider.trim().toLowerCase() : "";
             const flow = extras.flow === "auth" ? "auth" : extras.flow === "connect" ? "connect" : null;
             if (!provider || !flow) return null;
+            const purpose =
+                extras.purpose === "account_encryption_first_key"
+                    ? extras.purpose
+                    : null;
+            const userId =
+                typeof extras.userId === "string" && extras.userId.trim()
+                    ? extras.userId.trim()
+                    : null;
+            const publicKey =
+                typeof extras.publicKey === "string" && extras.publicKey.trim()
+                    ? extras.publicKey.trim()
+                    : null;
+            const proofHash =
+                typeof extras.proofHash === "string" && extras.proofHash.trim()
+                    ? extras.proofHash.trim()
+                    : null;
+            const requestDigestCandidate =
+                AccountEncryptionMigrateExternalAuthBindingDigestV1Schema
+                    .safeParse(
+                        typeof extras.requestDigest
+                            === "string"
+                            ? extras.requestDigest.trim()
+                            : null,
+                    );
+            const requestDigest =
+                requestDigestCandidate.success
+                    ? requestDigestCandidate.data
+                    : null;
+            if (
+                purpose === "account_encryption_first_key"
+                && (
+                    flow !== "auth"
+                    || !userId
+                    || !proofHash
+                    || !requestDigest
+                    || publicKey !== null
+                )
+            ) {
+                return null;
+            }
 
             return {
                 flow,
                 provider,
                 sid: typeof extras.sid === "string" && extras.sid.trim() ? extras.sid.trim() : null,
-                userId: typeof extras.userId === "string" && extras.userId.trim() ? extras.userId.trim() : null,
-                publicKey:
-                    typeof extras.publicKey === "string" && extras.publicKey.trim()
-                        ? extras.publicKey.trim()
-                        : null,
-                proofHash:
-                    typeof extras.proofHash === "string" && extras.proofHash.trim()
-                        ? extras.proofHash.trim()
-                        : null,
+                userId,
+                publicKey,
+                proofHash,
+                ...(purpose ? { purpose } : {}),
+                ...(purpose && requestDigest ? { requestDigest } : {}),
             };
         } catch (error) {
             if (isOAuthStateUnavailableError(error)) {

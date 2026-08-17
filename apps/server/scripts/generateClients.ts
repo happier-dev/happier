@@ -179,20 +179,40 @@ export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParam
     return true;
 }
 
-export function resolveSchemaSyncScript(env: NodeJS.ProcessEnv): "schema:sync" | "schema:sync:check" {
-    return String(env.HAPPIER_DEV_TARGET_EXECUTION ?? "").trim() === "1"
-        ? "schema:sync:check"
-        : "schema:sync";
+export function resolveSchemaSyncInvocation(params: Readonly<{
+    env: NodeJS.ProcessEnv;
+    checkOnly: boolean;
+    processExecPath?: string;
+}>): Readonly<{ command: string; args: string[] }> {
+    const check = params.checkOnly || String(params.env.HAPPIER_DEV_TARGET_EXECUTION ?? "").trim() === "1";
+    return {
+        command: params.processExecPath ?? process.execPath,
+        args: [
+            "./scripts/runTsx.mjs",
+            "--tsconfig",
+            "./tsconfig.json",
+            "./scripts/schemaSync.ts",
+            ...(check ? ["--check"] : []),
+            "--quiet",
+        ],
+    };
 }
 
 async function main(): Promise<void> {
     const env: NodeJS.ProcessEnv = { ...process.env };
     const serverRoot = resolveServerWorkspaceRoot(import.meta.url);
     const providers = resolveBuildDbProvidersFromEnv(env);
+    const checkOnly = process.argv.includes("--check");
 
-    await runCommand("yarn", ["-s", resolveSchemaSyncScript(env), "--quiet"], env, { cwd: serverRoot });
+    const schemaSyncInvocation = resolveSchemaSyncInvocation({ env, checkOnly });
+    await runCommand(schemaSyncInvocation.command, schemaSyncInvocation.args, env, { cwd: serverRoot });
     if (await areRequestedPrismaOutputsCurrent({ serverRoot, providers })) {
         return;
+    }
+    if (checkOnly) {
+        throw new Error(
+            "Generated Prisma clients are stale. Run `yarn --cwd apps/server generate:providers` before typechecking the runtime.",
+        );
     }
 
     // Always generate the default client (postgres schema).

@@ -13,6 +13,12 @@ import {
 
 const OWNER_METADATA_CIPHERTEXT =
     "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+const OWNER_METADATA_ENVELOPE = {
+    t: "encrypted",
+    c: OWNER_METADATA_CIPHERTEXT,
+} as const;
+const STORED_OWNER_METADATA_ENVELOPE =
+    JSON.stringify(OWNER_METADATA_ENVELOPE);
 
 describe("sessionRoutes v2 patch", () => {
     beforeEach(() => {
@@ -53,14 +59,8 @@ describe("sessionRoutes v2 patch", () => {
             { value: "mNew", version: 2 },
             { value: null, version: 3 },
         );
-        expect(buildUpdateSessionUpdate).toHaveBeenCalledWith(
-            "s1",
-            11,
-            expect.any(String),
-            { value: "mNew", version: 2 },
-            { value: null, version: 3 },
-        );
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
 
         expect(res).toEqual({
             success: true,
@@ -259,9 +259,7 @@ describe("sessionRoutes v2 patch", () => {
         const body = SessionMetadataTuplePatchV1Schema.parse({
             mode: "owner_migration",
             expectedAccountEncryptionMode: "plain",
-            expectedAccountContentPublicKeyFingerprint:
-                "content-public-key-sha256:"
-                + "a".repeat(64),
+            expectedAccountContentPublicKeyFingerprint: null,
             source: {
                 metadataLayoutVersion: 0,
                 metadata: {
@@ -279,9 +277,7 @@ describe("sessionRoutes v2 patch", () => {
                 sharedMetadata: {
                     ciphertext: "shared-safe",
                 },
-                ownerMetadata: {
-                    ciphertext: OWNER_METADATA_CIPHERTEXT,
-                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: null,
                 },
@@ -319,9 +315,12 @@ describe("sessionRoutes v2 patch", () => {
                 { accountId: "u1", cursor: 10 },
                 { accountId: "u2", cursor: 11 },
             ],
+            sessionOwnerId: "u1",
+            ownerAccountMode: "e2ee",
             metadataLayoutVersion: 1,
             sharedMetadata: { version: 5, value: "shared-safe" },
-            ownerMetadata: { value: OWNER_METADATA_CIPHERTEXT },
+            agentStateVersion: 9,
+            ownerMetadata: { value: STORED_OWNER_METADATA_ENVELOPE },
             agentState: { version: 9, value: "owner-state" },
         });
 
@@ -331,15 +330,12 @@ describe("sessionRoutes v2 patch", () => {
             body: {
                 mode: "owner",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    OWNER_METADATA_CIPHERTEXT,
+                expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
                 sharedMetadata: {
                     ciphertext: "shared-safe",
                     expectedVersion: 4,
                 },
-                ownerMetadata: {
-                    ciphertext: OWNER_METADATA_CIPHERTEXT,
-                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: "owner-state",
                     expectedVersion: 8,
@@ -353,15 +349,12 @@ describe("sessionRoutes v2 patch", () => {
             actorUserId: "u1",
             sessionId: "s1",
             metadataLayoutVersion: 1,
-            expectedOwnerMetadataCiphertext:
-                OWNER_METADATA_CIPHERTEXT,
+            expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
             sharedMetadata: {
                 ciphertext: "shared-safe",
                 expectedVersion: 4,
             },
-            ownerMetadata: {
-                ciphertext: OWNER_METADATA_CIPHERTEXT,
-            },
+            ownerMetadata: OWNER_METADATA_ENVELOPE,
             agentState: {
                 ciphertext: "owner-state",
                 expectedVersion: 8,
@@ -382,7 +375,7 @@ describe("sessionRoutes v2 patch", () => {
                 metadata: "shared-safe",
                 metadataVersion: 5,
                 metadataLayoutVersion: 1,
-                ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: "owner-state",
                 agentStateVersion: 9,
             },
@@ -421,15 +414,12 @@ describe("sessionRoutes v2 patch", () => {
                 sessionExpectation: {
                     kind: "inactive_model_intent",
                 },
-                expectedOwnerMetadataCiphertext:
-                    OWNER_METADATA_CIPHERTEXT,
+                expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
                 sharedMetadata: {
                     ciphertext: "shared-safe",
                     expectedVersion: 4,
                 },
-                ownerMetadata: {
-                    ciphertext: OWNER_METADATA_CIPHERTEXT,
-                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: "owner-state",
                     expectedVersion: 8,
@@ -445,15 +435,12 @@ describe("sessionRoutes v2 patch", () => {
             sessionExpectation: {
                 kind: "inactive_model_intent",
             },
-            expectedOwnerMetadataCiphertext:
-                OWNER_METADATA_CIPHERTEXT,
+            expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
             sharedMetadata: {
                 ciphertext: "shared-safe",
                 expectedVersion: 4,
             },
-            ownerMetadata: {
-                ciphertext: OWNER_METADATA_CIPHERTEXT,
-            },
+            ownerMetadata: OWNER_METADATA_ENVELOPE,
             agentState: {
                 ciphertext: "owner-state",
                 expectedVersion: 8,
@@ -468,6 +455,67 @@ describe("sessionRoutes v2 patch", () => {
         expect(emitUpdate).not.toHaveBeenCalled();
     });
 
+    it("returns typed publisher-authority loss for a stale owner tuple without publishing", async () => {
+        updateSessionMetadataEnvelopeTuple.mockResolvedValue({
+            ok: false,
+            error: "publisher-superseded",
+        });
+
+        const route = await createSessionRouteTestBuilder(
+            "PATCH",
+            "/v2/sessions/:sessionId",
+        );
+        const { reply, response } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: {
+                mode: "owner",
+                metadataLayoutVersion: 1,
+                publisherPrecondition: {
+                    machineId: "machine-1",
+                    committedFenceMs: 123,
+                },
+                expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
+                sharedMetadata: {
+                    ciphertext: "shared-safe",
+                    expectedVersion: 4,
+                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
+                agentState: {
+                    ciphertext: "owner-state",
+                    expectedVersion: 8,
+                },
+            },
+        });
+
+        expect(updateSessionMetadataEnvelopeTuple).toHaveBeenCalledWith({
+            mode: "owner",
+            actorUserId: "u1",
+            sessionId: "s1",
+            metadataLayoutVersion: 1,
+            publisherPrecondition: {
+                machineId: "machine-1",
+                committedFenceMs: 123,
+            },
+            expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
+            sharedMetadata: {
+                ciphertext: "shared-safe",
+                expectedVersion: 4,
+            },
+            ownerMetadata: OWNER_METADATA_ENVELOPE,
+            agentState: {
+                ciphertext: "owner-state",
+                expectedVersion: 8,
+            },
+        });
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(response).toEqual({
+            code: "session_publisher_authority_lost",
+        });
+        expect(buildSessionMetadataRecipientUpdate).not.toHaveBeenCalled();
+        expect(buildUpdateSessionUpdate).not.toHaveBeenCalled();
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
     it("publishes a shared-editor tuple to every participant without owner-only fields", async () => {
         updateSessionMetadataEnvelopeTuple.mockResolvedValue({
             ok: true,
@@ -475,9 +523,16 @@ describe("sessionRoutes v2 patch", () => {
                 { accountId: "u1", cursor: 10 },
                 { accountId: "u2", cursor: 11 },
             ],
+            sessionOwnerId: "u1",
+            ownerAccountMode: "e2ee",
             metadataLayoutVersion: 1,
             sharedMetadata: { version: 6, value: "shared-editor-safe" },
             agentStateVersion: 9,
+            ownerMetadata: { value: STORED_OWNER_METADATA_ENVELOPE },
+            agentState: {
+                version: 9,
+                value: "owner-full-state",
+            },
         });
 
         const route = await createSessionRouteTestBuilder(
@@ -501,15 +556,33 @@ describe("sessionRoutes v2 patch", () => {
             metadataLayoutVersion: 1,
             sharedMetadata: { version: 6 },
         });
-        for (const call of buildSessionMetadataRecipientUpdate.mock.calls) {
-            expect(call[3]).toEqual({
+        expect(buildSessionMetadataRecipientUpdate).toHaveBeenNthCalledWith(
+            1,
+            "s1",
+            10,
+            expect.any(String),
+            {
+                metadata: "shared-editor-safe",
+                metadataVersion: 6,
+                metadataLayoutVersion: 1,
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
+                agentState: "owner-full-state",
+                agentStateVersion: 9,
+            },
+        );
+        expect(buildSessionMetadataRecipientUpdate).toHaveBeenNthCalledWith(
+            2,
+            "s1",
+            11,
+            expect.any(String),
+            {
                 metadata: "shared-editor-safe",
                 metadataVersion: 6,
                 metadataLayoutVersion: 1,
                 agentState: null,
                 agentStateVersion: 9,
-            });
-        }
+            },
+        );
         expect(buildSessionMetadataRecipientUpdate).toHaveBeenCalledTimes(2);
         expect(buildUpdateSessionUpdate).not.toHaveBeenCalled();
     });
@@ -532,15 +605,12 @@ describe("sessionRoutes v2 patch", () => {
             body: {
                 mode: "owner",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    OWNER_METADATA_CIPHERTEXT,
+                expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
                 sharedMetadata: {
                     ciphertext: "shared-stale",
                     expectedVersion: 5,
                 },
-                ownerMetadata: {
-                    ciphertext: OWNER_METADATA_CIPHERTEXT,
-                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: "agent-stale",
                     expectedVersion: 9,
@@ -615,15 +685,12 @@ describe("sessionRoutes v2 patch", () => {
             body: {
                 mode: "owner",
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    OWNER_METADATA_CIPHERTEXT,
+                expectedOwnerMetadata: OWNER_METADATA_ENVELOPE,
                 sharedMetadata: {
                     ciphertext: "shared-stale",
                     expectedVersion: 5,
                 },
-                ownerMetadata: {
-                    ciphertext: OWNER_METADATA_CIPHERTEXT,
-                },
+                ownerMetadata: OWNER_METADATA_ENVELOPE,
                 agentState: {
                     ciphertext: "agent-stale",
                     expectedVersion: 9,

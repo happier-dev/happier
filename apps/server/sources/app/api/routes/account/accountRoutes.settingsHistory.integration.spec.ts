@@ -4,6 +4,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { accountRoutes } from "./accountRoutes";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 const encryptedContent = (value: string) => ({ t: "encrypted" as const, c: value });
 
@@ -35,7 +36,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("stores previous and current encrypted snapshots after a v2 write", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-v2",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "ciphertext-old",
                 settingsVersion: 4,
@@ -76,7 +77,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("does not create history snapshots for failed v2 version checks", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-v2-cas",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "ciphertext-current",
                 settingsVersion: 7,
@@ -110,7 +111,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("stores previous and current encrypted snapshots after a v1 write", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-v1",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "v1-old",
                 settingsVersion: 1,
@@ -150,7 +151,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
         harness.resetEnv({ HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT: "2" });
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-prune",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "ciphertext-0",
                 settingsVersion: 0,
@@ -187,7 +188,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
         harness.resetEnv({ HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT: "0" });
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-disabled",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "disabled-old",
                 settingsVersion: 0,
@@ -221,7 +222,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("returns snapshot content only from the version detail route", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-detail",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "detail-old",
                 settingsVersion: 10,
@@ -254,10 +255,174 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
         );
     });
 
-    it("restores a client-validated encrypted snapshot as a new current version", async () => {
+    it("fails an unknown snapshot mode without exposing bytes, cursors, or a restore mutation", async () => {
+        const retainedBytes = "retained-unknown-mode-settings-bytes";
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-restore",
+                encryptionMode: "plain",
+                settings: JSON.stringify({ t: "plain", v: { schemaVersion: 2 } }),
+                settingsVersion: 3,
+            },
+            select: { id: true, settings: true, settingsVersion: true, updatedAt: true },
+        });
+        await db.accountSettingsSnapshot.create({
+            data: {
+                accountId: account.id,
+                version: 2,
+                settingsDbValue: retainedBytes,
+                encryptionMode: "future-mode",
+                contentKind: "encrypted",
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const list = await app.inject({
+                    method: "GET",
+                    url: "/v2/account/settings/history",
+                    headers: { "x-test-user-id": account.id },
+                });
+                expect(list.statusCode).toBe(503);
+                expect(list.json()).toEqual({ error: "account_settings_storage_unavailable" });
+                expect(list.body).not.toContain(retainedBytes);
+
+                const detail = await app.inject({
+                    method: "GET",
+                    url: "/v2/account/settings/history/2",
+                    headers: { "x-test-user-id": account.id },
+                });
+                expect(detail.statusCode).toBe(503);
+                expect(detail.json()).toEqual({ error: "account_settings_storage_unavailable" });
+                expect(detail.body).not.toContain(retainedBytes);
+
+                const restore = await app.inject({
+                    method: "POST",
+                    url: "/v2/account/settings/history/2/restore",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: {
+                        expectedVersion: 3,
+                        content: encryptedContent(retainedBytes),
+                    },
+                });
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
+                expect(restore.body).not.toContain(retainedBytes);
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true, updatedAt: true },
+        })).resolves.toEqual({
+            settings: account.settings,
+            settingsVersion: account.settingsVersion,
+            updatedAt: account.updatedAt,
+        });
+        await expect(db.accountSettingsSnapshot.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+        await expect(db.accountChange.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(0);
+    });
+
+    it("reports an unreadable plain snapshot as storage unavailable without exposing retained bytes", async () => {
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-settings-history-detail-unreadable",
+                encryptionMode: "plain",
+                settings: JSON.stringify({ t: "plain", v: { schemaVersion: 2 } }),
+                settingsVersion: 3,
+            },
+            select: { id: true },
+        });
+        await db.accountSettingsSnapshot.create({
+            data: {
+                accountId: account.id,
+                version: 2,
+                settingsDbValue: "retained-e2ee-history-ciphertext",
+                encryptionMode: "plain",
+                contentKind: "plain",
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const detail = await app.inject({
+                    method: "GET",
+                    url: "/v2/account/settings/history/2",
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(detail.statusCode).toBe(503);
+                expect(detail.json()).toEqual({ error: "account_settings_storage_unavailable" });
+                expect(detail.body).not.toContain("retained-e2ee-history-ciphertext");
+            },
+        );
+    });
+
+    it("refuses to restore an unreadable plain snapshot without writing", async () => {
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-settings-history-restore-unreadable",
+                encryptionMode: "plain",
+                settings: JSON.stringify({ t: "plain", v: { schemaVersion: 2 } }),
+                settingsVersion: 3,
+            },
+            select: { id: true, settings: true, settingsVersion: true, updatedAt: true },
+        });
+        await db.accountSettingsSnapshot.create({
+            data: {
+                accountId: account.id,
+                version: 2,
+                settingsDbValue: "retained-e2ee-history-ciphertext",
+                encryptionMode: "plain",
+                contentKind: "plain",
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const restore = await app.inject({
+                    method: "POST",
+                    url: "/v2/account/settings/history/2/restore",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: {
+                        expectedVersion: 3,
+                        content: { t: "plain", v: { schemaVersion: 2 } },
+                    },
+                });
+
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
+                expect(restore.body).not.toContain("retained-e2ee-history-ciphertext");
+            },
+        );
+
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true, updatedAt: true },
+        })).resolves.toEqual({
+            settings: account.settings,
+            settingsVersion: account.settingsVersion,
+            updatedAt: account.updatedAt,
+        });
+        await expect(db.accountSettingsSnapshot.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(1);
+    });
+
+    it("fails closed instead of letting the retired exact-content restore overwrite current encrypted settings", async () => {
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "restore-old",
                 settingsVersion: 1,
@@ -281,15 +446,17 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: { expectedVersion: 2, content: encryptedContent("restore-old") },
                 });
-                expect(restore.statusCode).toBe(200);
-                expect(restore.json()).toEqual({ success: true, version: 3 });
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
 
                 const current = await app.inject({
                     method: "GET",
                     url: "/v2/account/settings",
                     headers: { "x-test-user-id": account.id },
                 });
-                expect(current.json()).toEqual({ content: encryptedContent("restore-old"), version: 3 });
+                expect(current.json()).toEqual({ content: encryptedContent("restore-new"), version: 2 });
             },
         );
     });
@@ -297,7 +464,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("rejects restore when the client-validated content echo is missing", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-restore-missing-echo",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "restore-missing-echo-old",
                 settingsVersion: 1,
@@ -321,7 +488,10 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: { expectedVersion: 2 },
                 });
-                expect(restore.statusCode).toBe(400);
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
 
                 const current = await app.inject({
                     method: "GET",
@@ -336,7 +506,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("rejects restore when the client-validated content does not match the snapshot", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-restore-validation",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "restore-validated-old",
                 settingsVersion: 1,
@@ -360,8 +530,10 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: { expectedVersion: 2, content: encryptedContent("wrong-ciphertext") },
                 });
-                expect(restore.statusCode).toBe(400);
-                expect(restore.json()).toEqual({ error: "invalid-params" });
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
 
                 const current = await app.inject({
                     method: "GET",
@@ -376,7 +548,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("rejects restore when the snapshot storage mode is incompatible with the current account mode", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-restore-mode",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "restore-mode-old",
                 settingsVersion: 1,
@@ -405,8 +577,10 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: { expectedVersion: 2, content: encryptedContent("restore-mode-old") },
                 });
-                expect(restore.statusCode).toBe(400);
-                expect(restore.json()).toEqual({ error: "invalid-params" });
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
 
                 const stored = await db.account.findUnique({
                     where: { id: account.id },
@@ -420,7 +594,7 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
     it("returns a CAS mismatch when restore expectedVersion is stale", async () => {
         const account = await db.account.create({
             data: {
-                publicKey: "pk-settings-history-restore-cas",
+                ...createSignedAccountContentBinding(),
                 encryptionMode: "e2ee",
                 settings: "restore-cas-old",
                 settingsVersion: 1,
@@ -444,8 +618,10 @@ describe("accountRoutes (/v2/account/settings/history) (integration)", () => {
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: { expectedVersion: 1, content: encryptedContent("restore-cas-old") },
                 });
-                expect(restore.statusCode).toBe(200);
-                expect(restore.json()).toEqual({ success: false, error: "version-mismatch", currentVersion: 2 });
+                expect(restore.statusCode).toBe(426);
+                expect(restore.json()).toEqual({
+                    error: "account_settings_restore_client_update_required",
+                });
             },
         );
     });

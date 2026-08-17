@@ -1,10 +1,18 @@
 export type SocketClientType = "session-scoped" | "user-scoped" | "machine-scoped";
 
+export function getAccountStoredContentV3SocketRoom(userId: string): string {
+    if (!userId) {
+        throw new Error("getAccountStoredContentV3SocketRoom: userId is required");
+    }
+    return `account-stored-content-v3:${userId}`;
+}
+
 export function getSocketRooms(params: {
     userId: string;
     clientType: SocketClientType;
     sessionId?: string | undefined;
     machineId?: string | undefined;
+    includeAccountStoredContentV3Room?: boolean | undefined;
 }): string[] {
     if (!params.userId) {
         throw new Error("getSocketRooms: userId is required");
@@ -40,6 +48,10 @@ export function getSocketRooms(params: {
         // memory aggressively under websocket churn. Keep machine daemons on dedicated machine rooms.
         rooms.push(`user-machines:${params.userId}`);
         rooms.push(`machine:${params.machineId}:${params.userId}`);
+    }
+
+    if (params.includeAccountStoredContentV3Room) {
+        rooms.push(getAccountStoredContentV3SocketRoom(params.userId));
     }
 
     return rooms;

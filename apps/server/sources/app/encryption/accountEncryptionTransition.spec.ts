@@ -18,20 +18,17 @@ describe("accountEncryptionTransition", () => {
         vi.clearAllMocks();
     });
 
-    it("checks only bounded Session existence after the Account-first fence", async () => {
+    it("leaves Session inventory to the canonical Session tuple owner after the Account-first fence", async () => {
         const accountFindUnique = vi.fn(async () => ({
             publicKey: null,
+            seq: 7,
             encryptionMode: "plain",
             contentPublicKey: null,
             contentPublicKeySig: null,
             settings: null,
             settingsVersion: 0,
         }));
-        let sessionCountArguments: unknown;
-        const sessionCount = vi.fn(async (args: unknown) => {
-            sessionCountArguments = args;
-            return 1;
-        });
+        const sessionCount = vi.fn(async () => 1);
         // This is a narrow deterministic repository boundary fixture.
         const tx = {
             account: { findUnique: accountFindUnique },
@@ -48,21 +45,52 @@ describe("accountEncryptionTransition", () => {
             tx,
             "account-1",
         );
-        expect(sessionCount).toHaveBeenCalledWith({
-            where: {
-                accountId: "account-1",
-                OR: [
-                    { metadataLayoutVersion: { not: 0 } },
-                    { ownerMetadata: { not: null } },
-                ],
-            },
-            take: 1,
-        });
-        expect(sessionCountArguments).not.toHaveProperty(
-            "select",
-        );
+        expect(sessionCount).not.toHaveBeenCalled();
         expect(result).toEqual({
-            status: "metadata_privacy_upgrade_required",
+            status: "ready",
+            account: {
+                version: 7,
+                publicKey: null,
+                signingKeyFingerprint: null,
+                contentKeyFingerprint: null,
+                settings: null,
+                settingsVersion: 0,
+                currentness: {
+                    encryptionMode: "plain",
+                    contentPublicKey: null,
+                    contentPublicKeySignature: null,
+                    contentPublicKeyFingerprint: null,
+                },
+            },
         });
+    });
+
+    it("rejects an inconsistent E2EE Account before transition inventory or mutation", async () => {
+        const accountFindUnique = vi.fn(async () => ({
+            publicKey: null,
+            seq: 7,
+            encryptionMode: "e2ee",
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+            settings: null,
+            settingsVersion: 0,
+        }));
+        const sessionCount = vi.fn(async () => 1);
+        const tx = {
+            account: { findUnique: accountFindUnique },
+            session: { count: sessionCount },
+        } as unknown as Tx;
+
+        const result =
+            await acquireAccountEncryptionTransitionFenceInTx(
+                tx,
+                "account-1",
+            );
+
+        expect(result).toEqual({
+            status: "account_inconsistent",
+            reason: "missing_or_invalid_signing_key",
+        });
+        expect(sessionCount).not.toHaveBeenCalled();
     });
 });

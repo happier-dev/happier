@@ -16,6 +16,7 @@ const FRAME_EVENT = "happier:peer-tunnel:frame:v1";
 const DISCONNECT_EVENT = "happier:peer-tunnel:disconnect:v1";
 const REDIS_GRANT_KEY_PREFIX = "peer-tunnel-relay-grant:v1:";
 const FETCH_SOCKETS_TIMEOUT_MS = 5_000;
+const REDIS_GRANT_ADMISSION_TIMEOUT_MS = 2_000;
 
 type AttachRequest = Readonly<{
     attachmentId: string;
@@ -65,12 +66,16 @@ type MachineAttachment = Readonly<{
     request: AttachRequest;
     socket: Socket;
     durationTimer: ReturnType<typeof setTimeout>;
+}>;
+
+type MachineSocketAttachmentMembership = Readonly<{
+    attachmentIds: Set<string>;
     onDisconnect(): void;
 }>;
 
 export type PeerTcpTunnelRelayCoordinatorConfig =
     | Readonly<{ mode: "memory" }>
-    | Readonly<{ mode: "redis"; redis: Pick<Redis, "set"> }>;
+    | Readonly<{ mode: "redis"; redis: Pick<Redis, "duplicate"> }>;
 
 export type PeerTcpTunnelRelayAdmissionResult =
     | Readonly<{ status: "attached" }>
@@ -137,12 +142,30 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
     io: Server;
     config: PeerTcpTunnelRelayCoordinatorConfig;
 }>): PeerTcpTunnelRelayCoordinator {
+    const relayAdmissionRedis = input.config.mode === "redis"
+        ? input.config.redis.duplicate({
+            enableOfflineQueue: false,
+            maxRetriesPerRequest: 0,
+            // The parent Socket.IO client delays reconnects to outlive a stale
+            // blocking-read socket timer. Admission never issues blocking reads,
+            // so inheriting that closure can leave a fresh post-restart OPEN
+            // fail-closed after the adapter itself is already healthy.
+            retryStrategy: (attempt) => Math.min(attempt * 50, 2_000),
+            socketTimeout: REDIS_GRANT_ADMISSION_TIMEOUT_MS,
+        })
+        : null;
+    const ignoreHandledRedisAdmissionError = (): void => {
+        // Admission commands surface their failure through `consumeGrant`; avoid
+        // ioredis' duplicate "unhandled error event" diagnostic for this client.
+    };
+    relayAdmissionRedis?.on("error", ignoreHandledRedisAdmissionError);
     const ownerRouteId = randomUUID();
     const consumedGrantExpById = new Map<string, number>();
     const ownerAttachmentsByTunnelKey = new Map<string, OwnerAttachment>();
     const ownerAttachmentById = new Map<string, OwnerAttachment>();
     const machineAttachmentsById = new Map<string, MachineAttachment>();
     const machineAttachmentIdByTunnelAndSocket = new Map<string, string>();
+    const machineSocketAttachmentMemberships = new Map<Socket, MachineSocketAttachmentMembership>();
     const pendingAdmissions = new Set<Promise<PeerTcpTunnelRelayAdmissionResult>>();
     let closed = false;
     let closePromise: Promise<void> | null = null;
@@ -251,6 +274,37 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         }
     }
 
+    async function waitForRelayAdmissionRedisReady(): Promise<boolean> {
+        if (!relayAdmissionRedis || closed || relayAdmissionRedis.status === "end") return false;
+        if (relayAdmissionRedis.status === "ready") return true;
+
+        return await new Promise<boolean>((resolve) => {
+            let settled = false;
+            const finish = (ready: boolean): void => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                relayAdmissionRedis.off("ready", onReady);
+                relayAdmissionRedis.off("end", onEnd);
+                resolve(ready);
+            };
+            const onReady = (): void => finish(true);
+            const onEnd = (): void => finish(false);
+            const timeout = setTimeout(
+                () => finish(false),
+                REDIS_GRANT_ADMISSION_TIMEOUT_MS,
+            );
+            timeout.unref();
+            relayAdmissionRedis.once("ready", onReady);
+            relayAdmissionRedis.once("end", onEnd);
+
+            // Close the event-subscription race without queueing or retrying the
+            // grant command itself.
+            if (relayAdmissionRedis.status === "ready") finish(true);
+            else if (closed || relayAdmissionRedis.status === "end") finish(false);
+        });
+    }
+
     async function consumeGrant(params: Readonly<{
         grantId: string;
         expiresAt: number;
@@ -264,8 +318,12 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             return "consumed";
         }
         try {
-            const ttlMs = Math.max(1, Math.floor(params.expiresAt - params.nowMs));
-            const result = await input.config.redis.set(
+            if (!await waitForRelayAdmissionRedisReady()) return "unavailable";
+            if (closed) return "unavailable";
+            const readyAtMs = Date.now();
+            if (params.expiresAt <= readyAtMs) return "unavailable";
+            const ttlMs = Math.max(1, Math.floor(params.expiresAt - readyAtMs));
+            const result = await relayAdmissionRedis!.set(
                 consumedGrantKey(params.grantId),
                 ownerRouteId,
                 "PX",
@@ -287,7 +345,12 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             current.request.machineSocketId,
         ));
         clearTimeout(current.durationTimer);
-        current.socket.off("disconnect", current.onDisconnect);
+        const membership = machineSocketAttachmentMemberships.get(current.socket);
+        if (!membership) return;
+        membership.attachmentIds.delete(attachmentId);
+        if (membership.attachmentIds.size > 0) return;
+        machineSocketAttachmentMemberships.delete(current.socket);
+        current.socket.off("disconnect", membership.onDisconnect);
     }
 
     function publishDisconnect(request: AttachRequest): void {
@@ -319,10 +382,6 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                 : { status: "rejected" };
         }
 
-        const onDisconnect = (): void => {
-            removeMachineAttachment(request.attachmentId);
-            publishDisconnect(request);
-        };
         const durationTimer = setTimeout(() => {
             removeMachineAttachment(request.attachmentId);
         }, Math.max(1, request.maxDurationMs));
@@ -331,10 +390,25 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             request,
             socket,
             durationTimer,
-            onDisconnect,
         });
         machineAttachmentIdByTunnelAndSocket.set(lookupKey, request.attachmentId);
-        socket.once("disconnect", onDisconnect);
+        let membership = machineSocketAttachmentMemberships.get(socket);
+        if (!membership) {
+            const attachmentIds = new Set<string>();
+            const onDisconnect = (): void => {
+                const attachments = [...attachmentIds]
+                    .map((attachmentId) => machineAttachmentsById.get(attachmentId))
+                    .filter((attachment): attachment is MachineAttachment => attachment !== undefined);
+                for (const attachment of attachments) {
+                    removeMachineAttachment(attachment.request.attachmentId);
+                    publishDisconnect(attachment.request);
+                }
+            };
+            membership = { attachmentIds, onDisconnect };
+            machineSocketAttachmentMemberships.set(socket, membership);
+            socket.once("disconnect", onDisconnect);
+        }
+        membership.attachmentIds.add(request.attachmentId);
         return { status: "attached" };
     }
 
@@ -651,6 +725,8 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
             input.io.off(DETACH_EVENT, handleDetach);
             input.io.off(FRAME_EVENT, handleFrame);
             input.io.off(DISCONNECT_EVENT, handleDisconnect);
+            relayAdmissionRedis?.off("error", ignoreHandledRedisAdmissionError);
+            relayAdmissionRedis?.disconnect(false);
         })();
         return closePromise;
     }

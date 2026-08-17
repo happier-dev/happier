@@ -97,6 +97,8 @@ function generateProviderSchemaFromPostgres(
         .replace(/^\s+/, '')
         .replace(/(\w+)\(\s*sort\s*:\s*\w+\s*\)/g, '$1');
 
+    body = stripBlockIdMapArgument(body);
+
     if (opts.provider === "sqlite") {
         body = stripRelationMapArguments(body);
     }
@@ -127,6 +129,16 @@ function generateProviderSchemaFromPostgres(
         body = annotateMySqlSessionSystemRecordFields(body);
 
         body = annotateMySqlPluginPermissionIndexes(body);
+
+        body = annotateMySqlPluginCollectionFields(body);
+
+        body = annotateMySqlAccountEncryptionTransitionFields(body);
+
+        body = annotateMySqlPluginAvailabilityFields(body);
+
+        body = annotateMySqlEventAutomationFields(body);
+
+        body = annotateMySqlPluginWebhookIngressFields(body);
 
         body = annotateMySqlSessionOrganizationFields(body);
 
@@ -167,7 +179,13 @@ function annotateMySqlSessionSystemRecordFields(schemaBody: string): string {
         /^model\s+SessionSystemRecord\s+\{[\s\S]*?^\}\s*$/gm,
         (model) => model
             .replace(/^(\s*namespace\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
-            .replace(/^(\s*kind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)"),
+            .replace(/^(\s*kind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+            .replace(/^(\s*permissionTurnId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(191)")
+            .replace(/^(\s*permissionRequestId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+            .replace(/^(\s*ownerKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(16)")
+            .replace(/^(\s*pluginId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*namespaceAddressKey\s+Bytes)(?![^\n]*@db\.)/m, "$1 @db.Binary(32)")
+            .replace(/^(\s*recordAddressKey\s+Bytes)(?![^\n]*@db\.)/m, "$1 @db.Binary(32)"),
     );
 }
 
@@ -198,6 +216,232 @@ function annotateMySqlPluginPermissionIndexes(schemaBody: string): string {
         .replace(
             /@@index\(\[accountId, pluginId, capability, eventKind, createdAt\], map: "plugin_permission_events_kind_idx"\)/g,
             `@@index([${eventIndex.join(", ")}], map: "plugin_permission_events_kind_idx")`,
+        );
+}
+
+function annotateMySqlPluginCollectionFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+PluginCollectionContract\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*collectionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*contractDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(43)"),
+        )
+        .replace(
+            /^model\s+PluginCollectionRow\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*collectionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*rowId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*contractId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*contractDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(43)"),
+        )
+        .replace(
+            /^model\s+PluginCollectionProjection\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*rowDbId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*collectionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*rowId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*fieldId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*typedEncodedValue\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+        )
+        .replace(
+            /^model\s+PluginCollectionIndexState\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*collectionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*indexId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*contractId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*contractDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(43)")
+                .replace(/^(\s*buildState\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)"),
+        )
+        .replace(
+            /^model\s+PluginCollectionIndexEntry\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*indexStateId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*encodedSortKey\s+Bytes)(?![^\n]*@db\.)/m, "$1 @db.VarBinary(2318)")
+                .replace(/^(\s*rowId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)"),
+        )
+        .replace(
+            /^model\s+PluginCollectionRelation\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*sourceRowDbId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*(?:sourcePluginId|sourceCollectionId|sourceRowId|relationId)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
+                .replace(/^(\s*targetKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*(?:targetPluginId|targetCollectionId|targetRowId)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)"),
+        );
+}
+
+function annotateMySqlAccountEncryptionTransitionFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+AccountEncryptionTransition\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)")
+                // Both fields are Account ids: retain the same MySQL width as Account.id.
+                .replace(/^(\s*(?:accountId|activeAccountId)\s+String\??)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(191)")
+                .replace(/^(\s*(?:fromEncryptionMode|toEncryptionMode|status)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(16)")
+                .replace(/^(\s*(?:sourceSigningKeyFingerprint|sourceContentKeyFingerprint|targetSigningKeyFingerprint|targetContentKeyFingerprint)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(49)")
+                .replace(/^(\s*targetAccountPublicKey\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)"),
+        )
+        .replace(
+            /^model\s+AccountEncryptionTransitionCollectionStage\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*transitionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(36)")
+                .replace(/^(\s*(?:pluginId|collectionId|rowId)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
+                .replace(/^(\s*contractDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(43)"),
+        );
+}
+
+function annotateMySqlPluginAvailabilityFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+AccountPluginIntent\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*desiredVersion\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)"),
+        )
+        .replace(
+            /^model\s+AccountPluginRelease\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*version\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*archiveDigestSha256\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
+            /^model\s+AccountPluginUiArtifact\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*releaseId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*contributionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*tier\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)")
+                .replace(/^(\s*platform\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(16)")
+                .replace(/^(\s*artifactDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
+            /^model\s+PluginMachineMaterialization\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*serverIdentityId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*materializationId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*version\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*sourceClass\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)")
+                .replace(/^(\s*archiveDigestSha256\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)")
+                .replace(/^(\s*trustState\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)"),
+        );
+}
+
+function annotateMySqlEventAutomationFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+Automation\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(
+                    /^(\s*triggerDefinitionEnvelope\s+String\?)(?![^\n]*@db\.)/m,
+                    "$1 @db.LongText",
+                ),
+        )
+        .replace(
+            /^model\s+AutomationRun\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*occurrenceKey\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.Char(43)")
+                .replace(
+                    /^(\s*(?:triggerEvidenceEnvelope|executionInputEnvelope|resultEnvelope|replyContextEnvelope|replyHandoffReceiptEnvelope)\s+String\?)(?![^\n]*@db\.)/gm,
+                    "$1 @db.LongText",
+                ),
+        )
+        .replace(
+            /^model\s+AutomationEventSourceCatalogStatus\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model.replace(
+                /^(\s*reporterMaterializationId\s+String)(?![^\n]*@db\.)/m,
+                "$1 @db.VarChar(256)",
+            ),
+        )
+        .replace(
+            /^model\s+AutomationEventSourceStatus\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model.replace(
+                /^(\s*reporterImmutableGenerationId\s+String\?)(?![^\n]*@db\.)/m,
+                "$1 @db.VarChar(256)",
+            ),
+        );
+}
+
+function annotateMySqlPluginWebhookIngressFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+PluginWebhookRoute\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*opaqueRouteId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(128)")
+                .replace(/^(\s*(?:verifierKind|routingKind)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(64)")
+                .replace(/^(\s*operatorPluginId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*operatorWebhookContributionId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(128)")
+                .replace(/^(\s*accountEndpointId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(28)")
+                .replace(/^(\s*(?:currentCredentialId|previousCredentialId)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(25)"),
+        )
+        .replace(
+            /^model\s+PluginWebhookEndpoint\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(28)")
+                .replace(/^(\s*pluginId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*(?:webhookContributionId|handlerActionId|sourceInstanceId|ensureIdempotencyKey)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(128)")
+                .replace(/^(\s*ensureRequestFingerprint\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
+                .replace(/^(\s*setupKind\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*routingKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*routeId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*providerInstallationId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(20)")
+                .replace(/^(\s*(?:target|previousTarget).*\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)"),
+        )
+        .replace(
+            /^model\s+PluginWebhookEndpointOperation\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*endpointId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(28)")
+                .replace(/^(\s*operationKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(16)")
+                .replace(/^(\s*idempotencyKey\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(128)")
+                .replace(/^(\s*resultKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)")
+                .replace(
+                    /^(\s*(?:requestTargetMachineId|requestTargetMaterializationId|requestTargetPluginId|resultPreviousTargetMachineId|resultPreviousTargetMaterializationId|resultPreviousTargetPluginId|resultTargetMachineId|resultTargetMaterializationId|resultTargetPluginId)\s+String\?)(?![^\n]*@db\.)/gm,
+                    "$1 @db.VarChar(256)",
+                ),
+        )
+        .replace(
+            /^model\s+PluginWebhookCredential\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*routeId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*credentialVersionId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*(?:verifierKind|state)\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(64)"),
+        )
+        .replace(
+            /^model\s+PluginWebhookDelivery\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*endpointId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(28)")
+                .replace(/^(\s*routeId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
+                .replace(/^(\s*deliveryIdentityDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
+                .replace(/^(\s*verifierKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*target.*\s+String)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
+                .replace(/^(\s*payloadKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(16)")
+                .replace(/^(\s*state\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(32)")
+                .replace(/^(\s*(?:leaseId|claimedByMachineId|claimedByMachineInstallationId)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(256)")
+                .replace(/^(\s*(?:lastErrorCode|terminalDisposition|discardReasonCode)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(128)"),
+        )
+        .replace(
+            /@@index\(\[targetMachineId, targetMachineInstallationId, targetMaterializationId, state, nextAttemptAt\], map: "([^"]+)"\)/g,
+            (_match, mapName: string) => `@@index([targetMachineId(length: 64), targetMachineInstallationId(length: 64), targetMaterializationId(length: 64), state(length: 32), nextAttemptAt], map: "${mapName}")`,
         );
 }
 
@@ -269,6 +513,63 @@ function annotateMySqlQualifiedConnectedAccountFields(schemaBody: string): strin
             .replace(/^(\s*qualifiedGroupDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
             .replace(/^(\s*activeConnectedAccountId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
     );
+}
+
+/**
+ * Neither SQLite nor MySQL can name a primary-key constraint, so Prisma rejects
+ * `@@id([...], map: "...")` for those providers even though PostgreSQL accepts it.
+ * The canonical PostgreSQL schema keeps the constraint name (its migrations create
+ * it); the derived provider schemas drop only that argument. `@@unique`/`@@index`
+ * names stay intact — both providers can name those.
+ */
+function stripBlockIdMapArgument(schemaBody: string): string {
+    const marker = "@@id(";
+    let out = "";
+    let cursor = 0;
+
+    for (;;) {
+        const start = schemaBody.indexOf(marker, cursor);
+        if (start === -1) break;
+
+        const argsStart = start + marker.length;
+        const argsEnd = findMatchingCloseParen(schemaBody, argsStart);
+        if (argsEnd === -1) break;
+
+        const keptArgs = splitTopLevelArgs(schemaBody.slice(argsStart, argsEnd))
+            .filter((arg) => !/^\s*map\s*:/.test(arg))
+            .map((arg) => arg.trim());
+        out += schemaBody.slice(cursor, start) + `${marker}${keptArgs.join(", ")})`;
+        cursor = argsEnd + 1;
+    }
+
+    return out + schemaBody.slice(cursor);
+}
+
+/** Index of the `)` closing the argument list that starts at `argsStart`, or -1. */
+function findMatchingCloseParen(text: string, argsStart: number): number {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = argsStart; i < text.length; i += 1) {
+        const ch = text[i]!;
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (ch === "\\") escaped = true;
+            else if (ch === '"') inString = false;
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === "(") depth += 1;
+        else if (ch === ")") {
+            if (depth === 0) return i;
+            depth -= 1;
+        }
+    }
+    return -1;
 }
 
 function stripRelationMapArguments(schemaBody: string): string {

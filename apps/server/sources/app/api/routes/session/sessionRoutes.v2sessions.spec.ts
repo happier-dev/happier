@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     encodeV2SessionListCursorV1,
     encodeV2SessionListCursorV2,
+    V2SessionListResponseSchema,
 } from "@happier-dev/protocol";
 import type { SessionRuntimeIssueV1 } from "@happier-dev/protocol";
 
@@ -11,16 +13,53 @@ import {
     DEFAULT_V2_SESSION_LIST_INITIAL_ATTENTION_ROW_LIMIT,
 } from "./v2SessionHotReadLimits";
 import {
-    mapV2SessionListRow,
+    mapV2SessionListRow as mapV2SessionListRowWithAccountMode,
 } from "./v2SessionListRows";
 import {
     createSessionRouteTestBuilder,
+    accountFindUnique,
     resetSessionRouteMocks,
     sessionFindFirst,
     sessionFindMany,
     sessionPinFindMany,
 } from "./sessionRoutes.testkit";
 import { isMissingAttentionProjectionColumnError } from "./v2SessionListPage";
+
+const OWNER_METADATA_ENVELOPE_V1 = {
+    t: "encrypted",
+    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+} as const;
+const STORED_OWNER_METADATA_ENVELOPE_V1 =
+    JSON.stringify(OWNER_METADATA_ENVELOPE_V1);
+const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
+
+const LEGACY_ACCOUNT_STORED_CONTENT_COMPATIBILITY = {
+    accepted: false,
+    supportsCurrentProtocol: false,
+    outcome: "reject-protocol-too-old",
+    declaration: { v: 1 as const, protocolVersion: 1 },
+    upgradeRequired: {
+        error: "client-upgrade-required",
+        requirement: {
+            v: 1 as const,
+            kind: "account-stored-content" as const,
+            minimumProtocolVersion:
+                CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+        },
+    },
+} as const;
+
+function mapV2SessionListRow(
+    params: Omit<
+        Parameters<typeof mapV2SessionListRowWithAccountMode>[0],
+        "ownerAccountMode"
+    >,
+) {
+    return mapV2SessionListRowWithAccountMode({
+        ...params,
+        ownerAccountMode: "e2ee",
+    });
+}
 
 function pagedSessionRow(
     id: string,
@@ -37,15 +76,20 @@ function pagedSessionRow(
         id,
         seq: 1,
         accountId: "u1",
+        currentStorageState: "hosted",
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
         encryptionMode: "plain",
         createdAt,
         updatedAt: overrides.updatedAt ?? createdAt,
         meaningfulActivityAt: overrides.meaningfulActivityAt ?? createdAt,
         archivedAt: null,
-        metadata: "{}",
+        metadata: STORED_SHARED_METADATA_V1,
         metadataVersion: 1,
         metadataLayoutVersion: 1,
-        ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+        ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
         agentState: null,
         agentStateVersion: 0,
         lastViewedSessionSeq: 0,
@@ -115,20 +159,19 @@ function expectedV2SessionVisibilityBranches() {
     ]);
 }
 
-function legacyPagedSessionRow(id: string, overrides: Parameters<typeof pagedSessionRow>[1] = {}) {
-    const {
-        pendingRequestObservedAt: _pendingRequestObservedAt,
-        latestReadyEventSeq: _latestReadyEventSeq,
-        latestReadyEventAt: _latestReadyEventAt,
-        thinking: _thinking,
-        thinkingAt: _thinkingAt,
-        runtimeActivityState: _runtimeActivityState,
-        runtimeActivityActiveCount: _runtimeActivityActiveCount,
-        runtimeActivityObservedAt: _runtimeActivityObservedAt,
-        runtimeActivityRevision: _runtimeActivityRevision,
-        ...legacyRow
-    } = pagedSessionRow(id, overrides);
-    return legacyRow;
+function hasAttentionCandidatePredicate(where: Record<string, unknown>): boolean {
+    const clauses = where.AND;
+    if (!Array.isArray(clauses)) return false;
+    return clauses.some((clause) => {
+        if (!clause || typeof clause !== "object") return false;
+        const candidates = (clause as Record<string, unknown>).OR;
+        return Array.isArray(candidates) && candidates.some((candidate) =>
+            candidate
+            && typeof candidate === "object"
+            && (Object.prototype.hasOwnProperty.call(candidate, "latestTurnStatus")
+                || Object.prototype.hasOwnProperty.call(candidate, "pendingPermissionRequestCount")
+                || Object.prototype.hasOwnProperty.call(candidate, "pendingUserActionRequestCount")));
+    });
 }
 
 describe("sessionRoutes v2 sessions snapshot", () => {
@@ -136,15 +179,171 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         resetSessionRouteMocks();
         sessionFindFirst.mockReset();
         sessionFindMany.mockReset();
+        sessionFindMany.mockResolvedValue([]);
+    });
+
+    it("does not read Account currentness for an empty page", async () => {
+        sessionFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { response } = await route.invoke({ query: { limit: 1 } });
+
+        expect(response).toEqual({
+            sessions: [],
+            nextCursor: null,
+            hasNext: false,
+        });
+        expect(accountFindUnique).not.toHaveBeenCalled();
+    });
+
+    it("coalesces owned layout-one projection to one Account-currentness read per page", async () => {
+        sessionFindMany
+            .mockResolvedValueOnce([
+                pagedSessionRow("owned-layout-one-2"),
+                pagedSessionRow("owned-layout-one-1"),
+            ])
+            .mockResolvedValueOnce([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { response } = await route.invoke({ query: { limit: 2 } });
+
+        expect(response).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "owned-layout-one-2" }),
+                expect.objectContaining({ id: "owned-layout-one-1" }),
+            ],
+            nextCursor: null,
+            hasNext: false,
+        });
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads Account currentness for the displayed shared row, not the owned layout-one lookahead row", async () => {
+        const sharedDisplayedRow = {
+            ...pagedSessionRow("shared-displayed"),
+            accountId: "owner",
+            shares: [{
+                encryptedDataKey: null,
+                accessLevel: "view",
+                canApprovePermissions: false,
+            }],
+        };
+        sessionFindMany
+            .mockResolvedValueOnce([
+                sharedDisplayedRow,
+                pagedSessionRow("owned-lookahead"),
+            ])
+            .mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { response } = await route.invoke({ query: { limit: 1 } });
+
+        expect(response).toEqual({
+            sessions: [expect.objectContaining({
+                id: "shared-displayed",
+                share: { accessLevel: "view", canApprovePermissions: false },
+            })],
+            nextCursor: encodeV2SessionListCursorV2({
+                sessionId: "shared-displayed",
+                meaningfulActivityAt: 1_000,
+            }),
+            hasNext: true,
+        });
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
+        expect(accountFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "owner" },
+        }));
+    });
+
+    it("does not require current stored-content support for a sliced-out layout-one lookahead row", async () => {
+        const emittedLayoutZero = {
+            ...pagedSessionRow("emitted-layout-zero", {
+                meaningfulActivityAt: new Date(2_000),
+            }),
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
+        };
+        sessionFindMany
+            .mockResolvedValueOnce([
+                emittedLayoutZero,
+                pagedSessionRow("layout-one-lookahead", {
+                    meaningfulActivityAt: new Date(1_000),
+                }),
+            ])
+            .mockResolvedValueOnce([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { reply, response } = await route.invoke({
+            query: { limit: 1 },
+            accountStoredContentCompatibility:
+                LEGACY_ACCOUNT_STORED_CONTENT_COMPATIBILITY,
+        });
+
+        expect(reply.statusCode).toBe(200);
+        expect(response).toEqual({
+            sessions: [expect.objectContaining({ id: "emitted-layout-zero" })],
+            nextCursor: encodeV2SessionListCursorV2({
+                sessionId: "emitted-layout-zero",
+                meaningfulActivityAt: 2_000,
+            }),
+            hasNext: true,
+        });
+        expect(accountFindUnique).not.toHaveBeenCalled();
+    });
+
+    it("requires current stored-content support when layout one appears only in the emitted pinned rows", async () => {
+        const regularLayoutZero = {
+            ...pagedSessionRow("regular-layout-zero"),
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
+        };
+        sessionPinFindMany.mockResolvedValue([
+            {
+                sessionId: "pinned-layout-one",
+                sortKey: "a",
+                pinnedAt: new Date(1_000),
+            },
+        ]);
+        sessionFindMany.mockImplementation(async (query) => {
+            const where = query.where as Record<string, unknown>;
+            if (where.currentStorageState === "hosted" && where.meaningfulActivityAt) {
+                return [regularLayoutZero];
+            }
+            if (where.id && !where.currentStorageState) {
+                return [pagedSessionRow("pinned-layout-one", {
+                    meaningfulActivityAt: new Date(100),
+                })];
+            }
+            return [];
+        });
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { reply } = await route.invoke({
+            query: { limit: 1 },
+            accountStoredContentCompatibility:
+                LEGACY_ACCOUNT_STORED_CONTENT_COMPATIBILITY,
+        });
+
+        expect(reply.statusCode).toBe(426);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "client-upgrade-required",
+            requirement: {
+                v: 1,
+                kind: "account-stored-content",
+                minimumProtocolVersion:
+                    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+            },
+        });
+        expect(accountFindUnique).not.toHaveBeenCalled();
     });
 
     it("keeps full Agent state owner-only when projecting a shared session row", () => {
         const row = {
             ...pagedSessionRow("s_shared_agent_state"),
             accountId: "owner",
-            metadata: "shared-metadata-envelope",
+            metadata: STORED_SHARED_METADATA_V1,
             metadataLayoutVersion: 1,
-            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: "full-owner-agent-state",
             agentStateVersion: 7,
             shares: [{
@@ -160,7 +359,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
 
         expect(owner.agentState).toBe("full-owner-agent-state");
         expect(owner.agentStateVersion).toBe(7);
-        expect(recipient.metadata).toBe("shared-metadata-envelope");
+        expect(recipient.metadata).toBe(STORED_SHARED_METADATA_V1);
         expect(recipient).not.toHaveProperty("ownerMetadata");
         expect(recipient.agentState).toBeNull();
         expect(recipient.agentStateVersion).toBe(7);
@@ -168,9 +367,47 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(JSON.stringify(recipient)).not.toMatch(
             /oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU\/wWRuslcRY3OZA==|full-owner-agent-state/,
         );
+        expect(V2SessionListResponseSchema.safeParse({
+            sessions: [owner, recipient],
+            nextCursor: null,
+            hasNext: false,
+        }).success).toBe(true);
     });
 
-    it("GET /v2/sessions preserves the released layout-zero shared projection", async () => {
+    it("rejects shared-recipient rows carrying owner projection authority", () => {
+        const row = {
+            ...pagedSessionRow("s_mixed_recipient_authority"),
+            accountId: "owner",
+            metadata: STORED_SHARED_METADATA_V1,
+            metadataLayoutVersion: 1,
+            ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+            agentState: "full-owner-agent-state",
+            agentStateVersion: 7,
+            shares: [{
+                encryptedDataKey: null,
+                accessLevel: "edit",
+                canApprovePermissions: true,
+            }],
+            currentStorageState: "hosted",
+        } as any;
+        const recipient = mapV2SessionListRow({ userId: "recipient", row });
+
+        expect(recipient.share).toEqual({
+            accessLevel: "edit",
+            canApprovePermissions: true,
+        });
+        expect(V2SessionListResponseSchema.safeParse({
+            sessions: [{
+                ...recipient,
+                ownerMetadata: OWNER_METADATA_ENVELOPE_V1,
+                agentState: "full-owner-agent-state",
+            }],
+            nextCursor: null,
+            hasNext: false,
+        }).success).toBe(false);
+    });
+
+    it("GET /v2/sessions refuses a released layout-zero shared projection until owner migration", async () => {
         sessionFindMany
             .mockResolvedValueOnce([
                 {
@@ -194,23 +431,10 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { reply, response: res } = await route.invoke({ query: { limit: 1 } });
 
-        expect(reply.statusCode).toBe(200);
+        expect(reply.statusCode).toBe(409);
         expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "legacy-shared",
-                    metadata: "legacy-whole-bag",
-                    metadataLayoutVersion: 0,
-                    agentState: "legacy-owner-state",
-                    agentStateVersion: 7,
-                    share: {
-                        accessLevel: "view",
-                        canApprovePermissions: false,
-                    },
-                }),
-            ],
-            nextCursor: null,
-            hasNext: false,
+            error: "Session metadata privacy upgrade required",
+            code: "metadata_privacy_upgrade_required",
         });
     });
 
@@ -369,6 +593,178 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(mapped.latestReadyEventAt).toBeNull();
     });
 
+    it.each([
+        {
+            name: "hosted",
+            publication: {
+                currentStorageState: "hosted",
+                acceptedThroughServerSeq: null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+            },
+            ceiling: 9,
+            recency: 9_000,
+            rollbackStarts: [4, 5],
+            retainsLiveFacts: true,
+        },
+        {
+            name: "machine-only",
+            publication: {
+                currentStorageState: "machine_only",
+                acceptedThroughServerSeq: null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+            },
+            ceiling: 0,
+            recency: 1_000,
+            rollbackStarts: [],
+            retainsLiveFacts: false,
+        },
+        {
+            name: "initial partial",
+            publication: {
+                currentStorageState: "server_partial",
+                acceptedThroughServerSeq: 4,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+            },
+            ceiling: 4,
+            recency: 1_000,
+            rollbackStarts: [4],
+            retainsLiveFacts: false,
+        },
+        {
+            name: "published snapshot with private post-publication activity",
+            publication: {
+                currentStorageState: "snapshot_complete",
+                acceptedThroughServerSeq: 9,
+                materializationPublicationId: "publication-4",
+                materializedThroughSourceAt: BigInt(4_000),
+                publishedThroughServerSeq: 4,
+            },
+            ceiling: 4,
+            recency: 4_000,
+            rollbackStarts: [4],
+            retainsLiveFacts: false,
+        },
+        {
+            name: "legacy external unknown",
+            publication: {
+                currentStorageState: "legacy_external_unknown",
+                acceptedThroughServerSeq: null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+            },
+            ceiling: 0,
+            recency: 1_000,
+            rollbackStarts: [],
+            retainsLiveFacts: false,
+        },
+    ] as const)(
+        "applies the publication ceiling to every preview fact for $name",
+        ({ publication, ceiling, recency, rollbackStarts, retainsLiveFacts }) => {
+            const mapped = mapV2SessionListRow({
+                userId: "u1",
+                row: {
+                    ...pagedSessionRow("s_publication_preview", {
+                        createdAt: new Date(1_000),
+                        updatedAt: new Date(9_000),
+                        meaningfulActivityAt: new Date(9_000),
+                        active: true,
+                        lastActiveAt: new Date(9_000),
+                    }),
+                    seq: 9,
+                    lastViewedSessionSeq: 8,
+                    pendingPermissionRequestCount: 2,
+                    pendingUserActionRequestCount: 3,
+                    pendingRequestObservedAt: new Date(9_000),
+                    pendingCount: 4,
+                    pendingBlockedCount: 5,
+                    pendingVersion: 6,
+                    latestTurnId: "turn-at-nine",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: BigInt(9_000),
+                    lastRuntimeIssue: JSON.stringify(usageLimitRuntimeIssue),
+                    runtimeActivityState: "active",
+                    runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: BigInt(9_000),
+                    runtimeActivityRevision: BigInt(9),
+                    thinking: true,
+                    thinkingAt: new Date(9_000),
+                    turns: [
+                        {
+                            transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 4 }),
+                            rollbackState: "eligible",
+                        },
+                        {
+                            transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 5 }),
+                            rollbackState: "eligible",
+                        },
+                    ],
+                    ...publication,
+                } as any,
+            });
+
+            expect(mapped).toMatchObject({
+                seq: ceiling,
+                lastViewedSessionSeq: Math.min(8, ceiling),
+                updatedAt: recency,
+                meaningfulActivityAt: recency,
+                activeAt: recency,
+                rollbackEligibleTurnStarts: rollbackStarts,
+                acceptedThroughServerSeq: publication.acceptedThroughServerSeq === null
+                    ? null
+                    : Math.min(publication.acceptedThroughServerSeq, ceiling),
+            });
+
+            if (retainsLiveFacts) {
+                expect(mapped).toMatchObject({
+                    active: true,
+                    pendingPermissionRequestCount: 2,
+                    pendingUserActionRequestCount: 3,
+                    pendingRequestObservedAt: 9_000,
+                    pendingCount: 4,
+                    pendingBlockedCount: 5,
+                    pendingVersion: 6,
+                    latestTurnId: "turn-at-nine",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: 9_000,
+                    thinking: true,
+                    thinkingAt: 9_000,
+                    runtimeActivityState: "active",
+                    runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: 9_000,
+                    runtimeActivityRevision: 9,
+                });
+                return;
+            }
+
+            expect(mapped).toMatchObject({
+                active: false,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                pendingRequestObservedAt: null,
+                pendingCount: 0,
+                pendingBlockedCount: 0,
+                pendingVersion: 0,
+                latestTurnId: null,
+                latestTurnStatus: null,
+                latestTurnStatusObservedAt: null,
+                lastRuntimeIssue: null,
+                thinking: false,
+                thinkingAt: null,
+            });
+            expect(mapped).not.toHaveProperty("runtimeActivityState");
+            expect(mapped).not.toHaveProperty("runtimeActivityActiveCount");
+            expect(mapped).not.toHaveProperty("runtimeActivityObservedAt");
+            expect(mapped).not.toHaveProperty("runtimeActivityRevision");
+        },
+    );
+
     it("exposes provider runtime activity as the canonical four-field projection on v2 rows", () => {
         const mapped = mapV2SessionListRow({
             userId: "u1",
@@ -405,7 +801,22 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(mapped.acceptedThroughServerSeq).toBeNull();
         expect(mapped.materializedThroughSourceAt).toBe(1_700_000_000_000);
         expect(mapped.publishedThroughServerSeq).toBe(12);
+        expect(mapped.transcriptShareable).toBe(true);
         expect(mapped).not.toHaveProperty("materializationPublicationId");
+
+        const incomplete = mapV2SessionListRow({
+            userId: "u1",
+            row: {
+                ...pagedSessionRow("s_incomplete_materialization"),
+                currentStorageState: "snapshot_complete",
+                acceptedThroughServerSeq: null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: BigInt(1_700_000_000_000),
+                publishedThroughServerSeq: 12,
+            } as any,
+        });
+        expect(incomplete.transcriptShareable).toBe(false);
+        expect(incomplete).not.toHaveProperty("materializationPublicationId");
     });
 
     it("omits malformed or source-class-contaminated runtime activity tuples", () => {
@@ -494,7 +905,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     metadata: "m2",
                     metadataVersion: 1,
                     metadataLayoutVersion: 1,
-                    ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                    ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
                     agentState: null,
                     agentStateVersion: 0,
                     lastViewedSessionSeq: 1,
@@ -666,15 +1077,18 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             { sessionId: "s_pinned_old", sortKey: "a", pinnedAt: new Date(1_000) },
             { sessionId: "s_pinned_older", sortKey: "b", pinnedAt: new Date(2_000) },
         ]);
-        sessionFindMany
-            .mockResolvedValueOnce([normalFirstPageRow, normalSecondPageRow])
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([
-                secondPinned,
-                firstPinned,
-            ])
-            .mockResolvedValueOnce([readyAttention])
-            .mockResolvedValueOnce([]);
+        sessionFindMany.mockImplementation(async (query) => {
+            const where = query.where as Record<string, unknown>;
+            if (where.id && !where.currentStorageState) {
+                return [secondPinned, firstPinned];
+            }
+            if (where.currentStorageState === "hosted" && where.meaningfulActivityAt) {
+                return hasAttentionCandidatePredicate(where)
+                    ? [readyAttention]
+                    : [normalFirstPageRow, normalSecondPageRow];
+            }
+            return [];
+        });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response } = await route.invoke({
@@ -697,8 +1111,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         // The attention owner requests one lookahead candidate, and each
         // publication-shape branch requests its own refill lookahead row.
         const expectedAttentionBranchTake = DEFAULT_V2_SESSION_LIST_INITIAL_ATTENTION_ROW_LIMIT + 2;
-        expect(sessionFindMany).toHaveBeenNthCalledWith(4, expect.objectContaining({ take: expectedAttentionBranchTake }));
-        expect(sessionFindMany).toHaveBeenNthCalledWith(5, expect.objectContaining({ take: expectedAttentionBranchTake }));
+        expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            take: expectedAttentionBranchTake,
+            where: expect.objectContaining({
+                currentStorageState: "hosted",
+                meaningfulActivityAt: { not: null },
+            }),
+        }));
         expect(sessionPinFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 accountId: "u1",
@@ -709,6 +1128,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             }),
             orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
         }));
+        expect(accountFindUnique).toHaveBeenCalledTimes(1);
     });
 
     it("treats an empty server pin set as authoritative instead of falling back to client-provided pinned ids", async () => {
@@ -775,16 +1195,20 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             materializedThroughSourceAt: BigInt(1_000),
             publishedThroughServerSeq: 4,
         };
-        sessionFindMany
-            .mockResolvedValueOnce([normalFirstPageRow, normalSecondPageRow])
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([
-                activeReadFailure,
-                inactiveUnreadFailure,
-                inactiveReadFailure,
-                inactivePublishedReadFailureWithStagedTail,
-            ])
-            .mockResolvedValueOnce([]);
+        sessionFindMany.mockImplementation(async (query) => {
+            const where = query.where as Record<string, unknown>;
+            if (where.currentStorageState === "hosted" && where.meaningfulActivityAt) {
+                return hasAttentionCandidatePredicate(where)
+                    ? [
+                        activeReadFailure,
+                        inactiveUnreadFailure,
+                        inactiveReadFailure,
+                        inactivePublishedReadFailureWithStagedTail,
+                    ]
+                    : [normalFirstPageRow, normalSecondPageRow];
+            }
+            return [];
+        });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response } = await route.invoke({
@@ -861,61 +1285,6 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(pinnedIds).toContain(`s_pinned_${pinnedCount - 1}`);
     });
 
-    it("falls back to a legacy row select when attention projection columns are not migrated yet", async () => {
-        const missingColumnError = Object.assign(new Error("no such column: pendingRequestObservedAt"), {
-            code: "P2022",
-        });
-        sessionFindMany
-            .mockRejectedValueOnce(missingColumnError)
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([{
-                ...legacyPagedSessionRow("s_legacy"),
-                seq: 9,
-                lastViewedSessionSeq: 9,
-                currentStorageState: "server_partial",
-                acceptedThroughServerSeq: 4,
-                materializationPublicationId: null,
-                materializedThroughSourceAt: null,
-                publishedThroughServerSeq: null,
-            }])
-            .mockResolvedValueOnce([]);
-
-        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
-        const { response: res } = await route.invoke({
-            query: { limit: 2 },
-        });
-
-        expect(sessionFindMany).toHaveBeenCalledTimes(4);
-        const initialSelect = sessionFindMany.mock.calls[0]?.[0]?.select as Record<string, unknown>;
-        const fallbackSelect = sessionFindMany.mock.calls[2]?.[0]?.select as Record<string, unknown>;
-        expect(initialSelect.pendingRequestObservedAt).toBe(true);
-        expect(fallbackSelect.pendingRequestObservedAt).toBeUndefined();
-        expect(fallbackSelect.turns).toBeUndefined();
-        expect(fallbackSelect).toEqual(expect.objectContaining({
-            currentStorageState: true,
-            acceptedThroughServerSeq: true,
-            materializationPublicationId: true,
-            materializedThroughSourceAt: true,
-            publishedThroughServerSeq: true,
-        }));
-        expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "s_legacy",
-                    seq: 4,
-                    lastViewedSessionSeq: 4,
-                    pendingRequestObservedAt: null,
-                    latestReadyEventSeq: null,
-                    latestReadyEventAt: null,
-                    thinking: false,
-                    thinkingAt: null,
-                }),
-            ],
-            nextCursor: null,
-            hasNext: false,
-        });
-    });
-
     it("does not downgrade a missing publication-authority column to the legacy projection", () => {
         expect(isMissingAttentionProjectionColumnError(
             Object.assign(new Error("no such column: currentStorageState"), { code: "P2022" }),
@@ -925,79 +1294,15 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         )).toBe(false);
     });
 
-    it("falls back to a legacy row select when runtime activity columns are not migrated yet", async () => {
-        const missingColumnError = Object.assign(new Error("no such column: runtimeActivityActiveCount"), {
-            code: "P2022",
-        });
-        sessionFindMany
-            .mockRejectedValueOnce(missingColumnError)
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([legacyPagedSessionRow("s_legacy_runtime")])
-            .mockResolvedValueOnce([]);
-
-        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
-        const { response: res } = await route.invoke({
-            query: { limit: 2 },
-        });
-
-        expect(sessionFindMany).toHaveBeenCalledTimes(4);
-        const initialSelect = sessionFindMany.mock.calls[0]?.[0]?.select as Record<string, unknown>;
-        const fallbackSelect = sessionFindMany.mock.calls[2]?.[0]?.select as Record<string, unknown>;
-        expect(initialSelect.runtimeActivityActiveCount).toBe(true);
-        expect(fallbackSelect.runtimeActivityState).toBeUndefined();
-        expect(fallbackSelect.runtimeActivityActiveCount).toBeUndefined();
-        expect(fallbackSelect.runtimeActivityObservedAt).toBeUndefined();
-        expect(fallbackSelect.runtimeActivityRevision).toBeUndefined();
-        expect(fallbackSelect.runtimeActivitySourceClass).toBeUndefined();
-        expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "s_legacy_runtime",
-                }),
-            ],
-            nextCursor: null,
-            hasNext: false,
-        });
-        const legacySession = (res as { sessions: unknown[] }).sessions[0];
-        expect(legacySession).not.toHaveProperty("runtimeActivityState");
-        expect(legacySession).not.toHaveProperty("runtimeActivityActiveCount");
-        expect(legacySession).not.toHaveProperty("runtimeActivityObservedAt");
-        expect(legacySession).not.toHaveProperty("runtimeActivityRevision");
-        expect(legacySession).not.toHaveProperty("runtimeActivitySourceClass");
-    });
-
-    it("falls back to empty rollback eligibility when session turn rows are not migrated yet", async () => {
-        const missingTurnRelationError = Object.assign(new Error("no such column: SessionTurn.rollbackState"), {
-            code: "P2022",
-        });
-        sessionFindMany
-            .mockRejectedValueOnce(missingTurnRelationError)
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([legacyPagedSessionRow("s_legacy_turns")])
-            .mockResolvedValueOnce([]);
-
-        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
-        const { response: res } = await route.invoke({
-            query: { limit: 2 },
-        });
-
-        const fallbackSelect = sessionFindMany.mock.calls[2]?.[0]?.select as Record<string, unknown>;
-        expect(fallbackSelect.turns).toBeUndefined();
-        expect(res).toEqual({
-            sessions: [
-                expect.objectContaining({
-                    id: "s_legacy_turns",
-                    rollbackEligibleTurnStarts: [],
-                }),
-            ],
-            nextCursor: null,
-            hasNext: false,
-        });
-    });
-
     it("accepts legacy v1 cursors by resolving the cursor row effective activity", async () => {
         sessionFindFirst.mockResolvedValue({
             id: "s5",
+            accountId: "u1",
+            currentStorageState: "hosted",
+            acceptedThroughServerSeq: null,
+            materializationPublicationId: null,
+            materializedThroughSourceAt: null,
+            publishedThroughServerSeq: null,
             createdAt: new Date(5_000),
             meaningfulActivityAt: new Date(4_500),
         });
@@ -1015,7 +1320,17 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 archivedAt: null,
                 OR: expectedV2SessionVisibilityBranches(),
             }),
-            select: { id: true, createdAt: true, meaningfulActivityAt: true },
+            select: expect.objectContaining({
+                id: true,
+                accountId: true,
+                createdAt: true,
+                meaningfulActivityAt: true,
+                currentStorageState: true,
+                acceptedThroughServerSeq: true,
+                materializationPublicationId: true,
+                materializedThroughSourceAt: true,
+                publishedThroughServerSeq: true,
+            }),
         }));
         expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
@@ -1031,30 +1346,27 @@ describe("sessionRoutes v2 sessions snapshot", () => {
     });
 
     it("paginates null meaningfulActivityAt rows by createdAt without skipping the next page", async () => {
-        sessionFindMany
-            .mockResolvedValueOnce([
-                pagedSessionRow("s9", {
-                    createdAt: new Date(900),
-                    meaningfulActivityAt: new Date(9_000),
-                }),
-                pagedSessionRow("s7", {
-                    createdAt: new Date(700),
-                    meaningfulActivityAt: new Date(7_000),
-                }),
-            ])
-            .mockResolvedValueOnce([
-                pagedSessionRow("s8", {
-                    createdAt: new Date(8_000),
-                    meaningfulActivityAt: null,
-                }),
-            ])
-            .mockResolvedValueOnce([
-                pagedSessionRow("s7", {
-                    createdAt: new Date(700),
-                    meaningfulActivityAt: new Date(7_000),
-                }),
-            ])
-            .mockResolvedValueOnce([]);
+        const s9 = pagedSessionRow("s9", {
+            createdAt: new Date(900),
+            meaningfulActivityAt: new Date(9_000),
+        });
+        const s8 = pagedSessionRow("s8", {
+            createdAt: new Date(8_000),
+            meaningfulActivityAt: null,
+        });
+        const s7 = pagedSessionRow("s7", {
+            createdAt: new Date(700),
+            meaningfulActivityAt: new Date(7_000),
+        });
+        sessionFindMany.mockImplementation(async (query) => {
+            const where = query.where as Record<string, unknown>;
+            if (where.currentStorageState !== "hosted") return [];
+            const hasCursor = Array.isArray(where.AND) && where.AND.length > 0;
+            if (where.meaningfulActivityAt) {
+                return hasCursor ? [s7] : [s9, s7];
+            }
+            return hasCursor ? [] : [s8];
+        });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response: firstPage } = await route.invoke({
@@ -1084,7 +1396,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             nextCursor: null,
             hasNext: false,
         });
-        expect(sessionFindMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        expect(sessionFindMany).toHaveBeenNthCalledWith(5, expect.objectContaining({
             where: expect.objectContaining({
                 archivedAt: null,
                 meaningfulActivityAt: { not: null },
@@ -1097,7 +1409,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 }],
             }),
         }));
-        expect(sessionFindMany).toHaveBeenNthCalledWith(4, expect.objectContaining({
+        expect(sessionFindMany).toHaveBeenNthCalledWith(6, expect.objectContaining({
             where: expect.objectContaining({
                 archivedAt: null,
                 meaningfulActivityAt: null,
