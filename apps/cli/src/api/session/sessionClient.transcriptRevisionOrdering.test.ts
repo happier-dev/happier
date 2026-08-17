@@ -188,7 +188,7 @@ describe('ApiSessionClient transcript revision retry ordering', () => {
     const drain = createDeferred<void>();
     const internals = client as unknown as {
       commitSessionMessage: CommitSessionMessage;
-      drainPendingLifecycleWritesBeforeClose(): Promise<void>;
+      drainBestEffortSessionWrites(): Promise<void>;
       sessionMessageCommitRetry: { size: number };
     };
     await internals.commitSessionMessage.call(client, {
@@ -197,7 +197,7 @@ describe('ApiSessionClient transcript revision retry ordering', () => {
       sidechainId: null,
       requireCommit: false,
     });
-    internals.drainPendingLifecycleWritesBeforeClose = async () => await drain.promise;
+    internals.drainBestEffortSessionWrites = async () => await drain.promise;
 
     const closePromise = client.close();
     await Promise.resolve();
@@ -253,5 +253,44 @@ describe('ApiSessionClient transcript revision retry ordering', () => {
     })).rejects.toThrow(/not confirmed/i);
 
     expect(internals.sessionMessageCommitRetry.size).toBe(0);
+  });
+
+  it('does not resolve close() until pending best-effort transcript commits settle', async () => {
+    vi.resetModules();
+    const messageAck = createDeferred<{ ok: true; id: string; seq: number; localId: string }>();
+    let messageCommitStarted = false;
+    let messagePayload: any = null;
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string, payload: any) => {
+        if (event === 'message') {
+          messageCommitStarted = true;
+          messagePayload = payload;
+          return await messageAck.promise;
+        }
+        return { ok: true, id: 'm1', seq: 1, localId: payload?.localId ?? 'l1' };
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+
+    client.sendSessionEvent({ type: 'ready' });
+    await vi.waitFor(() => expect(messageCommitStarted).toBe(true));
+
+    let didClose = false;
+    const closePromise = client.close().then(() => {
+      didClose = true;
+    });
+
+    for (let tick = 0; tick < 25; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(didClose).toBe(false);
+
+    messageAck.resolve({ ok: true, id: 'm1', seq: 1, localId: messagePayload.localId });
+    await closePromise;
+    expect(didClose).toBe(true);
   });
 });

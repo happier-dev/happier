@@ -5482,16 +5482,15 @@ export class ApiSessionClient extends EventEmitter {
         this.latestTurnStatusObservedAtMs = observedAtMs;
     }
 
+    /**
+     * Settles every best-effort session write this client still owns: queued transcript commits,
+     * durable session mutations, and session turn writes. `flush()` and `close()` share it so a
+     * confirmed close can never report success while final transcript rows are still in flight.
+     */
     private async drainBestEffortSessionWrites(): Promise<void> {
         await Promise.all([
             this.messageCommitQueueTail.catch(() => undefined),
             this.sessionMutationOutbox.flush('flush').catch(() => undefined),
-            ...[...this.pendingSessionTurnWrites].map((update) => update.catch(() => undefined)),
-        ]);
-    }
-
-    private async drainPendingLifecycleWritesBeforeClose(): Promise<void> {
-        await Promise.all([
             ...[...this.pendingSessionTurnWrites].map((update) => update.catch(() => undefined)),
         ]);
     }
@@ -5567,6 +5566,8 @@ export class ApiSessionClient extends EventEmitter {
         this.pendingInputReadinessAbortController?.abort();
         this.pendingInputReadinessAbortController = null;
         this.acceptedCanonicalPendingDeliveryOperationAbortController.abort();
+        // Disposing only stops future retry timers; it never cancels a commit already in flight,
+        // which the drain below still settles.
         this.sessionMessageCommitRetry.dispose();
         if (this.startupMessageCatchUpRetryTimer) {
             clearTimeout(this.startupMessageCatchUpRetryTimer);
@@ -5577,7 +5578,7 @@ export class ApiSessionClient extends EventEmitter {
             this.userSocketDisconnectTimer = null;
         }
         this.clearReconnectPresenceReassertTimer();
-        await this.drainPendingLifecycleWritesBeforeClose();
+        await this.drainBestEffortSessionWrites();
         await this.rpcHandlerManager.waitForIdle();
         await this.disposeRpcLifecycleRegistrations();
         await this.drainAcceptedCanonicalPendingDeliveryResolutionsBeforeClose();
