@@ -1,6 +1,7 @@
 import { findDeprecatedImportMatches } from '../migrations/lib/deprecatedImportRules.ts';
 import { type EnforcementMode, type InventoryFile } from '../migrations/lib/migrationTypes.ts';
 import {
+  containsRawNulByte,
   countActiveServerSnapshotEmptyMemoReads,
   countActiveServerSnapshotRefInitializerReads,
   countActiveServerSnapshotStateInitializerReads,
@@ -128,6 +129,17 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
         mode: 'enforce',
         filePath: file.filePath,
         message: 'Non-test source must not import @happier-dev/tests internals.',
+      });
+    }
+
+    if (containsRawNulByte(file.content)) {
+      findings.push({
+        ruleId: 'no-nul-byte-in-source',
+        mode: 'enforce',
+        filePath: file.filePath,
+        message:
+          'Source contains a raw NUL byte. Git then classifies the file as binary and recursive rg/grep skip it silently, '
+          + 'so negative-requirement audits over this file return false negatives. Write the separator as the \\u0000 escape instead.',
       });
     }
 

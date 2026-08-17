@@ -9,6 +9,19 @@ export function isTestPolicyFile(filePath: string): boolean {
   return TEST_POLICY_FILE_PATTERN.test(filePath) || TEST_POLICY_DIR_PATTERN.test(filePath);
 }
 
+/**
+ * A raw NUL byte in source makes Git classify the file as binary. Recursive `rg`/`grep` then
+ * skip it in silence -- reporting no match rather than any warning -- so negative-requirement
+ * audits ("this symbol no longer exists anywhere") return false negatives over it. Separators
+ * must therefore be written as the `\u0000` escape, never as the byte.
+ *
+ * Reads raw content on purpose: every instance so far has been a separator inside a template
+ * literal, which `stripStringsAndComments` erases.
+ */
+export function containsRawNulByte(content: string): boolean {
+  return content.includes(String.fromCharCode(0));
+}
+
 export function isCanonicalTestSpawnHelperPath(filePath: string): boolean {
   return CANONICAL_TEST_SPAWN_HELPER_PATH_PATTERN.test(filePath);
 }
