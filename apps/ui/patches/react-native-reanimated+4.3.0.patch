@@ -1,0 +1,41 @@
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp b/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
+index 313c66d..dd6e17e 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
+@@ -537,13 +537,33 @@ jsi::Value ReanimatedModuleProxy::getSettledUpdates(jsi::Runtime &rt) {
+ 
+   const auto lock = animatedPropsRegistry_->lock();
+ 
+-  // TODO: fix bug when threshold difference is smaller than 1 second
++  // An entry may only be dropped from the registry once it has been handed to React,
++  // so the age at which updates are REPORTED must never be greater than the age at
++  // which they are REMOVED, and the report must be taken first. Removing first loses
++  // every entry that aged past the removal threshold since the previous call: it is
++  // erased without ever being reported, React never receives it, and the commit hook
++  // then has nothing left to re-apply for that view. The view silently falls back to
++  // its last React-committed value on the next React commit, and `styleUpdater`'s
++  // shallowEqual skip means the animation mapper never writes it again - the loss is
++  // permanent. This is reachable whenever the JS thread is starved for longer than
++  // the gap between the two thresholds, because `PropsRegistryGarbageCollector` drives
++  // this from a 500ms `setInterval` that coalesces under load. (Measured on iOS
++  // 2026-08-09: a list spacer stuck at its pre-collapse height in 12/18 starved
++  // trials, permanently, with the correct value still held on the UI runtime.)
++  constexpr double kSettledReportAgeMs = 1000;
++  constexpr double kSettledRemoveAgeMs = 2000;
++  static_assert(
++      kSettledRemoveAgeMs >= kSettledReportAgeMs,
++      "Updates must be reported to React before they can be removed from the registry");
++
+   // TODO(future): flush updates from CSS animations and CSS transitions registries
+-  animatedPropsRegistry_->removeUpdatesOlderThanTimestamp(currentTimestamp - 2000); // 2 seconds
++  auto settledUpdates = animatedPropsRegistry_->getUpdatesOlderThanTimestamp(rt, currentTimestamp - kSettledReportAgeMs);
+ 
+   // TODO(future): find a better way to obtain timestamp for removing updates
+   // TODO(future): move removing old updates to separate method
+-  return animatedPropsRegistry_->getUpdatesOlderThanTimestamp(rt, currentTimestamp - 1000); // 1 second
++  animatedPropsRegistry_->removeUpdatesOlderThanTimestamp(currentTimestamp - kSettledRemoveAgeMs);
++
++  return settledUpdates;
+ }
+ 
+ bool ReanimatedModuleProxy::handleEvent(
