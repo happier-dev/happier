@@ -1,0 +1,376 @@
+import { act, Fragment, type ReactNode } from 'react';
+
+import {
+  PluginUiSemanticRoleSchema,
+  readPluginUiTestkitTargetedSurfaceAdmission,
+} from '@happier-dev/plugin-sdk/testing';
+import type {
+  PluginUiSemanticAdapterNode,
+  PluginUiSemanticRole,
+  PluginUiSemanticState,
+  PluginUiSemanticSurfaceAdapter,
+  PluginUiSemanticSurfaceMount,
+  PluginUiSemanticTarget,
+} from '@happier-dev/plugin-sdk/testing';
+import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+
+import { Text } from '../components/Text.js';
+import {
+  PluginUiPresentationHostProviderInternal,
+  type PluginUiPresentationHost,
+  type PluginUiTargetedSurfacePresentation,
+} from '../presentationHost/context.js';
+
+/** Optional strict targeted-Surface support for the public RNW semantic adapter. */
+export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
+  targetedSurfaces?: Readonly<{
+    /** Read the current strict daemon cold-admission projection on every render. */
+    readCurrentMounts(): unknown;
+    /** Read the actual public manifest exported by the exact contributor package. */
+    readContributorManifest(pluginId: string): unknown;
+  }>;
+}>;
+
+function createSemanticPresentationHost(input: Readonly<{
+  options: NonNullable<PluginUiRnwSemanticSurfaceAdapterOptions['targetedSurfaces']>;
+  readCurrentContext(): RenderContext;
+}>): PluginUiPresentationHost {
+  return Object.freeze({
+    renderMarkdown: () => null,
+    renderCodeBlock: () => null,
+    renderPopover: () => null,
+    renderIcon: () => null,
+    renderTargetedSurface(presentation: PluginUiTargetedSurfacePresentation) {
+      const context = input.readCurrentContext();
+      const admission = readPluginUiTestkitTargetedSurfaceAdmission({
+        mounts: input.options.readCurrentMounts(),
+        target: context.surface.targetedContributions.target,
+        surface: presentation.surface,
+        launchInput: presentation.input,
+        contributorManifest: input.options.readContributorManifest(
+          presentation.surface.contributor.pluginId,
+        ),
+        ...(presentation.instanceKey === undefined ? {} : { instanceKey: presentation.instanceKey }),
+      });
+      if (!admission) return presentation.fallback ?? null;
+      return (
+        <Fragment key={admission.key}>
+          <Text value={admission.content.text} />
+        </Fragment>
+      );
+    },
+  });
+}
+
+function renderSemanticSurface(input: Readonly<{
+  surface: RenderSurface;
+  context: RenderContext;
+  presentationHost?: PluginUiPresentationHost;
+}>): ReactNode {
+  const rendered = input.surface(input.context) as ReactNode;
+  return input.presentationHost === undefined
+    ? rendered
+    : (
+        <PluginUiPresentationHostProviderInternal host={input.presentationHost}>
+          {rendered}
+        </PluginUiPresentationHostProviderInternal>
+      );
+}
+
+const PRESSABLE_ROLES = new Set<PluginUiSemanticRole>([
+  'button',
+  'checkbox',
+  'link',
+  'option',
+  'radio',
+  'switch',
+  'tab',
+]);
+
+function normalizeText(value: string | null | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/gu, ' ').trim();
+  return normalized ? normalized : undefined;
+}
+
+function readRole(element: HTMLElement): PluginUiSemanticRole | undefined {
+  const rawRole = element.getAttribute('role');
+  if (rawRole === 'img') return 'image';
+  const parsed = PluginUiSemanticRoleSchema.safeParse(rawRole);
+  if (parsed.success) return parsed.data;
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === 'input' || tagName === 'textarea') return 'textbox';
+  if (tagName === 'img') return 'image';
+  if (element.hasAttribute('aria-label') && element.querySelector('img') !== null) return 'image';
+  return undefined;
+}
+
+function readName(element: HTMLElement): string | undefined {
+  const labelledBy = element.getAttribute('aria-labelledby');
+  const labelledName = labelledBy
+    ? labelledBy.split(/\s+/u)
+        .map((id) => element.ownerDocument.getElementById(id)?.textContent)
+        .map(normalizeText)
+        .filter((text): text is string => text !== undefined)
+        .join(' ')
+    : undefined;
+  return normalizeText(labelledName)
+    ?? normalizeText(element.getAttribute('aria-label'))
+    ?? normalizeText(element.textContent);
+}
+
+function readBooleanAria(element: HTMLElement, attribute: string): boolean | undefined {
+  const value = element.getAttribute(attribute);
+  return value === 'true' ? true : value === 'false' ? false : undefined;
+}
+
+function readState(element: HTMLElement): PluginUiSemanticState | undefined {
+  const disabled = readBooleanAria(element, 'aria-disabled')
+    ?? (element.matches(':disabled') ? true : undefined);
+  const busy = readBooleanAria(element, 'aria-busy');
+  const selected = readBooleanAria(element, 'aria-selected');
+  const checkedValue = element.getAttribute('aria-checked');
+  const checked = checkedValue === 'mixed' ? 'mixed' as const : readBooleanAria(element, 'aria-checked');
+  const expanded = readBooleanAria(element, 'aria-expanded');
+  if ([disabled, busy, selected, checked, expanded].every((value) => value === undefined)) return undefined;
+  return Object.freeze({
+    ...(disabled === undefined ? {} : { disabled }),
+    ...(busy === undefined ? {} : { busy }),
+    ...(selected === undefined ? {} : { selected }),
+    ...(checked === undefined ? {} : { checked }),
+    ...(expanded === undefined ? {} : { expanded }),
+  });
+}
+
+function readTextFieldFacts(element: HTMLElement): Readonly<{
+  label?: string;
+  placeholder?: string;
+  value?: string;
+}> {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName !== 'input' && tagName !== 'textarea') return {};
+  const input = element as HTMLInputElement | HTMLTextAreaElement;
+  const label = readName(element);
+  const placeholder = normalizeText(input.getAttribute('placeholder'));
+  return Object.freeze({
+    ...(label === undefined ? {} : { label }),
+    ...(placeholder === undefined ? {} : { placeholder }),
+    value: input.value,
+  });
+}
+
+function readSemanticNode(
+  element: HTMLElement,
+  handle: string,
+): PluginUiSemanticAdapterNode | undefined {
+  const role = readRole(element);
+  if (!role) return undefined;
+  const state = readState(element);
+  const name = readName(element);
+  const textField = readTextFieldFacts(element);
+  return Object.freeze({
+    handle,
+    role,
+    ...(name === undefined ? {} : { name }),
+    ...(state === undefined ? {} : { state }),
+    ...(textField.label === undefined ? {} : { label: textField.label }),
+    ...(textField.placeholder === undefined ? {} : { placeholder: textField.placeholder }),
+    ...(textField.value === undefined ? {} : { value: textField.value }),
+    ...(PRESSABLE_ROLES.has(role) && state?.disabled !== true ? { actions: ['press'] as const } : {}),
+  });
+}
+
+function semanticTargetMatches(
+  node: PluginUiSemanticAdapterNode,
+  target: PluginUiSemanticTarget,
+): boolean {
+  return node.role === target.role
+    && node.name === target.name
+    && node.state?.disabled === target.state?.disabled
+    && node.state?.busy === target.state?.busy
+    && node.state?.selected === target.state?.selected
+    && node.state?.checked === target.state?.checked
+    && node.state?.expanded === target.state?.expanded
+    && node.label === target.label
+    && node.placeholder === target.placeholder
+    && node.value === target.value;
+}
+
+function readTextNodes(container: HTMLElement): readonly Readonly<{ content: string }>[] {
+  const texts: Readonly<{ content: string }>[] = [];
+  // DOM TreeWalker `SHOW_TEXT`; keep traversal owned by the mounted document rather
+  // than depending on an ambient DOM global in an external author runner.
+  const textNodeFilter = 4;
+  const walker = container.ownerDocument.createTreeWalker(container, textNodeFilter);
+  for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
+    const content = normalizeText(current.textContent);
+    if (content !== undefined) texts.push(Object.freeze({ content }));
+  }
+  return Object.freeze(texts);
+}
+
+type SemanticRnwMount = Readonly<{
+  container: HTMLElement;
+  render(element: ReactNode): Promise<void>;
+  unmount(): void;
+}>;
+
+type SemanticReactRoot = Readonly<{
+  render(element: ReactNode): void;
+  unmount(): void;
+}>;
+
+async function mountRnw(element: ReactNode): Promise<SemanticRnwMount> {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: SemanticReactRoot | undefined;
+  try {
+    const reactDomClientModule = 'react-dom/client';
+    const { createRoot } = await import(reactDomClientModule) as Readonly<{
+      createRoot(container: Element): SemanticReactRoot;
+    }>;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(element);
+    });
+    if (!root) throw new Error('The Plugin UI semantic surface did not mount.');
+  } catch (error) {
+    const partiallyMountedRoot = root;
+    try {
+      if (partiallyMountedRoot) act(() => { partiallyMountedRoot.unmount(); });
+    } finally {
+      container.remove();
+    }
+    throw error;
+  }
+  const mountedRoot = root;
+  if (!mountedRoot) throw new Error('The Plugin UI semantic surface did not mount.');
+  let unmounted = false;
+  return {
+    container,
+    async render(next) {
+      if (unmounted) throw new Error('The Plugin UI semantic surface is no longer current.');
+      await act(async () => { mountedRoot.render(next); });
+    },
+    unmount() {
+      if (unmounted) return;
+      unmounted = true;
+      try {
+        act(() => { mountedRoot.unmount(); });
+      } finally {
+        container.remove();
+      }
+    },
+  };
+}
+
+/**
+ * RNW adapter behind the public semantic testing entry.
+ *
+ * Only bounded roles, names, states and supported actions cross into the SDK
+ * testkit. DOM nodes, React roots and private presentation hosts never do.
+ */
+export function createPluginUiRnwSemanticSurfaceAdapter(
+  options: PluginUiRnwSemanticSurfaceAdapterOptions = {},
+): PluginUiSemanticSurfaceAdapter<RenderSurface> {
+  return {
+    async mount({ surface, context, signal }) {
+      if (signal.aborted) throw new Error('The Plugin UI semantic surface was already cancelled.');
+      let currentContext = context;
+      const presentationHost = options.targetedSurfaces === undefined
+        ? undefined
+        : createSemanticPresentationHost({
+            options: options.targetedSurfaces,
+            readCurrentContext: () => currentContext,
+          });
+      const mount = await mountRnw(renderSemanticSurface({ surface, context, presentationHost }));
+      let revision = 0;
+      let disposed = false;
+      let disposal: Promise<void> | undefined;
+      const elementsByHandle = new Map<string, HTMLElement>();
+      const handlesByElement = new WeakMap<HTMLElement, string>();
+      let nextHandle = 0;
+      const handleForElement = (element: HTMLElement): string => {
+        const existing = handlesByElement.get(element);
+        if (existing !== undefined) return existing;
+        const handle = `element-${nextHandle}`;
+        nextHandle += 1;
+        handlesByElement.set(element, handle);
+        return handle;
+      };
+      const assertActive = () => {
+        if (disposed || signal.aborted) throw new Error('The Plugin UI semantic surface is no longer current.');
+      };
+      const dispose = (): Promise<void> => {
+        if (disposal) return disposal;
+        disposed = true;
+        disposal = Promise.resolve().then(() => {
+          signal.removeEventListener('abort', onAbort);
+          elementsByHandle.clear();
+          mount.unmount();
+        });
+        return disposal;
+      };
+      const onAbort = () => { void dispose(); };
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        await dispose();
+        throw new Error('The Plugin UI semantic surface was cancelled while mounting.');
+      }
+
+      const semanticMount: PluginUiSemanticSurfaceMount = {
+        async snapshot() {
+          assertActive();
+          elementsByHandle.clear();
+          const nodes: PluginUiSemanticAdapterNode[] = [];
+          for (const element of mount.container.querySelectorAll<HTMLElement>('[role], input, textarea, img, [aria-label]')) {
+            const handle = handleForElement(element);
+            const node = readSemanticNode(element, handle);
+            if (!node) continue;
+            elementsByHandle.set(handle, element);
+            nodes.push(node);
+          }
+          return Object.freeze({
+            revision,
+            nodes: Object.freeze(nodes),
+            texts: readTextNodes(mount.container),
+          });
+        },
+        async update(nextContext: RenderContext) {
+          assertActive();
+          const previousContext = currentContext;
+          currentContext = nextContext;
+          try {
+            await mount.render(renderSemanticSurface({ surface, context: nextContext, presentationHost }));
+          } catch (error) {
+            currentContext = previousContext;
+            throw error;
+          }
+          assertActive();
+          revision += 1;
+          elementsByHandle.clear();
+        },
+        async invoke({ revision: requestedRevision, handle, action, target }) {
+          assertActive();
+          if (requestedRevision !== revision || action !== 'press') {
+            throw new Error('The Plugin UI semantic target is stale.');
+          }
+          const element = elementsByHandle.get(handle);
+          const node = element ? readSemanticNode(element, handle) : undefined;
+          if (
+            !element
+            || !element.isConnected
+            || !mount.container.contains(element)
+            || !node
+            || !node.actions?.includes('press')
+            || !semanticTargetMatches(node, target)
+          ) {
+            throw new Error('The Plugin UI semantic target is no longer pressable.');
+          }
+          await act(async () => { element.click(); });
+        },
+        dispose,
+      };
+      return semanticMount;
+    },
+  };
+}

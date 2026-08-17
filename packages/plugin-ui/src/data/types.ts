@@ -1,0 +1,59 @@
+import type {
+  PluginAccountCollectionDefinition,
+  PluginAccountCollectionForDefinition,
+  PluginCollectionUiQueryErrorV1,
+  PluginCollectionUiQueryRequestV1,
+  PluginCollectionUiQueryResultV1,
+} from '@happier-dev/plugin-sdk/collections';
+
+/**
+ * The direct Account Collection operations that an executable plugin surface
+ * may use. AccountChange remains owned by the Data UI-query pager; this
+ * carrier deliberately does not manufacture a second synchronous watch API.
+ */
+export type PluginUiAccountCollectionForDefinition<
+  TDefinition extends PluginAccountCollectionDefinition,
+> = Pick<
+  PluginAccountCollectionForDefinition<TDefinition>,
+  'get' | 'put' | 'delete' | 'query' | 'batch'
+>;
+
+export type PluginUiCollectionQueryInput = Readonly<{
+  collectionId: PluginCollectionUiQueryRequestV1['collectionId'];
+  uiQueryId: PluginCollectionUiQueryRequestV1['uiQueryId'];
+  parameters: PluginCollectionUiQueryRequestV1['parameters'];
+  signal?: AbortSignal;
+}>;
+
+export type PluginUiCollectionQuerySnapshot = Readonly<{
+  rows: readonly PluginCollectionUiQueryResultV1['rows'][number][];
+  hasMore: boolean;
+  status: 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
+  error?: PluginCollectionUiQueryErrorV1;
+}>;
+
+/**
+ * Data owns query validation, AccountChange wakeups, cursor continuation, and
+ * disposal/currentness. Plugin UI only subscribes and presents this snapshot.
+ */
+export type PluginUiCollectionQueryPager = Readonly<{
+  getSnapshot(): PluginUiCollectionQuerySnapshot;
+  subscribe(listener: () => void): () => void;
+  refresh(): Promise<void>;
+  loadMore(): Promise<void>;
+  dispose(): void;
+}>;
+
+/**
+ * Host-private provider input exposed to authors only through the public hook.
+ * The host creates it for one captured Account lifetime; authors receive no
+ * transport, Account scope, or persisted contract facts.
+ */
+export type PluginUiDataClient = Readonly<{
+  collection<TDefinition extends PluginAccountCollectionDefinition>(
+    definition: TDefinition,
+  ): PluginUiAccountCollectionForDefinition<TDefinition>;
+  openCollectionQuery(
+    input: PluginUiCollectionQueryInput,
+  ): Promise<PluginUiCollectionQueryPager>;
+}>;

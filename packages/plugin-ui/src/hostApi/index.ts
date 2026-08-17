@@ -1,134 +1,111 @@
 import {
-  createContext,
-  createElement,
-  useContext,
-  useEffect,
+  useCallback,
   useMemo,
-  useState,
-  type ReactNode,
+  useSyncExternalStore,
 } from 'react';
+
+import { usePluginHostApiResourceStore } from './context.js';
 import type {
-  PluginSessionResourceTargetV1,
-  PluginUiJsonValueV1,
-  PluginUiResourceSnapshotV1,
-  PluginUiResourceSubscriptionEventV1,
-} from '@happier-dev/protocol/plugins/ui';
-
-import type { PluginUiResourceState } from '../components/State.js';
+  PluginUiResourceEntry,
+  PluginUiResourceError,
+  PluginUiResourceReference,
+  PluginUiResourceSnapshot,
+} from './resourceStore.js';
 import {
-  parsePluginUiResourceTarget,
-  type PluginUiHostApi,
-} from './client.js';
+  pluginUiResourceReferenceKey,
+} from './resourceStore.js';
+
+export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
 export {
-  createPluginUiHostApiFacade,
-  parsePluginUiResourceTarget,
-} from './client.js';
+  usePluginHostApi,
+} from './context.js';
 export {
-  createPluginSurfaceHostApi,
-} from './createPluginSurfaceHostApi.js';
+  type ComposerHandle,
+  type ComposerContentService,
+  type ComposersService,
+  useComposer,
+  useComposerView,
+} from '../composer/index.js';
 export type {
-  CreatePluginSurfaceHostApiInput,
-  PluginSurfaceHostApiHandlers,
-  PluginSurfaceHostApiMethodHandler,
-  PluginSurfaceHostApiV1,
-} from './createPluginSurfaceHostApi.js';
+  ComposerDecorationResultV1,
+  ComposerDecorationSetV1,
+  ComposerContentHandleV1,
+  ComposerContentInspectRequestV1,
+  ComposerContentInspectResultV1,
+  ComposerContentPickMediaRequestV1,
+  ComposerFocusResultV1,
+  ComposerInputLockRequestV1,
+  ComposerObserverV1,
+  ComposerReadResultV1,
+  ComposerRefV1,
+  ComposerRequestOptions,
+  ComposerSnapshotV1,
+  ComposerTransactionResultV1,
+  ComposerTransactionV1,
+  ComposerViewStateV1,
+} from '../composer/index.js';
 export type {
-  PluginUiHostApi,
-  PluginUiHostApiClientLike,
-  PluginUiHostApiRequestOptions,
-  PluginUiHostApiSubscription,
-} from './client.js';
+  PluginUiResourceError,
+  PluginUiResourceReference,
+  PluginUiResourceSnapshot,
+} from './resourceStore.js';
+export {
+  useExecutePluginAction,
+  type PluginActionExecution,
+  type PluginActionExecutionController,
+  type PluginActionInput,
+  type PluginActionInputFor,
+  type PluginActionReference,
+  type PluginActionResultFor,
+} from './executeAction.js';
 
-const PluginHostApiContext = createContext<PluginUiHostApi | null>(null);
-
-export type PluginHostApiProviderProps = Readonly<{
-  client: PluginUiHostApi;
-  children?: ReactNode;
+/**
+ * The result of a plugin Resource read (§3.6).
+ *
+ * `resource` is the current independent-dimension snapshot. `refresh` re-reads
+ * through the same canonical authority without clearing an admitted value.
+ */
+export type PluginUiResourceResult = Readonly<{
+  resource: PluginUiResourceSnapshot;
+  refresh: () => void;
 }>;
 
-export function PluginHostApiProvider({
-  client,
-  children,
-}: PluginHostApiProviderProps) {
-  return createElement(PluginHostApiContext.Provider, { value: client }, children);
-}
-
-export function usePluginHostApi(): PluginUiHostApi {
-  const client = useContext(PluginHostApiContext);
-  if (!client) {
-    throw new Error('PluginHostApiProvider is required before using plugin UI host API hooks.');
-  }
-  return client;
-}
-
-function createLoadingResourceState<Value>(): PluginUiResourceState<Value> {
-  return { status: 'loading' };
-}
-
-function stateFromSnapshot<Value>(
-  snapshot: PluginUiResourceSnapshotV1,
-): PluginUiResourceState<Value> {
-  if (snapshot.state === 'available') {
-    if (snapshot.payload === undefined || snapshot.payload === null) {
-      return { status: 'empty' };
-    }
-    return {
-      status: 'ready',
-      value: snapshot.payload as Value,
-    };
-  }
-  return {
-    status: snapshot.state,
-    diagnostics: snapshot.diagnostics,
-  };
-}
-
-function stateFromSubscriptionEvent<Value>(
-  event: PluginUiResourceSubscriptionEventV1,
-): PluginUiResourceState<Value> {
-  if (event.kind === 'snapshot') {
-    return stateFromSnapshot(event.snapshot);
-  }
-  if (event.kind === 'complete') {
-    return {
-      status: 'complete',
-      diagnostics: event.diagnostics,
-    };
-  }
-  return {
-    status: 'error',
-    code: event.code,
-    diagnostics: event.diagnostics,
-  };
-}
-
-export function usePluginResource<Value = PluginUiJsonValueV1>(
-  resource: PluginSessionResourceTargetV1,
-): PluginUiResourceState<Value> {
-  const client = usePluginHostApi();
-  const resourceKey = JSON.stringify(resource);
-  const parsedResource = useMemo(
-    () => parsePluginUiResourceTarget(resource),
-    [resourceKey],
+function usePluginResourceResult(
+  resource: PluginUiResourceReference,
+  live: boolean,
+): PluginUiResourceResult {
+  const resourceStore = usePluginHostApiResourceStore();
+  // The store owns bare-id normalization because it alone knows the mounted
+  // plugin identity. The hook only stabilizes the author-facing spelling.
+  const resourceKey = pluginUiResourceReferenceKey(resource, null);
+  const entry = useMemo<PluginUiResourceEntry>(
+    () => resourceStore.getEntry(resource),
+    [resourceStore, resourceKey],
   );
-  const [state, setState] = useState<PluginUiResourceState<Value>>(() =>
-    createLoadingResourceState(),
+  const subscribe = useCallback(
+    (listener: () => void) => entry.subscribe(listener, live),
+    [entry, live],
   );
+  const state = useSyncExternalStore(subscribe, entry.getSnapshot, entry.getSnapshot);
 
-  useEffect(() => {
-    let active = true;
-    setState(createLoadingResourceState());
-    const subscription = client.subscribeResource(parsedResource, (event) => {
-      if (!active) return;
-      setState(stateFromSubscriptionEvent<Value>(event));
-    });
+  const refresh = useCallback(() => {
+    entry.refresh();
+  }, [entry]);
 
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, [client, parsedResource]);
+  return useMemo(() => ({ resource: state, refresh }), [refresh, state]);
+}
 
-  return state;
+/** Read/refresh the current Resource snapshot without opening a watch. */
+export function usePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult {
+  return usePluginResourceResult(resource, false);
+}
+
+/**
+ * Read/refresh and observe a dynamic Resource through the mounted host adapter.
+ * A host that does not advertise `watchResource` remains a truthful snapshot
+ * source (`subscription: 'unsupported'`); this hook never falls back to polling.
+ */
+export function useLivePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult {
+  return usePluginResourceResult(resource, true);
 }

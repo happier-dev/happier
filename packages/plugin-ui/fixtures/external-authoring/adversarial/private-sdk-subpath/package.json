@@ -1,0 +1,12 @@
+{
+  "name": "@happier-dev/adversarial-private-sdk-subpath",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:negative": "node ./src/assert-public-export-boundary.mjs"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  }
+}

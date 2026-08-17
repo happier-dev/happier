@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.nodenext.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist-node"
+  }
+}

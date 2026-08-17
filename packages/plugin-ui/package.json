@@ -1,7 +1,7 @@
 {
   "name": "@happier-dev/plugin-ui",
   "version": "0.0.0",
-  "description": "Host runtime React primitives for Happier plugin UI.",
+  "description": "React and React Native components and hooks for Happier plugin authors.",
   "private": true,
   "license": "MIT",
   "repository": "happier-dev/happier",
@@ -18,17 +18,29 @@
       "types": "./dist/components/index.d.ts",
       "default": "./dist/components/index.js"
     },
-    "./compatibility": {
-      "types": "./dist/compatibility.d.ts",
-      "default": "./dist/compatibility.js"
-    },
     "./hostApi": {
       "types": "./dist/hostApi/index.d.ts",
       "default": "./dist/hostApi/index.js"
     },
+    "./data": {
+      "types": "./dist/data/index.d.ts",
+      "default": "./dist/data/index.js"
+    },
+    "./presentation": {
+      "types": "./dist/presentation/index.d.ts",
+      "default": "./dist/presentation/index.js"
+    },
+    "./environment": {
+      "types": "./dist/environment/index.d.ts",
+      "default": "./dist/environment/index.js"
+    },
+    "./advanced": {
+      "types": "./dist/advanced/index.d.ts",
+      "default": "./dist/advanced/index.js"
+    },
     "./testing": {
-      "types": "./dist/testing/render.d.ts",
-      "default": "./dist/testing/render.js"
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -41,35 +53,43 @@
       "posture": "prepublish_hold",
       "supportPolicy": "README.md#plugin-ui-release-posture",
       "externalPublicationRequiresApproval": true
-    },
-    "internalRuntimePackage": {
-      "posture": "prepublish_hold",
-      "supportPolicy": "README.md#plugin-ui-release-posture",
-      "externalPublicationRequiresApproval": true
     }
   },
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "prebuild": "yarn --cwd ../plugin-sdk -s check:public-toolchain",
+    "pretypecheck": "yarn --cwd ../plugin-sdk -s check:public-toolchain",
+    "prepack": "yarn -s build",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "vitest run --config ./vitest.config.ts",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --config ./vitest.config.ts && yarn -s test:external-authoring",
+    "test:external-authoring": "node --test ./scripts/validateExternalAuthoringFixture.test.mjs",
+    "test:external-authoring:tarballs": "node ./scripts/validateExternalAuthoringFixture.mjs",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs --check && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   },
   "peerDependencies": {
     "react": "19.2.0",
-    "react-test-renderer": "19.2.0"
+    "react-dom": ">=19.2.0",
+    "react-native": ">=0.79.0"
   },
   "peerDependenciesMeta": {
-    "react-test-renderer": {
+    "react-dom": {
+      "optional": true
+    },
+    "react-native": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
+    "@types/react-dom": "~19.1.7",
     "@types/react-test-renderer": "^19.1.0",
     "react": "19.2.0",
+    "react-native": "0.83.5",
     "react-test-renderer": "19.2.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

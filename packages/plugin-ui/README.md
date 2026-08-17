@@ -1,13 +1,14 @@
 # @happier-dev/plugin-ui
 
-Host/runtime React primitives for Happier plugin UI. This package is an
-internal workspace dependency for host rendering, portable components, host API
-facades, compatibility checks, and package-local testing utilities. Plugin
-authors should use `@happier-dev/plugin-sdk` for public UI contribution APIs.
+React and React Native primitives and hooks for Happier plugin authors. Realm-neutral
+UI declarations and the host API come from `@happier-dev/plugin-sdk/ui`; this package
+adds framework components without declaring a second host contract.
 
 ## Plugin UI release posture
 
-Current posture: **prepublish hold**.
+Current publication posture: **prepublish hold** until the Plugin SDK EU-3/EU-4
+atomic publication and export cutover. The source package is author-facing now;
+the hold prevents an incomplete standalone artifact from being published early.
 
 This workspace package is intentionally still `private: true` and versioned
 `0.0.0`. It is packability-ready for local dry-run validation, but external
@@ -17,27 +18,164 @@ work.
 
 Support policy while held:
 
-- Supported host/runtime imports are the subpaths listed in
-  `package.json#exports`.
-- Descriptor builders, target helpers, internal source files, and app-private UI
-  modules are not public plugin APIs.
+- The root entry is the ergonomic, curated author tier. Advanced trusted React
+  Native/RNW authors may also import the public `./advanced`,
+  `./presentation`, and `./environment` tiers; they compose the same canonical
+  implementations and projected environment that Happier core uses, rather
+  than a plugin-only primitive library.
+- All declared entry points are pre-publication source contracts while this
+  package is private and versioned `0.0.0`; no compatibility alias or stability
+  promise beyond this hold is implied. Import only the declared package entry
+  points, never `src/**` or an undocumented subpath.
+- Host factories, internal source files, and app-private UI modules are not public
+  plugin APIs.
 - React remains a peer dependency supplied by the host workspace.
-- `react-test-renderer` is optional and only needed for package-local testing
-  helpers.
+- React Native is an **optional** peer: it is a host-provided singleton (a plugin
+  bundle that inlined it would mount with two runtime worlds), so an author's
+  package declares it, externalizes it in its build, and never ships a copy. A
+  declarative or hosted-web plugin never installs it at all.
 
 ## Package surface
 
-Use the root export for host/runtime primitives:
+Use the root export for framework components and hooks:
 
-```ts
-import { Panel, Text, createPluginSurfaceHostApi } from '@happier-dev/plugin-ui';
+```tsx
+import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
+
+function Summary() {
+  return (
+    <>
+      <Text variant="title" tone="accent" value="Review summary" />
+      <Text tone="muted" valueKey="acme.review.updated" fallback="Updated just now" />
+    </>
+  );
+}
+
+export const renderSurface = defineUiSurface(Summary);
 ```
+
+`defineUiSurface` is the artifact entry wrapper: it installs
+`PluginUiProvider` around your surface from the render context the host already
+passes, so your components never thread `hostApi` or `context` and never mount a
+provider themselves.
+
+It must run inside your plugin bundle, not in the host. `@happier-dev/plugin-ui`
+is bundled into each plugin artifact rather than host-provided, so a provider
+created from a host-owned copy would publish React contexts that your bundled
+components cannot read.
+
+The surface stays live: the snapshot the host passes is the FIRST paint, and
+every later theme, locale, direction, text-scale and safe-area change arrives
+through the host's `watchContext` subscription. Install `PluginUiProvider`
+yourself only in an isolated test or complete standalone mount, through the
+explicit advanced entry.
 
 Subpath exports are available for narrower imports:
 
 ```ts
-import { createPluginUiHostApiFacade } from '@happier-dev/plugin-ui/hostApi';
+import { usePluginHostApi, usePluginResource } from '@happier-dev/plugin-ui';
 ```
+
+### Advanced trusted-author tier
+
+Use the root tier for ordinary surfaces. When a curated component does not fit
+your composition, trusted React Native/RNW authors may import shared primitive
+behavior from `/presentation` and the mounted environment facts from
+`/environment`:
+
+```tsx
+import {
+  useHappierUiAccessibility,
+  useHappierUiLocalization,
+} from '@happier-dev/plugin-ui/environment';
+import { HappierStack, HappierText } from '@happier-dev/plugin-ui/presentation';
+
+function AdvancedSummary() {
+  const { locale } = useHappierUiLocalization();
+  const { textScale } = useHappierUiAccessibility();
+
+  return (
+    <HappierStack direction="horizontal" gap={8}>
+      <HappierText>{`Summary (${locale}, ${textScale}×)`}</HappierText>
+    </HappierStack>
+  );
+}
+```
+
+When an isolated test or complete standalone mount really owns provider and
+Resource lifetime, use the explicit advanced entry rather than reopening those
+constructors on the beginner root:
+
+```tsx
+import { PluginUiProvider } from '@happier-dev/plugin-ui/advanced';
+```
+
+`/presentation` exposes lower-level shared primitives and behavior; it does
+not grant private app state, host transport, navigation, overlay, or
+presentation-host control. `/environment` exposes factual theme, localization,
+accessibility, platform, and safe-area capabilities. A mounted surface already
+receives those facts through `defineUiSurface`; do not create a second
+`PluginUiProvider`, import `presentationHost`, or fabricate a host environment
+inside a mounted artifact. `HappierUiEnvironmentProvider` is for an isolated
+test or a complete standalone RN/RNW environment where the caller actually owns
+every supplied fact.
+
+### Semantic testkit
+
+For semantic RN/RNW author-surface tests, pair the public SDK fixture with the
+public RNW adapter:
+
+```ts
+import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+```
+
+Pass `createPluginUiRnwSemanticSurfaceAdapter()` as the testkit `adapter` in a
+React Native Web test environment. The fixture observes bounded semantics only:
+the adapter never returns a DOM node, React/native tree, raw test renderer, or
+host-private controller. Do not use it to prove layout, portals, focus,
+accessibility runtime behavior, native reconciliation, or packed-artifact
+state. Supply `handlers` for genuine host boundaries; a public `PluginError`
+thrown by a handler remains a typed host-operation failure.
+
+Use `getByRole` for one target, `getAllByRole` or `queryAllByRole` for a
+collection, and bounded `findByRole` for an asynchronously rendered target.
+The public semantic vocabulary includes direct author-surface list, form,
+radio-group, tab-panel, and separator semantics; it is not a DOM selector API.
+
+This is deliberately not a host-registry or package test: it does not decide
+trust, installation, Surface Registry admission, on-demand activation, native
+reconciliation, or packed-artifact behavior. Prove those outcomes through the
+real CLI/daemon/UI lane rather than inventing a fixture-only mount refusal.
+
+### Graduation status
+
+Components graduate one family at a time, and each one lands as a single shared
+implementation that Happier's own interface renders too — never as a plugin-only
+copy. Graduated so far:
+
+| Family | Status |
+|---|---|
+| `Text` | Real React Native semantics: projected theme typography and tone, user text scale, selectability scope, accessibility identity |
+| `Spinner`, `Status`, `State`, `LoadingState`, `EmptyState`, `ErrorState` | Real components over one shared state/feedback implementation Happier's own empty, spinner and status surfaces render too |
+| `Button` | Real pressable semantics over the shared press→pending owner Happier's own buttons render: async pending, reentry guard, hover/focus, accessible busy/disabled state |
+| `ActionPanel`, `ActionPanel.Section`, `Action.Execute` / `.Copy` / `.OpenExternal` / `.OpenSurface` / `.Refresh` | Real toolbar and action semantics. Each member dispatches through the canonical host method for its concern and reports a typed outcome, including the `outcomeUnknown` settlement that must never be retried blindly |
+| `Surface`, `Card` | Real native surface hosts over shared surface/press behavior; Happier's `SurfaceCard` consumes that behavior while applying its app-private RN styles locally |
+| `List`, `List.Section`, `List.Item`, `Item`, `ItemGroup` | Real list and row semantics over the shared collection owner. Virtualized `List` owns its bounded search/filter/selected-option state before rows reach the native virtualizer; authors retain match semantics and controlled values. Theme injection, touch-target policy, overflow placement and group indexing remain adapter-owned |
+| `Form`, `Form.Field`, `Form.TextField`, `Form.Toggle`, `Form.Select`, `Form.ValidationMessage`, `Form.Actions` | Real form semantics over the canonical action-form owner. Authors provide static already-resolved options; host option sources and account inventory remain host-owned |
+| `Popover`, `Menu`, `Dropdown`, `ContextMenu` | Controlled overlay semantics over the incumbent presentation host. It owns anchoring, focus return, Escape, outside dismissal and Android Back; authors supply only semantic state and items |
+
+`./presentation` and `./environment` are the advanced public tier over the
+shared implementation and its environment seam. They exist so Happier core and
+plugin surfaces reach the same presentation owners; a core adapter may render
+its own RN host only when a portable author contract intentionally excludes
+required private props/styles. They remain less ergonomic than the root tier,
+not host-only or plugin-private.
+
+The root component props are deliberately curated. In particular, `Form` and
+`Select` accept author-visible, already-resolved option values instead of Action
+schema source instructions or host account metadata; List and overlay adapters
+derive host-only injection props from their public semantic inputs.
 
 The package tarball should contain only compiled `dist` output, `package.json`,
 and this README.
