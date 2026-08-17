@@ -18,3 +18,13 @@ export const PI_BRIDGE_DISABLE_MEMORY_FLAG = 'happy-disable-memory';
 
 /** Child env carrying the daemon machine id used by the memory bridge tools. */
 export const PI_BRIDGE_MEMORY_MACHINE_ID_ENV = 'HAPPIER_PI_BRIDGE_MEMORY_MACHINE_ID';
+
+/**
+ * Single-line JSON marker type the bridge extension writes to the Pi child's stderr after
+ * each assistant message, carrying the live context usage (`used`, `size`). The Pi RPC
+ * backend parses these markers off stderr and merges them into its per-turn token_count
+ * agent message, so the UI can display a live context-size badge for Pi sessions (parity
+ * with Claude/OpenCode). Stderr is an existing machine-readable side channel (usage-limit
+ * markers already ride it) and does not pollute the LLM context.
+ */
+export const PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE = 'happy-pi-token-count';

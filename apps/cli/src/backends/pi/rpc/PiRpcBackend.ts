@@ -48,6 +48,12 @@ import {
   resolvePiSessionIdFromResumeReference,
 } from '../utils/piSessionFiles';
 import { attachPiRpcJsonlLineReader, type PiRpcJsonlLineReader } from './attachPiRpcJsonlLineReader';
+import {
+  buildPiContextTelemetryKeySuffix,
+  mergePiContextTelemetryIntoTokens,
+  parsePiContextTelemetryMarkerLine,
+  type PiContextTelemetry,
+} from './piContextTelemetryMarker';
 import { mapPiRpcEventToAgentMessages } from './eventMapping';
 import {
   createPiProviderFailureError,
@@ -604,6 +610,8 @@ export class PiRpcBackend implements AgentBackend {
   private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string; modelOptions?: unknown[] }> } | null =
     null;
   private lastPublishedUsageKey: string | null = null;
+  /** Latest live context telemetry parsed from the bridge extension's stderr markers, if any. */
+  private latestContextTelemetry: PiContextTelemetry | null = null;
   private readonly connectedServiceRuntimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
   private disposed = false;
   /**
@@ -1804,7 +1812,11 @@ export class PiRpcBackend implements AgentBackend {
       const assistantMessagesRaw = stats.assistantMessages;
       const assistantMessages =
         typeof assistantMessagesRaw === 'number' && Number.isFinite(assistantMessagesRaw) ? assistantMessagesRaw : null;
-      const rawKey = assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId;
+      // The context-telemetry suffix lets a changed live-context value re-publish even when
+      // the assistant-message counter has not advanced (compaction, retries).
+      const contextTelemetry = this.latestContextTelemetry;
+      const rawKey = (assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId)
+        + (contextTelemetry ? buildPiContextTelemetryKeySuffix(contextTelemetry) : '');
       if (this.lastPublishedUsageKey === rawKey) return;
       this.lastPublishedUsageKey = rawKey;
 
@@ -1823,7 +1835,8 @@ export class PiRpcBackend implements AgentBackend {
       if (cacheRead !== null) tokens.cache_read = cacheRead;
       if (cacheWrite !== null) tokens.cache_creation = cacheWrite;
       if (total !== null) tokens.total = total;
-      if (Object.keys(tokens).length === 0) return;
+      if (Object.keys(tokens).length === 0 && !contextTelemetry) return;
+      if (contextTelemetry) mergePiContextTelemetryIntoTokens(tokens, contextTelemetry);
 
       const costRaw = stats.cost;
       const costTotal = typeof costRaw === 'number' && Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : null;
@@ -1842,6 +1855,13 @@ export class PiRpcBackend implements AgentBackend {
   private handleStderrLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) return;
+    // Bridge-extension context telemetry markers are consumed programmatically and must not
+    // surface as terminal-output noise in the transcript.
+    const contextTelemetry = parsePiContextTelemetryMarkerLine(trimmed);
+    if (contextTelemetry) {
+      this.latestContextTelemetry = contextTelemetry;
+      return;
+    }
     this.recentStderrLines.push(trimmed);
     if (this.recentStderrLines.length > PI_RPC_STDERR_TAIL_MAX_LINES) {
       this.recentStderrLines.splice(0, this.recentStderrLines.length - PI_RPC_STDERR_TAIL_MAX_LINES);
