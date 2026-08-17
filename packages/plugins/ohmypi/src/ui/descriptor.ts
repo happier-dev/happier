@@ -37,7 +37,7 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
   behavior: {
     mcpServers: { supportsDetectedConfigScan: true },
     externalSessions: {
-      supportsBackgroundFollow: true,
+      supportsBackgroundFollow: false,
       browse: {
         order: 25,
         sourceOptions: [

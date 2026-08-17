@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { buildAntigravityCliModelsProbeEnv } from '../lifecycle/runtimeEnv.js';
 import { ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS } from '../cliPrint/modelsProbePolicy.js';
 
@@ -35,7 +35,7 @@ export function buildAntigravityPreflightModelsFromModelsOutput(
 }
 
 export async function probeAntigravityPreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;

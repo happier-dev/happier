@@ -4,7 +4,8 @@ import { open, readFile, stat } from 'node:fs/promises';
 import {
   readJsonlFileBackwardPage,
   readJsonlFileForwardLines,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+  type JsonlScannerFileSystem,
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 export type AntigravityTranscriptJsonRecord = Readonly<Record<string, unknown>>;
 
@@ -56,6 +57,8 @@ export type AntigravityTranscriptPageLinesOutcome =
   | Readonly<{
       kind: 'page';
       records: readonly AntigravityTranscriptRecordWithOffsets[];
+      correlationLookbackRecords: readonly AntigravityTranscriptRecordWithOffsets[];
+      tailCorrelationLookbackRecords: readonly AntigravityTranscriptRecordWithOffsets[];
       nextCursor: string | null;
       tailCursor: string;
       hasMore: boolean;
@@ -71,6 +74,7 @@ export type AntigravityTranscriptAfterLinesOutcome =
   | Readonly<{
       kind: 'advanced';
       records: readonly AntigravityTranscriptRecordWithOffsets[];
+      correlationLookbackRecords?: readonly AntigravityTranscriptRecordWithOffsets[];
       sourceDiagnostics?: readonly Readonly<{
         code: 'malformed_source_utf8';
         count: number;
@@ -122,6 +126,12 @@ export function formatAntigravityTranscriptSourceRevision(stats: Readonly<{
 
 const TAIL_FINGERPRINT_CHARS = 4096;
 const CURSOR_FINGERPRINT_BYTES = 4096;
+/**
+ * Native transcript pages are stateless at the SDK boundary. This fixed source
+ * window supplies only the immediately preceding tool-call context required to
+ * map an id-less result; ongoing read-after state stays in that leaf's cursor.
+ */
+const ANTIGRAVITY_TRANSCRIPT_CORRELATION_LOOKBACK_MAX_ITEMS = 32;
 
 function readTailFingerprint(content: string): string {
   return content.slice(Math.max(0, content.length - TAIL_FINGERPRINT_CHARS));
@@ -280,6 +290,29 @@ export async function snapshotAntigravityTranscriptSource(
   }
 }
 
+/** Byte ceiling for the single head chunk read when deriving a conversation title. */
+export const ANTIGRAVITY_TRANSCRIPT_HEAD_MAX_BYTES = 32 * 1024;
+
+/**
+ * Reads the first complete JSONL record of a transcript within one bounded head chunk.
+ * A missing file, an unreadable head, or a first line longer than the ceiling yields null.
+ */
+export async function readAntigravityTranscriptHeadRecord(params: Readonly<{
+  path: string;
+  fileSystem?: JsonlScannerFileSystem;
+}>): Promise<AntigravityTranscriptJsonRecord | null> {
+  const page = await readJsonlFileForwardLines({
+    filePath: params.path,
+    offsetBytes: 0,
+    maxBytes: ANTIGRAVITY_TRANSCRIPT_HEAD_MAX_BYTES,
+    maxItems: 1,
+    maxOversizeLineBytes: ANTIGRAVITY_TRANSCRIPT_HEAD_MAX_BYTES,
+    ...(params.fileSystem ? { fileSystem: params.fileSystem } : {}),
+  });
+  const value = page.items[0]?.value;
+  return isRecord(value) ? value : null;
+}
+
 function encodeCursor(cursor: AntigravityBackwardCursorV2 | AntigravityForwardCursorV1): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
@@ -403,6 +436,21 @@ function toOffsetRecords(
     : []);
 }
 
+async function readCorrelationLookback(params: Readonly<{
+  path: string;
+  endOffsetBytes: number;
+  maxBytes: number;
+}>): Promise<readonly AntigravityTranscriptRecordWithOffsets[]> {
+  if (params.endOffsetBytes <= 0) return [];
+  const page = await readJsonlFileBackwardPage({
+    filePath: params.path,
+    endOffsetBytes: params.endOffsetBytes,
+    maxBytes: params.maxBytes,
+    maxItems: ANTIGRAVITY_TRANSCRIPT_CORRELATION_LOOKBACK_MAX_ITEMS,
+  });
+  return toOffsetRecords(page.items);
+}
+
 export async function pageAntigravityTranscriptLines(params: Readonly<{
   path: string;
   conversationId: string;
@@ -461,6 +509,17 @@ export async function pageAntigravityTranscriptLines(params: Readonly<{
     if (page.diagnostics?.some((diagnostic) => diagnostic.code === 'malformed_source_utf8')) {
       return { kind: 'read_failed', error: 'Malformed Antigravity transcript UTF-8.' };
     }
+    const firstPageRecord = page.items[0];
+    const correlationLookbackRecords = await readCorrelationLookback({
+      path: params.path,
+      endOffsetBytes: firstPageRecord?.startOffsetBytes ?? endOffsetBytes,
+      maxBytes: params.maxBytes,
+    });
+    const tailCorrelationLookbackRecords = await readCorrelationLookback({
+      path: params.path,
+      endOffsetBytes: tailOffset,
+      maxBytes: params.maxBytes,
+    });
     const after = await snapshotAntigravityTranscriptSource(params.path);
     if (!after) return { kind: 'source_unavailable' };
     if (after.sourceRevision !== before.sourceRevision || after.sizeBytes < before.sizeBytes) {
@@ -470,6 +529,8 @@ export async function pageAntigravityTranscriptLines(params: Readonly<{
     return {
       kind: 'page',
       records: toOffsetRecords(page.items),
+      correlationLookbackRecords,
+      tailCorrelationLookbackRecords,
       nextCursor: hasMore
         ? encodeCursor({
             v: 2,
@@ -499,6 +560,7 @@ export async function readAntigravityTranscriptLinesAfter(params: Readonly<{
   cursor: string;
   maxItems: number;
   maxBytes: number;
+  includeCorrelationLookback?: boolean;
 }>): Promise<AntigravityTranscriptAfterLinesOutcome> {
   try {
     const decoded = decodeForwardCursor(params.cursor);
@@ -519,6 +581,13 @@ export async function readAntigravityTranscriptLinesAfter(params: Readonly<{
     if (await readCursorFingerprint(params.path, decoded.offsetBytes) !== decoded.tailFingerprint) {
       return { kind: 'source_replaced', sourceRevision: before.sourceRevision };
     }
+    const correlationLookbackRecords = params.includeCorrelationLookback
+      ? await readCorrelationLookback({
+          path: params.path,
+          endOffsetBytes: decoded.offsetBytes,
+          maxBytes: params.maxBytes,
+        })
+      : undefined;
 
     const page = await readJsonlFileForwardLines({
       filePath: params.path,
@@ -563,6 +632,7 @@ export async function readAntigravityTranscriptLinesAfter(params: Readonly<{
     return {
       kind: 'advanced',
       records,
+      ...(correlationLookbackRecords === undefined ? {} : { correlationLookbackRecords }),
       ...(page.diagnostics === undefined ? {} : { sourceDiagnostics: page.diagnostics }),
       nextCursor: await encodeForwardCursor({
         path: params.path,

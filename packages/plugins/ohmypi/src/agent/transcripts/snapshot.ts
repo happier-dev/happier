@@ -1,6 +1,6 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 
 type SessionHeader = Readonly<{
   type: 'session';
@@ -19,8 +19,15 @@ type SessionEntry = Readonly<{
   summary?: unknown;
 }>;
 
+type OhMyPiRawTranscriptItem = Readonly<{
+  id: string;
+  localId: string;
+  createdAtMs: number;
+  raw: Readonly<Record<string, unknown>>;
+}>;
+
 export type OhMyPiSessionSnapshot = Readonly<{
-  items: readonly ExternalSessionTranscriptRawMessageV1[];
+  items: readonly OhMyPiRawTranscriptItem[];
   tailCursor: string;
   leafEntryId: string | null;
   title: string | null;
@@ -39,61 +46,81 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
-function parseTimestampMs(value: unknown): number {
+function readOhMyPiTimestampMs(value: unknown): number {
   if (typeof value === 'string' && value.trim().length > 0) {
     const ms = Date.parse(value);
     return Number.isFinite(ms) && ms >= 0 ? Math.trunc(ms) : 0;
   }
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    const truncated = Math.trunc(value);
-    return truncated < 1_000_000_000_000 ? truncated * 1000 : truncated;
+    return parseTimestampMs(value) ?? 0;
   }
   return 0;
 }
 
-function buildStableId(sessionFilePath: string, entryId: string, suffix?: string): string {
+function buildSessionFileQualifier(sessionFilePath: string): string {
+  return createHash('sha256').update(sessionFilePath, 'utf8').digest('base64url');
+}
+
+function buildStableId(sessionFileQualifier: string, entryId: string, suffix?: string): string {
   return suffix
-    ? `omp:${sessionFilePath}:${entryId}:${suffix}`
-    : `omp:${sessionFilePath}:${entryId}`;
+    ? `omp:${sessionFileQualifier}:${entryId}:${suffix}`
+    : `omp:${sessionFileQualifier}:${entryId}`;
 }
 
 function projectSummaryMessage(params: Readonly<{
-  sessionFilePath: string;
+  sessionFileQualifier: string;
   entryId: string;
   createdAtMs: number;
   summary: string;
   compact: boolean;
-}>): ExternalSessionTranscriptRawMessageV1 {
+}>): OhMyPiRawTranscriptItem {
+  const stableId = buildStableId(
+    params.sessionFileQualifier,
+    params.entryId,
+    params.compact ? 'compaction' : 'branch_summary',
+  );
   return {
-    id: buildStableId(params.sessionFilePath, params.entryId, params.compact ? 'compaction' : 'branch_summary'),
-    localId: buildStableId(params.sessionFilePath, params.entryId, params.compact ? 'compaction' : 'branch_summary'),
+    id: stableId,
+    localId: stableId,
     createdAtMs: params.createdAtMs,
-    raw: {
-      role: 'agent',
-      content: {
-        type: 'output',
-        data: {
-          type: 'summary',
-          summary: params.summary,
-          ...(params.compact ? { isCompactSummary: true } : {}),
-          uuid: params.entryId,
+    raw: params.compact
+      ? {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'ohMyPi',
+          data: {
+            type: 'context-compaction',
+            phase: 'completed',
+            lifecycleId: stableId,
+            trigger: 'unknown',
+            source: 'runtime',
+            summary: params.summary,
+          },
+        },
+      }
+      : {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'ohMyPi',
+          data: { type: 'message', message: params.summary },
         },
       },
-    },
   };
 }
 
 function projectUserMessage(params: Readonly<{
-  sessionFilePath: string;
+  sessionFileQualifier: string;
   entryId: string;
   createdAtMs: number;
   message: Record<string, unknown>;
-}>): ExternalSessionTranscriptRawMessageV1[] {
+}>): OhMyPiRawTranscriptItem[] {
   const content = params.message.content;
   if (typeof content === 'string') {
     return [{
-      id: buildStableId(params.sessionFilePath, params.entryId),
-      localId: buildStableId(params.sessionFilePath, params.entryId),
+      id: buildStableId(params.sessionFileQualifier, params.entryId),
+      localId: buildStableId(params.sessionFileQualifier, params.entryId),
       createdAtMs: params.createdAtMs,
       raw: { role: 'user', content: { type: 'text', text: content } },
     }];
@@ -110,25 +137,25 @@ function projectUserMessage(params: Readonly<{
   if (!text) return [];
 
   return [{
-    id: buildStableId(params.sessionFilePath, params.entryId),
-    localId: buildStableId(params.sessionFilePath, params.entryId),
+    id: buildStableId(params.sessionFileQualifier, params.entryId),
+    localId: buildStableId(params.sessionFileQualifier, params.entryId),
     createdAtMs: params.createdAtMs,
     raw: { role: 'user', content: { type: 'text', text } },
   }];
 }
 
 function projectAssistantMessage(params: Readonly<{
-  sessionFilePath: string;
+  sessionFileQualifier: string;
   entryId: string;
   createdAtMs: number;
   message: Record<string, unknown>;
-}>): ExternalSessionTranscriptRawMessageV1[] {
+}>): OhMyPiRawTranscriptItem[] {
   const content = params.message.content;
   const usage = asRecord(params.message.usage) ?? undefined;
   if (typeof content === 'string') {
     return [{
-      id: buildStableId(params.sessionFilePath, params.entryId, 'text:0'),
-      localId: buildStableId(params.sessionFilePath, params.entryId, 'text:0'),
+      id: buildStableId(params.sessionFileQualifier, params.entryId, 'text:0'),
+      localId: buildStableId(params.sessionFileQualifier, params.entryId, 'text:0'),
       createdAtMs: params.createdAtMs,
       raw: {
         role: 'agent',
@@ -143,13 +170,13 @@ function projectAssistantMessage(params: Readonly<{
 
   if (!Array.isArray(content)) return [];
 
-  const out: ExternalSessionTranscriptRawMessageV1[] = [];
+  const out: OhMyPiRawTranscriptItem[] = [];
   for (let index = 0; index < content.length; index += 1) {
     const block = asRecord(content[index]);
     if (!block) continue;
     const blockType = asString(block.type);
     if (!blockType) continue;
-    const stableId = buildStableId(params.sessionFilePath, params.entryId, `${blockType}:${index}`);
+    const stableId = buildStableId(params.sessionFileQualifier, params.entryId, `${blockType}:${index}`);
 
     if (blockType === 'text' && typeof block.text === 'string') {
       out.push({
@@ -230,14 +257,14 @@ function projectAssistantMessage(params: Readonly<{
 }
 
 function projectToolResultMessage(params: Readonly<{
-  sessionFilePath: string;
+  sessionFileQualifier: string;
   entryId: string;
   createdAtMs: number;
   message: Record<string, unknown>;
-}>): ExternalSessionTranscriptRawMessageV1[] {
+}>): OhMyPiRawTranscriptItem[] {
   const toolCallId = asString(params.message.toolCallId);
   if (!toolCallId) return [];
-  const stableId = buildStableId(params.sessionFilePath, params.entryId, 'toolResult');
+  const stableId = buildStableId(params.sessionFileQualifier, params.entryId, 'toolResult');
   return [{
     id: stableId,
     localId: stableId,
@@ -303,6 +330,7 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
   sessionId: string;
   lines: readonly unknown[];
 }>): ProjectedSnapshot {
+  const sessionFileQualifier = buildSessionFileQualifier(params.sessionFilePath);
   const records = params.lines.map((line) => asRecord(line));
   const headerIndex = records.findIndex((record) => record?.type === 'session');
   const header = (headerIndex >= 0 ? records[headerIndex] : null) as SessionHeader | null;
@@ -311,7 +339,7 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
     .find((record) => record?.type === 'title');
   const title = asString(titleSlot?.title) ?? asString(header?.title) ?? null;
   const workingDirectory = asString(header?.cwd) ?? null;
-  const createdAtMs = parseTimestampMs(header?.timestamp);
+  const createdAtMs = readOhMyPiTimestampMs(header?.timestamp);
 
   const entries: SessionEntry[] = params.lines
     .slice(headerIndex >= 0 ? headerIndex + 1 : params.lines.length)
@@ -334,11 +362,11 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
   }
   visibleEntries.reverse();
 
-  const items: ExternalSessionTranscriptRawMessageV1[] = [];
-  let lastActivityAtMs = parseTimestampMs(header?.timestamp);
+  const items: OhMyPiRawTranscriptItem[] = [];
+  let lastActivityAtMs = readOhMyPiTimestampMs(header?.timestamp);
   for (const entry of visibleEntries) {
     const entryId = String(entry.id);
-    const entryCreatedAtMs = parseTimestampMs(entry.timestamp);
+    const entryCreatedAtMs = readOhMyPiTimestampMs(entry.timestamp);
     if (entryCreatedAtMs > lastActivityAtMs) {
       lastActivityAtMs = entryCreatedAtMs;
     }
@@ -348,22 +376,22 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
       const role = asString(message?.role);
       if (!message || !role) continue;
       if (role === 'user') {
-        items.push(...projectUserMessage({ sessionFilePath: params.sessionFilePath, entryId, createdAtMs: entryCreatedAtMs, message }));
+        items.push(...projectUserMessage({ sessionFileQualifier, entryId, createdAtMs: entryCreatedAtMs, message }));
         continue;
       }
       if (role === 'assistant') {
-        items.push(...projectAssistantMessage({ sessionFilePath: params.sessionFilePath, entryId, createdAtMs: entryCreatedAtMs, message }));
+        items.push(...projectAssistantMessage({ sessionFileQualifier, entryId, createdAtMs: entryCreatedAtMs, message }));
         continue;
       }
       if (role === 'toolResult') {
-        items.push(...projectToolResultMessage({ sessionFilePath: params.sessionFilePath, entryId, createdAtMs: entryCreatedAtMs, message }));
+        items.push(...projectToolResultMessage({ sessionFileQualifier, entryId, createdAtMs: entryCreatedAtMs, message }));
       }
       continue;
     }
 
     if (entry.type === 'compaction' && typeof entry.summary === 'string') {
       items.push(projectSummaryMessage({
-        sessionFilePath: params.sessionFilePath,
+        sessionFileQualifier,
         entryId,
         createdAtMs: entryCreatedAtMs,
         summary: entry.summary,
@@ -374,7 +402,7 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
 
     if (entry.type === 'branch_summary' && typeof entry.summary === 'string') {
       items.push(projectSummaryMessage({
-        sessionFilePath: params.sessionFilePath,
+        sessionFileQualifier,
         entryId,
         createdAtMs: entryCreatedAtMs,
         summary: entry.summary,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { activate } from './activate.js';
 import { antigravityExternalSessionsContribution } from './agent/cliPrint/externalSessions.js';
@@ -35,7 +36,15 @@ describe('Antigravity plugin activation', () => {
     });
     const registration = fixture.registration('agents', 'antigravity');
     expect(registration?.factory).toEqual(expect.any(Function));
-    expect(registration?.externalSessions).toEqual(
+    expect(registration?.externalSessions).toEqual({
+      resolveSource: expect.any(Function),
+      listCandidates: expect.any(Function),
+      resolveLinkIdentity: expect.any(Function),
+      resolveLinkedIdentity: expect.any(Function),
+      pageTranscript: expect.any(Function),
+      readAfterTranscript: expect.any(Function),
+    });
+    expect(registration?.externalSessions).not.toBe(
       antigravityExternalSessionsContribution,
     );
     expect(Object.keys(registration?.externalSessions ?? {}).sort()).toEqual([
@@ -46,7 +55,12 @@ describe('Antigravity plugin activation', () => {
       'resolveLinkedIdentity',
       'resolveSource',
     ]);
-    expect(registration?.externalSessionObservation).toEqual(
+    expect(registration?.externalSessionObservation).toEqual({
+      describeResource: expect.any(Function),
+      observeResource: expect.any(Function),
+      reconcileResource: expect.any(Function),
+    });
+    expect(registration?.externalSessionObservation).not.toBe(
       antigravityExternalSessionObservationContribution,
     );
     expect(Object.keys(
@@ -58,6 +72,17 @@ describe('Antigravity plugin activation', () => {
     ]);
     expect(registration?.externalSessionHooks).toBeUndefined();
     expect(registration?.externalSessionTakeover).toBeUndefined();
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const cancelledRequest = {
+      signal: cancelled.signal,
+      deadlineAtMs: Date.now() + 30_000,
+      maxSerializedBytes: 64 * 1024,
+      source: {},
+    } as never;
+    expect(registration?.externalSessions?.resolveSource(cancelledRequest)).toEqual(
+      antigravityExternalSessionsContribution.resolveSource(cancelledRequest),
+    );
     expect(fixture.registration('hooks', 'resolve-prerequisites')).toEqual(expect.any(Function));
 
     const runtime = await registration!.factory!({
@@ -68,6 +93,80 @@ describe('Antigravity plugin activation', () => {
 
     expect(runtime.sessions).toEqual({ open: expect.any(Function) });
     expect(runtime.executionRuns).toEqual({ open: expect.any(Function) });
+    await fixture.dispose();
+  });
+
+  it('opens the registered runtime through the declared Gemini Connected Account purpose', async () => {
+    const fixture = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
+    const factory = fixture.registration('agents', 'antigravity')?.factory;
+    if (!factory) throw new Error('Expected the Antigravity Agent factory.');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.antigravity', version: '0.0.0' },
+      agent: { id: 'antigravity' },
+      signal: new AbortController().signal,
+    });
+    const signal = new AbortController().signal;
+    const disposeSubscription = vi.fn();
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'model_upstream',
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        target: { kind: 'account' as const, displayName: 'Gemini API key' },
+      })),
+      materialize: vi.fn(async () => ({
+        kind: 'environment' as const,
+        env: { GEMINI_API_KEY: 'registered-runtime-key' },
+      })),
+      requestSelection: vi.fn(),
+      watch: vi.fn(() => ({ dispose: disposeSubscription })),
+    };
+
+    const session = await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'registered-antigravity',
+      cwd: '/repo',
+      configuration: {
+        mode: { value: 'cliPrint', updatedAtMs: 1 },
+        model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: null, updatedAtMs: 1 },
+        options: {},
+      },
+    }, {
+      signal,
+      services: { connectedAccounts, exec: {} },
+      protocols: {},
+      ui: {},
+      session: { id: 'registered-antigravity' },
+    } as unknown as AgentRuntimeContext);
+
+    expect(connectedAccounts.watch).toHaveBeenCalledWith(
+      'model_upstream',
+      expect.any(Function),
+    );
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(
+      'model_upstream',
+      { signal },
+    );
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+      'model_upstream',
+      {
+        kind: 'environment',
+        keys: [
+          'GEMINI_API_KEY',
+          'GOOGLE_API_KEY',
+          'GOOGLE_GENAI_USE_VERTEXAI',
+          'GOOGLE_CLOUD_PROJECT',
+          'GOOGLE_CLOUD_LOCATION',
+        ],
+      },
+      { signal },
+    );
+
+    await session?.dispose();
+    expect(disposeSubscription).toHaveBeenCalledOnce();
     await fixture.dispose();
   });
 
@@ -94,7 +193,7 @@ describe('Antigravity plugin activation', () => {
       tools: {
         resolveManagedInstallable,
       },
-      services: { managed: { dependencies: { ensure } } },
+      services: { managedServices: { dependencies: { ensure } } },
     });
 
     expect(result).toEqual({ decision: 'allow' });

@@ -32,9 +32,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     });
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
-      payload: {
-        cwd: '/repo',
-      },
+      cwd: '/repo',
     }, fixture.context)).resolves.toMatchObject({
       decision: 'deny',
       reasonCode: 'ohmypi_models_unavailable',
@@ -61,9 +59,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     });
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
-      payload: {
-        cwd: '/repo',
-      },
+      cwd: '/repo',
     }, fixture.context)).resolves.toEqual({ decision: 'allow' });
   });
 
@@ -79,14 +75,12 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     });
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
-      payload: {
-        cwd: '/repo',
-        runtimeSelection: {
-          env: {
-            OPENAI_API_KEY: 'sk-materialized',
-            EMPTY_VALUE: '',
-            NON_STRING_VALUE: 123,
-          },
+      cwd: '/repo',
+      runtimeSelection: {
+        env: {
+          OPENAI_API_KEY: 'sk-materialized',
+          EMPTY_VALUE: '',
+          NON_STRING_VALUE: 123,
         },
       },
     }, fixture.context)).resolves.toEqual({ decision: 'allow' });
@@ -112,9 +106,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     });
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
-      payload: {
-        cwd: '/repo',
-      },
+      cwd: '/repo',
     }, fixture.context)).resolves.toMatchObject({
       decision: 'deny',
       reasonCode: 'ohmypi_models_unavailable',

@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { KIMI_ACP_TIMEOUTS, KIMI_STDERR_RULES, KIMI_TOOL_NAME_INFERENCE } from './transport.js';
 

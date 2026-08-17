@@ -1,4 +1,4 @@
-import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
 import {
   INSPECTOR_REPACK_MODULE_IDENTITY,
   INSPECTOR_UI_RENDERER_ID,
@@ -11,7 +11,7 @@ import {
  * Vite/Re.Pack presets, verifies their complete byte graphs, and writes the
  * canonical `dist/happier-plugin-ui/ui-artifacts.json` manifest.
  */
-export const pluginUiBuildConfig = definePluginUiBuildConfig({
+export const pluginUiBuildConfig = defineBuildConfig({
     projectRoot: '.',
     outDir: 'node_modules/.cache/happier-plugin-ui',
     targets: [

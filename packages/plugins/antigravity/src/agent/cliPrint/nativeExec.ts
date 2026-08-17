@@ -1,4 +1,4 @@
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import type { AntigravityCliPrintExecRun, AntigravityCliPrintExit } from './oneShot.js';
@@ -14,7 +14,7 @@ function mapProcessResult(result: PluginProcessResult): AntigravityCliPrintExit 
 }
 
 export function createAntigravityNativeCliPrintExecRun(
-  exec: Pick<PluginExecService, 'systemTools' | 'run'>,
+  exec: Pick<ExecService, 'systemTools' | 'run'>,
 ): AntigravityCliPrintExecRun {
   return async (input, options) => {
     if (input.agentId !== 'antigravity') {

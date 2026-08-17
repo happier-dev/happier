@@ -42,6 +42,15 @@ describe('Antigravity plugin manifest', () => {
         title: 'Antigravity',
         runtime: { kind: 'custom' },
         primary: 'sessions',
+        connectedAccounts: [{
+          purpose: 'model_upstream',
+          service: {
+            pluginId: 'happier.agent.gemini',
+            localId: 'gemini-account',
+          },
+          required: false,
+          materializationKinds: ['environment'],
+        }],
         capabilities: expect.objectContaining({
           surfaces: ['terminal', 'externalSessions'],
           sessions: {
@@ -61,8 +70,9 @@ describe('Antigravity plugin manifest', () => {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },
                   { kind: 'string', name: 'brainDir', min: 1, max: 10_000, nullish: true },
+                  { kind: 'string', name: 'conversationId', min: 1, max: 2_000, nullish: true },
+                  { kind: 'string', name: 'sourceRevision', min: 1, max: 10_000, nullish: true },
                 ],
-                passthrough: true,
               },
               key: {
                 segments: [

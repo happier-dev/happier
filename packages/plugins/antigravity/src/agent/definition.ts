@@ -3,7 +3,15 @@ import {
   ANTIGRAVITY_BACKEND_ID,
   ANTIGRAVITY_BINARY_NAME,
 } from './install/cliRuntime.js';
+import type { AgentModelConfig } from '@happier-dev/plugin-sdk/agents';
 import { ANTIGRAVITY_AGENT_MODEL_CONFIG } from './models.js';
+
+function defineAgentWithPublicModelConfig<TDefinition extends Readonly<Record<string, unknown>>>(
+  definition: TDefinition,
+  modelConfig: AgentModelConfig,
+): Readonly<TDefinition & { modelConfig: AgentModelConfig }> {
+  return Object.freeze({ ...definition, modelConfig });
+}
 
 const ANTIGRAVITY_RUNTIME_KIND_ALIASES = [
   { input: 'cliPrint', runtimeKind: 'cliPrint' },
@@ -53,7 +61,7 @@ const ANTIGRAVITY_SESSION_CONTROL_ADAPTER_PROJECTION = {
   },
 } as const;
 
-export const AGENT_DEFINITION = Object.freeze({
+export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
   id: ANTIGRAVITY_AGENT_ID,
   core: {
     id: ANTIGRAVITY_AGENT_ID,
@@ -86,7 +94,6 @@ export const AGENT_DEFINITION = Object.freeze({
   enablementCompatibilityBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   sessionModesKind: 'none',
-  modelConfig: ANTIGRAVITY_AGENT_MODEL_CONFIG,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
@@ -110,4 +117,4 @@ export const AGENT_DEFINITION = Object.freeze({
       canonicalReader: 'readCanonicalAntigravityRuntimeDescriptorV1',
     },
   },
-});
+}, ANTIGRAVITY_AGENT_MODEL_CONFIG);

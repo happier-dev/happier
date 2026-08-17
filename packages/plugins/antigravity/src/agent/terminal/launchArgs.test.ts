@@ -42,8 +42,79 @@ describe('Antigravity terminal launch arguments', () => {
       providerSessionId: 'conversation-current',
       terminalRuntime: { conversationId: 'conversation-stale' },
       antigravity: { conversationId: 'conversation-older' },
-    })).toMatchObject({
+    }, null)).toMatchObject({
       conversationId: 'conversation-current',
+    });
+  });
+
+  it('uses the host-resolved active model when newer intent and raw metadata disagree', () => {
+    expect(resolveAntigravityTerminalLaunchArgsInput({
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 41,
+        selection: {
+          agentTargetKey: 'backend:antigravity',
+          providerConnectionId: 'pc_next',
+          modelId: 'proposed-provider-model',
+        },
+      },
+      terminalRuntime: { modelId: 'unproven-terminal-model' },
+      antigravity: { model: 'unproven-agent-model' },
+      modelId: 'unproven-top-level-model',
+    }, {
+      agentTargetKey: 'backend:antigravity',
+      providerConnectionId: null,
+      modelId: 'active-native-model',
+    })).toMatchObject({
+      modelId: 'active-native-model',
+    });
+  });
+
+  it('launches the host-resolved Provider-bound selection for a replacement runtime', () => {
+    expect(resolveAntigravityTerminalLaunchArgsInput({
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 41,
+        selection: {
+          agentTargetKey: 'backend:antigravity',
+          providerConnectionId: 'pc_next',
+          modelId: 'next-launch-provider-model',
+        },
+      },
+    }, {
+      agentTargetKey: 'backend:antigravity',
+      providerConnectionId: 'pc_next',
+      modelId: 'next-launch-provider-model',
+    })).toMatchObject({
+      modelId: 'next-launch-provider-model',
+    });
+  });
+
+  it('does not promote catalog fallback, Provider intent, or raw metadata without host selection', () => {
+    expect(resolveAntigravityTerminalLaunchArgsInput({
+      sessionModelsV1: {
+        v: 1,
+        agentId: 'antigravity',
+        updatedAt: 40,
+        currentModelId: 'fallback-native-model',
+        availableModels: [
+          { id: 'fallback-native-model', name: 'Fallback native model' },
+        ],
+      },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 41,
+        selection: {
+          agentTargetKey: 'backend:antigravity',
+          providerConnectionId: 'pc_next',
+          modelId: 'next-launch-provider-model',
+        },
+      },
+      terminalRuntime: { modelId: 'unproven-terminal-model' },
+      antigravity: { model: 'unproven-agent-model' },
+      modelId: 'unproven-top-level-model',
+    }, null)).toMatchObject({
+      modelId: null,
     });
   });
 

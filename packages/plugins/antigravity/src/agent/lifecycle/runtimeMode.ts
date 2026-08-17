@@ -1,14 +1,13 @@
-import { readCanonicalAntigravityRuntimeDescriptorV1 } from '../runtime/runtimeDescriptor.js';
+import type { AntigravityRuntimeDescriptorModeV1 } from '../runtime/runtimeDescriptor.js';
 
 export const ANTIGRAVITY_RUNTIME_MODES = ['auto', 'cliPrint', 'sdk'] as const;
 export type AntigravityRuntimeMode = (typeof ANTIGRAVITY_RUNTIME_MODES)[number];
-export type ConcreteAntigravityRuntimeMode = 'cliPrint' | 'sdk';
+export type ConcreteAntigravityRuntimeMode = AntigravityRuntimeDescriptorModeV1;
 
 export const HAPPIER_ANTIGRAVITY_RUNTIME_MODE_ENV_KEY = 'HAPPIER_ANTIGRAVITY_RUNTIME_MODE';
 
 export type AntigravityRuntimeModeSource =
   | 'runtimeDescriptor'
-  | 'metadata'
   | 'accountSettings'
   | 'env'
   | 'default'
@@ -41,8 +40,7 @@ export type AntigravityRuntimeModeResolution =
     }>;
 
 export type AntigravityRuntimeModeRequest = Readonly<{
-  runtimeDescriptorV1?: unknown;
-  metadata?: Readonly<Record<string, unknown>> | null;
+  persistedRuntimeMode?: unknown;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   env?: Readonly<Record<string, string | undefined>> | null;
   cwd?: string | null;
@@ -66,28 +64,18 @@ function readEnvRuntimeMode(env: Readonly<Record<string, string | undefined>> | 
   return env?.[HAPPIER_ANTIGRAVITY_RUNTIME_MODE_ENV_KEY];
 }
 
-function readMetadataRuntimeDescriptor(metadata: Readonly<Record<string, unknown>> | null | undefined): unknown {
-  return metadata?.runtimeDescriptorV1 ?? metadata?.agentRuntimeDescriptorV1 ?? null;
-}
-
 export function resolveAntigravityRuntimeModeRequest(params: Readonly<{
-  runtimeDescriptorV1?: unknown;
-  metadata?: Readonly<Record<string, unknown>> | null;
+  persistedRuntimeMode?: unknown;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   env?: Readonly<Record<string, string | undefined>> | null;
 }>): Readonly<{
   requestedMode: AntigravityRuntimeMode;
   source: Exclude<AntigravityRuntimeModeSource, 'auto'>;
 }> {
-  const runtimeDescriptor = readCanonicalAntigravityRuntimeDescriptorV1(
-    params.runtimeDescriptorV1 ?? readMetadataRuntimeDescriptor(params.metadata),
-  );
-  if (isConcreteAntigravityRuntimeMode(runtimeDescriptor?.runtimeMode)) {
-    return { requestedMode: runtimeDescriptor.runtimeMode, source: 'runtimeDescriptor' };
+  const persistedRuntimeMode = normalizeAntigravityRuntimeMode(params.persistedRuntimeMode);
+  if (isConcreteAntigravityRuntimeMode(persistedRuntimeMode)) {
+    return { requestedMode: persistedRuntimeMode, source: 'runtimeDescriptor' };
   }
-
-  const metadataMode = normalizeAntigravityRuntimeMode(params.metadata?.antigravityRuntimeMode);
-  if (metadataMode) return { requestedMode: metadataMode, source: 'metadata' };
 
   const accountSettingsMode = normalizeAntigravityRuntimeMode(params.accountSettings?.antigravityRuntimeMode);
   if (accountSettingsMode) return { requestedMode: accountSettingsMode, source: 'accountSettings' };

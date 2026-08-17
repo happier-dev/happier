@@ -1,7 +1,7 @@
 import {
   ACP_AGENT_CLI_TRANSPORT_TIMEOUTS,
   createAcpToolNameInferencePreset,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const KILO_ACP_TIMEOUTS = ACP_AGENT_CLI_TRANSPORT_TIMEOUTS;
 

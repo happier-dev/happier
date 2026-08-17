@@ -77,6 +77,15 @@ export const PLUGIN_MANIFEST = {
         },
       },
       primary: 'sessions',
+      connectedAccounts: [{
+        purpose: 'model_upstream',
+        service: {
+          pluginId: 'happier.agent.gemini',
+          localId: 'gemini-account',
+        },
+        required: false,
+        materializationKinds: ['environment'],
+      }],
       capabilities: {
         surfaces: ['terminal', 'externalSessions'],
         sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
@@ -91,8 +100,9 @@ export const PLUGIN_MANIFEST = {
               fields: [
                 { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },
                 { kind: 'string', name: 'brainDir', min: 1, max: 10_000, nullish: true },
+                { kind: 'string', name: 'conversationId', min: 1, max: 2_000, nullish: true },
+                { kind: 'string', name: 'sourceRevision', min: 1, max: 10_000, nullish: true },
               ],
-              passthrough: true,
             },
             key: {
               segments: [

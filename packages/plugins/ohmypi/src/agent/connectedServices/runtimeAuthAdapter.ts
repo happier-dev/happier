@@ -1,6 +1,5 @@
 import { summarizeOhMyPiConnectedServiceActiveProfiles } from './activeProfiles.js';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 const REQUIRED_SERVICE_IDS = [
   'openai-codex',
@@ -13,13 +12,13 @@ const REQUIRED_SERVICE_IDS = [
 function exactTarget(selectionValue: unknown) {
   const selection = isRecord(selectionValue) ? selectionValue : null;
   if (!selection || !REQUIRED_SERVICE_IDS.includes(selection.serviceId as typeof REQUIRED_SERVICE_IDS[number])) return null;
-  const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(selection.credentialRevision);
-  if (!revision.success) return null;
+  const credentialRevision = readString(selection.credentialRevision);
+  if (!credentialRevision) return null;
   const serviceId = selection.serviceId as typeof REQUIRED_SERVICE_IDS[number];
   if (selection.kind === 'profile') {
     const profileId = readString(selection.profileId);
     return profileId ? {
-      serviceId, profileId, groupId: null, groupGeneration: null, credentialRevision: revision.data,
+      serviceId, profileId, groupId: null, groupGeneration: null, credentialRevision,
     } : null;
   }
   if (selection.kind !== 'group') return null;
@@ -29,7 +28,7 @@ function exactTarget(selectionValue: unknown) {
     ? selection.generation
     : null;
   return profileId && groupId && groupGeneration !== null ? {
-    serviceId, profileId, groupId, groupGeneration, credentialRevision: revision.data,
+    serviceId, profileId, groupId, groupGeneration, credentialRevision,
   } : null;
 }
 

@@ -29,7 +29,9 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
     avatarOverlay: { circleScale: 0.35, iconScaleRatio: 0.22 },
     icon: { assetId: 'antigravity' },
   },
-  behavior: {},
+  behavior: {
+    externalSessions: { supportsBackgroundFollow: true },
+  },
   session: {},
   message: {},
   components: { slots: [] },

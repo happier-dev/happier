@@ -1,7 +1,7 @@
 import type {
   AgentLaunchEnvironment,
   AgentPermissionIntent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildKiloOpenCodePermissionEnv } from '../permissions/opencodePermissionPolicy.js';
 

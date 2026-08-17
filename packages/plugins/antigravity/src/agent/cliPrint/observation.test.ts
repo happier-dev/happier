@@ -12,10 +12,10 @@ import { dirname, join } from 'node:path';
 
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   canonicalizePath,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -142,6 +142,18 @@ describe('Antigravity External Session observation', () => {
     });
 
     expect(() => contribution.describeResource(fixture.identity)).not.toThrow();
+  });
+
+  it('rejects an identity without the durable link-data source revision', async () => {
+    const fixture = await createConversationFixture();
+    const contribution = createAntigravityExternalSessionObservationContribution({
+      env: { HOME: fixture.homeDir },
+    });
+
+    expect(() => contribution.describeResource({
+      ...fixture.identity,
+      linkData: {},
+    })).toThrow(/transcript source revision/u);
   });
 
   it('keeps natural-resource grouping stable when the transcript is replaced', async () => {

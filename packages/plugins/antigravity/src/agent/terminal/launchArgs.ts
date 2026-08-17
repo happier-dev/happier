@@ -1,9 +1,4 @@
-import {
-  buildBackendTargetKeyV2,
-  resolveSessionModelSelectionIntentV1,
-} from '@happier-dev/plugin-sdk/experimental/providers';
-
-import { ANTIGRAVITY_BACKEND_ID } from '../install/cliRuntime.js';
+import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const ANTIGRAVITY_PRINT_MODE_SUPPORTED = false;
 
@@ -41,39 +36,9 @@ function readModelIdCandidate(value: unknown): string | null | undefined {
   return normalized;
 }
 
-function readModelSelectionId(metadata: Readonly<Record<string, unknown>>): unknown {
-  return resolveSessionModelSelectionIntentV1({
-    canonical: metadata.modelSelectionIntentV1,
-    legacy: metadata.modelOverrideV1,
-    agentTargetKey: buildBackendTargetKeyV2({
-      kind: 'backend',
-      backendId: ANTIGRAVITY_BACKEND_ID,
-      sourceKind: 'built_in',
-    }),
-  })?.selection?.modelId;
-}
-
-function resolveTerminalLaunchModelId(metadata: Readonly<Record<string, unknown>>): string | null {
-  const terminalRuntime = readRecord(metadata.terminalRuntime) ?? {};
-  const antigravity = readRecord(metadata.antigravity) ?? {};
-  const candidates = [
-    terminalRuntime.modelId,
-    terminalRuntime.model,
-    antigravity.modelId,
-    antigravity.model,
-    metadata.modelId,
-    metadata.model,
-    readModelSelectionId(metadata),
-  ];
-  for (const candidate of candidates) {
-    const modelId = readModelIdCandidate(candidate);
-    if (modelId !== undefined) return modelId;
-  }
-  return null;
-}
-
 export function resolveAntigravityTerminalLaunchArgsInput(
   metadata: Readonly<Record<string, unknown>>,
+  modelSelection: Parameters<AgentTerminalSurface['resolveLaunch']>[0]['modelSelection'],
 ): AntigravityTerminalLaunchArgsInput {
   const terminalRuntime = readRecord(metadata.terminalRuntime) ?? {};
   const antigravity = readRecord(metadata.antigravity) ?? {};
@@ -89,7 +54,7 @@ export function resolveAntigravityTerminalLaunchArgsInput(
     logFile: readString(terminalRuntime.logFile ?? antigravity.logFile),
     print: readBoolean(terminalRuntime.print ?? antigravity.print),
     unsafeSkipPermissions: readBoolean(terminalRuntime.unsafeSkipPermissions ?? antigravity.unsafeSkipPermissions),
-    modelId: resolveTerminalLaunchModelId(metadata),
+    modelId: readModelIdCandidate(modelSelection?.modelId) ?? null,
   };
 }
 

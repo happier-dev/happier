@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 export type AuggiePreflightModel = Readonly<{
   id: string;
@@ -58,7 +58,7 @@ export function buildAuggiePreflightModelsFromModelListJson(outputRaw: string): 
 }
 
 export async function probeAuggiePreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;

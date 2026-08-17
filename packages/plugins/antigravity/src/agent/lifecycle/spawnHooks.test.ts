@@ -21,7 +21,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable },
-      services: { managed: { dependencies: { ensure } } },
+      services: { managedServices: { dependencies: { ensure } } },
     })).resolves.toMatchObject({
       decision: 'deny',
       reasonCode: 'antigravity_localharness_unavailable',
@@ -42,7 +42,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
         },
       },
     }, {
-      services: { managed: { dependencies: { ensure } } },
+      services: { managedServices: { dependencies: { ensure } } },
     })).resolves.toEqual({ decision: 'allow' });
     expect(ensure).toHaveBeenCalledWith('localharness', undefined);
   });
@@ -204,7 +204,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-      services: { managed: { dependencies: { ensure } } },
+      services: { managedServices: { dependencies: { ensure } } },
     })).resolves.toEqual({ decision: 'allow' });
 
     expect(resolveManagedInstallable).not.toHaveBeenCalled();
@@ -248,7 +248,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     });
   });
 
-  it('uses providerExtra runtimeHandle from persisted descriptors before provider runtime selection', async () => {
+  it('uses the host semantic projection instead of reparsing a conflicting raw descriptor', async () => {
     const resolveManagedInstallable = vi.fn(async () => ({
       ok: true as const,
       command: '/managed/localharness',
@@ -262,7 +262,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
+          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
           env: { GEMINI_API_KEY: 'sdk-key' },
           runtimeDescriptorV1: {
             v: 1,
@@ -273,9 +273,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
                 owner: 'antigravity',
                 schemaId: 'antigravity.agentRuntimeDescriptorExtra',
                 v: 1,
-                runtimeHandle: {
-                  runtimeMode: 'sdk',
-                },
+                runtimeHandle: { runtimeMode: 'cliPrint' },
               },
             },
           },
@@ -283,7 +281,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-      services: { managed: { dependencies: { ensure } } },
+      services: { managedServices: { dependencies: { ensure } } },
     })).resolves.toEqual({ decision: 'allow' });
 
     expect(resolveManagedInstallable).not.toHaveBeenCalled();

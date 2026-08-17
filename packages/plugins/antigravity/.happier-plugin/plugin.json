@@ -1,0 +1,440 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": false,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          },
+          "surfaces": [
+            "terminal",
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [],
+                "kind": "primary"
+              }
+            ],
+            "machineLoginKey": "antigravity-cli",
+            "probe": {
+              "backgroundChecks": "manual_only",
+              "parser": "none",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "Antigravity CLI",
+          "executable": {
+            "binaryName": "agy",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://antigravity.google/docs/cli-install",
+            "guideUrl": "https://antigravity.google/docs/cli-install",
+            "managed": null,
+            "manual": {
+              "kind": "vendor_recipe",
+              "recipes": {
+                "darwin": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "linux": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "win32": [
+                  {
+                    "args": [
+                      "-NoProfile",
+                      "-ExecutionPolicy",
+                      "Bypass",
+                      "-Command",
+                      "irm https://antigravity.google/cli/install.ps1 | iex"
+                    ],
+                    "cmd": "powershell"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "model_upstream",
+            "required": false,
+            "service": {
+              "localId": "gemini-account",
+              "pluginId": "happier.agent.gemini"
+            }
+          }
+        ],
+        "id": "antigravity",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "antigravityCliPrint"
+                    },
+                    {
+                      "field": "brainDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "antigravityCliPrint"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "brainDir",
+                      "nullish": true
+                    },
+                    {
+                      "kind": "string",
+                      "max": 2000,
+                      "min": 1,
+                      "name": "conversationId",
+                      "nullish": true
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "sourceRevision",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "antigravityCliPrint"
+              }
+            ]
+          }
+        },
+        "title": "Antigravity"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "antigravity"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      }
+    ],
+    "managedDependencies": [
+      {
+        "description": "Google Antigravity structured local runtime.",
+        "executable": "localharness",
+        "id": "localharness",
+        "platforms": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "sources": [
+          {
+            "assetPathByPlatform": {
+              "darwin-arm64": "google/antigravity/bin/localharness",
+              "linux-arm64": "google/antigravity/bin/localharness",
+              "linux-x64": "google/antigravity/bin/localharness",
+              "win32-arm64": "google/antigravity/bin/localharness.exe",
+              "win32-x64": "google/antigravity/bin/localharness.exe"
+            },
+            "autoUpdateMode": "notify",
+            "compatibilityProbe": "antigravity-localharness-v1",
+            "distribution": "google-antigravity",
+            "executable": true,
+            "installConsent": "host_managed_required",
+            "installId": "dep.antigravity.localharness",
+            "kind": "managedPypiWheelAsset",
+            "trustedPublisher": "Google",
+            "versionSpecifier": ">=0.1.4,<0.2.0"
+          }
+        ],
+        "title": "Antigravity localharness"
+      }
+    ],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "auto",
+            "description": {
+              "fallback": "Select automatic routing, subscription CLI print mode, or SDK mode.",
+              "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.subtitle"
+            },
+            "id": "antigravityRuntimeMode",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Prefer the subscription CLI when available, then SDK credentials.",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.auto.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Auto",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.auto.title"
+                  },
+                  "value": "auto"
+                },
+                {
+                  "description": {
+                    "fallback": "Uses agy print mode with your local login; live tool approvals are degraded.",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.cliPrint.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Antigravity CLI (subscription)",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.cliPrint.title"
+                  },
+                  "value": "cliPrint"
+                },
+                {
+                  "description": {
+                    "fallback": "Uses Gemini API key or Vertex credentials through the SDK.",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.sdk.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Antigravity SDK (Gemini API / Vertex)",
+                    "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.sdk.title"
+                  },
+                  "value": "sdk"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Preferred Antigravity runtime mode",
+              "enum": [
+                "auto",
+                "cliPrint",
+                "sdk"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Runtime mode",
+              "key": "settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "blue"
+            },
+            "ionName": "rocket-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "Choose how Antigravity sessions start. CLI mode uses your subscription login with degraded live controls; SDK mode uses Gemini API or Vertex credentials.",
+                "key": "settingsAgents.plugins.antigravity.sections.runtime.footer"
+              },
+              "fields": [
+                "antigravityRuntimeMode"
+              ],
+              "id": "antigravity-runtime",
+              "title": {
+                "fallback": "Runtime",
+                "key": "settingsAgents.plugins.antigravity.sections.runtime.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "antigravity",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Antigravity",
+          "key": "settingsAgents.plugins.antigravity.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "agy"
+        ],
+        "id": "antigravity-cli",
+        "title": "Antigravity CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Antigravity",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "antigravity-external-session-transcripts",
+        "reason": "Read source-qualified Antigravity CLI transcripts for External Session observation.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "localharness-process",
+        "reason": "Launch the managed Antigravity localharness through host-mediated execution.",
+        "scope": {
+          "executables": [
+            {
+              "id": "localharness",
+              "kind": "managedDependency"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "antigravity-cli-process",
+        "reason": "Launch the user-installed Antigravity CLI through host-mediated execution.",
+        "scope": {
+          "executables": [
+            {
+              "id": "antigravity-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.antigravity",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

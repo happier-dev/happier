@@ -1,4 +1,4 @@
-import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const QWEN_APPROVAL_MODE_BY_PERMISSION_INTENT = Object.freeze({
   default: null,

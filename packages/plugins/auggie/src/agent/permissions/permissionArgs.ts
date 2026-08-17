@@ -1,4 +1,4 @@
-import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type AuggieToolPolicy = 'allow' | 'deny' | 'ask-user';
 

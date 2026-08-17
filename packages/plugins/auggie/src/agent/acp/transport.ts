@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type AuggieAcpRuntimeDefinition = NonNullable<AgentAcpRuntimeOptions['definition']>;
 

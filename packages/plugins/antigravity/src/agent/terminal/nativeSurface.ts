@@ -1,4 +1,4 @@
-import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   buildAntigravityTerminalLaunchArgs,
@@ -10,7 +10,10 @@ export function createAntigravityNativeTerminalSurface(): AgentTerminalSurface {
     resolveLaunch(request) {
       return {
         argv: buildAntigravityTerminalLaunchArgs(
-          resolveAntigravityTerminalLaunchArgsInput(request.metadata),
+          resolveAntigravityTerminalLaunchArgsInput(
+            request.metadata,
+            request.modelSelection,
+          ),
         ),
         process: {
           stdio: 'inherit',

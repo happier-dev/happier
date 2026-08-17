@@ -1,4 +1,4 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 const KIMI_ACP_PYTHON_SELECTOR_VALUES = ['auto', 'poll'] as const;
 
@@ -18,7 +18,7 @@ export const KIMI_AGENT_SETTINGS_CONTRIBUTION = {
   version: 1,
   title: { key: 'settingsAgents.plugins.kimi.title', fallback: 'Kimi' },
   target: { kind: 'agent', agent: 'kimi' },
-  scope: 'synced',
+  scope: 'account',
   fields: [
     {
       id: 'kimiAcpPythonSelector',

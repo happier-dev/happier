@@ -1,4 +1,4 @@
-import type { PluginLoopbackWebSocketEndpoint } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginLoopbackWebSocketEndpoint } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import type {
   AntigravityLocalharnessInputConfig,

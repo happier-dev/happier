@@ -1,4 +1,4 @@
-import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildAuggiePermissionIntentArgs } from '../permissions/permissionArgs.js';
 

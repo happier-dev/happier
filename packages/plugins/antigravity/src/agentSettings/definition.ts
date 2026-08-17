@@ -1,4 +1,4 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 export const ANTIGRAVITY_RUNTIME_MODE_VALUES = ['auto', 'cliPrint', 'sdk'] as const;
 export type AntigravityRuntimeMode = (typeof ANTIGRAVITY_RUNTIME_MODE_VALUES)[number];
@@ -23,7 +23,7 @@ export const ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION = {
   version: 1,
   title: { key: 'settingsAgents.plugins.antigravity.title', fallback: 'Antigravity' },
   target: { kind: 'agent', agent: 'antigravity' },
-  scope: 'synced',
+  scope: 'account',
   fields: [
     {
       id: 'antigravityRuntimeMode',

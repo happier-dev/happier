@@ -1,0 +1,149 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [],
+                "initialInput": "/auth\r",
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "parser": "unknown",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "Qwen CLI",
+          "executable": {
+            "binaryName": "qwen",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": null,
+            "guideUrl": "https://qwenlm.github.io/qwen-code-docs/",
+            "managed": {
+              "binaryName": "qwen",
+              "kind": "managed_package",
+              "packageName": "@qwen-code/qwen-code"
+            },
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "id": "qwen",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "Qwen Code"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [
+      {
+        "executableNames": [
+          "qwen"
+        ],
+        "id": "qwen-cli",
+        "title": "Qwen Code CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Qwen Code",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "qwen-process",
+        "reason": "Run the declared Qwen CLI executable.",
+        "scope": {
+          "executables": [
+            {
+              "id": "qwen-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.qwen",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

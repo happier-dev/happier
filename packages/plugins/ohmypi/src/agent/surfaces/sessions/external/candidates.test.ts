@@ -13,8 +13,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+  formatOhMyPiCandidateTitle,
   listOhMyPiSessionCandidates,
   OhMyPiCandidateSourceChangedError,
 } from './candidates.js';
@@ -359,5 +364,132 @@ describe('listOhMyPiSessionCandidates', () => {
       }),
     ]);
     expect(result.candidates[0]?.remoteSessionId).not.toBe('b_c');
+  });
+
+  it('derives a title from the first user message and suppresses the injected base system prompt', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-derived-titles-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+
+    const write = async (
+      remoteSessionId: string,
+      firstUserText: string | null,
+    ): Promise<void> => {
+      await writeFile(
+        join(sessionRoot, `2026-07-23T10-00-00-000Z_${remoteSessionId}.jsonl`),
+        [
+          jsonlLine({
+            type: 'session',
+            version: 3,
+            id: remoteSessionId,
+            timestamp: '2026-07-23T10:00:00.000Z',
+            cwd: '/repo',
+          }),
+          ...(firstUserText === null ? [] : [jsonlLine({
+            type: 'message',
+            id: `${remoteSessionId}-user`,
+            parentId: null,
+            timestamp: '2026-07-23T10:00:01.000Z',
+            message: { role: 'user', content: [{ type: 'text', text: firstUserText }] },
+          })]),
+        ].join(''),
+        'utf8',
+      );
+    };
+
+    await write('153e1829e9d3e497', 'Investigate the failing external-session link');
+    await write(
+      '153e1829e9d3e498',
+      `${HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1}\n\nreal prompt`,
+    );
+    await write(
+      '153e1829e9d3e499',
+      `${HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1}\n\nreal prompt`,
+    );
+    // A model_change-only session, exactly what Oh My Pi writes before the first turn.
+    await write('153e1829e9d3e500', null);
+
+    const result = await listOhMyPiSessionCandidates({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      limit: 10,
+    });
+
+    // The bounded scan is the only read; no candidate opens the session file again.
+    expect(vi.mocked(readFile)).not.toHaveBeenCalled();
+    expect(Object.fromEntries(result.candidates.map(
+      (candidate) => [candidate.remoteSessionId, candidate.title ?? null],
+    ))).toEqual({
+      '153e1829e9d3e497': 'Investigate the failing external-session link',
+      '153e1829e9d3e498': null,
+      '153e1829e9d3e499': null,
+      '153e1829e9d3e500': null,
+    });
+  });
+
+  it('bounds persisted titles before candidate publication without changing session identity', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-persisted-titles-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const normalTitle = 'Continue the compiler error investigation';
+    const asciiTitle = `Keep this useful persisted prefix ${'a'.repeat(10_001)} tail-search-token`;
+    const unicodeTitle = `🚀${'😀'.repeat(5_001)}`;
+    const sessions = [
+      ['153e1829e9d3e501', normalTitle],
+      ['153e1829e9d3e502', asciiTitle],
+      ['153e1829e9d3e503', unicodeTitle],
+    ] as const;
+    await Promise.all(sessions.map(async ([remoteSessionId, title]) => {
+      await writeFile(
+        join(sessionRoot, `2026-07-23T10-00-00-000Z_${remoteSessionId}.jsonl`),
+        jsonlLine({
+          type: 'session',
+          version: 3,
+          id: remoteSessionId,
+          timestamp: '2026-07-23T10:00:00.000Z',
+          cwd: '/repo',
+          title,
+        }),
+        'utf8',
+      );
+    }));
+
+    const result = await listOhMyPiSessionCandidates({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      limit: 10,
+    });
+    const titles = new Map(result.candidates.map((candidate) => [
+      candidate.remoteSessionId,
+      candidate.title,
+    ]));
+
+    expect(result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(
+      expect.arrayContaining(sessions.map(([remoteSessionId]) => remoteSessionId)),
+    );
+    expect(titles.get('153e1829e9d3e501')).toBe(normalTitle);
+    expect(titles.get('153e1829e9d3e502')).toBe('Keep this useful persisted prefix ' + 'a'.repeat(83) + '...');
+    expect(titles.get('153e1829e9d3e503')).toBe(`🚀${'😀'.repeat(57)}...`);
+
+    const searched = await listOhMyPiSessionCandidates({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      limit: 10,
+      searchTerm: 'tail-search-token',
+    });
+    expect(searched.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+      '153e1829e9d3e502',
+    ]);
+  });
+
+  it('normalizes and truncates a long derived title instead of publishing a wall of text', () => {
+    expect(formatOhMyPiCandidateTitle('  multi\n  line   prompt  ')).toBe('multi line prompt');
+    expect(formatOhMyPiCandidateTitle('   ')).toBeNull();
+    expect(formatOhMyPiCandidateTitle(null)).toBeNull();
+    const long = formatOhMyPiCandidateTitle('a'.repeat(400));
+    expect(long).toHaveLength(120);
+    expect(long?.endsWith('...')).toBe(true);
   });
 });

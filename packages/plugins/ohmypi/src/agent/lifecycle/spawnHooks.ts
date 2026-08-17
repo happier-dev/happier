@@ -1,3 +1,5 @@
+import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 import { buildOhMyPiPreflightModelsFromListModelsOutput } from '../preflight/models.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 
@@ -32,15 +34,11 @@ type OhMyPiDaemonSpawnToolContext = Readonly<{
   }>): Promise<OhMyPiDaemonRunToolResult>;
 }>;
 
-type OhMyPiDaemonSpawnHookContext = Readonly<{
+type OhMyPiDaemonSpawnHookContext = Partial<PluginInvocationContext> & Readonly<{
   tools?: Partial<OhMyPiDaemonSpawnToolContext>;
 }>;
 
 type OhMyPiDaemonSpawnPrerequisiteResult = PluginHookDecisionResultV1;
-
-type OhMyPiDaemonHookEvent = Readonly<{
-  payload?: unknown;
-}>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -52,14 +50,14 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readCwd(event: OhMyPiDaemonHookEvent): string | undefined {
-  const payload = readRecord(event.payload);
-  return readString(payload?.cwd) ?? readString(payload?.directory) ?? undefined;
+function readCwd(payload: JsonValue): string | undefined {
+  const payloadRecord = readRecord(payload);
+  return readString(payloadRecord?.cwd) ?? readString(payloadRecord?.directory) ?? undefined;
 }
 
-function readRuntimeSelectionEnv(event: OhMyPiDaemonHookEvent): Readonly<Record<string, string>> {
-  const payload = readRecord(event.payload);
-  const runtimeSelection = readRecord(payload?.runtimeSelection);
+function readRuntimeSelectionEnv(payload: JsonValue): Readonly<Record<string, string>> {
+  const payloadRecord = readRecord(payload);
+  const runtimeSelection = readRecord(payloadRecord?.runtimeSelection);
   const env = readRecord(runtimeSelection?.env);
   if (!env) return {};
   const output: Record<string, string> = {};
@@ -91,7 +89,7 @@ function denyOhMyPiSpawn(reasonCode: string, errorMessage: string): OhMyPiDaemon
 }
 
 export async function resolveOhMyPiDaemonSpawnPrerequisites(
-  event: OhMyPiDaemonHookEvent,
+  payload: JsonValue,
   context?: OhMyPiDaemonSpawnHookContext,
 ): Promise<OhMyPiDaemonSpawnPrerequisiteResult> {
   const runSystemTool = context?.tools?.runSystemTool;
@@ -107,8 +105,8 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
     lookupNames: ['omp'],
     sourcePreference: 'system-first',
     args: OH_MY_PI_LIST_MODELS_ARGS,
-    cwd: readCwd(event),
-    env: { ...readRuntimeSelectionEnv(event), CI: '1' },
+    cwd: readCwd(payload),
+    env: { ...readRuntimeSelectionEnv(payload), CI: '1' },
     timeoutMs: OH_MY_PI_PREFLIGHT_TIMEOUT_MS,
     maxStdoutBytes: OH_MY_PI_PREFLIGHT_OUTPUT_MAX_BYTES,
     maxStderrBytes: OH_MY_PI_PREFLIGHT_OUTPUT_MAX_BYTES,
@@ -132,4 +130,4 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
     ?? 'OhMyPi has no available models. Set provider API keys before starting a session.';
   return denyOhMyPiSpawn('ohmypi_models_unavailable', diagnostic);
 }
-import type { PluginHookDecisionResultV1 } from '@happier-dev/plugin-sdk/experimental/hooks';
+import type { PluginHookDecisionResult as PluginHookDecisionResultV1 } from '@happier-dev/plugin-sdk/hooks';

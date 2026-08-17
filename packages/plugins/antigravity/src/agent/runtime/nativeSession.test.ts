@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentSessionOpenRequest,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { createAntigravityNativeSessionRuntime } from './nativeSession.js';
 
@@ -41,7 +41,17 @@ describe('createAntigravityNativeSessionRuntime', () => {
     expect(runtime).not.toHaveProperty('events');
   });
 
-  it('carries an exact generic resume request into the Antigravity conversation argv', async () => {
+  it.each([
+    ['API key', {
+      GEMINI_API_KEY: 'qualified-gemini-key',
+      GOOGLE_API_KEY: 'qualified-gemini-key',
+    }],
+    ['Vertex', {
+      GOOGLE_GENAI_USE_VERTEXAI: '1',
+      GOOGLE_CLOUD_PROJECT: 'vertex-project',
+      GOOGLE_CLOUD_LOCATION: 'europe-west1',
+    }],
+  ])('carries an exact generic resume request and qualified %s environment into the CLI spawn', async (_label, connectedAccountEnv) => {
     const resolve = vi.fn(async () => ({
       executable: { kind: 'systemTool' as const, id: 'antigravity-cli' },
       executablePath: '/usr/local/bin/agy',
@@ -59,7 +69,7 @@ describe('createAntigravityNativeSessionRuntime', () => {
     const context = {
       signal: new AbortController().signal,
       services: {
-        exec: { systemTools: { resolve }, run } as unknown as PluginExecService,
+        exec: { systemTools: { resolve }, run } as unknown as ExecService,
       },
       ui: {},
       session: { id: 'session-1', services: {} },
@@ -77,7 +87,12 @@ describe('createAntigravityNativeSessionRuntime', () => {
       },
     };
 
-    const runtime = createAntigravityNativeSessionRuntime({ mode: 'cliPrint', request, context });
+    const runtime = createAntigravityNativeSessionRuntime({
+      mode: 'cliPrint',
+      request,
+      context,
+      connectedAccountEnv,
+    });
     await expect(runtime.send({
       inputIds: ['input-1'],
       input: { text: 'continue here' },
@@ -97,10 +112,31 @@ describe('createAntigravityNativeSessionRuntime', () => {
         '--add-dir',
         '/repo',
       ],
+      env: expect.objectContaining(connectedAccountEnv),
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('opens SDK mode through stable exec, bound-session MCP, and launch environment owners', async () => {
+  it.each([
+    ['API key', {
+      GEMINI_API_KEY: 'qualified-gemini-key',
+    }, {
+      geminiApiEndpoint: { apiKey: 'qualified-gemini-key' },
+    }],
+    ['Vertex', {
+      GOOGLE_GENAI_USE_VERTEXAI: '1',
+      GOOGLE_CLOUD_PROJECT: 'vertex-project',
+      GOOGLE_CLOUD_LOCATION: 'europe-west1',
+    }, {
+      vertexEndpoint: {
+        project: 'vertex-project',
+        location: 'europe-west1',
+      },
+    }],
+  ])('opens SDK mode with qualified %s auth through the real credential resolver', async (
+    _label,
+    materializedAuthEnv,
+    expectedModelEndpoint,
+  ) => {
     const sent: unknown[] = [];
     const spawn = vi.fn(async () => ({
       client: {
@@ -121,8 +157,16 @@ describe('createAntigravityNativeSessionRuntime', () => {
       signal: new AbortController().signal,
       services: { exec: { clients: { spawn } } },
       ui: {
-        confirm: vi.fn(async () => false),
-        askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })),
+        confirm: vi.fn(async () => ({
+          requestId: 'confirmation-declined',
+          kind: 'confirmation' as const,
+          status: 'declined' as const,
+        })),
+        askQuestions: vi.fn(async () => ({
+          requestId: 'questions-cancelled',
+          kind: 'questions' as const,
+          status: 'userCancelled' as const,
+        })),
       },
       session: { id: 'session-1', services: { mcp: { resolveServers } } },
     } as unknown as AgentSessionRuntimeContext;
@@ -130,10 +174,7 @@ describe('createAntigravityNativeSessionRuntime', () => {
       kind: 'create',
       sessionId: 'session-1',
       cwd: '/repo',
-      launchEnvironment: {
-        values: { GEMINI_API_KEY: 'gemini-key' },
-        unset: [],
-      },
+      launchEnvironment: { values: {}, unset: [] },
       configuration: {
         mode: { value: 'sdk', updatedAtMs: 1 },
         model: { value: 'gemini-3.5-flash', updatedAtMs: 1 },
@@ -142,7 +183,13 @@ describe('createAntigravityNativeSessionRuntime', () => {
       },
     };
 
-    const runtime = createAntigravityNativeSessionRuntime({ mode: 'sdk', request, context });
+    const materializeAuthEnv = vi.fn(async () => materializedAuthEnv);
+    const runtime = createAntigravityNativeSessionRuntime({
+      mode: 'sdk',
+      request,
+      context,
+      materializeAuthEnv,
+    });
     await expect(runtime.send({
       inputIds: ['input-1'],
       input: { text: 'hello' },
@@ -152,12 +199,13 @@ describe('createAntigravityNativeSessionRuntime', () => {
     });
 
     expect(resolveServers).toHaveBeenCalledWith({ signal: context.signal });
+    expect(materializeAuthEnv).toHaveBeenCalledOnce();
     expect(spawn).toHaveBeenCalledOnce();
     expect(sent[0]).toEqual(expect.objectContaining({
       config: expect.objectContaining({
         models: [expect.objectContaining({
           name: 'gemini-3.5-flash',
-          geminiApiEndpoint: { apiKey: 'gemini-key' },
+          ...expectedModelEndpoint,
         })],
         mcpServers: [{ name: 'docs', http: { url: 'https://example.test/mcp' } }],
       }),

@@ -3,13 +3,12 @@ import {
   listSessionFileStoreRoots,
   resolveSessionFileStoreDirs,
   scanJsonlSessionFile,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative } from 'node:path';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
-import { resolveOhMyPiAgentDir } from './source.js';
+import { resolveOhMyPiAgentDir, type OhMyPiExternalSessionSource } from './source.js';
 
 export type OhMyPiSessionFileIdentityMetadata = Readonly<{
   dev: number | bigint;
@@ -24,7 +23,7 @@ export function formatOhMyPiSessionFileGeneration(
 }
 
 export async function listOhMyPiSessionRoots(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string[]> {
   const sessionsRoot = await resolveOhMyPiSessionsRoot(params);
@@ -32,7 +31,7 @@ export async function listOhMyPiSessionRoots(params: Readonly<{
 }
 
 export async function resolveOhMyPiSessionsRoot(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string> {
   const agentDir = resolveOhMyPiAgentDir({ source: params.source, env: params.env });
@@ -50,7 +49,7 @@ export async function resolveOhMyPiSessionsRoot(params: Readonly<{
 }
 
 export async function resolveOhMyPiSessionFile(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   remoteSessionId: string;
   sessionFilePath?: string | null;
   env?: NodeJS.ProcessEnv;

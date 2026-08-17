@@ -106,7 +106,7 @@ describe('Plugin Inspector manifest', () => {
     expect(INSPECTOR_SETTINGS).toMatchObject({
       id: INSPECTOR_SETTINGS_ID,
       target: { kind: 'plugin' },
-      scope: 'local',
+      scope: 'daemon',
     });
     expect(INSPECTOR_SETTINGS.fields).toEqual([
       expect.objectContaining({
@@ -117,11 +117,20 @@ describe('Plugin Inspector manifest', () => {
     ]);
   });
 
-  it('retains one app-scope React Native surface whose physical graph is build-owned', () => {
+  it('retains one React Native renderer across direct app-tab and full-page destinations', () => {
     expect(INSPECTOR_UI).toEqual({
+      // Two DESTINATIONS, ONE renderer (EU-5b dogfood). A second renderer here
+      // would be a duplicate surface implementation, not a second destination.
       views: [{
         id: 'inspector-app',
-        placement: 'app.rightSidebarTab',
+        container: 'rightSidebarTab',
+        target: { kind: 'app' },
+        renderer: 'inspector-renderer',
+        title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
+      }, {
+        id: 'inspector-page',
+        container: 'appPage',
+        target: { kind: 'app' },
         renderer: 'inspector-renderer',
         title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
       }],
@@ -140,6 +149,10 @@ describe('Plugin Inspector manifest', () => {
       }],
     });
     expect(PLUGIN_MANIFEST.contributes.ui).toEqual(INSPECTOR_UI);
+    for (const view of INSPECTOR_UI.views) {
+      expect(view).not.toHaveProperty('placement');
+      expect(view).not.toHaveProperty('binding');
+    }
   });
 
   it('keeps every Inspector UI declaration in the canonical manifest graph', () => {
@@ -150,5 +163,27 @@ describe('Plugin Inspector manifest', () => {
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('surfacePlacements');
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('reactNativeBundles');
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('uiTranslations');
+  });
+
+  it('packages a generic inventory illustration separately from the brand mark', () => {
+    expect(PLUGIN_MANIFEST.contributes.resources).toEqual(expect.arrayContaining([
+      {
+        id: 'brand-icon',
+        kind: 'asset',
+        path: 'assets/brand.png',
+        contentType: 'image/png',
+      },
+      {
+        id: 'inventory-illustration',
+        kind: 'asset',
+        path: 'assets/inventory.png',
+        contentType: 'image/png',
+      },
+    ]));
+
+    const inventoryBytes = readFileSync(new URL('../assets/inventory.png', import.meta.url));
+    const brandBytes = readFileSync(new URL('../assets/brand.png', import.meta.url));
+    expect([...inventoryBytes.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(inventoryBytes.equals(brandBytes)).toBe(false);
   });
 });

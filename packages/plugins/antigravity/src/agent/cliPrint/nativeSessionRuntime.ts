@@ -1,4 +1,4 @@
-import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   type AntigravityConversationDiscovery,
@@ -20,7 +20,6 @@ import { mapAntigravityTranscriptRecordsToSteps } from './transcript/mapper.js';
 import { ANTIGRAVITY_AGENT_ID } from '../install/cliRuntime.js';
 import { isolateAntigravityCliPrintEnv } from '../lifecycle/runtimeEnv.js';
 import type { AntigravityStep } from '../normalize/index.js';
-import { readAntigravitySessionMetadataRuntimeDescriptor } from '../runtime/runtimeDescriptor.js';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -65,26 +64,24 @@ function readModelId(params: unknown): string | null {
   return modelId && modelId !== 'default' ? modelId : null;
 }
 
-function readMetadata(params: unknown): Readonly<Record<string, unknown>> | null {
-  return readRecord(readRecord(params)?.metadata);
-}
-
 export function createDefaultCliPrintSessionRuntime(params: Readonly<{
   sessionParams: Readonly<{
     sessionId: string;
     cwd: string;
     env?: Readonly<Record<string, string>>;
+    connectedAccountEnv?: Readonly<Record<string, string>>;
     modelId?: string | null;
-    metadata?: Readonly<Record<string, unknown>>;
+    providerSessionId?: string | null;
   }>;
   runAgentCli: AntigravityCliPrintExecRun;
 }>): AgentSessionRuntime {
   const cwd = readCwd(params.sessionParams) ?? '.';
-  const env = isolateAntigravityCliPrintEnv(readEnv(params.sessionParams));
+  const isolatedEnv = isolateAntigravityCliPrintEnv(readEnv(params.sessionParams));
+  const connectedAccountEnv = params.sessionParams.connectedAccountEnv ?? {};
+  const mergedEnv = { ...(isolatedEnv ?? {}), ...connectedAccountEnv };
+  const env = Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
   const brainDir = resolveAntigravityBrainDir(env);
-  const runtimeDescriptor = readAntigravitySessionMetadataRuntimeDescriptor(
-    readMetadata(params.sessionParams),
-  );
+  const providerSessionId = readNonEmptyString(params.sessionParams.providerSessionId);
   let lastDiscovery: AntigravityConversationDiscovery | null = null;
 
   const readTranscriptSteps = async (input: Readonly<{
@@ -138,7 +135,7 @@ export function createDefaultCliPrintSessionRuntime(params: Readonly<{
     modelId: readModelId(params.sessionParams),
     sandbox: true,
     includeWorkspaceScope: true,
-    conversationId: runtimeDescriptor?.agyConversationId ?? null,
+    conversationId: providerSessionId,
     promptTimeoutMs: 120_000,
     discoverConversationId: async () => lastDiscovery ?? { status: 'not_found' },
     runOneShot: async (input) => {

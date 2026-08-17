@@ -3,10 +3,12 @@ import { lstat } from 'node:fs/promises';
 
 import {
   deriveExternalSessionActivity,
-  type AgentExternalSessionObservationContribution,
-  type AgentExternalSessionsResolvedIdentity,
-  type ExternalAgentObservationLinkEvidenceBatchV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+  AgentExternalSessionObservationContribution,
+  AgentExternalSessionObservationLinkEvidenceBatchV1,
+  AgentExternalSessionsResolvedIdentity,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { validateOhMyPiExternalSessionSource } from './source.js';
 
@@ -16,7 +18,7 @@ const RECONCILIATION_FACT_TTL_MS = 1_000;
 const MAX_OPAQUE_KEY_LENGTH = 256;
 
 type ExternalAgentObservationLeafFact =
-  ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+  AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 export type OhMyPiObservationFileState = Readonly<{
   dev: number | bigint;
@@ -62,9 +64,10 @@ function readLinkedFile(
   if (!validation.ok || validation.source.kind !== 'ohMyPiAgentDir') {
     throw new Error(validation.ok ? 'provider/source mismatch' : validation.error);
   }
+  // The resolved session file travels only on the source: a top-level
+  // `sessionFilePath` on link data would be rejected by host owner metadata.
   const sourcePath = readNonemptyString(identity.source.sessionFilePath);
-  const linkPath = readNonemptyString(identity.linkData.sessionFilePath);
-  if (!sourcePath || !linkPath || sourcePath !== linkPath) {
+  if (!sourcePath) {
     throw new Error('Oh My Pi observation requires one resolved sessionFilePath');
   }
   const remoteSessionId = readNonemptyString(identity.remoteSessionId);

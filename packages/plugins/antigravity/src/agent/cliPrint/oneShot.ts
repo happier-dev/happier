@@ -1,3 +1,5 @@
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+
 import type { AntigravityStep } from '../normalize/index.js';
 import { hasAntigravityStepOutputEvidence } from '../normalize/index.js';
 
@@ -70,13 +72,6 @@ type AntigravityCliPrintExecRunOneShotParams = AntigravityCliPrintOneShotBasePar
   run: AntigravityCliPrintExecRun;
 }>;
 
-function sanitizeCliPrintErrorText(value: string): string {
-  return value
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, '$1[REDACTED]')
-    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)\s*[:=]\s*['"]?\S+/giu, '$1: [REDACTED]')
-    .slice(0, CLI_PRINT_ERROR_PREVIEW_MAX_CHARS);
-}
-
 function readCliPrintStdoutError(stdout: string): string | null {
   const firstLine = stdout
     .split(/\r?\n/u)
@@ -85,7 +80,8 @@ function readCliPrintStdoutError(stdout: string): string | null {
   if (!firstLine) return null;
   const errorMatch = /^Error:\s*(.+)$/iu.exec(firstLine);
   if (!errorMatch) return null;
-  return sanitizeCliPrintErrorText(errorMatch[1] ?? firstLine);
+  return redactBugReportSensitiveText(errorMatch[1] ?? firstLine)
+    .slice(0, CLI_PRINT_ERROR_PREVIEW_MAX_CHARS);
 }
 
 async function completeFromExit(
@@ -95,9 +91,14 @@ async function completeFromExit(
   const stdout = exit.stdout ?? '';
   const stderr = exit.stderr ?? '';
   if (exit.exitCode !== 0) {
+    const stderrPreview = redactBugReportSensitiveText(String(stderr).trim())
+      .slice(0, CLI_PRINT_ERROR_PREVIEW_MAX_CHARS);
+    const exitMessage = `Antigravity CLI print exited with code ${exit.exitCode ?? 'unknown'}`;
     throw new AntigravityCliPrintOneShotError({
       code: 'antigravity_cliprint_exit_nonzero',
-      message: `Antigravity CLI print exited with code ${exit.exitCode ?? 'unknown'}.`,
+      message: stderrPreview
+        ? `${exitMessage}: ${stderrPreview}`
+        : `${exitMessage}.`,
       exitCode: exit.exitCode,
       stderr,
     });

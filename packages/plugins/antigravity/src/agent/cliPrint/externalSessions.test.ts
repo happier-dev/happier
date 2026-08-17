@@ -1,4 +1,4 @@
-import { appendFile, mkdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, opendir, realpath, rename, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,17 @@ import {
   createAntigravityExternalSessionsContribution,
   readAntigravityExternalTranscriptAfter,
 } from './externalSessions.js';
+
+function userRaw(text: string) {
+  return { role: 'user', content: { type: 'text', text } };
+}
+
+function agentMessageRaw(message: string) {
+  return {
+    role: 'agent',
+    content: { type: 'acp', agentId: 'antigravity', data: { type: 'message', message } },
+  };
+}
 
 function invocation(maxSerializedBytes = 64 * 1024) {
   return {
@@ -56,7 +67,9 @@ describe('Antigravity external-session pure leaf', () => {
     if (!firstPage.ok || !firstPage.value.nextCursor) {
       throw new Error('candidate scan continuation unexpectedly missing');
     }
-    expect(firstPage.value).not.toHaveProperty('preparation');
+    expect(firstPage.value).toMatchObject({
+      preparation: { kind: 'building_candidate_index', scanned: 3 },
+    });
     expect(firstPage.value.candidates.length).toBeLessThanOrEqual(3);
 
     await createConversation(brainDir, 'conversation-added-after-page-one', [
@@ -72,6 +85,172 @@ describe('Antigravity external-session pure leaf', () => {
       code: 'source_invalid',
       retryable: true,
     });
+  });
+
+  it('hands a newer candidate discovered in a later filesystem chunk to canonical index preparation', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-traversal-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const firstPath = await createConversation(brainDir, 'conversation-traversal-first', [
+      '{"id":"first","type":"USER_INPUT","text":"first"}',
+    ]);
+    const laterPath = await createConversation(brainDir, 'conversation-traversal-later', [
+      '{"id":"later","type":"USER_INPUT","text":"later"}',
+    ]);
+    const directory = await opendir(brainDir);
+    const traversal = [] as string[];
+    for await (const entry of directory) {
+      if (entry.isDirectory()) traversal.push(entry.name);
+    }
+    const newestId = traversal.at(-1) === 'conversation-traversal-first'
+      ? 'conversation-traversal-first'
+      : 'conversation-traversal-later';
+    const newestPath = newestId === 'conversation-traversal-first' ? firstPath : laterPath;
+    const newestTimestamp = new Date('2026-07-22T10:00:00.000Z');
+    const olderTimestamp = new Date('2026-07-20T10:00:00.000Z');
+    await Promise.all([
+      utimes(firstPath, olderTimestamp, firstPath === newestPath ? newestTimestamp : olderTimestamp),
+      utimes(laterPath, olderTimestamp, laterPath === newestPath ? newestTimestamp : olderTimestamp),
+    ]);
+
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' as const };
+    const first = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      maxItems: 1,
+    });
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        candidates: [expect.any(Object)],
+        nextCursor: expect.any(String),
+        preparation: { kind: 'building_candidate_index', scanned: 1 },
+      },
+    });
+    if (!first.ok || !first.value.nextCursor) throw new Error('expected later traversal cursor');
+    expect(first.value.candidates[0]?.remoteSessionId).not.toBe(newestId);
+
+    const second = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      cursor: first.value.nextCursor,
+      maxItems: 1,
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      value: {
+        candidates: [expect.objectContaining({
+          remoteSessionId: newestId,
+          updatedAtMs: newestTimestamp.getTime(),
+        })],
+        preparation: { kind: 'building_candidate_index', scanned: 2 },
+      },
+    });
+  });
+
+  it('orders full searched pages globally when the newer match is in a later filesystem chunk', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-search-traversal-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const firstPath = await createConversation(brainDir, 'conversation-search-traversal-first', [
+      '{"id":"first","type":"USER_INPUT","text":"ordered search first traversal candidate"}',
+    ]);
+    const laterPath = await createConversation(brainDir, 'conversation-search-traversal-later', [
+      '{"id":"later","type":"USER_INPUT","text":"ordered search later traversal candidate"}',
+    ]);
+    const directory = await opendir(brainDir);
+    const traversal = [] as string[];
+    for await (const entry of directory) {
+      if (entry.isDirectory()) traversal.push(entry.name);
+    }
+    const newestId = traversal.at(-1) === 'conversation-search-traversal-first'
+      ? 'conversation-search-traversal-first'
+      : 'conversation-search-traversal-later';
+    const olderId = newestId === 'conversation-search-traversal-first'
+      ? 'conversation-search-traversal-later'
+      : 'conversation-search-traversal-first';
+    const newestPath = newestId === 'conversation-search-traversal-first' ? firstPath : laterPath;
+    const newestTimestamp = new Date('2026-07-22T10:00:00.000Z');
+    const olderTimestamp = new Date('2026-07-20T10:00:00.000Z');
+    await Promise.all([
+      utimes(firstPath, olderTimestamp, firstPath === newestPath ? newestTimestamp : olderTimestamp),
+      utimes(laterPath, olderTimestamp, laterPath === newestPath ? newestTimestamp : olderTimestamp),
+    ]);
+
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' as const };
+    const first = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      searchTerm: 'ordered search',
+      searchMode: 'full',
+      maxItems: 1,
+    });
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        candidates: [expect.objectContaining({
+          remoteSessionId: newestId,
+          updatedAtMs: newestTimestamp.getTime(),
+        })],
+        nextCursor: expect.any(String),
+      },
+    });
+    if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
+    expect(first.value).not.toHaveProperty('searchIncomplete');
+
+    const second = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      cursor: first.value.nextCursor,
+      searchTerm: 'ordered search',
+      searchMode: 'full',
+      maxItems: 1,
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      value: {
+        candidates: [expect.objectContaining({ remoteSessionId: olderId })],
+        nextCursor: null,
+      },
+    });
+    if (second.ok) expect(second.value).not.toHaveProperty('searchIncomplete');
+  });
+
+  it('marks a terminal full search complete instead of retaining its fast-preview state', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-terminal-full-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-terminal-full', [
+      '{"id":"terminal","type":"USER_INPUT","text":"complete full search result"}',
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const fast = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      searchTerm: 'complete full search',
+      searchMode: 'fast',
+      maxItems: 1,
+    });
+    expect(fast).toMatchObject({
+      ok: true,
+      value: { searchIncomplete: true },
+    });
+
+    const result = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      searchTerm: 'complete full search',
+      searchMode: 'full',
+      maxItems: 1,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        candidates: [expect.objectContaining({ remoteSessionId: 'conversation-terminal-full' })],
+        nextCursor: null,
+      },
+    });
+    if (result.ok) expect(result.value).not.toHaveProperty('searchIncomplete');
   });
 
   it('pages bounded candidates with source-qualified identities and detects replacement', async () => {
@@ -184,8 +363,8 @@ describe('Antigravity external-session pure leaf', () => {
       ok: true,
       value: {
         items: [
-          { messageRole: 'user', raw: { type: 'text', text: 'inspect' } },
-          { messageRole: 'agent', raw: { type: 'text', text: 'working' } },
+          { messageRole: 'user', raw: userRaw('inspect') },
+          { messageRole: 'agent', raw: agentMessageRaw('working') },
         ],
         tailCursor: expect.any(String),
       },
@@ -227,7 +406,7 @@ describe('Antigravity external-session pure leaf', () => {
       kind: 'advanced',
       items: [{
         messageRole: 'agent',
-        raw: { type: 'text', text: 'complete' },
+        raw: agentMessageRaw('complete'),
       }],
     });
     if (completed.kind !== 'advanced') throw new Error('completed append was not advanced');
@@ -243,7 +422,7 @@ describe('Antigravity external-session pure leaf', () => {
         outcome: 'advanced',
         items: [{
           messageRole: 'agent',
-          raw: { type: 'text', text: 'complete' },
+          raw: agentMessageRaw('complete'),
         }],
       },
     });
@@ -432,7 +611,7 @@ describe('Antigravity external-session pure leaf', () => {
     expect(firstPage).toMatchObject({
       ok: true,
       value: {
-        items: [{ raw: { type: 'text', text: 'original newest' } }],
+        items: [{ raw: agentMessageRaw('original newest') }],
         nextCursor: expect.any(String),
       },
     });
@@ -507,7 +686,92 @@ describe('Antigravity external-session pure leaf', () => {
     })).resolves.toMatchObject({
       ok: true,
       value: {
-        items: [{ raw: { type: 'text', text: 'middle' } }],
+        items: [{ raw: agentMessageRaw('middle') }],
+      },
+    });
+  });
+
+  it('correlates id-less tool results at transcript page and read-after boundaries', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-tool-boundary-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const transcriptPath = await createConversation(brainDir, 'conversation-tool-boundary', [
+      JSON.stringify({
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        tool_calls: [{ id: 'tool-call-before-page', name: 'list_dir', args: { path: '.' } }],
+      }),
+      JSON.stringify({ step_index: 2, type: 'LIST_DIRECTORY', content: ['README.md'] }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' as const };
+
+    const backward = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId: 'conversation-tool-boundary',
+      direction: 'older',
+      maxItems: 1,
+    });
+    expect(backward).toMatchObject({
+      ok: true,
+      value: {
+        items: [{
+          raw: {
+            content: {
+              data: { type: 'tool-result', callId: 'tool-call-before-page' },
+            },
+          },
+        }],
+      },
+    });
+
+    const tail = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId: 'conversation-tool-boundary',
+      direction: 'older',
+      maxItems: 10,
+    });
+    if (!tail.ok || !tail.value.tailCursor) throw new Error('tail cursor missing');
+
+    await appendFile(transcriptPath, [
+      JSON.stringify({
+        step_index: 3,
+        type: 'PLANNER_RESPONSE',
+        tool_calls: [{ id: 'tool-call-across-read-after', name: 'view_file', args: { path: 'README.md' } }],
+      }),
+      JSON.stringify({ step_index: 4, type: 'VIEW_FILE', content: '# README' }),
+      '',
+    ].join('\n'));
+
+    const planner = await contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId: 'conversation-tool-boundary',
+      cursor: tail.value.tailCursor,
+      maxItems: 1,
+    });
+    if (!planner.ok || planner.value.outcome !== 'advanced') {
+      throw new Error('planner continuation unexpectedly failed');
+    }
+
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId: 'conversation-tool-boundary',
+      cursor: planner.value.nextCursor,
+      maxItems: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [{
+          raw: {
+            content: {
+              data: { type: 'tool-result', callId: 'tool-call-across-read-after' },
+            },
+          },
+        }],
       },
     });
   });
@@ -550,7 +814,7 @@ describe('Antigravity external-session pure leaf', () => {
       ok: true,
       value: {
         outcome: 'advanced',
-        items: [{ raw: { type: 'text', text: 'first' } }],
+        items: [{ raw: agentMessageRaw('first') }],
         nextCursor: expect.any(String),
         boundary: expect.any(String),
       },
@@ -567,7 +831,7 @@ describe('Antigravity external-session pure leaf', () => {
       ok: true,
       value: {
         outcome: 'advanced',
-        items: [{ raw: { type: 'text', text: 'second' } }],
+        items: [{ raw: agentMessageRaw('second') }],
         boundary: expect.any(String),
       },
     });
@@ -611,7 +875,7 @@ describe('Antigravity external-session pure leaf', () => {
       ok: true,
       value: {
         outcome: 'advanced',
-        items: [{ raw: { type: 'text', text: 'visible' } }],
+        items: [{ raw: agentMessageRaw('visible') }],
         diagnostics: [{
           code: 'unsupported_record_skipped',
           count: 1,
@@ -670,6 +934,95 @@ describe('Antigravity external-session pure leaf', () => {
         }],
       },
     });
+  });
+
+  it('browses, links, and reloads with a strict declared source and durable revision linkData', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-link-identity-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-identity', [
+      JSON.stringify({ step_index: 1, type: 'USER_INPUT', content: '<USER_REQUEST>\ninspect\n</USER_REQUEST>' }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = { kind: 'antigravityCliPrint' };
+
+    const candidates = await contribution.listCandidates({
+      ...invocation(),
+      source,
+      maxItems: 5,
+    });
+    if (!candidates.ok) throw new Error('candidate browse unexpectedly failed');
+    const candidate = candidates.value.candidates[0];
+    if (!candidate?.linkData) throw new Error('candidate linkData unexpectedly missing');
+
+    const identity = await contribution.resolveLinkIdentity({
+      ...invocation(),
+      source,
+      remoteSessionId: candidate.remoteSessionId,
+      linkData: candidate.linkData,
+    });
+    if (!identity.ok) throw new Error('identity unexpectedly failed');
+    const canonicalBrainDir = await realpath(brainDir);
+    expect(identity.value).toEqual({
+      source: {
+        kind: 'antigravityCliPrint',
+        brainDir: canonicalBrainDir,
+        conversationId: 'conversation-identity',
+        sourceRevision: candidate.linkData.sourceRevision,
+      },
+      remoteSessionId: 'conversation-identity',
+      linkData: {
+        sourceRevision: candidate.linkData.sourceRevision,
+      },
+    });
+
+    const linked = await contribution.resolveLinkedIdentity({
+      ...invocation(),
+      source: identity.value.source,
+      remoteSessionId: identity.value.remoteSessionId,
+      linkData: identity.value.linkData,
+    });
+    if (!linked.ok) throw new Error('linked identity unexpectedly failed');
+    expect(linked.value).toEqual(identity.value);
+  });
+
+  it.each(['fast', 'full'] as const)('searches candidate titles in %s mode', async (searchMode) => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-candidate-title-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    await createConversation(brainDir, 'conversation-title', [
+      JSON.stringify({
+        step_index: 0,
+        type: 'USER_INPUT',
+        content: '<USER_REQUEST>\nAudit   the\nlink flow\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnoise\n</ADDITIONAL_METADATA>',
+      }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+
+    const page = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      maxItems: 5,
+      searchTerm: 'link flow',
+      searchMode,
+    });
+    if (!page.ok) throw new Error('candidate page unexpectedly failed');
+    expect(page.value.candidates).toEqual([
+      expect.objectContaining({
+        remoteSessionId: 'conversation-title',
+        title: 'Audit the link flow',
+      }),
+    ]);
+
+    const idPage = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      maxItems: 5,
+      searchTerm: 'conversation-title',
+      searchMode,
+    });
+    if (!idPage.ok) throw new Error('candidate id search unexpectedly failed');
+    expect(idPage.value.candidates).toEqual([
+      expect.objectContaining({ remoteSessionId: 'conversation-title' }),
+    ]);
   });
 
   it('honors complete serialized-result byte budgets without splitting a native record', async () => {

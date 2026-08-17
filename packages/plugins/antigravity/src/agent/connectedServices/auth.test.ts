@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import {
   ANTIGRAVITY_MATERIALIZED_HOME_CREDENTIAL_ENTRIES,
@@ -24,6 +24,7 @@ describe('Antigravity connected-service auth materialization', () => {
     });
 
     await expect(materializeAntigravityAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       rootDir: '/tmp/materialized-antigravity',
       gemini: record,
     })).resolves.toEqual({
@@ -64,6 +65,7 @@ describe('Antigravity connected-service auth materialization', () => {
     };
 
     await expect(materializeAntigravityAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       rootDir: '/tmp/materialized-antigravity',
       gemini: record,
     })).resolves.toEqual({
@@ -98,6 +100,7 @@ describe('Antigravity connected-service auth materialization', () => {
     });
 
     await expect(materializeAntigravityAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       rootDir: '/tmp/materialized-antigravity',
       gemini: record,
     })).resolves.toEqual({
@@ -113,6 +116,7 @@ describe('Antigravity connected-service auth materialization', () => {
 
   it('ignores malformed Gemini credential inputs through the shared credential parser', async () => {
     await expect(materializeAntigravityAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       rootDir: '/tmp/materialized-antigravity',
       gemini: {
         serviceId: 'gemini',
@@ -120,6 +124,42 @@ describe('Antigravity connected-service auth materialization', () => {
         kind: 'token',
       },
     })).resolves.toEqual({ env: {} });
+  });
+
+  it('keeps qualified-purpose pre-materialization secret-free while isolating inherited Google auth', async () => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1,
+      serviceId: 'gemini',
+      profileId: 'api-key',
+      kind: 'token',
+      token: {
+        token: 'must-not-enter-qualified-launch',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const materialized = await materializeAntigravityAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'qualified',
+      rootDir: '/tmp/materialized-antigravity',
+      gemini: record,
+    });
+
+    expect(materialized).toEqual({
+      env: {
+        HOME: '/tmp/materialized-antigravity/home',
+        GEMINI_CLI_HOME: '/tmp/materialized-antigravity/home',
+        GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false',
+        ANTIGRAVITY_AUTH_MODE: '',
+        GEMINI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        GOOGLE_GENAI_USE_VERTEXAI: '',
+        GOOGLE_CLOUD_PROJECT: '',
+        GOOGLE_CLOUD_LOCATION: '',
+        GOOGLE_APPLICATION_CREDENTIALS: '',
+      },
+    });
+    expect(JSON.stringify(materialized)).not.toContain('must-not-enter-qualified-launch');
   });
 
   it('declares projection helpers without broadening Gemini setup ownership', () => {

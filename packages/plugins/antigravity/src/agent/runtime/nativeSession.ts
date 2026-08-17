@@ -4,8 +4,11 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginUiQuestion, PluginUiQuestionAnswer } from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  InteractionTransientAuthorQuestionV1,
+  InteractionTransientQuestionAnswerV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import { openAntigravityNativeLocalharnessClient } from '../localharness/client/nativeClient.js';
 import {
@@ -17,7 +20,6 @@ import type { AntigravityLocalharnessPermissionRequester } from '../localharness
 import type { ConcreteAntigravityRuntimeMode } from '../lifecycle/runtimeMode.js';
 import { createAntigravityNativeCliPrintExecRun } from '../cliPrint/nativeExec.js';
 import { createDefaultCliPrintSessionRuntime } from '../cliPrint/nativeSessionRuntime.js';
-import { buildAntigravityRuntimeDescriptorV1 } from './runtimeDescriptor.js';
 
 function composeLaunchEnvironment(request: AgentSessionOpenRequest): Readonly<Record<string, string>> {
   const environment = { ...(request.launchEnvironment?.values ?? {}) };
@@ -34,23 +36,25 @@ function readBoundSessionMcpService(context: AgentRuntimeContext): AgentSessionM
 function createPermissionRequester(
   context: AgentRuntimeContext,
 ): AntigravityLocalharnessPermissionRequester {
-  return async (request) => ({
-    decision: await context.ui.confirm(
-      `Allow Antigravity to use ${request.toolName}?`,
-      { title: 'Antigravity permission' },
-    ) ? 'approved' : 'denied',
-  });
+  return async (request) => {
+    const result = await context.services.interactions.confirm({
+      kind: 'confirmation',
+      title: 'Antigravity permission',
+      message: `Allow Antigravity to use ${request.toolName}?`,
+    });
+    return { decision: result.status === 'approved' ? 'approved' : 'denied' };
+  };
 }
 
 function mapQuestionAnswer(
-  answer: PluginUiQuestionAnswer | undefined,
+  answer: InteractionTransientQuestionAnswerV1 | undefined,
   choices: readonly string[],
 ): unknown {
   if (!answer) return { textAnswer: { answer: '' } };
-  if (answer.type === 'text') return { textAnswer: { answer: answer.value } };
-  const selected = answer.type === 'single' ? [answer.answer] : answer.answers;
+  if (answer.kind === 'text') return { textAnswer: { answer: answer.value } };
+  const selected = answer.kind === 'singleChoice' ? [answer.answer] : answer.answers;
   const selectedChoiceIndices = selected.flatMap((item) => {
-    if (item.type !== 'choice') return [];
+    if (item.kind !== 'choice') return [];
     const index = choices.findIndex((_choice, choiceIndex) => String(choiceIndex) === item.choiceId);
     return index >= 0 ? [index] : [];
   });
@@ -59,7 +63,7 @@ function mapQuestionAnswer(
 
 function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnessElicitation {
   return async (request) => {
-    const questions = request.questions.map((question, index): PluginUiQuestion => {
+    const questions = request.questions.map((question, index): InteractionTransientAuthorQuestionV1 => {
       const id = question.id?.trim() || `question-${index}`;
       const prompt = question.prompt?.trim() || question.label?.trim() || id;
       const choices = 'choices' in question && Array.isArray(question.choices)
@@ -69,7 +73,7 @@ function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnes
         ? {
             id,
             prompt,
-            type: 'single',
+            type: 'singleChoice',
             choices: choices.map((label, choiceIndex) => ({ id: String(choiceIndex), label })) as [
               { id: string; label: string },
               ...Array<{ id: string; label: string }>,
@@ -78,11 +82,12 @@ function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnes
         : { id, prompt, type: 'text' };
     });
     if (questions.length === 0) return { status: 'cancelled' };
-    const result = await context.ui.askQuestions(
-      questions as [PluginUiQuestion, ...PluginUiQuestion[]],
-      { title: 'Antigravity question' },
-    );
-    if (result.status !== 'answered') return { status: result.status };
+    const result = await context.services.interactions.askQuestions({
+      kind: 'questions',
+      title: 'Antigravity question',
+      questions: questions as [InteractionTransientAuthorQuestionV1, ...InteractionTransientAuthorQuestionV1[]],
+    });
+    if (result.status !== 'answered') return { status: 'cancelled' };
     return {
       status: 'answered',
       answers: request.questions.map((question, index) => {
@@ -100,6 +105,8 @@ export function createAntigravityNativeSessionRuntime(input: Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
   context: AgentRuntimeContext;
+  connectedAccountEnv?: Readonly<Record<string, string>>;
+  materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
 }>): AgentSessionRuntime {
   const env = composeLaunchEnvironment(input.request);
   if (input.mode === 'cliPrint') {
@@ -113,20 +120,13 @@ export function createAntigravityNativeSessionRuntime(input: Readonly<{
         sessionId: input.request.sessionId,
         cwd: input.request.cwd,
         env,
+        ...(input.connectedAccountEnv
+          ? { connectedAccountEnv: input.connectedAccountEnv }
+          : {}),
         ...(input.request.configuration?.model.value
           ? { modelId: input.request.configuration.model.value }
           : {}),
-        ...(providerSessionId
-          ? {
-              metadata: {
-                runtimeDescriptorV1: buildAntigravityRuntimeDescriptorV1({
-                  runtimeMode: 'cliPrint',
-                  providerSessionId,
-                  agyConversationId: providerSessionId,
-                }),
-              },
-            }
-          : {}),
+        ...(providerSessionId ? { providerSessionId } : {}),
       },
       runAgentCli: createAntigravityNativeCliPrintExecRun(input.context.services.exec),
     });
@@ -142,7 +142,12 @@ export function createAntigravityNativeSessionRuntime(input: Readonly<{
     }),
     requestPermission: createPermissionRequester(input.context),
     elicit: createElicitation(input.context),
-    resolveCredentials: createAntigravityLocalharnessCredentialResolver({ env }),
+    resolveCredentials: createAntigravityLocalharnessCredentialResolver({
+      env,
+      ...(input.materializeAuthEnv
+        ? { materializeAuthEnv: input.materializeAuthEnv }
+        : {}),
+    }),
     resolveMcpServers: () => {
       const mcp = readBoundSessionMcpService(input.context);
       return mcp

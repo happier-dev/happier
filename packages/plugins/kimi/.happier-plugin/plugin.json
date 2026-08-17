@@ -1,0 +1,294 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "login"
+                ],
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "parser": "unknown",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "Kimi CLI",
+          "executable": {
+            "binaryName": "kimi",
+            "knownUserBinDirSuffixes": [
+              ".local/bin"
+            ],
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://code.kimi.com",
+            "guideUrl": "https://kimi.moonshot.cn/docs/cli",
+            "managed": null,
+            "manual": {
+              "kind": "vendor_recipe",
+              "recipes": {
+                "darwin": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://code.kimi.com/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "linux": [
+                  {
+                    "args": [
+                      "-lc",
+                      "curl -fsSL https://code.kimi.com/install.sh | bash"
+                    ],
+                    "cmd": "bash"
+                  }
+                ],
+                "win32": [
+                  {
+                    "args": [
+                      "-NoProfile",
+                      "-ExecutionPolicy",
+                      "Bypass",
+                      "-Command",
+                      "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression"
+                    ],
+                    "cmd": "powershell"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "id": "kimi",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "Kimi"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "kimi"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      }
+    ],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "auto",
+            "description": {
+              "fallback": "Choose how Happier starts Kimi ACP's Python stdio loop.",
+              "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.subtitle"
+            },
+            "id": "kimiAcpPythonSelector",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Use Kimi's default Python selector.",
+                    "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.options.auto.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Automatic",
+                    "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.options.auto.title"
+                  },
+                  "value": "auto"
+                },
+                {
+                  "description": {
+                    "fallback": "Use poll() instead of epoll() for Kimi ACP stdio.",
+                    "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.options.poll.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Compatibility mode",
+                    "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.options.poll.title"
+                  },
+                  "value": "poll"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Kimi ACP Python stdio selector compatibility mode",
+              "enum": [
+                "auto",
+                "poll"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Python stdio selector",
+              "key": "settingsAgents.plugins.kimi.fields.kimiAcpPythonSelector.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "green"
+            },
+            "ionName": "leaf-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "Use compatibility mode only for Linux/container environments where Kimi ACP startup hangs.",
+                "key": "settingsAgents.plugins.kimi.sections.compatibility.footer"
+              },
+              "fields": [
+                "kimiAcpPythonSelector"
+              ],
+              "id": "kimi-compatibility",
+              "title": {
+                "fallback": "Compatibility",
+                "key": "settingsAgents.plugins.kimi.sections.compatibility.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "kimi",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Kimi",
+          "key": "settingsAgents.plugins.kimi.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "kimi",
+          "kimi-cli"
+        ],
+        "id": "kimi-cli",
+        "title": "Kimi CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Kimi",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "kimi-process",
+        "reason": "Run the declared Kimi CLI executable.",
+        "scope": {
+          "envKeys": [
+            "HAPPIER_KIMI_ACP_SELECTOR",
+            "PYTHONPATH"
+          ],
+          "executables": [
+            {
+              "id": "kimi-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.kimi",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

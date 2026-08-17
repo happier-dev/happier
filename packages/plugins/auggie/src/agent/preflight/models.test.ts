@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import {
   AUGGIE_PREFLIGHT_SESSION_CONTROLS,
@@ -66,7 +66,7 @@ describe('Auggie preflight model probing', () => {
       spawn: async () => { throw new Error('spawn should not be used'); },
       clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
       agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies PluginExecService;
+    } satisfies ExecService;
 
     await expect(AUGGIE_PREFLIGHT_SESSION_CONTROLS.probeModelsRaw?.({
       exec,

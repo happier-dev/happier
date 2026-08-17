@@ -2,6 +2,7 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  opendir,
   realpath,
   rename,
   rm,
@@ -11,11 +12,21 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { TranscriptRawRecordV1Schema } from '@happier-dev/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createOhMyPiExternalSessionsContribution } from './contribution.js';
+import { listOhMyPiSessionRoots } from './files.js';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    opendir: vi.fn(actual.opendir),
+  };
+});
 
 const roots = new Set<string>();
 
@@ -59,6 +70,145 @@ afterEach(async () => {
 });
 
 describe('Oh My Pi public External Sessions contribution', () => {
+  it('lists only the explicitly configured source when ambient Pi storage points elsewhere', async () => {
+    const configured = await createAgentDir();
+    const ambient = await createAgentDir();
+    const header = (id: string) => [{
+      type: 'session', id, timestamp: '2026-08-16T10:00:00.000Z', cwd: '/repo', title: id,
+    }];
+    await writeTranscript({
+      agentDir: configured, remoteSessionId: 'configured-omp', records: header('configured-omp'),
+    });
+    await writeTranscript({
+      agentDir: ambient, remoteSessionId: 'ambient-omp', records: header('ambient-omp'),
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: ambient },
+    });
+
+    const listed = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir', agentDir: configured },
+      maxItems: 10,
+    });
+
+    expect(listed).toMatchObject({
+      ok: true,
+      value: { candidates: [expect.objectContaining({ remoteSessionId: 'configured-omp' })] },
+    });
+    expect(JSON.stringify(listed)).not.toContain('ambient-omp');
+  });
+
+  it('projects resolved sources onto the bounded Agent contribution DTO', async () => {
+    const agentDir = await createAgentDir();
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    expect(await contribution.resolveSource({
+      ...invocation(),
+      source: {
+        kind: 'ohMyPiAgentDir',
+        agentDir,
+        resolvedRoot: '/private/host-owned-root',
+      },
+    })).toEqual({
+      ok: true,
+      value: {
+        source: {
+          kind: 'ohMyPiAgentDir',
+          agentDir: expect.any(String),
+        },
+      },
+    });
+  });
+
+  it('keeps transcript item identities stable and file-distinct without publishing session paths', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'shared-session';
+    const records = [
+      {
+        type: 'session',
+        id: remoteSessionId,
+        timestamp: '2026-07-23T10:00:00.000Z',
+        cwd: '/repo',
+      },
+      {
+        type: 'message',
+        id: 'shared-entry',
+        parentId: null,
+        timestamp: '2026-07-23T10:00:01.000Z',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { target: 'README.md' } },
+          ],
+        },
+      },
+    ];
+    const transcriptPaths = await Promise.all([
+      writeTranscript({ agentDir, rootName: '-repo-a', remoteSessionId, records }),
+      writeTranscript({ agentDir, rootName: '-repo-b', remoteSessionId, records }),
+    ]);
+    const canonicalTranscriptPaths = await Promise.all(transcriptPaths.map((path) => realpath(path)));
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    const source = await contribution.resolveSource({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir' },
+    });
+    expect(source.ok).toBe(true);
+    if (!source.ok) return;
+
+    const readPage = async (sessionFilePath: string) => {
+      const linked = await contribution.resolveLinkIdentity({
+        ...invocation(),
+        source: source.value.source,
+        remoteSessionId,
+        linkData: { sessionFilePath },
+      });
+      expect(linked.ok).toBe(true);
+      if (!linked.ok) return null;
+      const page = await contribution.pageTranscript({
+        ...invocation(),
+        source: linked.value.source,
+        remoteSessionId,
+        direction: 'older',
+        maxItems: 10,
+      });
+      expect(page.ok).toBe(true);
+      return page.ok ? page.value : null;
+    };
+
+    const firstPage = await readPage(canonicalTranscriptPaths[0]!);
+    const repeatedFirstPage = await readPage(canonicalTranscriptPaths[0]!);
+    const secondPage = await readPage(canonicalTranscriptPaths[1]!);
+    expect(firstPage).not.toBeNull();
+    expect(repeatedFirstPage).not.toBeNull();
+    expect(secondPage).not.toBeNull();
+    if (!firstPage || !repeatedFirstPage || !secondPage) return;
+
+    const firstItem = firstPage.items[0];
+    const repeatedFirstItem = repeatedFirstPage.items[0];
+    const secondItem = secondPage.items[0];
+    expect(firstItem?.id).toBe(repeatedFirstItem?.id);
+    expect(firstItem?.id).not.toBe(secondItem?.id);
+    expect(firstItem?.id).toMatch(/^omp:[A-Za-z0-9_-]+:shared-entry:toolCall:0$/u);
+    expect(firstItem?.localId).toBe(firstItem?.id);
+    expect(firstItem?.raw).toMatchObject({
+      content: { data: { id: firstItem?.id } },
+    });
+    expect(firstItem?.id.length).toBeLessThanOrEqual(2_000);
+
+    for (const page of [firstPage, repeatedFirstPage, secondPage]) {
+      const serialized = JSON.stringify(page);
+      for (const canonicalPath of canonicalTranscriptPaths) {
+        expect(serialized).not.toContain(canonicalPath);
+      }
+    }
+  });
+
   it('exposes exactly six bounded methods and preserves tree/compaction item identity', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'tree-session';
@@ -155,14 +305,18 @@ describe('Oh My Pi public External Sessions contribution', () => {
       ok: true,
       value: {
         remoteSessionId,
-        linkData: { sessionFilePath: canonicalTranscriptPath },
+        source: { kind: 'ohMyPiAgentDir', sessionFilePath: canonicalTranscriptPath },
+        // The resolved session file travels only on the source; the host spreads
+        // this record into top-level owner metadata, which rejects unknown keys.
+        linkData: {},
       },
     });
     if (!linked.ok) return;
+    expect(linked.value.linkData).toEqual({});
 
     await expect(contribution.resolveLinkedIdentity({
       ...invocation(),
-      source: source.value.source,
+      source: linked.value.source,
       remoteSessionId,
       linkData: linked.value.linkData,
     })).resolves.toEqual(linked);
@@ -179,8 +333,37 @@ describe('Oh My Pi public External Sessions contribution', () => {
       value: {
         items: [
           expect.objectContaining({ id: expect.stringContaining(':user-root') }),
-          expect.objectContaining({ id: expect.stringContaining(':branch-summary:branch_summary') }),
-          expect.objectContaining({ id: expect.stringContaining(':compact-1:compaction') }),
+          expect.objectContaining({
+            id: expect.stringContaining(':branch-summary:branch_summary'),
+            raw: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'ohMyPi',
+                data: {
+                  type: 'message',
+                  message: 'selected branch',
+                },
+              },
+            },
+          }),
+          expect.objectContaining({
+            id: expect.stringContaining(':compact-1:compaction'),
+            raw: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'ohMyPi',
+                data: expect.objectContaining({
+                  type: 'context-compaction',
+                  phase: 'completed',
+                  trigger: 'unknown',
+                  source: 'runtime',
+                  summary: 'compacted context',
+                }),
+              },
+            },
+          }),
         ],
         tailCursor: expect.any(String),
       },
@@ -212,12 +395,162 @@ describe('Oh My Pi public External Sessions contribution', () => {
     expect(JSON.stringify(after)).toContain('continued');
   });
 
+  it('traverses session renames while paging and following the active parent chain', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'renamed-tree-session';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
+        {
+          type: 'message',
+          id: 'root',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'root' },
+        },
+        {
+          type: 'message',
+          id: 'before-rename',
+          parentId: 'root',
+          timestamp: '2026-07-23T10:00:02.000Z',
+          message: { role: 'assistant', content: 'before rename' },
+        },
+        {
+          type: 'session_info',
+          id: 'rename',
+          parentId: 'before-rename',
+          timestamp: '2026-07-23T10:00:03.000Z',
+          name: 'Renamed session',
+        },
+        {
+          type: 'message',
+          id: 'leaf',
+          parentId: 'rename',
+          timestamp: '2026-07-23T10:00:04.000Z',
+          message: { role: 'assistant', content: 'after rename' },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    const source = { kind: 'ohMyPiAgentDir' as const, agentDir };
+
+    const newest = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 1,
+    });
+    expect(newest).toMatchObject({
+      ok: true,
+      value: {
+        items: [expect.objectContaining({ id: expect.stringContaining(':leaf:text:0') })],
+        nextCursor: expect.any(String),
+        tailCursor: expect.any(String),
+        hasMore: true,
+        truncated: false,
+      },
+    });
+    if (!newest.ok || !newest.value.nextCursor || !newest.value.tailCursor) return;
+
+    const middle = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      cursor: newest.value.nextCursor,
+      maxItems: 1,
+    });
+    expect(middle).toMatchObject({
+      ok: true,
+      value: {
+        items: [expect.objectContaining({ id: expect.stringContaining(':before-rename:text:0') })],
+        nextCursor: expect.any(String),
+        hasMore: true,
+        truncated: false,
+      },
+    });
+    if (!middle.ok || !middle.value.nextCursor) return;
+
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      cursor: middle.value.nextCursor,
+      maxItems: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        items: [expect.objectContaining({ id: expect.stringMatching(/:root$/u) })],
+        nextCursor: null,
+        hasMore: false,
+        truncated: false,
+      },
+    });
+
+    const renamePosition = (await stat(transcriptPath)).size;
+    await appendFile(transcriptPath, [
+      jsonlLine({
+        type: 'session_info',
+        id: 'follow-rename',
+        parentId: 'leaf',
+        timestamp: '2026-07-23T10:00:05.000Z',
+        name: 'Renamed again',
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'continued',
+        parentId: 'follow-rename',
+        timestamp: '2026-07-23T10:00:06.000Z',
+        message: { role: 'assistant', content: 'continued after rename' },
+      }),
+    ].join(''), 'utf8');
+
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: newest.value.tailCursor,
+      maxItems: 10,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [expect.objectContaining({ id: expect.stringContaining(':continued:text:0') })],
+        diagnostics: [{
+          code: 'non_transcript_record_skipped',
+          count: 1,
+          positions: [renamePosition],
+        }],
+      },
+    });
+  });
+
   it('keeps duplicate native ids qualified by the candidate file identity', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'duplicate-id';
+    await Promise.all([
+      mkdir(join(agentDir, 'sessions', '-root-a'), { recursive: true }),
+      mkdir(join(agentDir, 'sessions', '-root-z'), { recursive: true }),
+    ]);
+    const [legacyFirstRoot, secondRoot] = await listOhMyPiSessionRoots({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    expect(legacyFirstRoot).toEqual(expect.any(String));
+    expect(secondRoot).toEqual(expect.any(String));
+    if (!legacyFirstRoot || !secondRoot) return;
+
+    // The legacy unqualified resolver stops at its first root. Put the older
+    // duplicate there so this test distinguishes it from shared precedence.
     const olderPath = await writeTranscript({
       agentDir,
-      rootName: '-older',
+      rootName: basename(legacyFirstRoot),
       remoteSessionId,
       records: [
         { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
@@ -232,7 +565,7 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
     const newerPath = await writeTranscript({
       agentDir,
-      rootName: '-newer',
+      rootName: basename(secondRoot),
       remoteSessionId,
       records: [
         { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T11:00:00.000Z' },
@@ -270,9 +603,122 @@ describe('Oh My Pi public External Sessions contribution', () => {
         linkData: candidate.linkData,
       })).resolves.toMatchObject({
         ok: true,
-        value: { linkData: candidate.linkData },
+        value: {
+          source: {
+            kind: 'ohMyPiAgentDir',
+            sessionFilePath: candidate.linkData?.sessionFilePath,
+          },
+          linkData: {},
+        },
       });
     }
+
+    await expect(contribution.resolveLinkIdentity({
+      ...invocation(),
+      source,
+      remoteSessionId,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        source: {
+          kind: 'ohMyPiAgentDir',
+          sessionFilePath: canonicalNewerPath,
+        },
+      },
+    });
+  });
+
+  it('recovers public-ref precedence without replaying a one-entry candidate page per unrelated file', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'public-ref-bounded-winner';
+    const noiseRecords = (id: string) => [{
+      type: 'session',
+      id,
+      timestamp: '2026-07-23T10:00:00.000Z',
+    }];
+    await Promise.all(Array.from({ length: 100 }, async (_, index) => {
+      const remoteNoiseId = `public-ref-noise-${String(index).padStart(3, '0')}`;
+      await writeTranscript({
+        agentDir,
+        rootName: '-noise',
+        remoteSessionId: remoteNoiseId,
+        records: noiseRecords(remoteNoiseId),
+      });
+    }));
+    await writeTranscript({
+      agentDir,
+      rootName: '-older',
+      remoteSessionId,
+      records: [{
+        type: 'session',
+        id: remoteSessionId,
+        timestamp: '2026-07-23T10:00:00.000Z',
+      }],
+    });
+    const newerPath = await writeTranscript({
+      agentDir,
+      rootName: '-newer',
+      remoteSessionId,
+      records: [{
+        type: 'session',
+        id: remoteSessionId,
+        timestamp: '2026-07-23T11:00:00.000Z',
+      }],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    vi.mocked(opendir).mockClear();
+    await expect(contribution.resolveLinkIdentity({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        source: {
+          kind: 'ohMyPiAgentDir',
+          sessionFilePath: await realpath(newerPath),
+        },
+      },
+    });
+    expect(vi.mocked(opendir).mock.calls.length).toBeLessThanOrEqual(12);
+  });
+
+  it('does not fall back to a filename-only match when no candidate owns the requested id', async () => {
+    const agentDir = await createAgentDir();
+    const requestedSessionId = 'requested-session';
+    await writeTranscript({
+      agentDir,
+      remoteSessionId: requestedSessionId,
+      records: [
+        {
+          type: 'session',
+          id: 'different-session',
+          timestamp: '2026-07-23T10:00:00.000Z',
+        },
+        {
+          type: 'message',
+          id: 'different-user',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'different source identity' },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    await expect(contribution.resolveLinkIdentity({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId: requestedSessionId,
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'candidate_not_found',
+    });
   });
 
   it('refuses a stale tail cursor after atomic replacement or a branch switch', async () => {
@@ -1002,5 +1448,121 @@ describe('Oh My Pi public External Sessions contribution', () => {
     expect(firstCandidateCount).toBeLessThan(remoteSessionIds.length);
     expect(seen).toHaveLength(remoteSessionIds.length);
     expect(new Set(seen)).toEqual(new Set(remoteSessionIds));
+  });
+
+  it('publishes every transcript row as a canonical transcript raw record', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'canonical-envelope';
+    await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z', cwd: '/repo' },
+        {
+          type: 'message',
+          id: 'user-string',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'plain string prompt' },
+        },
+        {
+          type: 'message',
+          id: 'user-blocks',
+          parentId: 'user-string',
+          timestamp: '2026-07-23T10:00:02.000Z',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'first part' }, { type: 'text', text: ' and second' }],
+          },
+        },
+        {
+          type: 'message',
+          id: 'assistant-string',
+          parentId: 'user-blocks',
+          timestamp: '2026-07-23T10:00:03.000Z',
+          message: {
+            role: 'assistant',
+            content: 'plain assistant answer',
+            usage: { input_tokens: 12, output_tokens: 34 },
+          },
+        },
+        {
+          type: 'message',
+          id: 'assistant-blocks',
+          parentId: 'assistant-string',
+          timestamp: '2026-07-23T10:00:04.000Z',
+          message: {
+            role: 'assistant',
+            usage: { input_tokens: 5, output_tokens: 7 },
+            content: [
+              { type: 'thinking', thinking: 'weighing options' },
+              { type: 'text', text: 'here is the plan' },
+              { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: '/repo/a.ts' } },
+              { type: 'tool_use', id: 'call-2', name: 'bash', input: { command: 'ls' } },
+              { type: 'tool_result', tool_use_id: 'call-2', content: 'a.ts', is_error: false },
+            ],
+          },
+        },
+        {
+          type: 'message',
+          id: 'tool-result',
+          parentId: 'assistant-blocks',
+          timestamp: '2026-07-23T10:00:05.000Z',
+          message: {
+            role: 'toolResult',
+            toolCallId: 'call-1',
+            content: [{ type: 'text', text: 'file body' }],
+            isError: false,
+          },
+        },
+        {
+          type: 'branch_summary',
+          id: 'branch-summary',
+          parentId: 'tool-result',
+          timestamp: '2026-07-23T10:00:06.000Z',
+          summary: 'summarized the abandoned branch',
+        },
+        {
+          type: 'compaction',
+          id: 'compaction',
+          parentId: 'branch-summary',
+          timestamp: '2026-07-23T10:00:07.000Z',
+          summary: 'compacted the earlier turns',
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    const page = await contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir' as const, agentDir },
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 50,
+    });
+    expect(page.ok).toBe(true);
+    if (!page.ok) return;
+
+    const failures = page.value.items.flatMap((item) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(item.raw);
+      return parsed.success ? [] : [{ id: item.id, raw: item.raw, issues: parsed.error.issues }];
+    });
+    expect(failures).toEqual([]);
+
+    const raws = page.value.items.map((item) => item.raw);
+    expect(raws).toEqual(expect.arrayContaining([
+      { role: 'user', content: { type: 'text', text: 'plain string prompt' } },
+      { role: 'user', content: { type: 'text', text: 'first part and second' } },
+      {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'ohMyPi',
+          data: { type: 'thinking', text: 'weighing options' },
+        },
+      },
+    ]));
   });
 });

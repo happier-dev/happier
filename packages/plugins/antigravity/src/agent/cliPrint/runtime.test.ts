@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createAntigravityCliPrintSessionRuntime } from './runtime.js';
 import { AntigravityCliPrintOneShotError } from './oneShot.js';
@@ -44,7 +44,7 @@ describe('Antigravity cliPrint native session runtime', () => {
       kind: 'provider-session-id',
       providerSessionId: 'conv-1',
     }));
-    for (const event of events) expect(AgentSessionRuntimeEventV1Schema.safeParse(event).success).toBe(true);
+    for (const event of events) expect(AgentSessionRuntimeEventSchema.safeParse(event).success).toBe(true);
   });
 
   it('maps transcript evidence and a provider error into native events', async () => {

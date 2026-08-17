@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   createOhMyPiExternalSessionObservationContribution,
@@ -34,7 +34,9 @@ function linkedSource(params: Readonly<{
       sessionFilePath,
     },
     remoteSessionId: params.remoteSessionId,
-    linkData: { sessionFilePath },
+    // Mirrors the real resolved identity: the session file travels on the source
+    // only, because the host spreads link data into strict owner metadata.
+    linkData: {},
   };
 }
 
@@ -377,7 +379,7 @@ describe('Oh My Pi External Session observation', () => {
         linkKey: first.linkKey,
         linkedSource: {
           ...firstSource,
-          linkData: { sessionFilePath: '/tmp/omp/other.jsonl' },
+          source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' },
         },
       }],
     })).rejects.toThrow(/requires one resolved sessionFilePath/u);

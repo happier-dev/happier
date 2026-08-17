@@ -1,45 +1,34 @@
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import {
+  AgentRuntimeJsonValueSchema,
+  type AgentSessionRuntimeEvent,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { AntigravityStep } from './types.js';
 
+type NativeSessionEventInput = AgentSessionRuntimeEvent extends infer Event
+  ? Event extends AgentSessionRuntimeEvent
+    ? Omit<Event, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never
+  : never;
+
 function createTranscriptErrorEvent(params: Readonly<{
-  sessionId: string;
   turnId: string;
-  emittedAtMs: number;
   message: string;
-}>): RuntimeEventV1 {
+}>): NativeSessionEventInput {
   return {
     kind: 'turn-failed',
-    sessionId: params.sessionId,
-    emittedAtMs: params.emittedAtMs,
     turnId: params.turnId,
-    issue: {
-      v: 1,
-      scope: 'primary_session',
-      status: 'failed',
+    diagnostic: {
       code: 'antigravity_cliprint_transcript_error',
-      source: 'agent_status_error',
-      occurredAt: params.emittedAtMs,
-      sanitizedPreview: params.message,
+      severity: 'error',
+      message: params.message,
     },
   };
 }
 
-function createProviderProgressEvent(params: Readonly<{
-  sessionId: string;
-  turnId: string;
-  emittedAtMs: number;
-  detail: Readonly<Record<string, unknown>>;
-}>): RuntimeEventV1 {
-  return {
-    kind: 'turn-progress',
-    sessionId: params.sessionId,
-    turnId: params.turnId,
-    emittedAtMs: params.emittedAtMs,
-    agentId: 'antigravity',
-    source: 'cliprint_transcript',
-    detail: params.detail,
-  };
+function toJsonValue(value: unknown) {
+  const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : { unavailable: true };
 }
 
 export function hasAntigravityStepOutputEvidence(steps: readonly AntigravityStep[]): boolean {
@@ -57,8 +46,8 @@ export function mapAntigravityStepsToRuntimeEvents(params: Readonly<{
   turnId: string;
   emittedAtMs: number;
   steps: readonly AntigravityStep[];
-}>): RuntimeEventV1[] {
-  const events: RuntimeEventV1[] = [];
+}>): NativeSessionEventInput[] {
+  const events: NativeSessionEventInput[] = [];
   let syntheticId = 0;
   const nextId = (prefix: string) => `${params.turnId}:${prefix}-${syntheticId += 1}`;
   for (const step of params.steps) {
@@ -67,61 +56,32 @@ export function mapAntigravityStepsToRuntimeEvents(params: Readonly<{
       continue;
     } else if (step.kind === 'assistant_message') {
       events.push({
-        kind: 'transcript-agent-message-committed',
-        sessionId: params.sessionId,
-        emittedAtMs: params.emittedAtMs,
-        agentId: 'antigravity',
-        localId: step.id ?? nextId('assistant'),
-        body: { type: 'message', message: step.text },
+        kind: 'transcript-message-committed',
+        messageId: step.id ?? nextId('assistant'),
+        role: 'assistant',
+        text: step.text,
+        turnId: params.turnId,
       });
     } else if (step.kind === 'tool_call') {
       events.push({
         kind: 'tool-call',
-        sessionId: params.sessionId,
-        emittedAtMs: params.emittedAtMs,
         turnId: params.turnId,
         toolCallId: step.id ?? nextId('tool'),
         toolName: step.toolName,
-        toolInput: step.input,
+        input: toJsonValue(step.input),
       });
     } else if (step.kind === 'tool_result') {
       events.push({
         kind: 'tool-result',
-        sessionId: params.sessionId,
-        emittedAtMs: params.emittedAtMs,
         turnId: params.turnId,
         toolCallId: step.toolCallId,
-        output: step.output,
+        output: toJsonValue(step.output),
         ...(step.isError !== undefined ? { isError: step.isError } : {}),
       });
     } else if (step.kind === 'error') {
       events.push(createTranscriptErrorEvent({
-        sessionId: params.sessionId,
         turnId: params.turnId,
-        emittedAtMs: params.emittedAtMs,
         message: step.message,
-      }));
-    } else if (step.kind === 'checkpoint') {
-      events.push(createProviderProgressEvent({
-        sessionId: params.sessionId,
-        turnId: params.turnId,
-        emittedAtMs: params.emittedAtMs,
-        detail: {
-          type: 'checkpoint',
-          ...(step.checkpointId ? { checkpointId: step.checkpointId } : {}),
-          ...(step.id ? { localId: step.id } : {}),
-        },
-      }));
-    } else if (step.kind === 'system_message') {
-      events.push(createProviderProgressEvent({
-        sessionId: params.sessionId,
-        turnId: params.turnId,
-        emittedAtMs: params.emittedAtMs,
-        detail: {
-          type: 'system_message',
-          text: step.text,
-          ...(step.id ? { localId: step.id } : {}),
-        },
       }));
     }
   }

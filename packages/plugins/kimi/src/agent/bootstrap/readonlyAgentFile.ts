@@ -1,4 +1,4 @@
-import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/experimental/runtime/tempTextFile';
+import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 
 export function buildKimiReadOnlyAgentFileContent(): string {
   return (

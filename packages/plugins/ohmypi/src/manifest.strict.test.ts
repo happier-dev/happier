@@ -8,7 +8,38 @@ describe('OhMyPi strict plugin manifest', () => {
     const ingestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(ingestion.ok, JSON.stringify(ingestion)).toBe(true);
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
-      expect.objectContaining({ id: 'ohmypi', runtime: { kind: 'custom' }, primary: 'sessions' }),
+      expect.objectContaining({
+        id: 'ohmypi',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        connectedAccounts: [
+          expect.objectContaining({
+            purpose: 'openai-codex',
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            materializationKinds: ['environment'],
+          }),
+          expect.objectContaining({
+            purpose: 'openai',
+            service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+            materializationKinds: ['environment'],
+          }),
+          expect.objectContaining({
+            purpose: 'claude-subscription',
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            materializationKinds: ['environment'],
+          }),
+          expect.objectContaining({
+            purpose: 'anthropic',
+            service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+            materializationKinds: ['environment'],
+          }),
+          expect.objectContaining({
+            purpose: 'gemini',
+            service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+            materializationKinds: ['environment'],
+          }),
+        ],
+      }),
     ]);
     expect(PLUGIN_MANIFEST.contributes.hooks).toEqual([
       expect.objectContaining({ id: 'resolve-prerequisites', on: 'agent.resolvePrerequisites' }),

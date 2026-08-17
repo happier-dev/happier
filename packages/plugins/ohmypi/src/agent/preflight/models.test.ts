@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  PluginExecService,
+  ExecService,
   PluginExecSpawnRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import {
   buildOhMyPiPreflightModelsFromListModelsOutput,
@@ -41,7 +41,7 @@ function createExecRunFixture(params: Readonly<{
     },
     clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
     agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-  } satisfies PluginExecService;
+  } satisfies ExecService;
   return { exec, runs };
 }
 

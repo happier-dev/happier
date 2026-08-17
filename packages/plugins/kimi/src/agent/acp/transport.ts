@@ -1,6 +1,6 @@
 import type {
   AgentAcpRuntimeDefinition,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const KIMI_ACP_TIMEOUTS = Object.freeze({
   initMs: 90_000,

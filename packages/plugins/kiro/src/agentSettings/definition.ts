@@ -1,11 +1,11 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 export const KIRO_AGENT_SETTINGS_CONTRIBUTION = {
   id: 'agent-settings',
   version: 1,
   title: { key: 'settingsAgents.plugins.kiro.title', fallback: 'Kiro' },
   target: { kind: 'agent', agent: 'kiro' },
-  scope: 'synced',
+  scope: 'account',
   fields: [],
   presentation: {
     icon: { ionName: 'flash-outline', color: { kind: 'theme', token: 'orange' } },

@@ -2,7 +2,13 @@ import { opendir, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { snapshotAntigravityTranscriptSource } from './transcript/jsonl.js';
+import type { JsonlScannerFileSystem } from '@happier-dev/plugin-sdk/sessions/file-stores';
+
+import {
+  readAntigravityTranscriptHeadRecord,
+  snapshotAntigravityTranscriptSource,
+} from './transcript/jsonl.js';
+import { mapAntigravityTranscriptRecordToSteps } from './transcript/mapper.js';
 
 export type AntigravityConversationDiscovery =
   | Readonly<{ status: 'found'; conversationId: string }>
@@ -44,7 +50,36 @@ export type AntigravityConversationCandidate = Readonly<{
   transcriptPath: string;
   sourceRevision: string;
   updatedAtMs: number;
+  title?: string;
 }>;
+
+const CONVERSATION_TITLE_MAX_CHARS = 120;
+
+/**
+ * The classified user step already carries the user-authored request body: the
+ * mapper owns stripping Antigravity's prompt scaffolding, so the title only has
+ * to normalize whitespace and bound the length.
+ */
+function formatAntigravityConversationTitle(text: string): string | null {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  return normalized.length <= CONVERSATION_TITLE_MAX_CHARS
+    ? normalized
+    : `${normalized.slice(0, CONVERSATION_TITLE_MAX_CHARS - 3).trimEnd()}...`;
+}
+
+async function readAntigravityConversationTitle(params: Readonly<{
+  transcriptPath: string;
+  fileSystem?: JsonlScannerFileSystem;
+}>): Promise<string | null> {
+  const record = await readAntigravityTranscriptHeadRecord({
+    path: params.transcriptPath,
+    ...(params.fileSystem ? { fileSystem: params.fileSystem } : {}),
+  });
+  if (!record) return null;
+  const [step] = mapAntigravityTranscriptRecordToSteps(record);
+  return step?.kind === 'user_message' ? formatAntigravityConversationTitle(step.text) : null;
+}
 
 export class AntigravityCandidateSourceChangedError extends Error {
   readonly name = 'AntigravityCandidateSourceChangedError';
@@ -70,18 +105,23 @@ async function resolveAntigravityCandidateSourceGeneration(brainDir: string): Pr
 export async function resolveAntigravityConversationCandidate(params: Readonly<{
   brainDir: string;
   conversationId: string;
+  fileSystem?: JsonlScannerFileSystem;
 }>): Promise<AntigravityConversationCandidate | null> {
   if (!isSafeAntigravityConversationId(params.conversationId)) return null;
   const transcriptPath = resolveAntigravityTranscriptFullPath(params.brainDir, params.conversationId);
   const snapshot = await snapshotAntigravityTranscriptSource(transcriptPath);
-  return snapshot
-    ? {
-        conversationId: params.conversationId,
-        transcriptPath,
-        sourceRevision: snapshot.sourceRevision,
-        updatedAtMs: snapshot.mtimeMs,
-      }
-    : null;
+  if (!snapshot) return null;
+  const title = await readAntigravityConversationTitle({
+    transcriptPath,
+    ...(params.fileSystem ? { fileSystem: params.fileSystem } : {}),
+  });
+  return {
+    conversationId: params.conversationId,
+    transcriptPath,
+    sourceRevision: snapshot.sourceRevision,
+    updatedAtMs: snapshot.mtimeMs,
+    ...(title ? { title } : {}),
+  };
 }
 
 export async function pageAntigravityConversationCandidates(params: Readonly<{
@@ -90,6 +130,7 @@ export async function pageAntigravityConversationCandidates(params: Readonly<{
   expectedSourceGeneration?: string | null;
   maxItems: number;
   signal?: AbortSignal;
+  fileSystem?: JsonlScannerFileSystem;
 }>): Promise<Readonly<{
   candidates: readonly (AntigravityConversationCandidate & Readonly<{
     directoryEntryOffset: number;
@@ -156,6 +197,7 @@ export async function pageAntigravityConversationCandidates(params: Readonly<{
     const candidate = await resolveAntigravityConversationCandidate({
       brainDir: params.brainDir,
       conversationId: selectedEntry.conversationId,
+      ...(params.fileSystem ? { fileSystem: params.fileSystem } : {}),
     });
     if (candidate) {
       candidates.push({

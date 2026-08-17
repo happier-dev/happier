@@ -1,0 +1,176 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "login"
+                ],
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "manual_only",
+              "parser": "kiroWhoamiJson",
+              "statusArgs": [
+                "whoami",
+                "--format",
+                "json"
+              ]
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "Kiro CLI",
+          "executable": {
+            "binaryName": "kiro-cli",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://kiro.dev/docs/cli/acp/",
+            "managed": null,
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "id": "kiro",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "Kiro"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "orange"
+            },
+            "ionName": "flash-outline"
+          },
+          "sections": [],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "kiro",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Kiro",
+          "key": "settingsAgents.plugins.kiro.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "kiro-cli"
+        ],
+        "id": "kiro-cli",
+        "title": "Kiro CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Kiro",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "kiro-process",
+        "reason": "Run the declared Kiro CLI executable.",
+        "scope": {
+          "executables": [
+            {
+              "id": "kiro-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.kiro",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

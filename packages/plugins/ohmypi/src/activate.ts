@@ -1,9 +1,5 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk/experimental/hooks';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { HookHandler } from '@happier-dev/plugin-sdk/runtime';
+import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { resolveOhMyPiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createOhMyPiAgentRuntime } from './agent/runtime/engine.js';
@@ -15,17 +11,18 @@ import {
   ohMyPiExternalSessionTakeoverContribution,
 } from './agent/surfaces/sessions/external/semantics.js';
 
-type OhMyPiSpawnPrerequisiteHookEvent = Parameters<typeof resolveOhMyPiDaemonSpawnPrerequisites>[0];
-type OhMyPiSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveOhMyPiDaemonSpawnPrerequisites>[1]>;
-
 const resolveOhMyPiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
-  resolveOhMyPiDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<OhMyPiSpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<OhMyPiSpawnPrerequisiteHookContext>(context),
-  );
+  resolveOhMyPiDaemonSpawnPrerequisites(event, context);
 
 export function activate(api: PluginApi): void {
-  api.agents.register('ohmypi', createOhMyPiAgentRuntime);
+  api.agents.register('ohmypi', createOhMyPiAgentRuntime, {
+    sessionRunnerFactory: {
+      module: './agent/runtime/engine',
+      export: 'createOhMyPiAgentRuntime',
+      runtimeApiVersion: 1,
+      externalSessionsExport: 'ohMyPiExternalSessionsContribution',
+    },
+  });
   api.agents.registerExternalSessions('ohmypi', ohMyPiExternalSessionsContribution);
   api.agents.registerExternalSessionTakeover(
     'ohmypi',

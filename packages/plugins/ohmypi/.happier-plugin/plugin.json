@@ -1,0 +1,381 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "configuration": true,
+            "delivery": [
+              "newTurn"
+            ],
+            "open": [
+              "create",
+              "resume",
+              "fork"
+            ]
+          },
+          "surfaces": [
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "machineLoginKey": "oh-my-pi",
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "OPENAI_CODEX_OAUTH_TOKEN",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_OAUTH_TOKEN",
+                "ANTHROPIC_API_KEY",
+                "GEMINI_API_KEY"
+              ],
+              "parser": "piEnvOnly",
+              "statusArgs": null
+            },
+            "support": "manual_only"
+          },
+          "displayName": "oh-my-pi CLI",
+          "executable": {
+            "acceptsJavaScriptFileOverride": true,
+            "binaryName": "omp",
+            "knownUserBinDirSuffixes": [
+              ".bun/bin"
+            ],
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://github.com/can1357/oh-my-pi",
+            "guideUrl": "https://github.com/can1357/oh-my-pi#via-bun-recommended",
+            "managed": {
+              "binaryName": "omp",
+              "githubRepo": "can1357/oh-my-pi",
+              "kind": "github_release_binary"
+            },
+            "manual": {
+              "kind": "vendor_recipe",
+              "recipes": {
+                "darwin": [
+                  {
+                    "args": [
+                      "install",
+                      "-g",
+                      "@oh-my-pi/pi-coding-agent"
+                    ],
+                    "cmd": "bun"
+                  }
+                ],
+                "linux": [
+                  {
+                    "args": [
+                      "install",
+                      "-g",
+                      "@oh-my-pi/pi-coding-agent"
+                    ],
+                    "cmd": "bun"
+                  }
+                ],
+                "win32": [
+                  {
+                    "args": [
+                      "install",
+                      "-g",
+                      "@oh-my-pi/pi-coding-agent"
+                    ],
+                    "cmd": "bun"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-codex",
+            "required": false,
+            "service": {
+              "localId": "openai-codex",
+              "pluginId": "happier.agent.codex"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai",
+            "required": false,
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "claude-subscription",
+            "required": false,
+            "service": {
+              "localId": "claude-subscription",
+              "pluginId": "happier.agent.claude"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "anthropic",
+            "required": false,
+            "service": {
+              "localId": "anthropic",
+              "pluginId": "happier.agent.claude"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "gemini",
+            "required": false,
+            "service": {
+              "localId": "gemini-account",
+              "pluginId": "happier.agent.gemini"
+            }
+          }
+        ],
+        "id": "ohmypi",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  },
+                  {
+                    "constants": {},
+                    "field": "agentDir",
+                    "kind": "agentSettingOverride",
+                    "normalization": "configuredPath",
+                    "settingId": "ohMyPiAgentDir"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "ohMyPiAgentDir"
+                    },
+                    {
+                      "field": "agentDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "ohMyPiAgentDir"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "agentDir",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "ohMyPiAgentDir"
+              }
+            ]
+          }
+        },
+        "title": "Oh My Pi"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "ohMyPi"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      }
+    ],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "default": "",
+            "description": {
+              "fallback": "Optional Oh My Pi data root. Leave empty to use ~/.omp/agent.",
+              "key": "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle"
+            },
+            "id": "ohMyPiAgentDir",
+            "presentation": {
+              "control": "text"
+            },
+            "schema": {
+              "maxLength": 10000,
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Agent directory",
+              "key": "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "orange"
+            },
+            "ionName": "code-slash-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "This directory is used only for Oh My Pi sessions started or discovered by Happier.",
+                "key": "settingsAgents.plugins.ohmypi.sections.storage.footer"
+              },
+              "fields": [
+                "ohMyPiAgentDir"
+              ],
+              "id": "ohmypi-storage",
+              "title": {
+                "fallback": "Storage",
+                "key": "settingsAgents.plugins.ohmypi.sections.storage.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "ohmypi",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Oh My Pi",
+          "key": "settingsAgents.plugins.ohmypi.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "omp"
+        ],
+        "id": "ohmypi-cli",
+        "title": "Oh My Pi CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Oh My Pi",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "ohmypi-process",
+        "reason": "Launch the user-installed Oh My Pi CLI through the host execution service.",
+        "scope": {
+          "envKeys": [
+            "OPENAI_CODEX_OAUTH_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_OAUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "PI_CODING_AGENT_DIR"
+          ],
+          "executables": [
+            {
+              "id": "ohmypi-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.ohmypi",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

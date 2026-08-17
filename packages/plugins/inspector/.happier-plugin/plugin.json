@@ -1,0 +1,223 @@
+{
+  "brand": {
+    "iconResourceId": "brand-icon"
+  },
+  "contributes": {
+    "accountCollections": [],
+    "actions": [
+      {
+        "dangerLevel": "safe",
+        "description": {
+          "fallback": "Verify the Inspector action bridge.",
+          "key": "plugins.inspector.surface.selfCheckDescription"
+        },
+        "id": "self-check",
+        "placementBindings": [
+          "toolbar"
+        ],
+        "resultSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "ui"
+        ],
+        "title": {
+          "fallback": "Run Inspector self-check",
+          "key": "plugins.inspector.surface.selfCheck"
+        }
+      }
+    ],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [
+      {
+        "contentType": "image/png",
+        "id": "brand-icon",
+        "kind": "asset",
+        "path": "assets/brand.png"
+      },
+      {
+        "contentType": "image/png",
+        "id": "inventory-illustration",
+        "kind": "asset",
+        "path": "assets/inventory.png"
+      }
+    ],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "description": "Local presentation preferences for the Plugin Inspector.",
+        "fields": [
+          {
+            "default": true,
+            "description": {
+              "fallback": "Display per-plugin diagnostic details in the inspector surface.",
+              "key": "plugins.inspector.settings.showDiagnostics.description"
+            },
+            "id": "show-diagnostics",
+            "schema": {
+              "type": "boolean"
+            },
+            "title": {
+              "fallback": "Show diagnostics in Plugin Inspector",
+              "key": "plugins.inspector.settings.showDiagnostics"
+            }
+          }
+        ],
+        "id": "settings",
+        "presentation": {
+          "sections": [],
+          "subagentSections": []
+        },
+        "scope": "daemon",
+        "target": {
+          "kind": "plugin"
+        },
+        "title": {
+          "fallback": "Plugin Inspector",
+          "key": "plugins.inspector.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [
+        {
+          "artifact": "inspector-app-native",
+          "id": "inspector-renderer",
+          "kind": "reactNative",
+          "requiredHostMethods": [
+            "executeAction"
+          ]
+        }
+      ],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "plugins.inspector.description": "Inspect installed plugins, diagnostics, and reload state.",
+            "plugins.inspector.settings.showDiagnostics": "Show diagnostics in Plugin Inspector",
+            "plugins.inspector.settings.showDiagnostics.description": "Display per-plugin diagnostic details in the inspector surface.",
+            "plugins.inspector.surface.empty": "No plugins installed.",
+            "plugins.inspector.surface.inventoryIllustration": "Plugin inventory illustration",
+            "plugins.inspector.surface.loading": "Loading…",
+            "plugins.inspector.surface.noMatches": "No matching plugins",
+            "plugins.inspector.surface.noMatchesDescription": "Try a different name or plugin ID.",
+            "plugins.inspector.surface.openDiagnostics": "Open diagnostics",
+            "plugins.inspector.surface.openPage": "Open full page",
+            "plugins.inspector.surface.pageRoot": "Page root",
+            "plugins.inspector.surface.refreshing": "Refreshing plugin inventory",
+            "plugins.inspector.surface.reload": "Reload",
+            "plugins.inspector.surface.reloadFailed": "Last reload failed",
+            "plugins.inspector.surface.reloadSucceeded": "Last reload succeeded",
+            "plugins.inspector.surface.reloading": "Reloading…",
+            "plugins.inspector.surface.search": "Search installed plugins",
+            "plugins.inspector.surface.searchPlaceholder": "Search by name or plugin ID",
+            "plugins.inspector.surface.selfCheck": "Run Inspector self-check",
+            "plugins.inspector.surface.selfCheckDescription": "Verify the Inspector action bridge.",
+            "plugins.inspector.surface.showActions": "Inspector actions",
+            "plugins.inspector.surface.showActionsContext": "Open Inspector context actions",
+            "plugins.inspector.title": "Plugin Inspector"
+          }
+        }
+      ],
+      "views": [
+        {
+          "container": "rightSidebarTab",
+          "headerActions": [],
+          "id": "inspector-app",
+          "instancePolicy": "singleton",
+          "renderer": "inspector-renderer",
+          "target": {
+            "kind": "app"
+          },
+          "title": {
+            "fallback": "Plugin Inspector",
+            "key": "plugins.inspector.title"
+          }
+        },
+        {
+          "container": "appPage",
+          "headerActions": [],
+          "id": "inspector-page",
+          "instancePolicy": "singleton",
+          "renderer": "inspector-renderer",
+          "target": {
+            "kind": "app"
+          },
+          "title": {
+            "fallback": "Plugin Inspector",
+            "key": "plugins.inspector.title"
+          }
+        }
+      ]
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "First-party Plugin SDK inspector for installed plugin state and reload diagnostics.",
+  "displayName": "Plugin Inspector",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": []
+  },
+  "id": "happier.inspector",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,10 +1,12 @@
 import { join } from 'node:path';
 
 import {
-  defineConnectedServiceAuthMaterialization,
-  readConnectedServiceCredentialRecord,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    defineAuthMaterialization as defineConnectedServiceAuthMaterialization,
+    parseCredentialRecord as readConnectedServiceCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+    TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { AntigravityConnectedServiceId } from './serviceIds.js';
 
@@ -21,7 +23,6 @@ export const ANTIGRAVITY_MATERIALIZED_HOME_CREDENTIAL_ENTRIES = Object.freeze([
 
 export const ANTIGRAVITY_AUTH_ISOLATION_ENV_KEYS = ANTIGRAVITY_MATERIALIZED_HOME_CREDENTIAL_ENTRIES;
 
-type TokenCredentialRecord = Extract<ConnectedServiceCredentialRecordV1, { kind: 'token' }>;
 type AntigravityAuthMaterializationDiagnostic = Readonly<{
   code: string;
   providerId: 'antigravity';
@@ -102,8 +103,10 @@ export const readAntigravityConnectedServiceId:
   (selection: unknown) => AntigravityConnectedServiceId | null =
     antigravityAuthMaterialization.readConnectedServiceId;
 
-export const createAntigravityAuthMaterializationInput =
-  antigravityAuthMaterialization.createAuthMaterializationInput;
+export const createAntigravityAuthMaterializationInput: <TRecord>(
+  serviceId: AntigravityConnectedServiceId,
+  record: TRecord,
+) => Readonly<Record<string, TRecord>> = antigravityAuthMaterialization.createAuthMaterializationInput;
 
 function materializedHomeEnv(rootDir: string | null): Record<string, string> {
   if (!rootDir) return {};
@@ -129,6 +132,25 @@ export async function materializeAntigravityAuthEnvironment(
   env: Record<string, string>;
   diagnostics?: readonly AntigravityAuthMaterializationDiagnostic[];
 }>> {
+  const rootDir = readString(input.rootDir);
+  const acceptsLegacyRawCredential =
+    input.connectedAccountMaterializationAuthority === 'legacy_unfenced_one_shot';
+  if (!acceptsLegacyRawCredential) {
+    return {
+      env: {
+        ...materializedHomeEnv(rootDir),
+        GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false',
+        ANTIGRAVITY_AUTH_MODE: '',
+        GEMINI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        GOOGLE_GENAI_USE_VERTEXAI: '',
+        GOOGLE_CLOUD_PROJECT: '',
+        GOOGLE_CLOUD_LOCATION: '',
+        GOOGLE_APPLICATION_CREDENTIALS: '',
+      },
+    };
+  }
+
   const record = readConnectedServiceCredentialRecord(input.gemini);
   if (!record) return { env: {} };
 
@@ -144,7 +166,6 @@ export async function materializeAntigravityAuthEnvironment(
     };
   }
 
-  const rootDir = readString(input.rootDir);
   return {
     env: {
       ...materializedHomeEnv(rootDir),

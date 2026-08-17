@@ -1,17 +1,12 @@
 import { stat } from 'node:fs/promises';
 
-import type {
-  ExternalSessionTranscriptPageV1,
-  ExternalSessionTranscriptRawMessageV1,
-  ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
 import {
   readJsonlAfterCursor,
   readJsonlFileBackwardPage,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 import type {
-  JsonlScannerFileSystemV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+  JsonlScannerFileSystem as JsonlScannerFileSystemV1,
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {
   decodeOhMyPiTranscriptCursor,
@@ -23,6 +18,18 @@ import {
   formatOhMyPiSessionFileGeneration,
   resolveOhMyPiSessionFile,
 } from './files.js';
+import type { OhMyPiExternalSessionSource } from './source.js';
+
+type OhMyPiRawTranscriptItem =
+  ReturnType<typeof projectOhMyPiSessionSnapshotToDirectMessages>['items'][number];
+
+export type OhMyPiRawTranscriptPage = Readonly<{
+  items: readonly OhMyPiRawTranscriptItem[];
+  nextCursor: string | null;
+  tailCursor?: string | null;
+  hasMore?: boolean;
+  truncated?: boolean;
+}>;
 
 type PagingParams = Readonly<{
   cursor?: string;
@@ -150,7 +157,13 @@ function decodeOhMyPiTreeCursor(raw: string | null | undefined): OhMyPiTranscrip
 }
 
 type OhMyPiTranscriptRecordClassification =
-  | Readonly<{ kind: 'known_non_transcript' }>
+  | Readonly<{
+      kind: 'known_non_transcript';
+      treeEntry: Readonly<{
+        id: string;
+        parentId: string | null;
+      }> | null;
+    }>
   | Readonly<{ kind: 'preamble' }>
   | Readonly<{ kind: 'unsupported' }>
   | Readonly<{
@@ -173,7 +186,18 @@ function classifyOhMyPiTranscriptRecord(
     return { kind: 'preamble' };
   }
   if (record.type === 'session_info' && typeof record.name === 'string') {
-    return { kind: 'known_non_transcript' };
+    const id = typeof record.id === 'string' && record.id.length > 0 ? record.id : null;
+    const parentId = record.parentId === null
+      ? null
+      : typeof record.parentId === 'string' && record.parentId.length > 0
+        ? record.parentId
+        : undefined;
+    return {
+      kind: 'known_non_transcript',
+      treeEntry: id !== null && parentId !== undefined
+        ? { id, parentId }
+        : null,
+    };
   }
   if (
     typeof record.type !== 'string'
@@ -196,19 +220,19 @@ function classifyOhMyPiTranscriptRecord(
   };
 }
 
-function measureItemBytes(item: ExternalSessionTranscriptRawMessageV1): number {
+function measureItemBytes(item: OhMyPiRawTranscriptItem): number {
   return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
 export function pageOhMyPiTranscriptItems(
-  items: readonly ExternalSessionTranscriptRawMessageV1[],
+  items: readonly OhMyPiRawTranscriptItem[],
   params?: PagingParams,
-): ExternalSessionTranscriptPageV1 {
+): OhMyPiRawTranscriptPage {
   const endExclusive = decodeOhMyPiTranscriptCursor(params?.cursor ?? null, items.length);
   const maxItems = Math.max(1, Math.trunc(params?.maxItems ?? 100));
   const maxBytes = Math.max(1024, Math.trunc(params?.maxBytes ?? 1024 * 1024));
 
-  const selected: ExternalSessionTranscriptRawMessageV1[] = [];
+  const selected: OhMyPiRawTranscriptItem[] = [];
   let usedBytes = 0;
   let nextIndex = endExclusive;
   for (let index = Math.min(endExclusive, items.length) - 1; index >= 0; index -= 1) {
@@ -231,14 +255,14 @@ export function pageOhMyPiTranscriptItems(
 }
 
 export function readAfterOhMyPiTranscriptItems(
-  items: readonly ExternalSessionTranscriptRawMessageV1[],
+  items: readonly OhMyPiRawTranscriptItem[],
   params?: PagingParams,
-): ExternalSessionTranscriptPageV1 {
+): OhMyPiRawTranscriptPage {
   const startIndex = decodeOhMyPiTranscriptCursor(params?.cursor ?? null, items.length);
   const maxItems = Math.max(1, Math.trunc(params?.maxItems ?? 100));
   const maxBytes = Math.max(1024, Math.trunc(params?.maxBytes ?? 1024 * 1024));
 
-  const selected: ExternalSessionTranscriptRawMessageV1[] = [];
+  const selected: OhMyPiRawTranscriptItem[] = [];
   let usedBytes = 0;
   let nextIndex = Math.min(startIndex, items.length);
   for (let index = Math.min(startIndex, items.length); index < items.length; index += 1) {
@@ -259,7 +283,7 @@ export function readAfterOhMyPiTranscriptItems(
 }
 
 export async function pageOhMyPiSessionTranscript(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
   providerSessionId: string;
   sessionFilePath?: string | null;
@@ -268,7 +292,7 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
   maxBytes: number;
   maxItems: number;
   scannerFileSystem?: JsonlScannerFileSystemV1;
-}>): Promise<ExternalSessionTranscriptPageV1> {
+}>): Promise<OhMyPiRawTranscriptPage> {
   if (params.direction !== 'older') {
     return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
   }
@@ -322,7 +346,7 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
 
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
   const maxBytes = Math.max(1024, Math.trunc(params.maxBytes));
-  const selectedNewestFirst: ExternalSessionTranscriptRawMessageV1[] = [];
+  const selectedNewestFirst: OhMyPiRawTranscriptItem[] = [];
   let usedBytes = 0;
   let targetEntryId = cursor?.leafEntryId ?? null;
   let pendingItemEndExclusive = cursor?.itemEndExclusive;
@@ -335,6 +359,20 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
   for (let index = scan.items.length - 1; index >= 0; index -= 1) {
     const scanned = scan.items[index]!;
     const classification = classifyOhMyPiTranscriptRecord(scanned.value);
+    if (classification.kind === 'known_non_transcript') {
+      const treeEntry = classification.treeEntry;
+      if (!treeEntry) continue;
+      if (targetEntryId !== null && treeEntry.id !== targetEntryId) continue;
+      matchedEntry = true;
+      if (targetEntryId === null && initialLeafEntryId === null) {
+        initialLeafEntryId = treeEntry.id;
+      }
+      pendingItemEndExclusive = undefined;
+      targetEntryId = treeEntry.parentId;
+      nextPosition = scanned.startOffsetBytes;
+      if (targetEntryId === null) break;
+      continue;
+    }
     if (classification.kind !== 'entry') continue;
     if (targetEntryId !== null && classification.id !== targetEntryId) continue;
     matchedEntry = true;
@@ -421,14 +459,14 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
 }
 
 export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
   providerSessionId: string;
   sessionFilePath?: string | null;
   cursor: string;
   maxBytes: number;
   maxItems: number;
-}>): Promise<ExternalSessionTranscriptPageV1 & Readonly<{
+}>): Promise<OhMyPiRawTranscriptPage & Readonly<{
   diagnostics?: readonly Readonly<{
     code: string;
     count: number;
@@ -470,7 +508,7 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
     maxBytes: params.maxBytes,
     maxItems: params.maxItems,
   });
-  const items: ExternalSessionTranscriptRawMessageV1[] = [];
+  const items: OhMyPiRawTranscriptItem[] = [];
   const skippedRecords: Array<{
     code:
       | 'malformed_record_skipped'
@@ -497,6 +535,14 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
     const classification = classifyOhMyPiTranscriptRecord(parsed);
     if (classification.kind === 'known_non_transcript') {
       skippedRecords.push({ code: 'non_transcript_record_skipped', position: lineStartOffset });
+      if (classification.treeEntry) {
+        if (classification.treeEntry.parentId !== leafEntryId) {
+          throw new OhMyPiExternalSessionSourceChangedError(
+            'Oh My Pi external-session branch changed after the cursor.',
+          );
+        }
+        leafEntryId = classification.treeEntry.id;
+      }
       nextPosition = nextLineStartOffset;
       nextItemStartIndex = undefined;
       continue;

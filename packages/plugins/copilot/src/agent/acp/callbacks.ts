@@ -1,4 +1,4 @@
-import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export function buildCopilotAcpArgv(params: Readonly<{
   baseArgs: readonly string[];

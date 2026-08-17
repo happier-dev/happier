@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AgentExternalSessionTakeoverContribution,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   ohMyPiExternalSessionTakeoverContribution,
@@ -60,9 +60,12 @@ describe('Oh My Pi external-session auxiliary semantics', () => {
       deadlineAtMs: Date.now() + 1_000,
       maxSerializedBytes: 262_144,
       linkedSessionId: 'linked-session',
-      source: { kind: 'ohMyPiAgentDir', agentDir },
+      // The resolved identity carries the session file on the source; link data
+      // stays empty because the host projects it into strict owner metadata.
+      source: { kind: 'ohMyPiAgentDir', agentDir, sessionFilePath },
       remoteSessionId: 'takeover-session',
-      linkData: { sessionFilePath },
+      linkData: {},
+      targetDirectory: '/local/selected/workspace',
     })).resolves.toEqual({
       ok: true,
       value: {
@@ -85,6 +88,7 @@ describe('Oh My Pi external-session auxiliary semantics', () => {
       source: { kind: 'ohMyPiAgentDir', agentDir },
       remoteSessionId: 'takeover-session',
       linkData: { sessionFilePath: '/does/not/need/to/exist.jsonl' },
+      targetDirectory: '/local/selected/workspace',
       linkedDirectory: '/repo/from-linked-session',
     })).resolves.toEqual({
       ok: true,

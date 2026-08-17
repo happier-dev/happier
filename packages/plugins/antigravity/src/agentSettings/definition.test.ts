@@ -12,7 +12,7 @@ describe('Antigravity agent settings definition', () => {
       id: 'agent-settings',
       version: 1,
       target: { kind: 'agent', agent: 'antigravity' },
-      scope: 'synced',
+      scope: 'account',
     });
     expect(field).toMatchObject({
       id: 'antigravityRuntimeMode',

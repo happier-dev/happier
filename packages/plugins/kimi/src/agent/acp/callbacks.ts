@@ -1,7 +1,7 @@
 import type {
   AgentLaunchEnvironment,
   AgentPermissionIntent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { ensureKimiReadOnlyAgentFile } from '../bootstrap/readonlyAgentFile.js';
 import { HAPPIER_KIMI_ACP_SELECTOR_ENV } from '../preferences/pythonSelector.js';

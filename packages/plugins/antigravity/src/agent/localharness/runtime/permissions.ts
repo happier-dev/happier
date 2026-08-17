@@ -1,7 +1,7 @@
 import type {
-  SessionPermissionDecisionRequestV1,
-  SessionPermissionDecisionResultV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  SessionPermissionDecisionRequest as SessionPermissionDecisionRequestV1,
+  SessionPermissionDecisionResult as SessionPermissionDecisionResultV1,
+} from '@happier-dev/plugin-sdk/sessions';
 
 import type { AntigravityLocalharnessEvent } from '../client/protocol.js';
 import { isHarnessSideTool } from '../client/protocol.js';

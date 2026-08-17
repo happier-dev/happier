@@ -1,4 +1,4 @@
-import type { PromptAssetCapabilities } from '@happier-dev/plugin-sdk/manifest';
+import type { PromptAssetCapabilities } from '@happier-dev/plugin-sdk/resources';
 
 export type CopilotPromptAssetConfig = Readonly<{
   assetTypeId: string;

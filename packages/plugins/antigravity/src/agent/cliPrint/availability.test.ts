@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { probeAntigravityCliPrintAvailability } from './availability.js';
 
@@ -20,7 +20,7 @@ describe('probeAntigravityCliPrintAvailability', () => {
       stdoutTruncated: false,
       stderrTruncated: false,
     }));
-    const exec = { systemTools: { resolve }, run } as unknown as PluginExecService;
+    const exec = { systemTools: { resolve }, run } as unknown as ExecService;
 
     await expect(probeAntigravityCliPrintAvailability({
       exec,

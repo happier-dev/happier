@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto';
 import {
   deriveExternalSessionActivity,
   type AgentExternalSessionObservationContribution,
-  type AgentExternalSessionsResolvedIdentity,
-  type ExternalAgentObservationLinkEvidenceBatchV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  type AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+  AgentExternalSessionsResolvedIdentity,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   canonicalizePathSync,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/fs';
 
 import {
   isSafeAntigravityConversationId,
@@ -27,7 +29,7 @@ const MAX_OPAQUE_KEY_LENGTH = 256;
 const MAX_REMOTE_SESSION_ID_LENGTH = 2_000;
 
 type ExternalAgentObservationLeafFact =
-  ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+  AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 type AntigravityObservationLinkedFile = Readonly<{
   brainDir: string;

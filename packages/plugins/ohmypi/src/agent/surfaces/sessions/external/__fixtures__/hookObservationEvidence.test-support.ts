@@ -1,6 +1,6 @@
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 const sessionFilePath = '/fixture/omp/session.jsonl';
 
@@ -17,7 +17,9 @@ export const OH_MY_PI_HOOK_OBSERVATION_EVIDENCE = Object.freeze({
       sessionFilePath,
     },
     remoteSessionId: 'omp-native-session-fixture',
-    linkData: { sessionFilePath },
+    // The resolved session file travels on the source only; a top-level
+    // `sessionFilePath` on link data is rejected by host owner metadata.
+    linkData: {},
   } as const satisfies AgentExternalSessionsResolvedIdentity),
   recipe: Object.freeze({
     disposition: 'none' as const,

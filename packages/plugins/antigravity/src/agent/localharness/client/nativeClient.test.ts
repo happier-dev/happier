@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 import { openAntigravityNativeLocalharnessClient } from './nativeClient.js';
 
@@ -25,7 +25,7 @@ describe('openAntigravityNativeLocalharnessClient', () => {
       wait,
       dispose,
     }));
-    const exec = { clients: { spawn } } as unknown as Pick<PluginExecService, 'clients'>;
+    const exec = { clients: { spawn } } as unknown as Pick<ExecService, 'clients'>;
     const requestFrame = new Uint8Array([1, 2, 3]);
 
     const client = await openAntigravityNativeLocalharnessClient({ exec, requestFrame });

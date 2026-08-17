@@ -1,4 +1,4 @@
-import type { AgentModelConfig, AgentModelDescriptor } from '@happier-dev/plugin-sdk/experimental/agents';
+import type { AgentModelConfig, AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 
 export const ANTIGRAVITY_DEFAULT_MODEL_ID = 'Gemini 3.5 Flash (Medium)';
 
@@ -39,7 +39,7 @@ export const ANTIGRAVITY_STATIC_MODELS: readonly AgentModelDescriptor[] = Object
   description: 'Observed Antigravity CLI model fallback. The full list is discovered dynamically with agy models.',
 }]);
 
-export const ANTIGRAVITY_AGENT_MODEL_CONFIG = Object.freeze({
+export const ANTIGRAVITY_AGENT_MODEL_CONFIG: AgentModelConfig = Object.freeze({
   supportsSelection: true,
   supportsFreeform: false,
   nonAcpApplyScope: 'next_prompt',

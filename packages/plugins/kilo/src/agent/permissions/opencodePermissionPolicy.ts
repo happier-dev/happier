@@ -1,7 +1,7 @@
 import {
   resolveAcpToolPermissionPolicy,
-} from '@happier-dev/agents';
-import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type OpenCodePermissionPolicy = ReturnType<typeof resolveAcpToolPermissionPolicy>;
 

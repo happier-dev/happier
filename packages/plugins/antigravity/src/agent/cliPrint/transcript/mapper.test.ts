@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 
+import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import { describe, expect, it } from 'vitest';
 
 import { parseAntigravityTranscriptJsonl } from './jsonl.js';
@@ -12,6 +13,53 @@ import {
 } from './mapper.js';
 
 describe('Antigravity cliPrint transcript mapper', () => {
+  it('projects only canonical transcript events and omits source-only checkpoint/system records', () => {
+    const items = projectAntigravityTranscriptRecordsToExternalItems({
+      conversationId: 'conversation-canonical',
+      records: [
+        { record: { step_index: 1, type: 'USER_INPUT', text: 'inspect' }, startOffsetBytes: 0, endOffsetBytes: 10 },
+        {
+          record: {
+            step_index: 2,
+            type: 'PLANNER_RESPONSE',
+            text: 'working',
+            tool_calls: [{ name: 'list_dir', args: { path: '.' } }],
+          },
+          startOffsetBytes: 10,
+          endOffsetBytes: 20,
+        },
+        { record: { step_index: 3, type: 'LIST_DIRECTORY', content: ['README.md'] }, startOffsetBytes: 20, endOffsetBytes: 30 },
+        { record: { step_index: 4, type: 'checkpoint', checkpointId: 'cp-1' }, startOffsetBytes: 30, endOffsetBytes: 40 },
+        { record: { step_index: 5, type: 'system_message', text: 'compacted' }, startOffsetBytes: 40, endOffsetBytes: 50 },
+        { record: { step_index: 6, type: 'error', message: 'boom' }, startOffsetBytes: 50, endOffsetBytes: 60 },
+      ],
+    });
+
+    expect(items.map((item) => item.messageRole)).toEqual([
+      'user',
+      'agent',
+      'event',
+      'event',
+      'event',
+    ]);
+    expect(items.map((item) => {
+      const parsed = AgentExternalSessionTranscriptRawRecordSchema.safeParse(item.raw);
+      return parsed.success ? 'parsed' : `unparsed:${JSON.stringify(item.raw)}`;
+    })).toEqual(items.map(() => 'parsed'));
+    expect(items.at(-1)).toMatchObject({
+      id: 'antigravity-turn-conversation-canonical-byte-50-step-6',
+      messageRole: 'event',
+      raw: {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'antigravity',
+          data: { type: 'turn_failed', id: 'antigravity-turn-conversation-canonical-byte-50-step-6' },
+        },
+      },
+    });
+  });
+
   it('classifies the sanitized source fixture once for cliPrint, external, and terminal consumers', () => {
     const records = parseAntigravityTranscriptJsonl(readFileSync(
       new URL('./__fixtures__/transcript_full.semantic.sanitized.jsonl', import.meta.url),
@@ -96,7 +144,14 @@ describe('Antigravity cliPrint transcript mapper', () => {
         id: 'antigravity-conversation-1-byte-41-item-1',
         createdAtMs: Date.parse('2026-07-23T08:00:00Z'),
         messageRole: 'agent',
-        raw: { type: 'text', text: 'I will inspect it.' },
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            agentId: 'antigravity',
+            data: { type: 'message', message: 'I will inspect it.' },
+          },
+        },
       },
       {
         id: 'antigravity-turn-conversation-1-byte-41-tool-1',
@@ -104,14 +159,74 @@ describe('Antigravity cliPrint transcript mapper', () => {
         localId: 'antigravity-turn-conversation-1-byte-41-tool-1',
         messageRole: 'event',
         raw: {
-          type: 'tool-call',
-          callId: 'antigravity-turn-conversation-1-byte-41-tool-1',
-          name: 'list_dir',
-          input: { path: '.' },
-          id: 'antigravity-turn-conversation-1-byte-41-tool-1',
+          role: 'agent',
+          content: {
+            type: 'acp',
+            agentId: 'antigravity',
+            data: {
+              type: 'tool-call',
+              callId: 'antigravity-turn-conversation-1-byte-41-tool-1',
+              name: 'list_dir',
+              input: { path: '.' },
+              id: 'antigravity-turn-conversation-1-byte-41-tool-1',
+            },
+          },
         },
       },
     ]);
+  });
+
+  it('strips Antigravity prompt scaffolding from user steps and projected transcript rows', () => {
+    const content = '<USER_REQUEST>\nAudit the link flow\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md\n</ADDITIONAL_METADATA>';
+
+    expect(mapAntigravityTranscriptRecordToStep({ step_index: 0, type: 'USER_INPUT', content })).toEqual({
+      id: 'antigravity-step-0',
+      kind: 'user_message',
+      text: 'Audit the link flow',
+    });
+
+    const [item] = projectAntigravityTranscriptRecordsToExternalItems({
+      conversationId: 'conversation-scaffolding',
+      records: [{ record: { step_index: 0, type: 'USER_INPUT', content }, startOffsetBytes: 0, endOffsetBytes: 10 }],
+    });
+    expect(item?.raw).toEqual({
+      role: 'user',
+      content: { type: 'text', text: 'Audit the link flow' },
+    });
+  });
+
+  it.each([
+    {
+      name: 'unterminated request',
+      content: '<USER_REQUEST>\nAudit the link flow\n<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md',
+    },
+    {
+      name: 'metadata before the request',
+      content: '<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md\n</ADDITIONAL_METADATA>\n<USER_REQUEST>\nAudit\n',
+    },
+    {
+      name: 'repeated request tags',
+      content: '<USER_REQUEST>\nAudit\n<USER_REQUEST>\nmore\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md\n</ADDITIONAL_METADATA>',
+    },
+    {
+      name: 'repeated close tags',
+      content: '<USER_REQUEST>\nAudit\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md\n</ADDITIONAL_METADATA>\n</USER_REQUEST>',
+    },
+    {
+      name: 'metadata without any request scaffold',
+      content: 'Audit\n<ADDITIONAL_METADATA>\nopen file: /repo/secret/notes.md\n</ADDITIONAL_METADATA>',
+    },
+    {
+      name: 'truncated mid-metadata',
+      content: '<USER_REQUEST>\nAudit\n<ADDITIONAL_METADATA>\nopen file: /repo/sec',
+    },
+  ])('drops the user row instead of leaking Antigravity workspace metadata on a $name', ({ content }) => {
+    expect(mapAntigravityTranscriptRecordToStep({ step_index: 0, type: 'USER_INPUT', content })).toBeNull();
+
+    expect(projectAntigravityTranscriptRecordsToExternalItems({
+      conversationId: 'conversation-malformed-scaffolding',
+      records: [{ record: { step_index: 0, type: 'USER_INPUT', content }, startOffsetBytes: 0, endOffsetBytes: 10 }],
+    })).toEqual([]);
   });
 
   it('maps observed user, assistant, tool, checkpoint, and system records to Antigravity steps', () => {
@@ -321,7 +436,7 @@ describe('Antigravity cliPrint transcript mapper', () => {
     expect(events).toEqual([]);
   });
 
-  it('emits canonical runtime events without pretending cliPrint has live permissions', () => {
+  it('emits canonical Agent runtime event inputs without pretending cliPrint has live permissions', () => {
     const events = mapAntigravityTranscriptStepsToRuntimeEvents({
       sessionId: 'session-1',
       turnId: 'turn-1',
@@ -335,18 +450,19 @@ describe('Antigravity cliPrint transcript mapper', () => {
     });
 
     expect(events.map((event) => event.kind)).toEqual([
-      'transcript-agent-message-committed',
+      'transcript-message-committed',
       'tool-call',
       'tool-result',
     ]);
     expect(events[0]).toMatchObject({
-      agentId: 'antigravity',
-      localId: 'assistant-1',
-      body: { type: 'message', message: 'hi there' },
+      messageId: 'assistant-1',
+      role: 'assistant',
+      text: 'hi there',
+      turnId: 'turn-1',
     });
   });
 
-  it('maps transcript error records to a failed turn event', () => {
+  it('maps transcript error records to a canonical failed-turn event', () => {
     const events = mapAntigravityTranscriptStepsToRuntimeEvents({
       sessionId: 'session-1',
       turnId: 'turn-1',
@@ -359,17 +475,16 @@ describe('Antigravity cliPrint transcript mapper', () => {
     expect(events).toEqual([
       expect.objectContaining({
         kind: 'turn-failed',
-        sessionId: 'session-1',
         turnId: 'turn-1',
-        issue: expect.objectContaining({
+        diagnostic: expect.objectContaining({
           code: 'antigravity_cliprint_transcript_error',
-          sanitizedPreview: 'agy failed while applying changes',
+          message: 'agy failed while applying changes',
         }),
       }),
     ]);
   });
 
-  it('keeps checkpoint and system records observable as provider progress', () => {
+  it('does not retain generic progress payloads that cannot be represented by the canonical Agent event', () => {
     const events = mapAntigravityTranscriptStepsToRuntimeEvents({
       sessionId: 'session-1',
       turnId: 'turn-1',
@@ -380,31 +495,6 @@ describe('Antigravity cliPrint transcript mapper', () => {
       ],
     });
 
-    expect(events).toEqual([
-      expect.objectContaining({
-        kind: 'turn-progress',
-        sessionId: 'session-1',
-        turnId: 'turn-1',
-        agentId: 'antigravity',
-        source: 'cliprint_transcript',
-        detail: {
-          type: 'checkpoint',
-          checkpointId: 'cp-1',
-          localId: 'checkpoint-1',
-        },
-      }),
-      expect.objectContaining({
-        kind: 'turn-progress',
-        sessionId: 'session-1',
-        turnId: 'turn-1',
-        agentId: 'antigravity',
-        source: 'cliprint_transcript',
-        detail: {
-          type: 'system_message',
-          text: 'Resuming from a compaction',
-          localId: 'system-1',
-        },
-      }),
-    ]);
+    expect(events).toEqual([]);
   });
 });

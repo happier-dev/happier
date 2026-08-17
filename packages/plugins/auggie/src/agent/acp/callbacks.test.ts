@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   buildAuggieAcpArgvFromSessionConfiguration,

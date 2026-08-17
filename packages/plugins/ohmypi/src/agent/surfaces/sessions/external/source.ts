@@ -1,13 +1,30 @@
 import {
   resolveSessionFileStoreDirsSync,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
+import type { AgentExternalSessionSource } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 
+export type OhMyPiExternalSessionSource = Readonly<{
+  kind: 'ohMyPiAgentDir';
+  agentDir?: string | null;
+}>;
+
+export function projectOhMyPiExternalSessionSource(
+  source: AgentExternalSessionSource,
+): OhMyPiExternalSessionSource | null {
+  if (source.kind !== 'ohMyPiAgentDir') return null;
+  const agentDir = typeof source.agentDir === 'string' && source.agentDir.trim().length > 0
+    ? source.agentDir.trim()
+    : null;
+  return {
+    kind: 'ohMyPiAgentDir',
+    ...(agentDir ? { agentDir } : {}),
+  };
+}
+
 export type OhMyPiSourceValidationResult =
-  | Readonly<{ ok: true; source: ExternalSessionsSource }>
+  | Readonly<{ ok: true; source: OhMyPiExternalSessionSource }>
   | Readonly<{ ok: false; error: string }>;
 
 export function canonicalizeOhMyPiExternalSessionsPath(raw: string): string {
@@ -30,7 +47,7 @@ export function resolveConfiguredOhMyPiAgentDir(env: NodeJS.ProcessEnv): string 
 }
 
 export function resolveOhMyPiAgentDir(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
 }>): string {
   const env = params.env ?? process.env;
@@ -47,7 +64,7 @@ export function resolveOhMyPiAgentDir(params: Readonly<{
 }
 
 export function validateOhMyPiExternalSessionSource(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
 }>): OhMyPiSourceValidationResult {
   const env = params.env ?? process.env;
@@ -60,14 +77,12 @@ export function validateOhMyPiExternalSessionSource(params: Readonly<{
       ? canonicalizeOhMyPiExternalSessionsPath(source.agentDir)
       : null;
   const configuredAgentDir = resolveConfiguredOhMyPiAgentDir(env);
-  if (requestedAgentDir && requestedAgentDir !== configuredAgentDir) {
-    return { ok: false, error: 'source agentDir override is not allowed' };
-  }
+  const agentDir = requestedAgentDir ?? configuredAgentDir;
   return {
     ok: true,
     source: {
       ...source,
-      agentDir: configuredAgentDir,
+      agentDir,
     },
   };
 }

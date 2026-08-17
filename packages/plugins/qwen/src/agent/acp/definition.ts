@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const QWEN_ACP_RUNTIME_DEFINITION = Object.freeze({
   modelConfigOptionId: 'model',

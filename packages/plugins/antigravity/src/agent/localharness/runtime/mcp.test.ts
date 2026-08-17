@@ -21,12 +21,6 @@ describe('Antigravity localharness MCP mapping', () => {
         scope: { sessionId: 'session-1' },
       },
       {
-        id: 'managed-id',
-        name: 'managed-server',
-        transport: { kind: 'managed', url: 'https://managed.example.test/mcp' },
-        scope: { sessionId: 'session-1' },
-      },
-      {
         id: 'unsafe-id',
         name: 'unsafe-server',
         transport: { kind: 'http', url: 'file:///tmp/socket' },
@@ -49,7 +43,6 @@ describe('Antigravity localharness MCP mapping', () => {
     expect(result.configs).toEqual([
       { name: 'http-server', http: { url: 'https://example.test/mcp' } },
       { name: 'sse-server', http: { url: 'http://127.0.0.1:3000/sse' } },
-      { name: 'managed-server', http: { url: 'https://managed.example.test/mcp' } },
     ]);
     expect(result.unsupported).toEqual([
       {
@@ -82,12 +75,6 @@ describe('Antigravity localharness MCP mapping', () => {
         scope: { sessionId: 'session-1' },
       },
       {
-        id: 'managed-no-url',
-        name: 'managed-no-url',
-        transport: { kind: 'managed' },
-        scope: { sessionId: 'session-1' },
-      },
-      {
         id: 'hosted-id',
         name: 'hosted-server',
         transport: { kind: 'hosted' },
@@ -104,12 +91,6 @@ describe('Antigravity localharness MCP mapping', () => {
         reason: 'unsupported_stdio',
       },
       {
-        id: 'managed-no-url',
-        name: 'managed-no-url',
-        transportKind: 'managed',
-        reason: 'missing_url',
-      },
-      {
         id: 'hosted-id',
         name: 'hosted-server',
         transportKind: 'hosted',
@@ -118,7 +99,7 @@ describe('Antigravity localharness MCP mapping', () => {
     ]);
 
     expect(formatUnsupportedMcpServersDiagnostic(result.unsupported)).toBe(
-      'Antigravity localharness cannot attach these MCP servers: stdio-server (stdio: unsupported_stdio), managed-no-url (managed: missing_url), hosted-server (hosted: unsupported_transport).',
+      'Antigravity localharness cannot attach these MCP servers: stdio-server (stdio: unsupported_stdio), hosted-server (hosted: unsupported_transport).',
     );
   });
 });

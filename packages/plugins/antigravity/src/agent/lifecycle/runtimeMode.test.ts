@@ -19,14 +19,7 @@ describe('Antigravity runtime mode normalization', () => {
 describe('resolveAntigravityRuntimeMode', () => {
   it('lets the persisted runtime descriptor override requested settings for resume', async () => {
     const result = await resolveAntigravityRuntimeMode({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'antigravity',
-        provider: {
-          runtimeMode: 'sdk',
-        },
-      },
-      metadata: { antigravityRuntimeMode: 'cliPrint' },
+      persistedRuntimeMode: 'sdk',
       accountSettings: { antigravityRuntimeMode: 'cliPrint' },
       env: { HAPPIER_ANTIGRAVITY_RUNTIME_MODE: 'cliPrint' },
       probes: {
@@ -43,9 +36,9 @@ describe('resolveAntigravityRuntimeMode', () => {
     });
   });
 
-  it('prefers explicit metadata over provider settings and env', async () => {
+  it('prefers the persisted runtime selection over provider settings and env', async () => {
     const result = await resolveAntigravityRuntimeMode({
-      metadata: { antigravityRuntimeMode: 'sdk' },
+      persistedRuntimeMode: 'sdk',
       accountSettings: { antigravityRuntimeMode: 'cliPrint' },
       env: { HAPPIER_ANTIGRAVITY_RUNTIME_MODE: 'cliPrint' },
       probes: {
@@ -58,7 +51,7 @@ describe('resolveAntigravityRuntimeMode', () => {
       status: 'resolved',
       mode: 'sdk',
       requestedMode: 'sdk',
-      source: 'metadata',
+      source: 'runtimeDescriptor',
     });
   });
 
@@ -85,7 +78,7 @@ describe('resolveAntigravityRuntimeMode', () => {
     const hasSdkCredentials = vi.fn(async () => true);
 
     const result = await resolveAntigravityRuntimeMode({
-      metadata: { antigravityRuntimeMode: 'cliPrint' },
+      persistedRuntimeMode: 'cliPrint',
       probes: {
         isCliPrintAvailable,
         hasSdkCredentials,
@@ -95,7 +88,7 @@ describe('resolveAntigravityRuntimeMode', () => {
     expect(result).toEqual({
       status: 'setup_required',
       requestedMode: 'cliPrint',
-      source: 'metadata',
+      source: 'runtimeDescriptor',
       reasonCode: 'antigravity_runtime_unavailable',
       diagnostic: expect.stringContaining('Antigravity CLI'),
     });
@@ -108,7 +101,7 @@ describe('resolveAntigravityRuntimeMode', () => {
     const hasSdkCredentials = vi.fn(async () => false);
 
     const result = await resolveAntigravityRuntimeMode({
-      metadata: { antigravityRuntimeMode: 'sdk' },
+      persistedRuntimeMode: 'sdk',
       probes: {
         isCliPrintAvailable,
         hasSdkCredentials,
@@ -118,7 +111,7 @@ describe('resolveAntigravityRuntimeMode', () => {
     expect(result).toEqual({
       status: 'setup_required',
       requestedMode: 'sdk',
-      source: 'metadata',
+      source: 'runtimeDescriptor',
       reasonCode: 'antigravity_runtime_unavailable',
       diagnostic: expect.stringContaining('Gemini API'),
     });
@@ -126,7 +119,7 @@ describe('resolveAntigravityRuntimeMode', () => {
     expect(isCliPrintAvailable).not.toHaveBeenCalled();
   });
 
-  it('uses the debug env override when no persisted, metadata, or setting mode is present', async () => {
+  it('uses the debug env override when no persisted or setting mode is present', async () => {
     const result = await resolveAntigravityRuntimeMode({
       env: { HAPPIER_ANTIGRAVITY_RUNTIME_MODE: 'sdk' },
       probes: {

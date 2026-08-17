@@ -1,0 +1,194 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "login"
+                ],
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "COPILOT_GITHUB_TOKEN",
+                "GH_TOKEN",
+                "GITHUB_TOKEN"
+              ],
+              "parser": "copilotGhAuth",
+              "statusArgs": null
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "GitHub Copilot CLI",
+          "executable": {
+            "binaryName": "copilot",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli",
+            "guideUrl": null,
+            "managed": {
+              "binaryName": "copilot",
+              "kind": "managed_package",
+              "packageName": "@github/copilot"
+            },
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "id": "copilot",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "GitHub Copilot"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "blue"
+            },
+            "ionName": "logo-github"
+          },
+          "sections": [],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "copilot",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Copilot",
+          "key": "settingsAgents.plugins.copilot.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "copilot"
+        ],
+        "id": "copilot-cli",
+        "title": "GitHub Copilot CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "GitHub Copilot",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "copilot-process",
+        "reason": "Run the declared GitHub Copilot CLI executable.",
+        "scope": {
+          "envKeys": [
+            "COPILOT_GITHUB_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN"
+          ],
+          "executables": [
+            {
+              "id": "copilot-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.copilot",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,17 +1,20 @@
 import type {
-  AgentExternalSessionSource,
   AgentExternalSessionTakeoverContribution,
   AgentExternalSessionTakeoverResolveLaunchRequest,
   AgentExternalSessionTakeoverResolveLaunchResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 import { readOhMyPiSessionSnapshot } from '../../../transcripts/snapshot.js';
 import { resolveOhMyPiSessionFile } from './files.js';
-import { resolveOhMyPiAgentDir } from './source.js';
+import {
+  projectOhMyPiExternalSessionSource,
+  resolveOhMyPiAgentDir,
+  type OhMyPiExternalSessionSource,
+} from './source.js';
 
 type SessionLookupParams = Readonly<{
-  source: AgentExternalSessionSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
   remoteSessionId: string;
   sessionFilePath?: string | null;
@@ -46,10 +49,15 @@ function invocationFailure(
   return null;
 }
 
+/**
+ * The resolved session file travels on the source, not on link data: the host
+ * projects link data minus `source` into top-level session owner metadata, whose
+ * strict allow-list rejects a `sessionFilePath` key.
+ */
 function readSessionFilePath(
-  linkData: Readonly<Record<string, unknown>>,
+  source: Readonly<Record<string, unknown>>,
 ): string | null {
-  const value = linkData.sessionFilePath;
+  const value = source.sessionFilePath;
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
     : null;
@@ -67,15 +75,23 @@ async function resolveLaunch(
       message: 'Oh My Pi external-session takeover requires an ohMyPiAgentDir source.',
     };
   }
+  const source = projectOhMyPiExternalSessionSource(request.source);
+  if (!source) {
+    return {
+      ok: false,
+      code: 'source_invalid',
+      message: 'Oh My Pi external-session takeover requires an ohMyPiAgentDir source.',
+    };
+  }
 
   try {
     const linkedDirectory = request.linkedDirectory?.trim() ?? '';
     let directory = linkedDirectory;
     if (!directory) {
       const resolved = await resolveSessionFile({
-        source: request.source,
+        source,
         remoteSessionId: request.remoteSessionId,
-        sessionFilePath: readSessionFilePath(request.linkData),
+        sessionFilePath: readSessionFilePath(request.source),
       });
       const afterResolve = invocationFailure(request);
       if (afterResolve) return afterResolve;
@@ -99,7 +115,7 @@ async function resolveLaunch(
     }
 
     const agentDir = resolveOhMyPiAgentDir({
-      source: request.source,
+      source,
     });
     return {
       ok: true,

@@ -1,16 +1,20 @@
 import type {
-  AgentExternalSessionCandidate,
   AgentExternalSessionLinkData,
   AgentExternalSessionLinkDataValue,
-  AgentExternalSessionSource,
   AgentExternalSessionsContribution,
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsInvocation,
-  AgentExternalSessionsReadAfterTranscriptResult,
   AgentExternalSessionsResult,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+  AgentExternalSessionCandidate,
+  AgentExternalSessionSource,
+  AgentExternalSessionsListCandidatesResult,
+  AgentExternalSessionsReadAfterTranscriptResult,
   AgentExternalSessionsTranscriptPage,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-import { canonicalizePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/external';
+import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
+import { canonicalizePath } from '@happier-dev/plugin-sdk/fs';
 
 import {
   AntigravityCandidateSourceChangedError,
@@ -25,7 +29,7 @@ import {
   readAntigravityTranscriptLinesAfter,
 } from './transcript/jsonl.js';
 import {
-  projectAntigravityTranscriptRecordGroupsToExternalItems,
+  projectAntigravityTranscriptRecordGroupsWithCorrelation,
   projectAntigravityTranscriptRecordsToExternalItems,
 } from './transcript/mapper.js';
 
@@ -37,6 +41,26 @@ type CandidateCursorV2 = Readonly<{
   brainDir: string;
   sourceGeneration: string;
   directoryEntryOffset: number;
+}>;
+
+type FullCandidateSearchCursorV1 = Readonly<{
+  v: 1;
+  kind: 'antigravityFullCandidateSearch';
+  brainDir: string;
+  sourceGeneration: string;
+  searchTerm: string;
+  after: Readonly<{
+    remoteSessionId: string;
+    updatedAtMs: number;
+    sourceRevision: string;
+  }>;
+}>;
+
+type AntigravityExternalReadAfterCursorV1 = Readonly<{
+  v: 1;
+  kind: 'antigravityExternalReadAfter';
+  transcriptCursor: string;
+  pendingToolCallIds: readonly string[];
 }>;
 
 type AntigravityExternalReadAfterOutcome =
@@ -104,8 +128,86 @@ function readString(value: AgentExternalSessionLinkDataValue | undefined): strin
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function encodeCandidateCursor(cursor: CandidateCursorV2): string {
+function encodeCandidateCursor(cursor: CandidateCursorV2 | FullCandidateSearchCursorV1): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function encodeAntigravityExternalReadAfterCursor(
+  cursor: AntigravityExternalReadAfterCursorV1,
+): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeAntigravityExternalReadAfterCursor(
+  raw: string,
+): AntigravityExternalReadAfterCursorV1 | null {
+  try {
+    const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const rawPendingToolCallIds = record.pendingToolCallIds;
+    if (!Array.isArray(rawPendingToolCallIds)) return null;
+    const pendingToolCallIds: string[] = [];
+    for (const id of rawPendingToolCallIds) {
+      if (typeof id !== 'string' || !id.trim()) return null;
+      pendingToolCallIds.push(id);
+    }
+    if (
+      record.v !== 1
+      || record.kind !== 'antigravityExternalReadAfter'
+      || typeof record.transcriptCursor !== 'string'
+      || !record.transcriptCursor.trim()
+    ) return null;
+    return {
+      v: 1,
+      kind: 'antigravityExternalReadAfter',
+      transcriptCursor: record.transcriptCursor,
+      pendingToolCallIds,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidateSearchCursorV1 | null {
+  if (!raw?.trim()) return null;
+  try {
+    const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const after = record.after;
+    if (!after || typeof after !== 'object' || Array.isArray(after)) return null;
+    const anchor = after as Record<string, unknown>;
+    return record.v === 1
+      && record.kind === 'antigravityFullCandidateSearch'
+      && typeof record.brainDir === 'string'
+      && record.brainDir.length > 0
+      && typeof record.sourceGeneration === 'string'
+      && record.sourceGeneration.length > 0
+      && typeof record.searchTerm === 'string'
+      && record.searchTerm.trim().length > 0
+      && typeof anchor.remoteSessionId === 'string'
+      && anchor.remoteSessionId.trim().length > 0
+      && typeof anchor.updatedAtMs === 'number'
+      && Number.isFinite(anchor.updatedAtMs)
+      && typeof anchor.sourceRevision === 'string'
+      && anchor.sourceRevision.trim().length > 0
+      ? {
+          v: 1,
+          kind: 'antigravityFullCandidateSearch',
+          brainDir: record.brainDir,
+          sourceGeneration: record.sourceGeneration,
+          searchTerm: record.searchTerm,
+          after: {
+            remoteSessionId: anchor.remoteSessionId,
+            updatedAtMs: anchor.updatedAtMs,
+            sourceRevision: anchor.sourceRevision,
+          },
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeCandidateCursor(raw: string | undefined): CandidateCursorV2 | null {
@@ -173,11 +275,8 @@ function validateResolvedSourceIdentity(
   return null;
 }
 
-function readSourceRevision(
-  source: AgentExternalSessionSource,
-  linkData?: AgentExternalSessionLinkData,
-): string | null {
-  return readString(linkData?.sourceRevision) ?? readString(source.sourceRevision);
+function readLinkSourceRevision(linkData?: AgentExternalSessionLinkData): string | null {
+  return readString(linkData?.sourceRevision);
 }
 
 function toResolvedSource(params: Readonly<{
@@ -197,12 +296,147 @@ function toCandidate(candidate: Readonly<{
   conversationId: string;
   sourceRevision: string;
   updatedAtMs: number;
+  title?: string;
 }>): AgentExternalSessionCandidate {
   return {
     remoteSessionId: candidate.conversationId,
     updatedAtMs: candidate.updatedAtMs,
+    ...(candidate.title ? { title: candidate.title } : {}),
     linkData: { sourceRevision: candidate.sourceRevision },
   };
+}
+
+function isFullCandidateSearchAnchor(
+  candidate: AgentExternalSessionCandidate,
+  anchor: FullCandidateSearchCursorV1['after'],
+): boolean {
+  return candidate.remoteSessionId === anchor.remoteSessionId
+    && candidate.updatedAtMs === anchor.updatedAtMs
+    && readLinkSourceRevision(candidate.linkData) === anchor.sourceRevision;
+}
+
+function fullCandidateSearchAnchorCandidate(
+  anchor: FullCandidateSearchCursorV1['after'],
+): AgentExternalSessionCandidate {
+  return {
+    remoteSessionId: anchor.remoteSessionId,
+    updatedAtMs: anchor.updatedAtMs,
+    linkData: { sourceRevision: anchor.sourceRevision },
+  };
+}
+
+function encodeFullCandidateSearchCursor(params: Readonly<{
+  brainDir: string;
+  sourceGeneration: string;
+  searchTerm: string;
+  candidate: AgentExternalSessionCandidate;
+}>): string | null {
+  const sourceRevision = readLinkSourceRevision(params.candidate.linkData);
+  if (!sourceRevision) return null;
+  return encodeCandidateCursor({
+    v: 1,
+    kind: 'antigravityFullCandidateSearch',
+    brainDir: params.brainDir,
+    sourceGeneration: params.sourceGeneration,
+    searchTerm: params.searchTerm,
+    after: {
+      remoteSessionId: params.candidate.remoteSessionId,
+      updatedAtMs: params.candidate.updatedAtMs,
+      sourceRevision,
+    },
+  });
+}
+
+/**
+ * Search bypasses the host's complete candidate index. A full search therefore
+ * exhausts the bounded native source and retains only the requested ordered
+ * page plus one continuation row; it never becomes a second candidate index.
+ */
+async function listFullCandidateSearch(params: Readonly<{
+  invocation: AgentExternalSessionsInvocation;
+  brainDir: string;
+  searchTerm: string;
+  cursor: FullCandidateSearchCursorV1 | null;
+  maxItems: number;
+}>): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
+  const limit = Math.trunc(params.maxItems);
+  const after = params.cursor
+    ? fullCandidateSearchAnchorCandidate(params.cursor.after)
+    : null;
+  let foundAfter = after === null;
+  let sourceGeneration = params.cursor?.sourceGeneration ?? null;
+  let afterDirectoryEntryOffset: number | null = null;
+  const retained: AgentExternalSessionCandidate[] = [];
+
+  while (true) {
+    const stopped = invocationFailure(params.invocation);
+    if (stopped) return stopped;
+    const page = await pageAntigravityConversationCandidates({
+      brainDir: params.brainDir,
+      afterDirectoryEntryOffset,
+      expectedSourceGeneration: sourceGeneration,
+      maxItems: limit,
+      signal: params.invocation.signal,
+    });
+    sourceGeneration ??= page.sourceGeneration;
+
+    for (const nativeCandidate of page.candidates) {
+      const candidate = toCandidate(nativeCandidate);
+      if (
+        !candidate.remoteSessionId.toLowerCase().includes(params.searchTerm)
+        && candidate.title?.toLowerCase().includes(params.searchTerm) !== true
+      ) {
+        continue;
+      }
+      if (params.cursor) {
+        if (isFullCandidateSearchAnchor(candidate, params.cursor.after)) {
+          foundAfter = true;
+          continue;
+        }
+        if (!after || compareExternalSessionCandidatePrecedence(candidate, after) <= 0) continue;
+      }
+      retained.push(candidate);
+      retained.sort(compareExternalSessionCandidatePrecedence);
+      if (retained.length > limit + 1) retained.pop();
+    }
+
+    if (page.nextDirectoryEntryOffset === null) break;
+    afterDirectoryEntryOffset = page.nextDirectoryEntryOffset;
+  }
+
+  if (!foundAfter) {
+    return failed('source_invalid', 'Antigravity full-search candidate cursor is stale or unavailable.', true);
+  }
+  const stopped = invocationFailure(params.invocation);
+  if (stopped) return stopped;
+
+  if (retained.length === 0) {
+    return boundedResult(params.invocation, ok({ candidates: [], nextCursor: null }));
+  }
+
+  let candidates = retained.slice(0, limit);
+  while (candidates.length > 0) {
+    const hasMore = retained.length > candidates.length;
+    const lastCandidate = candidates.at(-1);
+    if (!lastCandidate) return failed('invalid_request');
+    const nextCursor = hasMore && sourceGeneration
+      ? encodeFullCandidateSearchCursor({
+        brainDir: params.brainDir,
+        sourceGeneration,
+        searchTerm: params.searchTerm,
+        candidate: lastCandidate,
+      })
+      : null;
+    if (hasMore && !nextCursor) return failed('invalid_request');
+    const result = ok({
+      candidates,
+      nextCursor,
+    });
+    if (serializedByteLength(result) <= params.invocation.maxSerializedBytes) return result;
+    candidates = candidates.slice(0, -1);
+  }
+
+  return failed('invalid_request');
 }
 
 async function resolveIdentity(params: Readonly<{
@@ -245,7 +479,7 @@ async function resolveTranscriptReadTarget(params: Readonly<{
   transcriptPath: string;
   sourceRevision: string;
 }>>> {
-  const sourceRevision = readSourceRevision(params.source);
+  const sourceRevision = readString(params.source.sourceRevision);
   if (sourceRevision) {
     if (!isSafeAntigravityConversationId(params.remoteSessionId)) {
       return failed('source_invalid', 'Antigravity conversation identity is invalid.');
@@ -262,12 +496,13 @@ async function resolveTranscriptReadTarget(params: Readonly<{
     brainDir: params.brainDir,
     remoteSessionId: params.remoteSessionId,
   });
-  return resolved.ok
-    ? ok({
-        transcriptPath: resolved.value.transcriptPath,
-        sourceRevision: String(resolved.value.linkData.sourceRevision),
-      })
-    : resolved;
+  if (!resolved.ok) return resolved;
+  const resolvedRevision = readLinkSourceRevision(resolved.value.linkData);
+  if (!resolvedRevision) return failed('source_invalid', 'Antigravity source revision is invalid.');
+  return ok({
+    transcriptPath: resolved.value.transcriptPath,
+    sourceRevision: resolvedRevision,
+  });
 }
 
 export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
@@ -278,19 +513,29 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
   maxItems: number;
   maxBytes: number;
 }>): Promise<AntigravityExternalReadAfterOutcome> {
+  const wrappedCursor = decodeAntigravityExternalReadAfterCursor(params.cursor);
   const outcome = await readAntigravityTranscriptLinesAfter({
     path: params.transcriptPath,
     conversationId: params.conversationId,
     sourceRevision: params.sourceRevision,
-    cursor: params.cursor,
+    cursor: wrappedCursor?.transcriptCursor ?? params.cursor,
     maxItems: params.maxItems,
     maxBytes: params.maxBytes,
+    includeCorrelationLookback: !wrappedCursor,
   });
+  if (outcome.kind === 'already_current') return { ...outcome, cursor: params.cursor };
   if (outcome.kind !== 'advanced') return outcome;
-  const groups = projectAntigravityTranscriptRecordGroupsToExternalItems({
+  const incomingPendingToolCallIds = wrappedCursor?.pendingToolCallIds
+    ?? projectAntigravityTranscriptRecordGroupsWithCorrelation({
+      conversationId: params.conversationId,
+      records: outcome.correlationLookbackRecords ?? [],
+    }).pendingToolCallIds;
+  const projected = projectAntigravityTranscriptRecordGroupsWithCorrelation({
     conversationId: params.conversationId,
     records: outcome.records,
+    pendingToolCallIds: incomingPendingToolCallIds,
   });
+  const groups = projected.groups;
   const items = groups.flatMap((group) => group.items);
   const skippedPositions = groups
     .filter((group) => group.items.length === 0)
@@ -298,7 +543,12 @@ export async function readAntigravityExternalTranscriptAfter(params: Readonly<{
   return {
     kind: 'advanced',
     items,
-    nextCursor: outcome.nextCursor,
+    nextCursor: encodeAntigravityExternalReadAfterCursor({
+      v: 1,
+      kind: 'antigravityExternalReadAfter',
+      transcriptCursor: outcome.nextCursor,
+      pendingToolCallIds: projected.pendingToolCallIds,
+    }),
     hasMore: outcome.hasMore,
     sourceRevision: outcome.sourceRevision,
     ...(outcome.sourceDiagnostics === undefined
@@ -368,11 +618,36 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) return failed('invalid_request');
       const validation = await validateSource({ source: request.source, env: readEnv() });
       if (!validation.ok) return boundedResult(request, validation);
-      const decoded = request.cursor ? decodeCandidateCursor(request.cursor) : null;
-      if (request.cursor && (!decoded || decoded.brainDir !== validation.value.brainDir)) {
+      const searchTerm = request.searchTerm?.trim().toLowerCase() ?? '';
+      const fullSearch = searchTerm.length > 0 && request.searchMode === 'full';
+      const fullSearchCursor = fullSearch && request.cursor
+        ? decodeFullCandidateSearchCursor(request.cursor)
+        : null;
+      if (
+        fullSearch
+        && request.cursor
+        && (
+          !fullSearchCursor
+          || fullSearchCursor.brainDir !== validation.value.brainDir
+          || fullSearchCursor.searchTerm !== searchTerm
+        )
+      ) {
+        return failed('invalid_request', 'Invalid Antigravity full-search candidate cursor.');
+      }
+      const decoded = fullSearch ? null : request.cursor ? decodeCandidateCursor(request.cursor) : null;
+      if (!fullSearch && request.cursor && (!decoded || decoded.brainDir !== validation.value.brainDir)) {
         return failed('invalid_request', 'Invalid Antigravity candidate cursor.');
       }
       try {
+        if (fullSearch) {
+          return await listFullCandidateSearch({
+            invocation: request,
+            brainDir: validation.value.brainDir,
+            searchTerm,
+            cursor: fullSearchCursor,
+            maxItems: request.maxItems,
+          });
+        }
         const page = await pageAntigravityConversationCandidates({
           brainDir: validation.value.brainDir,
           afterDirectoryEntryOffset: decoded?.directoryEntryOffset,
@@ -380,9 +655,11 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           maxItems: request.maxItems,
           signal: request.signal,
         });
-        const searchTerm = request.searchTerm?.trim().toLowerCase() ?? '';
         const filtered = searchTerm
-          ? page.candidates.filter((candidate) => candidate.conversationId.toLowerCase().includes(searchTerm))
+          ? page.candidates.filter((candidate) => (
+            candidate.conversationId.toLowerCase().includes(searchTerm)
+            || candidate.title?.toLowerCase().includes(searchTerm)
+          ))
           : page.candidates;
         const candidates: AgentExternalSessionCandidate[] = [];
         for (let index = 0; index < filtered.length; index += 1) {
@@ -402,7 +679,9 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           const proposed = ok({
             candidates: [...candidates, mapped],
             nextCursor,
-            ...(searchTerm ? { searchIncomplete: true } : {}),
+            ...(searchTerm
+              ? { searchIncomplete: true }
+              : { preparation: { kind: 'building_candidate_index' as const, scanned: candidate.directoryEntryOffset } }),
           });
           if (serializedByteLength(proposed) > request.maxSerializedBytes) {
             if (candidates.length === 0) return failed('invalid_request');
@@ -417,7 +696,14 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
                 sourceGeneration: page.sourceGeneration,
                 directoryEntryOffset: lastAcceptedCandidate.directoryEntryOffset,
               }),
-              ...(searchTerm ? { searchIncomplete: true } : {}),
+              ...(searchTerm
+                ? { searchIncomplete: true }
+                : {
+                  preparation: {
+                    kind: 'building_candidate_index' as const,
+                    scanned: lastAcceptedCandidate.directoryEntryOffset,
+                  },
+                }),
             });
           }
           candidates.push(mapped);
@@ -433,7 +719,9 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
                 directoryEntryOffset: page.nextDirectoryEntryOffset,
               })
             : null,
-          ...(searchTerm ? { searchIncomplete: true } : {}),
+          ...(searchTerm
+            ? { searchIncomplete: true }
+            : { preparation: { kind: 'building_candidate_index' as const, scanned: page.scanned } }),
         });
         return boundedResult(request, result);
       } catch (error) {
@@ -460,7 +748,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       const resolved = await resolveIdentity({
         brainDir: validation.value.brainDir,
         remoteSessionId: request.remoteSessionId,
-        expectedSourceRevision: readSourceRevision(request.source, request.linkData),
+        expectedSourceRevision: readLinkSourceRevision(request.linkData),
       });
       if (!resolved.ok) return boundedResult(request, resolved);
       const { transcriptPath: _transcriptPath, ...identity } = resolved.value;
@@ -474,7 +762,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
       if (identityMismatch) return boundedResult(request, identityMismatch);
       const validation = await validateSource({ source: request.source, env: readEnv() });
       if (!validation.ok) return boundedResult(request, validation);
-      const sourceRevision = readSourceRevision(request.source, request.linkData);
+      const sourceRevision = readLinkSourceRevision(request.linkData);
       if (!sourceRevision) return failed('invalid_request', 'Antigravity link identity requires sourceRevision.');
       const resolved = await resolveIdentity({
         brainDir: validation.value.brainDir,
@@ -525,16 +813,31 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
           truncated: true,
         }));
       }
-      const groups = projectAntigravityTranscriptRecordGroupsToExternalItems({
+      const incomingPendingToolCallIds = projectAntigravityTranscriptRecordGroupsWithCorrelation({
+        conversationId: request.remoteSessionId,
+        records: outcome.correlationLookbackRecords,
+      }).pendingToolCallIds;
+      const projected = projectAntigravityTranscriptRecordGroupsWithCorrelation({
         conversationId: request.remoteSessionId,
         records: outcome.records,
+        pendingToolCallIds: incomingPendingToolCallIds,
       });
+      const groups = projected.groups;
       const items = groups.flatMap((group) => group.items);
       if (items.length > request.maxItems) return failed('invalid_request');
+      const tailPendingToolCallIds = projectAntigravityTranscriptRecordGroupsWithCorrelation({
+        conversationId: request.remoteSessionId,
+        records: outcome.tailCorrelationLookbackRecords,
+      }).pendingToolCallIds;
       return boundedResult(request, ok({
         items,
         nextCursor: outcome.nextCursor,
-        tailCursor: outcome.tailCursor,
+        tailCursor: encodeAntigravityExternalReadAfterCursor({
+          v: 1,
+          kind: 'antigravityExternalReadAfter',
+          transcriptCursor: outcome.tailCursor,
+          pendingToolCallIds: tailPendingToolCallIds,
+        }),
         hasMore: outcome.hasMore,
       }));
     },
@@ -571,5 +874,8 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
   });
 }
 
-export const antigravityExternalSessionsContribution =
+// Annotated with the factory's own declared return type: the contribution surface now reaches
+// `ManagedServiceSpec` transitively, so an inferred type would make declaration emit name it
+// through a deep relative path it cannot portably reference.
+export const antigravityExternalSessionsContribution: AgentExternalSessionsContribution =
   createAntigravityExternalSessionsContribution();

@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 type OhMyPiPreflightModelOption = Readonly<{
   id: string;
@@ -91,7 +91,7 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
 }
 
 export async function probeOhMyPiPreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;

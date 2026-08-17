@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { KIRO_ACP_STDERR_RULES } from './transport.js';
 

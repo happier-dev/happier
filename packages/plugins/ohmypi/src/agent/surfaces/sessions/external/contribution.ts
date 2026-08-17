@@ -1,4 +1,9 @@
+import {
+  AgentExternalSessionTranscriptRawRecordSchema,
+  compareExternalSessionCandidatePrecedence,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
+  AgentExternalSessionCandidate,
   AgentExternalSessionLinkData,
   AgentExternalSessionLinkDataValue,
   AgentExternalSessionSource,
@@ -9,15 +14,14 @@ import type {
   AgentExternalSessionsReadAfterTranscriptResult,
   AgentExternalSessionsResult,
   AgentExternalSessionsTranscriptPage,
-  ExternalSessionTranscriptRawMessageV1,
-  ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   listOhMyPiSessionCandidates,
   OhMyPiCandidateInvalidCursorError,
   OhMyPiCandidateResultBudgetTooSmallError,
   OhMyPiCandidateSourceChangedError,
+  type OhMyPiExternalSessionCandidate,
 } from './candidates.js';
 import { resolveOhMyPiSessionFile } from './files.js';
 import {
@@ -26,8 +30,13 @@ import {
   OhMyPiExternalSessionSourceUnavailableError,
   pageOhMyPiSessionTranscript,
   readAfterOhMyPiSessionTranscript,
+  type OhMyPiRawTranscriptPage,
 } from './transcript.js';
-import { validateOhMyPiExternalSessionSource } from './source.js';
+import {
+  projectOhMyPiExternalSessionSource,
+  validateOhMyPiExternalSessionSource,
+  type OhMyPiExternalSessionSource,
+} from './source.js';
 
 function ok<T>(value: T): AgentExternalSessionsResult<T> {
   return { ok: true, value };
@@ -65,18 +74,9 @@ function readOptionalString(value: AgentExternalSessionLinkDataValue | undefined
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function toLegacySource(source: AgentExternalSessionSource): ExternalSessionsSource | null {
-  if (source.kind !== 'ohMyPiAgentDir') return null;
-  const agentDir = readOptionalString(source.agentDir);
-  return {
-    kind: 'ohMyPiAgentDir',
-    ...(agentDir ? { agentDir } : {}),
-  };
-}
-
 function toPublicSource(params: Readonly<{
   source: AgentExternalSessionSource;
-  validatedSource: ExternalSessionsSource;
+  validatedSource: OhMyPiExternalSessionSource;
 }>): AgentExternalSessionSource {
   const agentDir = params.validatedSource.kind === 'ohMyPiAgentDir'
     ? readOptionalString(
@@ -84,7 +84,6 @@ function toPublicSource(params: Readonly<{
     )
     : null;
   return {
-    ...params.source,
     kind: 'ohMyPiAgentDir',
     ...(agentDir ? { agentDir } : {}),
   };
@@ -94,10 +93,10 @@ function validateSource(params: Readonly<{
   source: AgentExternalSessionSource;
   env: NodeJS.ProcessEnv;
 }>): AgentExternalSessionsResult<Readonly<{
-  legacySource: ExternalSessionsSource;
+  legacySource: OhMyPiExternalSessionSource;
   publicSource: AgentExternalSessionSource;
 }>> {
-  const legacySource = toLegacySource(params.source);
+  const legacySource = projectOhMyPiExternalSessionSource(params.source);
   if (!legacySource) {
     return failed('source_invalid', 'provider/source mismatch');
   }
@@ -146,22 +145,30 @@ function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
     && Object.values(value).every((entry) => isLinkDataValue(entry, new Set([value])));
 }
 
+/**
+ * Admits one projected row into the canonical transcript raw-record contract.
+ * `isLinkData` keeps the row inside the public JSON contract; the schema then
+ * admits the `{ role, content }` envelope every transcript reader parses, so a
+ * row neither check accepts fails the page here instead of reaching a reader
+ * that cannot render it.
+ */
 function mapTranscriptItem(
-  item: ExternalSessionTranscriptRawMessageV1,
+  item: OhMyPiRawTranscriptPage['items'][number],
 ): AgentExternalSessionTranscriptItem | null {
   if (!isLinkData(item.raw)) return null;
+  const parsedRaw = AgentExternalSessionTranscriptRawRecordSchema.safeParse(item.raw);
+  if (!parsedRaw.success) return null;
   return {
     id: item.id,
     createdAtMs: item.createdAtMs,
     ...(item.localId !== undefined ? { localId: item.localId } : {}),
-    ...(item.messageRole !== undefined ? { messageRole: item.messageRole } : {}),
-    raw: item.raw,
+    raw: parsedRaw.data,
   };
 }
 
 function mapTranscriptPage(
   page: Readonly<{
-    items: readonly ExternalSessionTranscriptRawMessageV1[];
+    items: OhMyPiRawTranscriptPage['items'];
     nextCursor: string | null;
     tailCursor?: string | null;
     hasMore?: boolean;
@@ -262,7 +269,7 @@ function mapCandidate(candidate: Readonly<{
   createdAtMs?: number;
   archived?: boolean;
   details?: unknown;
-}>) {
+}>): AgentExternalSessionCandidate {
   const details = isPlainObject(candidate.details) ? candidate.details : null;
   const sessionFilePath = typeof details?.sessionFilePath === 'string'
     ? details.sessionFilePath
@@ -283,8 +290,96 @@ function withoutCandidateTitles(
   return candidates.map(({ title: _discardedTitle, ...candidate }) => candidate);
 }
 
-function readSessionFilePath(linkData: AgentExternalSessionLinkData | undefined): string | null {
+function candidateResultFits(params: Readonly<{
+  candidates: readonly ReturnType<typeof mapCandidate>[];
+  nextCursor: string | null;
+  searchIncomplete: boolean | undefined;
+  preparation: Readonly<{ kind: 'building_candidate_index'; scanned: number }> | undefined;
+  maxSerializedBytes: number;
+}>): boolean {
+  return serializedByteLength(ok({
+    candidates: params.candidates,
+    nextCursor: params.nextCursor,
+    ...(params.searchIncomplete !== undefined ? { searchIncomplete: params.searchIncomplete } : {}),
+    ...(params.preparation !== undefined ? { preparation: params.preparation } : {}),
+  })) <= params.maxSerializedBytes;
+}
+
+/**
+ * A public ref has no private file path. Reuse this leaf's cursor-backed
+ * candidate discovery, retain only the exact id's shared-precedence winner,
+ * and discard it at the end of this invocation.
+ */
+async function resolveUnqualifiedOhMyPiCandidate(params: Readonly<{
+  source: OhMyPiExternalSessionSource;
+  env: NodeJS.ProcessEnv;
+  remoteSessionId: string;
+  invocation: AgentExternalSessionsInvocation;
+}>): Promise<OhMyPiExternalSessionCandidate | null> {
+  let cursor: string | undefined;
+  let winner: OhMyPiExternalSessionCandidate | null = null;
+  do {
+    params.invocation.signal.throwIfAborted();
+    const listed = await listOhMyPiSessionCandidates({
+      source: params.source,
+      env: params.env,
+      ...(cursor ? { cursor } : {}),
+      limit: 50,
+      searchTerm: params.remoteSessionId,
+      signal: params.invocation.signal,
+      resultBudget: {
+        fits(candidates, nextCursor, searchIncomplete, preparation) {
+          return candidateResultFits({
+            candidates: candidates.map(mapCandidate),
+            nextCursor,
+            searchIncomplete,
+            preparation,
+            maxSerializedBytes: params.invocation.maxSerializedBytes,
+          });
+        },
+      },
+    });
+    params.invocation.signal.throwIfAborted();
+    for (const candidate of listed.candidates) {
+      if (
+        candidate.remoteSessionId === params.remoteSessionId
+        && (
+          !winner
+          || compareExternalSessionCandidatePrecedence(
+            mapCandidate(candidate),
+            mapCandidate(winner),
+          ) < 0
+        )
+      ) {
+        winner = candidate;
+      }
+    }
+    cursor = listed.nextCursor ?? undefined;
+  } while (cursor);
+  return winner;
+}
+
+/**
+ * Candidate-supplied hint only. A candidate's `linkData` is a transient request
+ * input; it never reaches session owner metadata.
+ */
+function readCandidateSessionFilePath(
+  linkData: AgentExternalSessionLinkData | undefined,
+): string | null {
   return readOptionalString(linkData?.sessionFilePath);
+}
+
+/**
+ * The resolved session file travels on `source.sessionFilePath` — the carrier every
+ * Oh My Pi read path (transcript paging, read-after, observation, takeover) already
+ * uses, and the one the host persists inside `externalSessionV1.source`.
+ *
+ * It must NOT also travel on the resolved `linkData`: that record is persisted
+ * only as the nested `externalSessionV1.linkData` vendor bag, so a duplicate
+ * copy there would be a second, silently divergable carrier for the same fact.
+ */
+function readResolvedSessionFilePath(source: AgentExternalSessionSource): string | null {
+  return readOptionalString(source.sessionFilePath);
 }
 
 export function createOhMyPiExternalSessionsContribution(params: Readonly<{
@@ -319,12 +414,13 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
           signal: request.signal,
           resultBudget: {
             fits(candidates, nextCursor, searchIncomplete, preparation) {
-              return serializedByteLength(ok({
+              return candidateResultFits({
                 candidates: candidates.map(mapCandidate),
                 nextCursor,
-                ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-                ...(preparation !== undefined ? { preparation } : {}),
-              })) <= request.maxSerializedBytes;
+                searchIncomplete,
+                preparation,
+                maxSerializedBytes: request.maxSerializedBytes,
+              });
             },
           },
         });
@@ -374,11 +470,26 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
       try {
+        const requestedSessionFilePath = readResolvedSessionFilePath(request.source)
+          ?? readCandidateSessionFilePath(request.linkData);
+        const candidate = requestedSessionFilePath
+          ? null
+          : await resolveUnqualifiedOhMyPiCandidate({
+              source: validation.value.legacySource,
+              env,
+              remoteSessionId: request.remoteSessionId,
+              invocation: request,
+            });
+        const sessionFilePath = requestedSessionFilePath
+          ?? candidate?.details.sessionFilePath;
+        if (!sessionFilePath) {
+          return failed('candidate_not_found', 'Oh My Pi external-session candidate was not found.');
+        }
         const resolved = await resolveOhMyPiSessionFile({
           source: validation.value.legacySource,
           env,
           remoteSessionId: request.remoteSessionId,
-          sessionFilePath: readSessionFilePath(request.linkData),
+          sessionFilePath,
         });
         const after = invocationFailure(request);
         if (after) return after;
@@ -391,7 +502,7 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
             sessionFilePath: resolved.filePath,
           },
           remoteSessionId: request.remoteSessionId,
-          linkData: { sessionFilePath: resolved.filePath },
+          linkData: {},
         });
       } catch (error) {
         const after = invocationFailure(request);
@@ -407,14 +518,10 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
     async resolveLinkedIdentity(request) {
       const stopped = invocationFailure(request);
       if (stopped) return stopped;
-      const sessionFilePath = readSessionFilePath(request.linkData);
-      if (!sessionFilePath) {
-        return failed('invalid_request', 'Oh My Pi linked identity requires a sessionFilePath.');
+      if (!readResolvedSessionFilePath(request.source)) {
+        return failed('invalid_request', 'Oh My Pi linked identity requires a source sessionFilePath.');
       }
-      return await this.resolveLinkIdentity({
-        ...request,
-        linkData: { sessionFilePath },
-      });
+      return await this.resolveLinkIdentity({ ...request, linkData: {} });
     },
 
     async pageTranscript(request) {
@@ -493,4 +600,4 @@ export function createOhMyPiExternalSessionsContribution(params: Readonly<{
   });
 }
 
-export const ohMyPiExternalSessionsContribution = createOhMyPiExternalSessionsContribution();
+export const ohMyPiExternalSessionsContribution: AgentExternalSessionsContribution = createOhMyPiExternalSessionsContribution();

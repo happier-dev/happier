@@ -5,7 +5,7 @@ import type {
   AgentSessionConfigurationSnapshot,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   createAntigravityNativeRuntime,
@@ -57,7 +57,21 @@ function createNativeSession(sessionId: string): AgentSessionRuntime {
   };
 }
 
-const context = {} as AgentRuntimeContext;
+function createConnectedAccountsFixture(binding: unknown = null) {
+  return {
+    getBinding: vi.fn(async () => binding),
+    materialize: vi.fn(),
+    requestSelection: vi.fn(),
+    watch: vi.fn(() => ({ dispose: vi.fn() })),
+  };
+}
+
+function createContext(connectedAccounts = createConnectedAccountsFixture()): AgentRuntimeContext {
+  return {
+    signal: new AbortController().signal,
+    services: { connectedAccounts },
+  } as unknown as AgentRuntimeContext;
+}
 
 describe('createAntigravityNativeRuntime', () => {
   it('opens both structured session modes through one native runtime and preserves custody ordering', async () => {
@@ -65,6 +79,7 @@ describe('createAntigravityNativeRuntime', () => {
       return createNativeSession(request.sessionId);
     });
     const runtime = createAntigravityNativeRuntime({ openSession });
+    const context = createContext();
 
     const sdk = await runtime.sessions?.open({
       kind: 'create',
@@ -104,6 +119,7 @@ describe('createAntigravityNativeRuntime', () => {
       createNativeSession(request.sessionId)
     ));
     const runtime = createAntigravityNativeRuntime({ openSession });
+    const context = createContext();
 
     const executionRun = await runtime.executionRuns?.open({
       kind: 'create',
@@ -131,6 +147,7 @@ describe('createAntigravityNativeRuntime', () => {
       openSession,
       resolveMode: async () => 'sdk',
     });
+    const context = createContext();
 
     await runtime.sessions?.open({
       kind: 'resume',
@@ -157,7 +174,12 @@ describe('createAntigravityNativeRuntime', () => {
     await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
       sessionId: 'terminal-session',
       cwd: '/repo',
-      metadata: { model: 'gemini-3.1-pro-high' },
+      metadata: {},
+      modelSelection: {
+        agentTargetKey: 'backend:antigravity',
+        providerConnectionId: null,
+        modelId: 'gemini-3.1-pro-high',
+      },
     }))).resolves.toEqual({
       argv: ['--model', 'gemini-3.1-pro-high'],
       process: { stdio: 'inherit', windowsHide: true },
@@ -172,5 +194,128 @@ describe('createAntigravityNativeRuntime', () => {
         },
       },
     });
+  });
+
+  it('materializes the bound Gemini environment with the exact session cancellation signal', async () => {
+    const signal = new AbortController().signal;
+    const connectedAccounts = createConnectedAccountsFixture({
+      purpose: 'model_upstream',
+      service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+      target: { kind: 'account', displayName: 'Vertex account' },
+    });
+    connectedAccounts.materialize.mockResolvedValue({
+      kind: 'environment',
+      env: {
+        GOOGLE_GENAI_USE_VERTEXAI: '1',
+        GOOGLE_CLOUD_PROJECT: 'vertex-project',
+        GOOGLE_CLOUD_LOCATION: 'europe-west1',
+        UNDECLARED_SECRET: 'must-not-propagate',
+      },
+    });
+    const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
+      createNativeSession(request.sessionId)
+    ));
+    const runtime = createAntigravityNativeRuntime({ openSession });
+    const context = {
+      signal,
+      services: { connectedAccounts },
+    } as unknown as AgentRuntimeContext;
+
+    await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'qualified-cli-session',
+      cwd: '/repo',
+      configuration: configuration('cliPrint'),
+    }, context);
+
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(
+      'model_upstream',
+      { signal },
+    );
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+      'model_upstream',
+      {
+        kind: 'environment',
+        keys: [
+          'GEMINI_API_KEY',
+          'GOOGLE_API_KEY',
+          'GOOGLE_GENAI_USE_VERTEXAI',
+          'GOOGLE_CLOUD_PROJECT',
+          'GOOGLE_CLOUD_LOCATION',
+        ],
+      },
+      { signal },
+    );
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({
+      connectedAccountEnv: {
+        GOOGLE_GENAI_USE_VERTEXAI: '1',
+        GOOGLE_CLOUD_PROJECT: 'vertex-project',
+        GOOGLE_CLOUD_LOCATION: 'europe-west1',
+      },
+    }));
+  });
+
+  it('keeps the native launch path unchanged when no account is bound', async () => {
+    const connectedAccounts = createConnectedAccountsFixture();
+    const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
+      createNativeSession(request.sessionId)
+    ));
+    const runtime = createAntigravityNativeRuntime({ openSession });
+
+    await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'native-login-session',
+      cwd: '/repo',
+      launchEnvironment: { values: { SAFE_NATIVE_ENV: 'kept' }, unset: [] },
+      configuration: configuration('sdk'),
+    }, createContext(connectedAccounts));
+
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(openSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      connectedAccountEnv: expect.anything(),
+      materializeAuthEnv: expect.anything(),
+    }));
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        launchEnvironment: { values: { SAFE_NATIVE_ENV: 'kept' }, unset: [] },
+      }),
+    }));
+  });
+
+  it('turns a later purpose resync into session recovery and disposes the watch with the session', async () => {
+    let resync: (() => void) | null = null;
+    const disposeSubscription = vi.fn();
+    const connectedAccounts = {
+      ...createConnectedAccountsFixture(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        return { dispose: disposeSubscription };
+      }),
+    };
+    const disposeSession = vi.fn();
+    const runtime = createAntigravityNativeRuntime({
+      openSession: ({ request }) => ({
+        ...createNativeSession(request.sessionId),
+        dispose: disposeSession,
+      }),
+    });
+    const session = await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'watched-session',
+      cwd: '/repo',
+      configuration: configuration('sdk'),
+    }, createContext(connectedAccounts));
+
+    resync?.();
+    expect(disposeSession).not.toHaveBeenCalled();
+    resync?.();
+    await vi.waitFor(() => {
+      expect(disposeSession).toHaveBeenCalledWith('runtime_recovery');
+    });
+    expect(disposeSubscription).toHaveBeenCalledOnce();
+
+    await session?.dispose();
+    expect(disposeSession).toHaveBeenCalledTimes(1);
+    expect(disposeSubscription).toHaveBeenCalledTimes(1);
   });
 });

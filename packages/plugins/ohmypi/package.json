@@ -29,18 +29,22 @@
   },
   "files": [
     "dist",
+    ".happier-plugin/plugin.json",
     "package.json"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

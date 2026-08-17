@@ -1,8 +1,8 @@
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 
 import { encodeInputConfigFrame, LOCALHARNESS_PROTOCOL_FINGERPRINT } from '../client/handshake.js';
@@ -521,7 +521,8 @@ export function createAntigravityLocalharnessCredentialResolver(params: Readonly
     const materializedEnv = await params.materializeAuthEnv?.().catch(() => null) ?? {};
     const env = { ...params.env, ...materializedEnv };
     const explicitMode = readString(env.ANTIGRAVITY_AUTH_MODE);
-    if (explicitMode === 'vertex') {
+    const publicVertexMode = readString(env.GOOGLE_GENAI_USE_VERTEXAI)?.toLowerCase();
+    if (explicitMode === 'vertex' || publicVertexMode === '1' || publicVertexMode === 'true') {
       return {
         mode: 'vertex',
         project: readString(env.GOOGLE_CLOUD_PROJECT) ?? readString(env.VERTEX_PROJECT),

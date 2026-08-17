@@ -1,9 +1,18 @@
 import type {
   AgentAcpRuntimeDefinition,
+  AgentRuntimeContext,
   AgentRuntimeFactory,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+  AgentSessionDisposeReason,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
+
+export {
+  ohMyPiExternalSessionsContribution,
+} from '../surfaces/sessions/external/contribution.js';
 
 const OH_MY_PI_ACP_RUNTIME_DEFINITION = Object.freeze({
   acceptsVerifiedImageInput: true,
@@ -11,20 +20,186 @@ const OH_MY_PI_ACP_RUNTIME_DEFINITION = Object.freeze({
   mcp: { policy: 'pass_through' as const },
 }) satisfies AgentAcpRuntimeDefinition;
 
+type PreparedOhMyPiConnectedAccounts = Readonly<{
+  request: AgentSessionOpenRequest;
+  bind(session: AgentSessionRuntime): AgentSessionRuntime;
+  cleanup(): void;
+}>;
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Oh My Pi qualified Connected Account preparation was aborted.');
+}
+
+async function waitForInitialPurposeObservations(
+  observations: Iterable<Promise<void>>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw abortError(signal);
+  let abort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(abortError(signal));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    await Promise.race([Promise.all(observations), aborted]);
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
+}
+
+function isExpectedService(
+  actual: Readonly<{ pluginId: string; localId: string }>,
+  expected: Readonly<{ pluginId: string; localId: string }>,
+): boolean {
+  return actual.pluginId === expected.pluginId && actual.localId === expected.localId;
+}
+
+async function prepareOhMyPiQualifiedAccounts(
+  request: AgentSessionOpenRequest,
+  context: AgentRuntimeContext,
+): Promise<PreparedOhMyPiConnectedAccounts> {
+  const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
+  const initialObservations: Promise<void>[] = [];
+  let invalidated = false;
+  let invalidationHandler: (() => Promise<void>) | null = null;
+  let cleaned = false;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const subscription of subscriptions) subscription.dispose();
+  };
+  const invalidate = async (): Promise<void> => {
+    invalidated = true;
+    await invalidationHandler?.();
+  };
+
+  try {
+    for (const declaration of OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES) {
+      let resolveInitial!: () => void;
+      initialObservations.push(new Promise<void>((resolve) => {
+        resolveInitial = resolve;
+      }));
+      let initial = true;
+      subscriptions.push(context.services.connectedAccounts.watch(
+        declaration.purpose,
+        () => {
+          if (initial) {
+            initial = false;
+            resolveInitial();
+            return;
+          }
+          return invalidate();
+        },
+      ));
+    }
+    await waitForInitialPurposeObservations(initialObservations, context.signal);
+
+    const bindings = await Promise.all(OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => ({
+      declaration,
+      binding: await context.services.connectedAccounts.getBinding(
+        declaration.purpose,
+        { signal: context.signal },
+      ),
+    })));
+    const bound = bindings.flatMap((entry) => entry.binding === null
+      ? []
+      : [{ declaration: entry.declaration, binding: entry.binding }]);
+    for (const entry of bound) {
+      if (!isExpectedService(entry.binding.service, entry.declaration.service)) {
+        throw new Error(
+          `Oh My Pi Connected Account purpose ${entry.declaration.purpose} resolved an unexpected service.`,
+        );
+      }
+    }
+
+    const materializedEnvironment = await Promise.all(bound.map(async ({ declaration }) => {
+      const materialized = await context.services.connectedAccounts.materialize(
+        declaration.purpose,
+        { kind: 'environment', keys: [declaration.materializationKey] },
+        { signal: context.signal },
+      );
+      if (materialized.kind !== 'environment') {
+        throw new Error(
+          `Oh My Pi Connected Account purpose ${declaration.purpose} returned an invalid environment materialization.`,
+        );
+      }
+      const value = materialized.env[declaration.materializationKey];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(
+          `Oh My Pi Connected Account purpose ${declaration.purpose} did not materialize ${declaration.materializationKey}.`,
+        );
+      }
+      return {
+        key: declaration.launchEnvironmentKey,
+        value,
+      };
+    }));
+
+    let preparedRequest = request;
+    if (materializedEnvironment.length > 0) {
+      const values = { ...(request.launchEnvironment?.values ?? {}) };
+      const unset = new Set(request.launchEnvironment?.unset ?? []);
+      for (const entry of materializedEnvironment) {
+        values[entry.key] = entry.value;
+        unset.delete(entry.key);
+      }
+      preparedRequest = {
+        ...request,
+        launchEnvironment: {
+          values,
+          unset: [...unset],
+        },
+      } satisfies AgentSessionOpenRequest;
+    }
+
+    return {
+      request: preparedRequest,
+      bind(session) {
+        let disposed = false;
+        const dispose = async (reason?: AgentSessionDisposeReason): Promise<void> => {
+          if (disposed) return;
+          disposed = true;
+          cleanup();
+          await session.dispose(reason);
+        };
+        invalidationHandler = async () => await dispose('runtime_recovery');
+        if (invalidated) void invalidationHandler();
+        return {
+          ...session,
+          dispose,
+        };
+      },
+      cleanup,
+    };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
 export const createOhMyPiAgentRuntime: AgentRuntimeFactory = () => ({
   sessions: {
-    open(request, context) {
-      return context.protocols.acp.open(request, {
-        transport: {
-          kind: 'stdio',
-          executable: {
-            kind: 'systemTool',
-            id: OH_MY_PI_SYSTEM_TOOL_ID,
+    async open(request, context) {
+      const prepared = await prepareOhMyPiQualifiedAccounts(request, context);
+      try {
+        const session = await context.protocols.acp.open(prepared.request, {
+          transport: {
+            kind: 'stdio',
+            executable: {
+              kind: 'systemTool',
+              id: OH_MY_PI_SYSTEM_TOOL_ID,
+            },
+            args: ['--mode', 'acp'],
           },
-          args: ['--mode', 'acp'],
-        },
-        definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
-      });
+          definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
+        });
+        return prepared.bind(session);
+      } catch (error) {
+        prepared.cleanup();
+        throw error;
+      }
     },
   },
 });

@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { COPILOT_ACP_STDERR_RULES, COPILOT_ACP_TIMEOUTS, COPILOT_ACP_TOOL_NAME_INFERENCE } from './transport.js';
 

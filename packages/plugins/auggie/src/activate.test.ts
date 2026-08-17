@@ -4,7 +4,7 @@ import {
   type AgentSessionOpenRequest,
   type AgentSessionRuntime,
   type AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { AntigravityLocalharnessClient } from '../client/nativeClient.js';
 import { WEBSOCKET_FIXTURE } from '../__fixtures__/localharness-0.1.4.js';
@@ -99,7 +99,7 @@ describe('Antigravity localharness native session runtime', () => {
       'usage-observed',
       'turn-complete',
     ]);
-    for (const event of events) expect(AgentSessionRuntimeEventV1Schema.safeParse(event).success).toBe(true);
+    for (const event of events) expect(AgentSessionRuntimeEventSchema.safeParse(event).success).toBe(true);
   });
 
   it('fails an idle-only turn without transcript evidence', async () => {

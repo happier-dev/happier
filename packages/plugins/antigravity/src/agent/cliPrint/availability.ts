@@ -1,4 +1,4 @@
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import {
@@ -54,7 +54,7 @@ export function clearAntigravityCliPrintAvailabilityCache(): void {
 }
 
 export async function probeAntigravityCliPrintAvailability(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd?: string | null;
   env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;

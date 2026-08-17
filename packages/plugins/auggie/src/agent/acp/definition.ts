@@ -1,4 +1,4 @@
-import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AUGGIE_ACP_TIMEOUTS, AUGGIE_STDERR_RULES, AUGGIE_TOOL_NAME_INFERENCE } from './transport.js';
 

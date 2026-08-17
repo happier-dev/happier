@@ -1,6 +1,8 @@
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
+import { OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const OH_MY_PI_AUTH_ENV_KEYS = [
   'OPENAI_CODEX_OAUTH_TOKEN',
@@ -72,6 +74,12 @@ export const PLUGIN_MANIFEST = {
         },
       },
       primary: 'sessions',
+      connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, service }) => ({
+        purpose,
+        service,
+        required: false,
+        materializationKinds: ['environment'] as const,
+      })),
       capabilities: {
         surfaces: ['externalSessions'],
         sessions: {
@@ -91,7 +99,6 @@ export const PLUGIN_MANIFEST = {
                 { kind: 'literal', name: 'kind', value: 'ohMyPiAgentDir' },
                 { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
               ],
-              passthrough: true,
             },
             key: {
               segments: [
@@ -99,7 +106,13 @@ export const PLUGIN_MANIFEST = {
                 { kind: 'field', field: 'agentDir' },
               ],
             },
-            instances: [{ kind: 'default', constants: {} }],
+            instances: [{ kind: 'default', constants: {} }, {
+              kind: 'agentSettingOverride',
+              settingId: 'ohMyPiAgentDir',
+              field: 'agentDir',
+              normalization: 'configuredPath',
+              constants: {},
+            }],
           }],
         },
       },
@@ -114,5 +127,6 @@ export const PLUGIN_MANIFEST = {
       filters: { agentId: 'ohMyPi' },
       executionKind: 'decide',
     }],
+    settings: [OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies PluginManifest;

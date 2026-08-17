@@ -4,15 +4,30 @@ import { basename, join } from 'node:path';
 
 import {
   scanJsonlSessionFile,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 import {
   deriveExternalSessionActivity,
-  type ExternalSessionCandidateV1,
-  type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import { resolveOhMyPiSessionsRoot } from './files.js';
-import { resolveOhMyPiAgentDir } from './source.js';
+import { resolveOhMyPiAgentDir, type OhMyPiExternalSessionSource } from './source.js';
+
+export type OhMyPiExternalSessionCandidate = Readonly<{
+  remoteSessionId: string;
+  title?: string;
+  updatedAtMs: number;
+  createdAtMs?: number;
+  activity?: ReturnType<typeof deriveExternalSessionActivity>;
+  details: Readonly<{
+    workingDirectory: string | null;
+    agentDir: string;
+    sessionFilePath: string;
+  }>;
+}>;
 
 type CandidatePreparation = Readonly<{
   kind: 'building_candidate_index';
@@ -21,7 +36,7 @@ type CandidatePreparation = Readonly<{
 
 export type OhMyPiCandidateResultBudget = Readonly<{
   fits(
-    candidates: readonly ExternalSessionCandidateV1[],
+    candidates: readonly OhMyPiExternalSessionCandidate[],
     nextCursor: string | null,
     searchIncomplete: boolean | undefined,
     preparation: CandidatePreparation | undefined,
@@ -58,6 +73,50 @@ type FileIdentity = Readonly<{
 
 const GENERATION_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const EMPTY_AGGREGATE_XOR = Buffer.alloc(12).toString('base64url');
+
+const OH_MY_PI_CANDIDATE_TITLE_MAX_CHARS = 120;
+
+/**
+ * Happier prepends its own base system prompt to the first Oh My Pi user turn and
+ * Oh My Pi persists that whole block as the first user message, so a title derived
+ * from it would render a wall of instructions. Which block opens the preamble
+ * depends on the session's prompt settings, so every opening the canonical producer
+ * can emit disqualifies the message. Anchoring on the producer's own block headings
+ * — rather than a hand-copied phrase list — keeps this honest as the prompt evolves.
+ */
+const HAPPIER_BASE_SYSTEM_PROMPT_HEADINGS = [
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+]
+  .map((block) => (block.split('\n', 1)[0] ?? '').trim().toLowerCase())
+  .filter((heading) => heading.length > 0);
+
+function normalizeOhMyPiCandidateTitle(value: string | null): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (normalized.length <= OH_MY_PI_CANDIDATE_TITLE_MAX_CHARS) return normalized;
+  const prefixLimit = OH_MY_PI_CANDIDATE_TITLE_MAX_CHARS - 3;
+  const prefix = normalized.slice(0, prefixLimit);
+  const safePrefix = /[\uD800-\uDBFF]$/u.test(prefix) ? prefix.slice(0, -1) : prefix;
+  return `${safePrefix.trimEnd()}...`;
+}
+
+/**
+ * Oh My Pi never persists an agent-authored title, so a candidate's only title
+ * evidence is the first user message the bounded session scan already returned.
+ */
+export function formatOhMyPiCandidateTitle(value: string | null): string | null {
+  const normalized = normalizeOhMyPiCandidateTitle(value);
+  if (!normalized) return null;
+  const lowerNormalized = normalized.toLowerCase();
+  if (HAPPIER_BASE_SYSTEM_PROMPT_HEADINGS.some((heading) => lowerNormalized.startsWith(heading))) {
+    return null;
+  }
+  return normalized;
+}
 
 export class OhMyPiCandidateInvalidCursorError extends Error {
   readonly name = 'OhMyPiCandidateInvalidCursorError';
@@ -287,7 +346,7 @@ async function inspectCandidateFile(params: Readonly<{
   env: NodeJS.ProcessEnv;
   searchTerm: string;
 }>): Promise<Readonly<{
-  candidate: ExternalSessionCandidateV1 | null;
+  candidate: OhMyPiExternalSessionCandidate | null;
   identityToken: string;
 }>> {
   const beforeMetadata = await lstat(params.filePath);
@@ -308,9 +367,17 @@ async function inspectCandidateFile(params: Readonly<{
   ) throwSourceChanged();
   const identityToken = `${params.filePath}\u0000${JSON.stringify(after)}`;
   if (!scanned) return { candidate: null, identityToken };
+  // The bounded scan already read the head of this file; the derived title reuses
+  // that result and never opens the session file a second time.
+  const persistedTitle = scanned.title === null || scanned.title === undefined
+    ? null
+    : scanned.title;
+  const title = persistedTitle === null
+    ? formatOhMyPiCandidateTitle(scanned.firstUserMessage)
+    : normalizeOhMyPiCandidateTitle(persistedTitle);
   const haystack = [
     scanned.sessionId,
-    scanned.title ?? '',
+    persistedTitle ?? title ?? '',
     scanned.cwd ?? '',
     basename(params.sessionRoot),
   ].join(' ').toLowerCase();
@@ -320,7 +387,7 @@ async function inspectCandidateFile(params: Readonly<{
   return {
     candidate: {
       remoteSessionId: scanned.sessionId,
-      ...(scanned.title ? { title: scanned.title } : {}),
+      ...(title ? { title } : {}),
       updatedAtMs: scanned.lastActivityAtMs || Math.trunc(afterMetadata.mtimeMs),
       ...(typeof scanned.createdAtMs === 'number' ? { createdAtMs: scanned.createdAtMs } : {}),
       activity: deriveExternalSessionActivity({
@@ -338,7 +405,7 @@ async function inspectCandidateFile(params: Readonly<{
 }
 
 export async function listOhMyPiSessionCandidates(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OhMyPiExternalSessionSource;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
@@ -346,7 +413,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   signal?: AbortSignal;
   resultBudget?: OhMyPiCandidateResultBudget;
 }>): Promise<Readonly<{
-  candidates: ExternalSessionCandidateV1[];
+  candidates: OhMyPiExternalSessionCandidate[];
   nextCursor: string | null;
   searchIncomplete?: true;
   preparation?: CandidatePreparation;
@@ -391,7 +458,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   let aggregateCount = decoded?.aggregateCount ?? 0;
   const expectedAggregateXor = decoded?.expectedAggregateXor;
   const expectedAggregateCount = decoded?.expectedAggregateCount;
-  const candidates: ExternalSessionCandidateV1[] = [];
+  const candidates: OhMyPiExternalSessionCandidate[] = [];
   let inspectedEntries = 0;
   let inspectedRoots = 0;
   const rootDirectory = await opendir(sessionsRoot);
@@ -514,7 +581,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
             ...(phase === 'verify' ? { expectedAggregateXor, expectedAggregateCount } : {}),
           });
           let identityToken: string;
-          let candidate: ExternalSessionCandidateV1 | null = null;
+          let candidate: OhMyPiExternalSessionCandidate | null = null;
           if (phase === 'scan') {
             const inspected = await inspectCandidateFile({
               filePath,

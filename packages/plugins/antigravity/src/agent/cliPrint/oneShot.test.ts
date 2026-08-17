@@ -185,10 +185,14 @@ describe('runAntigravityCliPrintOneShot', () => {
   });
 
   it('classifies non-zero exits without leaking control to console output', async () => {
+    const privateStderr = [
+      'authentication failed: {"password":"quoted-json-secret"}',
+      'Authorization: Basic dXNlcjpwYXNz',
+    ].join('\n');
     const runExec = vi.fn(async () => createRunResult({
       exitCode: 2,
       stdout: '',
-      stderr: 'auth failed',
+      stderr: privateStderr,
     }));
 
     const run = runAntigravityCliPrintOneShot({
@@ -203,7 +207,11 @@ describe('runAntigravityCliPrintOneShot', () => {
     await expect(run).rejects.toMatchObject({
       code: 'antigravity_cliprint_exit_nonzero',
       exitCode: 2,
-      stderr: 'auth failed',
+      message: [
+        'Antigravity CLI print exited with code 2: authentication failed: {"password": "[REDACTED]"}',
+        'authorization: basic [REDACTED]',
+      ].join('\n'),
+      stderr: privateStderr,
     });
     await expect(run).rejects.toBeInstanceOf(AntigravityCliPrintOneShotError);
   });

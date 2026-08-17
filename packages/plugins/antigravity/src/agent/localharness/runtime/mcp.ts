@@ -1,4 +1,4 @@
-import type { AgentSessionMcpServer } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionMcpServer } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { AntigravityLocalharnessMcpServerConfig } from '../client/protocol.js';
 
@@ -6,7 +6,7 @@ export type AntigravityLocalharnessUnsupportedMcpServer = Readonly<{
   id: string;
   name: string;
   transportKind: string;
-  reason: 'invalid_url' | 'missing_url' | 'unsupported_stdio' | 'unsupported_transport';
+  reason: 'invalid_url' | 'unsupported_stdio' | 'unsupported_transport';
 }>;
 
 export type AntigravityLocalharnessMcpMapping = Readonly<{
@@ -63,19 +63,6 @@ export function mapMcpServersToLocalharnessConfig(
       const url = readSafeRemoteUrl(server.transport.url);
       if (!url) {
         unsupported.push(unsupportedServer(server, 'invalid_url'));
-        continue;
-      }
-      configs.push(Object.freeze({
-        name: readServerName(server),
-        http: { url },
-      }));
-      continue;
-    }
-
-    if (server.transport.kind === 'managed') {
-      const url = readSafeRemoteUrl(server.transport.url);
-      if (!url) {
-        unsupported.push(unsupportedServer(server, 'missing_url'));
         continue;
       }
       configs.push(Object.freeze({

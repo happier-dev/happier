@@ -3,10 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
 
 import { buildAntigravityCliPrintLaunchArgs } from './launchArgs.js';
 import {
@@ -72,89 +70,6 @@ function readErrorMessage(error: unknown, fallback: string): string {
 
 function createDefaultTurnId(): string {
   return `antigravity-cliprint-turn-${randomUUID()}`;
-}
-
-function toJsonValue(value: unknown) {
-  const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
-  return parsed.success ? parsed.data : { unavailable: true };
-}
-
-function readCommittedMessage(event: Extract<RuntimeEventV1, { kind: 'transcript-agent-message-committed' }>) {
-  if (!event.body || typeof event.body !== 'object' || Array.isArray(event.body)) return null;
-  const body = event.body as Readonly<Record<string, unknown>>;
-  const text = typeof body.message === 'string'
-    ? body.message
-    : typeof body.text === 'string'
-      ? body.text
-      : null;
-  if (text === null) return null;
-  return { text, role: body.thinking === true ? 'reasoning' as const : 'assistant' as const };
-}
-
-function mapTranscriptEvent(event: RuntimeEventV1): NativeSessionEventInput | null {
-  switch (event.kind) {
-    case 'message-delta': {
-      const delta = event.delta;
-      if (typeof delta === 'string') {
-        return { kind: 'message-delta', turnId: event.turnId, channel: 'assistant', text: delta };
-      }
-      if (!delta || typeof delta !== 'object' || Array.isArray(delta)) return null;
-      const record = delta as Readonly<Record<string, unknown>>;
-      if (typeof record.text !== 'string') return null;
-      return {
-        kind: 'message-delta',
-        turnId: event.turnId,
-        channel: record.thinking === true ? 'reasoning' : 'assistant',
-        text: record.text,
-      };
-    }
-    case 'transcript-agent-message-committed': {
-      const committed = readCommittedMessage(event);
-      return committed
-        ? {
-            kind: 'transcript-message-committed',
-            messageId: event.localId,
-            role: committed.role,
-            text: committed.text,
-            ...(typeof event.turnId === 'string' ? { turnId: event.turnId } : {}),
-          }
-        : null;
-    }
-    case 'tool-call':
-      return {
-        kind: 'tool-call',
-        turnId: event.turnId,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        input: toJsonValue(event.toolInput),
-      };
-    case 'tool-progress':
-      return {
-        kind: 'tool-progress',
-        turnId: event.turnId,
-        toolCallId: event.toolCallId,
-        progress: toJsonValue(event.progress),
-      };
-    case 'tool-result':
-      return {
-        kind: 'tool-result',
-        turnId: event.turnId,
-        toolCallId: event.toolCallId,
-        output: toJsonValue(event.output),
-        ...(event.isError === true ? { isError: true } : {}),
-      };
-    case 'turn-failed':
-      return {
-        kind: 'turn-failed',
-        turnId: event.turnId,
-        diagnostic: diagnostic(
-          event.issue.code,
-          event.issue.sanitizedPreview ?? 'Antigravity CLI print transcript reported an error.',
-        ),
-      };
-    default:
-      return null;
-  }
 }
 
 export function createAntigravityCliPrintSessionRuntime(
@@ -260,11 +175,9 @@ export function createAntigravityCliPrintSessionRuntime(
             emittedAtMs: deps.now?.() ?? Date.now(),
             steps: transcriptSteps,
           })) {
-            const mapped = mapTranscriptEvent(event);
-            if (!mapped) continue;
-            staged.push(mapped);
-            if (mapped.kind === 'turn-failed') transcriptFailure = true;
-            if (['message-delta', 'transcript-message-committed', 'tool-call', 'tool-result', 'turn-failed'].includes(mapped.kind)) {
+            staged.push(event);
+            if (event.kind === 'turn-failed') transcriptFailure = true;
+            if (['message-delta', 'transcript-message-committed', 'tool-call', 'tool-result', 'turn-failed'].includes(event.kind)) {
               hasOutputEvidence = true;
             }
           }

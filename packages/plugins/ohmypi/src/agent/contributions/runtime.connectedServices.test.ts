@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
 
@@ -125,6 +125,7 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     });
 
     await expect(connectedServices?.materializeAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       openaiCodex,
       openai,
       claudeSubscription,
@@ -139,6 +140,26 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
         GEMINI_API_KEY: 'gemini-api-key',
       },
     });
+  });
+
+  it('does not translate raw credential records for qualified materialization authority', async () => {
+    const connectedServices = readConnectedServices();
+    const openai = buildConnectedServiceCredentialRecord({
+      now: 1_700_000_000_000,
+      serviceId: 'openai',
+      profileId: 'openai-qualified',
+      kind: 'token',
+      token: {
+        token: 'must-not-reach-qualified-launch',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    await expect(connectedServices.materializeAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'qualified',
+      openai,
+    })).resolves.toEqual({ env: {} });
   });
 
   it('exports restart/rematerialize runtime auth semantics for connected-service switches', async () => {
@@ -256,6 +277,7 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     });
 
     await expect(connectedServices?.materializeAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       gemini: geminiOauth,
     })).rejects.toThrow(/Gemini OAuth credentials are not supported/i);
   });
@@ -281,6 +303,7 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     });
 
     await expect(connectedServices?.materializeAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
       claudeSubscription: claudeOauth,
     })).rejects.toThrow(/Claude subscription OAuth credentials are not supported/i);
   });

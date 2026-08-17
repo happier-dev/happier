@@ -1,5 +1,5 @@
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 import { decodeAntigravityLocalharnessEndpoint } from './handshake.js';
 
@@ -23,7 +23,7 @@ function mapProcessResult(result: PluginProcessResult): AntigravityLocalharnessC
 }
 
 export async function openAntigravityNativeLocalharnessClient(params: Readonly<{
-  exec: Pick<PluginExecService, 'clients'>;
+  exec: Pick<ExecService, 'clients'>;
   requestFrame: Uint8Array;
   signal?: AbortSignal;
 }>): Promise<AntigravityLocalharnessClient> {

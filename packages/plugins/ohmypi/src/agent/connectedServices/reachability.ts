@@ -8,7 +8,7 @@ import {
   parseSessionIdFromFileName,
   resolveSessionFileStoreDirs,
   sessionFileNameMatchesSessionId,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../sessionFileStoreDescriptor.js';
 

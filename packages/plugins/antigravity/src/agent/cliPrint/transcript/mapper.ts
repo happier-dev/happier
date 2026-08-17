@@ -3,10 +3,13 @@ import {
   normalizeAntigravityToolName,
   type AntigravityStep,
 } from '../../normalize/index.js';
-import type {
-  AgentExternalSessionLinkDataValue,
-  AgentExternalSessionTranscriptItem,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+import {
+  AgentExternalSessionTranscriptRawRecordSchema,
+  type AgentExternalSessionLinkDataValue,
+  type AgentExternalSessionTranscriptItem,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+type AgentExternalSessionTranscriptRawRecord = AgentExternalSessionTranscriptItem['raw'];
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -66,6 +69,58 @@ function readText(record: JsonRecord): string | null {
   const message = record.message;
   if (isRecord(message)) return readString(message.text) ?? readString(message.content);
   return null;
+}
+
+const USER_REQUEST_OPEN_TAG = '<USER_REQUEST>';
+const USER_REQUEST_CLOSE_TAG = '</USER_REQUEST>';
+const ADDITIONAL_METADATA_TAGS = ['<ADDITIONAL_METADATA>', '</ADDITIONAL_METADATA>'] as const;
+
+function firstIndexOfAny(text: string, tags: readonly string[]): number {
+  let earliest = -1;
+  for (const tag of tags) {
+    const index = text.indexOf(tag);
+    if (index >= 0 && (earliest < 0 || index < earliest)) earliest = index;
+  }
+  return earliest;
+}
+
+function occurrences(text: string, tag: string): number {
+  let count = 0;
+  for (let index = text.indexOf(tag); index >= 0; index = text.indexOf(tag, index + tag.length)) {
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Antigravity wraps every user turn in its own prompt scaffolding: the typed
+ * request inside `<USER_REQUEST>` plus `<ADDITIONAL_METADATA>` the CLI appends
+ * (open editor paths and other workspace context the user never wrote). This is
+ * the single place that strips it, so the classified step feeds candidate
+ * titles, transcript rows, and prompt correlation with the same user-authored
+ * text.
+ *
+ * The metadata block is workspace context that shared recipients must never
+ * see, so anything other than exactly one terminated `<USER_REQUEST>` block
+ * whose metadata follows it fails closed with an empty body: the caller then
+ * omits the user row and the derived title instead of emitting scaffolding.
+ */
+export function readAntigravityUserRequestBody(text: string): string {
+  const metadataIndex = firstIndexOfAny(text, ADDITIONAL_METADATA_TAGS);
+  const openIndex = text.indexOf(USER_REQUEST_OPEN_TAG);
+  if (openIndex < 0) return metadataIndex < 0 ? text : '';
+  if (
+    occurrences(text, USER_REQUEST_OPEN_TAG) !== 1
+    || occurrences(text, USER_REQUEST_CLOSE_TAG) !== 1
+  ) {
+    return '';
+  }
+  const bodyStart = openIndex + USER_REQUEST_OPEN_TAG.length;
+  const closeIndex = text.indexOf(USER_REQUEST_CLOSE_TAG, bodyStart);
+  if (closeIndex < 0) return '';
+  return metadataIndex >= 0 && metadataIndex < closeIndex
+    ? ''
+    : text.slice(bodyStart, closeIndex);
 }
 
 function readArray(value: unknown): readonly unknown[] {
@@ -150,7 +205,8 @@ function mapAntigravityTranscriptRecordToStepsWithContext(
   if (!type) return [];
   if (['user_input', 'user', 'user_message'].includes(type)) {
     const text = readText(record);
-    return text ? [{ ...(id ? { id } : {}), kind: 'user_message', text }] : [];
+    const requested = text ? readAntigravityUserRequestBody(text).trim() : '';
+    return requested ? [{ ...(id ? { id } : {}), kind: 'user_message', text: requested }] : [];
   }
   if (['planner_response', 'assistant', 'assistant_message', 'conversation_history'].includes(type)) {
     const text = readText(record);
@@ -255,11 +311,29 @@ function toLinkDataValue(value: unknown): AgentExternalSessionLinkDataValue {
   return null;
 }
 
+/**
+ * Canonical current Agent transcript envelope. The Protocol schema is the
+ * admission boundary; this mapper uses it to keep this producer from emitting
+ * source-local events that no host consumer can interpret.
+ */
+function toAgentRaw(
+  data: AgentExternalSessionLinkDataValue,
+): AgentExternalSessionTranscriptRawRecord {
+  return AgentExternalSessionTranscriptRawRecordSchema.parse({
+    role: 'agent',
+    content: { type: 'acp', agentId: 'antigravity', data },
+  });
+}
+
+function toUserRaw(text: string): AgentExternalSessionTranscriptRawRecord {
+  return { role: 'user', content: { type: 'text', text } };
+}
+
 function projectStep(params: Readonly<{
   step: AntigravityStep;
   fallbackId: string;
   createdAtMs: number;
-}>): AgentExternalSessionTranscriptItem {
+}>): AgentExternalSessionTranscriptItem | null {
   const id = params.step.id ?? params.fallbackId;
   const localId = params.step.id;
   const common = {
@@ -269,53 +343,48 @@ function projectStep(params: Readonly<{
   };
   switch (params.step.kind) {
     case 'user_message':
-      return { ...common, messageRole: 'user', raw: { type: 'text', text: params.step.text } };
+      return { ...common, messageRole: 'user', raw: toUserRaw(params.step.text) };
     case 'assistant_message':
-      return { ...common, messageRole: 'agent', raw: { type: 'text', text: params.step.text } };
+      return {
+        ...common,
+        messageRole: 'agent',
+        raw: toAgentRaw({ type: 'message', message: params.step.text }),
+      };
     case 'tool_call':
       return {
         ...common,
         messageRole: 'event',
-        raw: {
+        raw: toAgentRaw({
           type: 'tool-call',
           callId: id,
           name: params.step.toolName,
           input: toLinkDataValue(params.step.input),
           id,
-        },
+        }),
       };
     case 'tool_result':
       return {
         ...common,
         messageRole: 'event',
-        raw: {
+        raw: toAgentRaw({
           type: 'tool-result',
           callId: params.step.toolCallId,
           output: toLinkDataValue(params.step.output),
           id,
           ...(params.step.isError !== undefined ? { isError: params.step.isError } : {}),
-        },
+        }),
       };
     case 'checkpoint':
-      return {
-        ...common,
-        messageRole: 'event',
-        raw: {
-          type: 'antigravity_checkpoint',
-          ...(params.step.checkpointId ? { checkpointId: params.step.checkpointId } : {}),
-        },
-      };
     case 'system_message':
-      return {
-        ...common,
-        messageRole: 'event',
-        raw: { type: 'antigravity_system', text: params.step.text },
-      };
+      // These source-local records have no canonical ACP transcript event.
+      return null;
     case 'error':
       return {
         ...common,
         messageRole: 'event',
-        raw: { type: 'antigravity_error', message: params.step.message },
+        // The source diagnostic stays in the runtime diagnostic owner; history
+        // carries only the canonical terminal event.
+        raw: toAgentRaw({ type: 'turn_failed', id }),
       };
   }
 }
@@ -324,8 +393,22 @@ export function projectAntigravityTranscriptRecordGroupsToExternalItems(params: 
   conversationId: string;
   records: readonly AntigravityTranscriptRecordWithOffsets[];
 }>): readonly AntigravityExternalTranscriptItemGroup[] {
-  const pendingToolCallIds: string[] = [];
-  return params.records.map((entry) => {
+  return projectAntigravityTranscriptRecordGroupsWithCorrelation({
+    conversationId: params.conversationId,
+    records: params.records,
+  }).groups;
+}
+
+export function projectAntigravityTranscriptRecordGroupsWithCorrelation(params: Readonly<{
+  conversationId: string;
+  records: readonly AntigravityTranscriptRecordWithOffsets[];
+  pendingToolCallIds?: readonly string[];
+}>): Readonly<{
+  groups: readonly AntigravityExternalTranscriptItemGroup[];
+  pendingToolCallIds: readonly string[];
+}> {
+  const pendingToolCallIds = [...(params.pendingToolCallIds ?? [])];
+  const groups = params.records.map((entry) => {
     let fallbackToolCallId = 0;
     const namespace = `${params.conversationId}-byte-${entry.startOffsetBytes}`;
     const steps = mapAntigravityTranscriptRecordToStepsWithContext(entry.record, {
@@ -337,13 +420,17 @@ export function projectAntigravityTranscriptRecordGroupsToExternalItems(params: 
     return {
       startOffsetBytes: entry.startOffsetBytes,
       endOffsetBytes: entry.endOffsetBytes,
-      items: steps.map((step, index) => projectStep({
-        step,
-        createdAtMs,
-        fallbackId: `antigravity-${params.conversationId}-byte-${entry.startOffsetBytes}-item-${index + 1}`,
-      })),
+      items: steps.flatMap((step, index) => {
+        const item = projectStep({
+          step,
+          createdAtMs,
+          fallbackId: `antigravity-${params.conversationId}-byte-${entry.startOffsetBytes}-item-${index + 1}`,
+        });
+        return item ? [item] : [];
+      }),
     };
   });
+  return { groups, pendingToolCallIds };
 }
 
 export function projectAntigravityTranscriptRecordsToExternalItems(params: Readonly<{

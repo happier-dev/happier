@@ -57,6 +57,9 @@ describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
       workingDirectory: '/repo/current',
       createdAtMs: Date.parse('2026-07-21T09:59:00.000Z'),
     });
+    const [toolCallItem, toolResultItem] = projected.items;
+    expect(toolCallItem?.id).toMatch(/^omp:[A-Za-z0-9_-]+:assistant-1:toolCall:0$/u);
+    expect(toolResultItem?.id).toMatch(/^omp:[A-Za-z0-9_-]+:tool-result-1:toolResult$/u);
     expect(projected.items.map((item) => item.raw)).toEqual([
       {
         role: 'agent',
@@ -66,7 +69,7 @@ describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
           data: {
             type: 'tool-call',
             callId: 'tool-1',
-            id: 'omp:/tmp/current-omp-session.jsonl:assistant-1:toolCall:0',
+            id: toolCallItem?.id,
             name: 'read',
             input: { path: 'README.md' },
           },
@@ -80,7 +83,7 @@ describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
           data: {
             type: 'tool-result',
             callId: 'tool-1',
-            id: 'omp:/tmp/current-omp-session.jsonl:tool-result-1:toolResult',
+            id: toolResultItem?.id,
             output: [{ type: 'text', text: 'file contents' }],
             isError: false,
           },
@@ -167,15 +170,15 @@ describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
       ],
     });
 
-    expect(projected.items.map((item) => item.id)).toEqual([
-      'omp:/tmp/omp-session.jsonl:user-1',
-      'omp:/tmp/omp-session.jsonl:assistant-1:text:0',
-      'omp:/tmp/omp-session.jsonl:assistant-1:thinking:1',
-      'omp:/tmp/omp-session.jsonl:leaf-user',
-      'omp:/tmp/omp-session.jsonl:compact-1:compaction',
-      'omp:/tmp/omp-session.jsonl:assistant-2:tool_use:0',
-      'omp:/tmp/omp-session.jsonl:assistant-2:tool_result:1',
-      'omp:/tmp/omp-session.jsonl:assistant-2:text:2',
+    expect(projected.items.map((item) => item.id.replace(/^omp:[A-Za-z0-9_-]+:/u, ''))).toEqual([
+      'user-1',
+      'assistant-1:text:0',
+      'assistant-1:thinking:1',
+      'leaf-user',
+      'compact-1:compaction',
+      'assistant-2:tool_use:0',
+      'assistant-2:tool_result:1',
+      'assistant-2:text:2',
     ]);
     expect(projected.items.map((item) => item.raw.role)).toEqual([
       'user',
@@ -190,6 +193,7 @@ describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
     expect(JSON.stringify(projected.items)).toContain('final answer');
     expect(JSON.stringify(projected.items)).not.toContain('branch prompt');
     expect(JSON.stringify(projected.items)).not.toContain('branch summary');
+    expect(JSON.stringify(projected.items)).not.toContain('/tmp/omp-session.jsonl');
     expect(projected.title).toBe('OMP session');
     expect(projected.workingDirectory).toBe('/repo');
     expect(projected.lastActivityAtMs).toBe(Date.parse('2026-04-10T10:00:07.000Z'));

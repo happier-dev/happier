@@ -51,7 +51,7 @@ type AntigravityDaemonSpawnToolContext = Readonly<{
 type AntigravityDaemonSpawnHookContext = Omit<Partial<PluginInvocationContext>, 'services'> & Readonly<{
   tools?: Partial<AntigravityDaemonSpawnToolContext>;
   services?: Readonly<{
-    managed?: Readonly<{
+    managedServices?: Readonly<{
       dependencies?: Readonly<{
         ensure(
           id: string,
@@ -109,8 +109,7 @@ function readAntigravityRuntimeModeSelection(event: unknown): Readonly<{
     ?? {};
   const accountSettings = readRecord(runtimeSelection.accountSettings) ?? readRecord(payload?.accountSettings);
   const request = resolveAntigravityRuntimeModeRequest({
-    runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1,
-    metadata: providerRuntimeSelection,
+    persistedRuntimeMode: providerRuntimeSelection?.antigravityRuntimeMode,
     accountSettings,
     env,
   });
@@ -151,7 +150,7 @@ async function resolveSdkSpawnPrerequisites(
       'Antigravity SDK mode requires Gemini API-key or Vertex credentials before daemon spawn.',
     );
   }
-  const dependencies = context?.services?.managed?.dependencies;
+  const dependencies = context?.services?.managedServices?.dependencies;
   if (!dependencies) {
     return denyAntigravitySpawn(
       'antigravity_localharness_unavailable',

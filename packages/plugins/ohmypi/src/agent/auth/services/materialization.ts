@@ -1,9 +1,9 @@
 import {
-  defineConnectedServiceAuthMaterialization,
-  readConnectedServiceCredentialRecord,
-  requireConnectedServiceOauthCredentialRecordWithExpiry,
-  requireConnectedServiceTokenCredentialRecord,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  defineAuthMaterialization as defineConnectedServiceAuthMaterialization,
+  parseCredentialRecord as readConnectedServiceCredentialRecord,
+  requireOauthCredentialRecordWithExpiry as requireConnectedServiceOauthCredentialRecordWithExpiry,
+  requireTokenCredentialRecord as requireConnectedServiceTokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 const ohMyPiAuthMaterialization = defineConnectedServiceAuthMaterialization([
   { serviceId: 'openai-codex', inputKey: 'openaiCodex' },
@@ -23,6 +23,12 @@ export const createOhMyPiAuthMaterializationInput = ohMyPiAuthMaterialization.cr
 export async function materializeOhMyPiAuthEnvironment(
   input: Readonly<Record<string, unknown>>,
 ): Promise<Readonly<{ env: Record<string, string> }>> {
+  if (
+    input.connectedAccountMaterializationAuthority
+    !== 'legacy_unfenced_one_shot'
+  ) {
+    return { env: {} };
+  }
   const env: Record<string, string> = {};
   const openaiCodex = readConnectedServiceCredentialRecord(input.openaiCodex);
   const openai = readConnectedServiceCredentialRecord(input.openai);
