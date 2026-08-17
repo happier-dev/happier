@@ -287,6 +287,10 @@ export function spawnLoggedProcess(params: {
   stdoutPath: string;
   stderrPath: string;
   cleanupDescendantsOnExit?: boolean;
+  cleanup?: () => void | Promise<void>;
+  onDescendantObserved?: (pid: number) => void;
+  collectDescendants?: typeof collectDescendantPids;
+  terminateProcessTree?: typeof terminateProcessTreeByPid;
 }): SpawnedProcess {
   type TimeoutHandle = ReturnType<typeof setTimeout>;
   const unrefTimeout = (handle: TimeoutHandle | null) => {
@@ -310,8 +314,36 @@ export function spawnLoggedProcess(params: {
 
   const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
   const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
+  const collectDescendants = params.collectDescendants ?? collectDescendantPids;
+  const terminateProcessTree = params.terminateProcessTree ?? terminateProcessTreeByPid;
   const observedDescendantPids = new Set<number>();
   const detachCleanup = attachExitCleanup(child, () => [...observedDescendantPids]);
+  let descendantObservationError: unknown = null;
+  const observeDescendants = () => {
+    if (typeof child.pid !== 'number' || child.pid <= 0) return;
+    try {
+      for (const pid of collectDescendants(child.pid)) {
+        const firstObservation = !observedDescendantPids.has(pid);
+        observedDescendantPids.add(pid);
+        if (firstObservation) params.onDescendantObserved?.(pid);
+      }
+      descendantObservationError = null;
+    } catch (error) {
+      descendantObservationError = error;
+    }
+  };
+  let ownedCleanupPromise: Promise<void> | null = null;
+  const cleanupOwnedResources = (): Promise<void> => {
+    if (!params.cleanup) return Promise.resolve();
+    if (!ownedCleanupPromise) {
+      try {
+        ownedCleanupPromise = Promise.resolve(params.cleanup());
+      } catch (error) {
+        ownedCleanupPromise = Promise.reject(error);
+      }
+    }
+    return ownedCleanupPromise;
+  };
   let descendantPoller: TimeoutHandle | null = null;
   let descendantPollerActive = process.platform !== 'win32';
   const pollStartedAtMs = Date.now();
@@ -321,11 +353,7 @@ export function spawnLoggedProcess(params: {
 
   const pollDescendants = () => {
     if (!descendantPollerActive) return;
-    if (typeof child.pid === 'number' && child.pid > 0) {
-      for (const pid of collectDescendantPids(child.pid)) {
-        observedDescendantPids.add(pid);
-      }
-    }
+    observeDescendants();
     const nextDelay = Date.now() - pollStartedAtMs < fastPollWindowMs ? fastPollMs : slowPollMs;
     descendantPoller = setTimeout(pollDescendants, nextDelay);
     unrefTimeout(descendantPoller);
@@ -338,72 +366,112 @@ export function spawnLoggedProcess(params: {
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
 
-  const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
+  const stopDescendantPolling = () => {
     descendantPollerActive = false;
     if (descendantPoller) clearTimeout(descendantPoller);
     descendantPoller = null;
+  };
 
-    if (typeof child.pid === 'number' && child.pid > 0) {
-      for (const pid of collectDescendantPids(child.pid)) {
-        observedDescendantPids.add(pid);
+  const settleCleanupPhases = async (
+    phases: readonly Promise<void>[],
+    context: string,
+  ): Promise<void> => {
+    const results = await Promise.allSettled(phases);
+    const collectErrors = (reason: unknown): Error[] => {
+      if (reason instanceof AggregateError) {
+        return reason.errors.flatMap(collectErrors);
       }
-    }
+      return [reason instanceof Error ? reason : new Error(String(reason))];
+    };
+    const errors = results.flatMap((result) => result.status === 'rejected'
+      ? collectErrors(result.reason)
+      : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, context);
+  };
 
-    if (typeof child.pid !== 'number' || child.pid <= 0) {
-      try {
-        child.kill(signal);
-      } catch {
-        // ignore
+  let descendantCleanupPromise: Promise<void> | null = null;
+  let explicitStopStarted = false;
+  const cleanupDescendants = (
+    signal: NodeJS.Signals = 'SIGTERM',
+    options: Readonly<{ automaticExit?: boolean }> = {},
+  ): Promise<void> => {
+    if (descendantCleanupPromise) return descendantCleanupPromise;
+    descendantCleanupPromise = (async () => {
+      const errors: Error[] = [];
+      observeDescendants();
+      if (descendantObservationError) {
+        errors.push(
+          descendantObservationError instanceof Error
+            ? descendantObservationError
+            : new Error(String(descendantObservationError)),
+        );
       }
-      return;
-    }
 
-    if (process.platform === 'win32') {
-      await terminateProcessTreeByPid(child.pid, {
-        graceMs: 10_000,
-        pollMs: 25,
-        skipAliveCheck: true,
-        additionalPids: [...observedDescendantPids],
-      });
-      return;
-    }
+      if (typeof child.pid !== 'number' || child.pid <= 0) {
+        try {
+          child.kill(signal);
+        } catch {
+          // ignore
+        }
+      } else {
+        if (process.platform !== 'win32' && signal !== 'SIGTERM' && child.exitCode === null && !child.killed) {
+          try {
+            process.kill(child.pid, signal);
+          } catch {
+            // ignore
+          }
+        }
 
-    if (signal !== 'SIGTERM' && child.exitCode === null && !child.killed) {
-      try {
-        process.kill(child.pid, signal);
-      } catch {
-        // ignore
+        if (options.automaticExit !== true || observedDescendantPids.size > 0 || descendantObservationError) {
+          try {
+            await terminateProcessTree(child.pid, {
+              graceMs: options.automaticExit === true ? 0 : 10_000,
+              pollMs: 25,
+              skipAliveCheck: true,
+              additionalPids: [...observedDescendantPids],
+            });
+          } catch (error) {
+            errors.push(error instanceof Error ? error : new Error(String(error)));
+          }
+        }
       }
-    }
 
-    await terminateProcessTreeByPid(child.pid, {
-      graceMs: 10_000,
-      pollMs: 25,
-      skipAliveCheck: true,
-      additionalPids: [...observedDescendantPids],
-    });
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, 'Test process descendant cleanup failed');
+      }
+    })();
+    return descendantCleanupPromise;
+  };
+
+  const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
+    explicitStopStarted = true;
+    stopDescendantPolling();
+
+    await settleCleanupPhases(
+      [cleanupDescendants(signal), cleanupOwnedResources()],
+      'Test process descendant and owned cleanup failed',
+    );
   };
 
   child.once('exit', () => {
-    descendantPollerActive = false;
-    if (descendantPoller) clearTimeout(descendantPoller);
-    descendantPoller = null;
-
-    if (typeof child.pid === 'number' && child.pid > 0) {
-      for (const pid of collectDescendantPids(child.pid)) {
-        observedDescendantPids.add(pid);
-      }
-    }
-
-    if (params.cleanupDescendantsOnExit !== false && observedDescendantPids.size > 0) {
-      void terminateProcessTreeByPid(child.pid ?? 0, {
-        graceMs: 0,
-        pollMs: 25,
-        skipAliveCheck: true,
-        additionalPids: [...observedDescendantPids],
-      }).catch(() => {});
-    }
+    stopDescendantPolling();
     detachCleanup();
+    if (!explicitStopStarted && params.cleanupDescendantsOnExit !== false) {
+      void settleCleanupPhases(
+        [cleanupDescendants('SIGTERM', { automaticExit: true }), cleanupOwnedResources()],
+        'Automatic test process descendant and owned cleanup failed',
+      ).catch(() => {
+        process.emitWarning(
+          'Automatic test process cleanup failed (phase=automatic-exit)',
+          {
+            code: 'HAPPIER_TEST_PROCESS_AUTO_CLEANUP_FAILED',
+            type: 'HappierTestProcessCleanupWarning',
+          },
+        );
+      });
+    }
   });
 
   return { child, stdoutPath: params.stdoutPath, stderrPath: params.stderrPath, stop };

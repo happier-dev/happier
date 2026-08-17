@@ -49,8 +49,17 @@ type ProcessEntry = {
   pgid: number;
 };
 
-function listUnixProcesses(): ProcessEntry[] {
-  const result = spawnSync('ps', ['-axo', 'pid=,ppid=,pgid='], {
+type SpawnProcessList = (
+  command: string,
+  args: string[],
+  options: Readonly<{
+    encoding: 'utf8';
+    stdio: ['ignore', 'pipe', 'ignore'];
+  }>,
+) => Readonly<{ status: number | null; stdout: string }>;
+
+function listUnixProcesses(spawnProcessList: SpawnProcessList = spawnSync): ProcessEntry[] {
+  const result = spawnProcessList('ps', ['-axo', 'pid=,ppid=,pgid='], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   });
@@ -75,11 +84,63 @@ function listUnixProcesses(): ProcessEntry[] {
   return entries;
 }
 
-export function collectDescendantPids(rootPid: number): number[] {
-  if (process.platform === 'win32' || !Number.isInteger(rootPid) || rootPid <= 0) return [];
+function listWindowsProcesses(spawnProcessList: SpawnProcessList = spawnSync): ProcessEntry[] {
+  const result = spawnProcessList(
+    'powershell.exe',
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId); ConvertTo-Json -Compress -InputObject $p",
+    ],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+
+  if (result.status !== 0 || typeof result.stdout !== 'string' || result.stdout.length === 0) {
+    throw new Error('Unable to inspect the Windows process tree with PowerShell Get-CimInstance');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout.replace(/^\uFEFF/u, '').trim()) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Unable to parse the Windows process tree: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const entries: ProcessEntry[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const record = row as { ProcessId?: unknown; ParentProcessId?: unknown };
+    const pid = Number(record.ProcessId);
+    const ppid = Number(record.ParentProcessId);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || pid <= 0 || ppid < 0) continue;
+    entries.push({ pid, ppid, pgid: pid });
+  }
+  return entries;
+}
+
+export function collectDescendantPids(
+  rootPid: number,
+  options: Readonly<{
+    platform?: NodeJS.Platform;
+    spawnProcessList?: SpawnProcessList;
+  }> = {},
+): number[] {
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return [];
+
+  const platform = options.platform ?? process.platform;
+  const snapshot = platform === 'win32'
+    ? listWindowsProcesses(options.spawnProcessList)
+    : listUnixProcesses(options.spawnProcessList);
 
   const childrenByParent = new Map<number, number[]>();
-  for (const entry of listUnixProcesses()) {
+  for (const entry of snapshot) {
     if (entry.ppid <= 0) continue;
     const children = childrenByParent.get(entry.ppid);
     if (children) {
@@ -203,9 +264,15 @@ export async function terminateProcessTreeByPid(
   if (!skipAliveCheck && !isProcessAlive(pid) && additionalPids.every((extraPid) => !isProcessAlive(extraPid))) return;
 
   if (process.platform === 'win32') {
-    taskkillTree(pid);
+    const rootStopped = taskkillTree(pid);
     for (const extraPid of additionalPids) {
-      taskkillTree(extraPid);
+      const descendantStopped = taskkillTree(extraPid);
+      if (!descendantStopped && isProcessAlive(extraPid)) {
+        throw new Error(`Failed to terminate Windows descendant process ${extraPid}`);
+      }
+    }
+    if (!rootStopped && isProcessAlive(pid)) {
+      throw new Error(`Failed to terminate Windows process tree ${pid}`);
     }
     return;
   }
