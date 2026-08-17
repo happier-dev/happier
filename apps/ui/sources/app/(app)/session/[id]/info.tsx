@@ -216,6 +216,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const sessionFoldersEnabled = useFeatureEnabled('sessions.folders');
+    // Scoped to THIS Session's server, like the in-Session picker: the child is
+    // created on that server, so an unrelated selected server must not decide
+    // whether this conversation may continue with another Agent.
+    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+        scopeKind: 'spawn',
+        serverId: sessionServerId,
+    });
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id, sessionServerId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
@@ -679,6 +686,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             settings,
             replayEnabled: sessionReplayEnabled,
             executionRunsEnabled,
+            agentSwitchingEnabled,
             navigateToSession: (childSessionId, options) => {
                 router.push(buildScopedSessionRouteHref({
                     sessionId: childSessionId,
@@ -690,6 +698,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             },
         });
     }, [
+        agentSwitchingEnabled,
         executionRunsEnabled,
         reachableMachineId,
         router,

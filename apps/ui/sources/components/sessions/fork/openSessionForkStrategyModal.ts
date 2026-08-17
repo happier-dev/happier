@@ -14,8 +14,12 @@ export type OpenSessionForkStrategyModalParams = Readonly<{
     /** Short quotation of the message this fork branches from, when there is one. */
     sourcePreview?: string | null;
     navigate: (childSessionId: string, options?: Readonly<{ serverId?: string }>) => void | Promise<void>;
-    /** Navigates to the canonical New Session screen with this fork point attached. */
-    configureNewSession: () => void;
+    /**
+     * Navigates to the canonical New Session screen with this fork point
+     * attached, or `null` when `sessions.agentSwitching` is closed for this
+     * Session's server and source-context continuation is not offered.
+     */
+    configureNewSession: (() => void) | null;
 }>;
 
 /**
@@ -35,7 +39,7 @@ export function openSessionForkStrategyModal(params: OpenSessionForkStrategyModa
             availability: params.availability,
             sourcePreview: params.sourcePreview ?? null,
             navigate: params.navigate,
-            onConfigureNewSession: params.configureNewSession,
+            onConfigureNewSession: params.configureNewSession ?? null,
         },
         chrome: {
             kind: 'card',

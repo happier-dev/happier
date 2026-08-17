@@ -126,6 +126,7 @@ describe('TurnView (thinking expansion controlled)', () => {
       workspacePath: null,
     } satisfies TranscriptMessageDisplayCommon;
     const forkCommon = {
+      agentSwitchingEnabled: false,
       executionRunsEnabled: false,
       sessionForkSupportSource: null,
       sessionReplayEnabled: false,

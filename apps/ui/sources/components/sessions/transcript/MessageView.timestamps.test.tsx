@@ -394,6 +394,7 @@ describe('MessageView timestamps', () => {
                     workspacePath: null,
                 }}
                 forkCommon={{
+                    agentSwitchingEnabled: false,
                     executionRunsEnabled: false,
                     sessionForkSupportSource: null,
                     sessionReplayEnabled: false,

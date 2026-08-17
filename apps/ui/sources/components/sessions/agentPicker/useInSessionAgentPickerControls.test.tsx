@@ -42,10 +42,15 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const detailSelectionChangeRef = vi.hoisted(() => ({
     current: null as null | ((next: unknown) => void),
 }));
+const detailModelSummaryRef = vi.hoisted(() => ({ current: null as string | null | undefined }));
 
 vi.mock('./buildSessionAgentPickerDetailContent', () => ({
-    buildSessionAgentPickerDetailContent: (params: { onSelectionChange: (next: unknown) => void }) => {
+    buildSessionAgentPickerDetailContent: (params: {
+        onSelectionChange: (next: unknown) => void;
+        modelSummary?: string;
+    }) => {
         detailSelectionChangeRef.current = params.onSelectionChange;
+        detailModelSummaryRef.current = params.modelSummary;
         return null;
     },
 }));
@@ -344,6 +349,22 @@ describe('useInSessionAgentPickerControls', () => {
         // The continuation meaning is one line in the model section's subtitle slot,
         // never a standalone description block.
         expect(codexOption?.detailDescription).toBeUndefined();
+    });
+
+    // The in-session transition seeds the target through `resolveReplaySeedDraft`
+    // with `recent_messages` plus a character cap, and the coordinator drops the
+    // resolved `referencedSessionMediaWorkspacePaths` — no media-continuity
+    // envelope is composed on this path at all. So the line must not promise the
+    // whole conversation, and it must say that attachments are left behind.
+    it('states what a switch actually carries, media limitation included', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+
+        optionsOf(hook.getCurrent())[1]?.renderDetailContent?.({ onRequestClose: () => {} });
+
+        expect(detailModelSummaryRef.current).toBe(t('session.agentContinuation.detailDescription'));
+        expect(detailModelSummaryRef.current).toContain('as text');
+        expect(detailModelSummaryRef.current).toContain('images and files');
     });
 
     it('arms nothing until a row is deliberately selected', async () => {

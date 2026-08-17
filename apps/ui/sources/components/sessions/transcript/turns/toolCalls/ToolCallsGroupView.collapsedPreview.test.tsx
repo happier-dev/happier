@@ -208,6 +208,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             } as ToolCallMessage,
         ];
         const forkCommon = {
+            agentSwitchingEnabled: false,
             executionRunsEnabled: true,
             sessionForkSupportSource: null,
             sessionReplayEnabled: true,

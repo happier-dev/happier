@@ -26,6 +26,13 @@ export type OpenSessionForkStrategyFlowParams = Readonly<{
     settings: SessionForkReplaySettingsSource | null | undefined;
     replayEnabled: boolean | null | undefined;
     executionRunsEnabled: boolean;
+    /**
+     * The caller's already-resolved `sessions.agentSwitching` decision for THIS
+     * Session's server. Required, not optional: source-context continuation is
+     * the switching capability reached from the fork surface, and an omitted
+     * decision is how the second entry point escaped the gate in the first place.
+     */
+    agentSwitchingEnabled: boolean;
     restoredDraftText?: string | null;
     sourceMessageId?: string | null;
     sourcePreview?: string | null;
@@ -71,7 +78,13 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
             ...replayOptions,
         },
         navigate: params.navigateToSession,
-        configureNewSession: () => {
+        // Configure new Session is the one route here that continues this
+        // conversation with another Agent, so it consults the same decision the
+        // in-Session picker does rather than a second interpretation of it. The
+        // same-engine routes above are the pre-existing fork product and stay
+        // available either way, so a closed gate narrows this modal instead of
+        // emptying it — nobody is left mid-flow with nothing to choose.
+        configureNewSession: !params.agentSwitchingEnabled ? null : () => {
             // Read the Session at the moment the user chooses Configure, so the
             // seed reflects current configuration rather than menu-open state.
             const session = storage.getState().sessions[params.sessionId] ?? null;

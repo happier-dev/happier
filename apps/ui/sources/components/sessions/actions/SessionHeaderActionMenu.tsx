@@ -268,6 +268,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
     [preferredSessionServerId, session.serverId, props.sessionId],
   );
+  // Scoped to THIS Session's server, like the in-Session picker: the child is
+  // created on that server, so an unrelated selected server must not decide
+  // whether this conversation may continue with another Agent.
+  const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+    scopeKind: 'spawn',
+    serverId: sessionServerId,
+  });
   const readStateSignature = storage((state) =>
     buildSessionHeaderReadStateSignature(state, props.sessionId, sessionServerId ?? null),
   );
@@ -609,6 +616,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               settings,
               replayEnabled: sessionReplayEnabled,
               executionRunsEnabled: executionRunsEnabled === true,
+              agentSwitchingEnabled,
               navigateToSession: (childSessionId, options) => {
                 router.push(buildScopedSessionRouteHref({
                   sessionId: childSessionId,
