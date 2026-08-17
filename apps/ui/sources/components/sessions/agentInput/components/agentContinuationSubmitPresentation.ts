@@ -45,8 +45,35 @@ export type AgentContinuationSubmitPresentation = Readonly<{
     markSize: number;
 }>;
 
-/** Matches the arrow mark this replaces, before the per-Agent optical scale. */
+/** The mark's nominal em box on the send control, before the per-Agent optical scale. */
 const AGENT_MARK_NOMINAL_SIZE = 18;
+
+/**
+ * Whether the composer is presenting an armed Agent switch right now — one
+ * decision, read by both surfaces that show it.
+ *
+ * Selection IS the selection: the moment a target Agent is chosen, the composer's
+ * engine chip names it and the send control announces "Continue with {Agent}".
+ * Those two must never disagree, so neither decides on its own. Them disagreeing
+ * is the reported defect: a picker showing a checkmark on Sonnet 4.6 while the
+ * chip still read GPT 5.6 Sol.
+ *
+ * An arm only presents while pressing send would actually take it. Send is a send
+ * only when there is something to send; on an empty composer the same button is
+ * Dictation or Stop, and naming an Agent switch on either would promise something
+ * press does not do — so the chip must not claim it there either.
+ */
+export function resolveArmedComposerContinuation<TTarget>(params: Readonly<{
+    armedContinuationTarget: TTarget | null | undefined;
+    hasSendableContent: boolean;
+    /** True when Dictation, rather than send, currently owns the submit control. */
+    dictationHoldsSubmit: boolean;
+}>): TTarget | null {
+    if (!params.armedContinuationTarget) return null;
+    if (!params.hasSendableContent) return null;
+    if (params.dictationHoldsSubmit) return null;
+    return params.armedContinuationTarget;
+}
 
 export function resolveAgentContinuationSubmitPresentation(input: Readonly<{
     agentId: string;

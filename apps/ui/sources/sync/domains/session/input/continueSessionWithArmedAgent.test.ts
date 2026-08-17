@@ -5,7 +5,9 @@ import { t } from '@/text';
 
 import {
     continueSessionWithArmedAgent,
+    reconcileArmedAgentContinuationDisposition,
     resolveArmedAgentContinuationDisposition,
+    type ArmedAgentContinuationCanonicalFacts,
     type ArmedAgentContinuationSubmission,
 } from './continueSessionWithArmedAgent';
 
@@ -76,7 +78,8 @@ describe('continueSessionWithArmedAgent', () => {
         expect(outcome.disposition).toEqual({
             draft: 'clear',
             arm: 'clear',
-            failureMessage: null,
+            notice: null,
+            send: 'allow',
         });
     });
 
@@ -172,23 +175,38 @@ describe('resolveArmedAgentContinuationDisposition', () => {
             expect(disposition.draft).toBe('preserve');
             // Silence is the defect this whole path exists to remove: every
             // outcome that is not a completed send says so out loud.
-            expect(disposition.failureMessage).not.toBeNull();
+            expect(disposition.notice).not.toBeNull();
+            expect(disposition.notice?.message).not.toBe('');
         }
+    });
+
+    it('says nothing at all when the switch completed and the message landed', () => {
+        expect(resolveArmedAgentContinuationDisposition({ type: 'accepted', localId: 'local-1' }, LABELS)).toEqual({
+            draft: 'clear',
+            arm: 'clear',
+            notice: null,
+            send: 'allow',
+        });
     });
 
     it('keeps the armed target while the Session is still the source Agent', () => {
         // `rejected` and `source_stopped` both leave the Session on the source
-        // Agent, so the armed choice is still a truthful promise and a retry is
-        // the safe action.
+        // Agent, so the armed choice is still a truthful promise and the ordinary
+        // send is the retry — which is why neither notice carries an action.
         expect(resolveArmedAgentContinuationDisposition(
             { type: 'rejected', code: 'source_not_idle', sourceEffect: 'none' },
             LABELS,
         )).toEqual({
             draft: 'preserve',
             arm: 'keep',
-            failureMessage: t('session.agentContinuation.transition.rejected.sourceNotIdle', {
-                agent: 'Claude Code',
-            }),
+            send: 'allow',
+            notice: {
+                tone: 'warning',
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.rejected.sourceNotIdle', {
+                    agent: 'Claude Code',
+                }),
+            },
         });
 
         expect(resolveArmedAgentContinuationDisposition(
@@ -197,10 +215,15 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         )).toEqual({
             draft: 'preserve',
             arm: 'keep',
-            failureMessage: t('session.agentContinuation.transition.sourceStopped', {
-                source: 'Claude Code',
-                agent: 'Codex',
-            }),
+            send: 'allow',
+            notice: {
+                tone: 'warning',
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.sourceStopped', {
+                    source: 'Claude Code',
+                    agent: 'Codex',
+                }),
+            },
         });
     });
 
@@ -214,8 +237,34 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         )).toEqual({
             draft: 'preserve',
             arm: 'clear',
-            failureMessage: t('session.agentContinuation.transition.switched', { agent: 'Codex' }),
+            send: 'allow',
+            notice: {
+                tone: 'warning',
+                // Resume is only offered once a canonical fact says the Session
+                // has no live runtime. Without that fact, offering it would
+                // contradict a target that is already running.
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.switched', { agent: 'Codex' }),
+            },
         });
+    });
+
+    it('treats a committed switch as a partial SUCCESS to act on, never as an error', () => {
+        // The Session really did move to the target; only the message failed. The
+        // shipped defect reported this as "Error" behind an OK button and threw the
+        // fact away on dismiss. Every code reachable at this depth must therefore
+        // produce a WARNING that names the target, a draft that survives, and an
+        // armed row that does not — the switch is spent.
+        for (const code of ['divider_missing', 'target_start_failed', 'input_rejected'] as const) {
+            const disposition = resolveArmedAgentContinuationDisposition(
+                { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code },
+                LABELS,
+            );
+            expect(disposition.notice?.tone).toBe('warning');
+            expect(disposition.notice?.message).toContain('Codex');
+            expect(disposition.draft).toBe('preserve');
+            expect(disposition.arm).toBe('clear');
+        }
     });
 
     it('does not name a cause it cannot know for an indeterminate outcome', () => {
@@ -225,7 +274,115 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         )).toEqual({
             draft: 'preserve',
             arm: 'keep',
-            failureMessage: t('session.agentContinuation.transition.unknown'),
+            // Nothing is established yet, so nothing may be sent: a second
+            // submission is the one way this path can duplicate the reader's
+            // message. The notice is a notice, never a retry button.
+            send: 'block',
+            notice: {
+                tone: 'neutral',
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.unknown'),
+            },
         });
+    });
+});
+
+describe('reconcileArmedAgentContinuationDisposition', () => {
+    const TARGET_AGENT_ID = 'codex';
+    const UNKNOWN: SessionAgentTransitionResultV1 = { type: 'outcome_unknown', localId: 'local-1' };
+
+    function reconcile(
+        facts: ArmedAgentContinuationCanonicalFacts | null,
+        result: SessionAgentTransitionResultV1 = UNKNOWN,
+    ) {
+        return reconcileArmedAgentContinuationDisposition({
+            result,
+            labels: LABELS,
+            targetAgentId: TARGET_AGENT_ID,
+            facts,
+        });
+    }
+
+    it('resolves an unknown outcome to success once the exact input is canonically admitted', () => {
+        // The reader's message is in the transcript. Anything else the banner
+        // could say now contradicts an established effect.
+        expect(reconcile({ currentAgentId: 'codex', sessionActive: true, inputAdmitted: true })).toEqual({
+            draft: 'clear',
+            arm: 'clear',
+            notice: null,
+            send: 'allow',
+        });
+    });
+
+    it('resolves an unknown outcome to the committed depth once the Session canonically runs the target', () => {
+        expect(reconcile({ currentAgentId: 'codex', sessionActive: false, inputAdmitted: false })).toEqual({
+            draft: 'preserve',
+            arm: 'clear',
+            send: 'allow',
+            notice: {
+                tone: 'warning',
+                // The Session is the target and has no live runtime: starting it
+                // is the one factual recovery, and it belongs to the Session's
+                // existing resume owner.
+                recovery: 'resumeSession',
+                message: t('session.agentContinuation.transition.switched', { agent: 'Codex' }),
+            },
+        });
+    });
+
+    it('never offers resume for a target that is already running', () => {
+        expect(reconcile({ currentAgentId: 'codex', sessionActive: true, inputAdmitted: false }).notice)
+            .toEqual({
+                tone: 'warning',
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.switched', { agent: 'Codex' }),
+            });
+    });
+
+    it('offers resume for a committed-but-inactive target reported by the daemon itself', () => {
+        expect(reconcile(
+            { currentAgentId: 'codex', sessionActive: false, inputAdmitted: false },
+            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'target_start_failed' },
+        ).notice?.recovery).toBe('resumeSession');
+    });
+
+    it('keeps saying it does not know when the canonical facts establish nothing, but stops blocking', () => {
+        // The reconciliation attempt IS the window. Once it has read canonical
+        // state and still cannot tell, holding the composer hostage forever
+        // would be a worse lie than the one this notice already tells honestly.
+        expect(reconcile({ currentAgentId: 'claude', sessionActive: true, inputAdmitted: false })).toEqual({
+            draft: 'preserve',
+            arm: 'keep',
+            send: 'allow',
+            notice: {
+                tone: 'neutral',
+                recovery: 'none',
+                message: t('session.agentContinuation.transition.unknown'),
+            },
+        });
+    });
+
+    it('blocks the composer until canonical facts have actually been read', () => {
+        expect(reconcile(null).send).toBe('block');
+    });
+
+    it('never lets a client-side view weaken a definite daemon answer', () => {
+        // `rejected` guarantees the source was never touched. A local view that
+        // happens to show the target Agent must not promote that into a
+        // committed cutover.
+        expect(reconcile(
+            { currentAgentId: 'codex', sessionActive: false, inputAdmitted: false },
+            { type: 'rejected', code: 'source_not_idle', sourceEffect: 'none' },
+        )).toEqual(resolveArmedAgentContinuationDisposition(
+            { type: 'rejected', code: 'source_not_idle', sourceEffect: 'none' },
+            LABELS,
+        ));
+
+        // And a stopped source stays a stopped source.
+        const sourceStopped: SessionAgentTransitionResultV1 = {
+            type: 'partially_applied', localId: 'local-1', applied: 'source_stopped', code: 'cutover_conflict',
+        };
+        expect(reconcile({ currentAgentId: 'codex', sessionActive: true, inputAdmitted: true }, sourceStopped).notice)
+            .toEqual(resolveArmedAgentContinuationDisposition(sourceStopped, LABELS).notice);
     });
 });

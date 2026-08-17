@@ -377,6 +377,142 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
+    it('becomes a button that names the switch, not a circle with a glyph in it', async () => {
+        // The armed control is the app's standard rounded button growing around its
+        // logo and label, not a bespoke pill: it renders the words as well as the
+        // mark, so the consequence is legible without a screen reader.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        const texts = send.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : []));
+        expect(texts).toContain('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
+
+        await screen.unmount();
+    });
+
+    it('keeps the circular send while the composer has nothing to send', async () => {
+        // An arm only presents where pressing send would actually take it. On an
+        // empty composer the same button is Dictation or Stop, so the armed shape
+        // and the armed name would both promise something press does not do.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).not.toBe('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).length).toBe(0);
+
+        await screen.unmount();
+    });
+
+    it('names the armed engine and model on the chip, and agrees with the send control', async () => {
+        // Selection IS the selection. A picker showing a checkmark on Sonnet 4.6
+        // while the chip still read GPT 5.6 Sol was telling the reader two different
+        // things about one decision.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: 'Sonnet 4.6' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        if (!chip) throw new Error('agent-input-agent-chip not found');
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['claude']);
+        expect(chip.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toContain('Sonnet 4.6');
+        // The pair must hold: a chip claiming an armed target while the button does
+        // not announce it would be the same contradiction in the other direction.
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
+            .toBe('session.agentContinuation.sendLabel');
+
+        await screen.unmount();
+    });
+
+    it('names the armed Agent while it is still on that Agent\u2019s own model settings', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: null }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        expect(chip?.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toContain('Claude');
+
+        await screen.unmount();
+    });
+
+    it('returns the chip to the running engine when the switch is disarmed', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={null}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        if (!chip) throw new Error('agent-input-agent-chip not found');
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
+        const labels = chip.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : []));
+        expect(labels).not.toContain('Sonnet 4.6');
+        expect(labels).not.toContain('Claude');
+
+        await screen.unmount();
+    });
+
     it('hides the voice icon when voice is disabled (no text)', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');

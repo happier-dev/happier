@@ -56,6 +56,9 @@ import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
+// From the registry rather than the catalog facade: this narrows an id the picker
+// supplied, which is the same check the send control's presentation resolver makes.
+import { isAgentId } from '@/agents/registry/registryCore';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -146,6 +149,8 @@ import type {
     AgentInputStatusBadge as AgentInputStatusBadgeDescriptor,
 } from './agentInputContracts';
 import type { AgentInputSendIntentOptions, AgentInputSendOptions } from './agentInputSendOptions';
+import { APPLIED_RUNTIME_MARKER_ICON, resolveAppliedRuntimeStatus } from './appliedRuntimeMarker';
+import { resolveArmedComposerContinuation } from './components/agentContinuationSubmitPresentation';
 import { AgentInputStatusBadge } from './status/AgentInputStatusBadge';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
@@ -360,6 +365,14 @@ interface AgentInputProps {
      * worth doing once the user is actually choosing an Agent — a live capability
      * probe, for instance — instead of on every composer mount.
      */
+    /**
+     * The reader is reaching for the Agent chip — hover, focus, or press-in.
+     *
+     * Fired before the picker opens so the Session's machine can be asked about
+     * continuation support while the pointer is still travelling, rather than on
+     * every Session view.
+     */
+    onAgentPickerIntent?: () => void;
     onAgentPickerVisibilityChange?: (visible: boolean) => void;
     agentPickerSelectedOptionId?: string | null;
     onAgentPickerSelect?: (id: string) => void;
@@ -383,7 +396,17 @@ interface AgentInputProps {
      * send control names it, because pressing send with a target armed continues
      * this Session with that Agent rather than the one running now.
      */
-    armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
+    armedContinuationTarget?: Readonly<{
+        agentId: string;
+        label: string;
+        /**
+         * The label of the model chosen for the target Agent, or null while it is
+         * still on that Agent's own defaults. It is the picker's OWN label — the
+         * exact words the reader just selected — rather than a second lookup that
+         * could name the same model differently.
+         */
+        modelLabel?: string | null;
+    }> | null;
     isSending?: boolean;
     disabled?: boolean;
     minHeight?: number;
@@ -1997,18 +2020,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ? t('agentInput.model.extendedContextLabel', { model: found.label })
                 : found.label)
             : appliedModelId;
-        const status = props.sessionActive === true
-            ? 'running'
-            : props.sessionActive === false
-                ? 'lastUsed'
-                : 'lastReported';
+        // Both the status and its glyph come from the shared owner, because the
+        // Agent rail in the same popover draws the same mark beside the Session's
+        // Agent and the two columns must not disagree about one Session.
+        const status = resolveAppliedRuntimeStatus(props.sessionActive);
         return {
             optionValue: found?.value ?? appliedModelId,
-            iconName: props.sessionActive === true
-                ? 'play-circle' as const
-                : props.sessionActive === false
-                    ? 'clock' as const
-                    : 'info' as const,
+            iconName: APPLIED_RUNTIME_MARKER_ICON[status],
             summary: t(`agentInput.model.${status}`, { model: label }),
         };
     }, [effectiveModelPolicy.appliedModelId, modelOptions, props.sessionActive]);
@@ -2521,9 +2539,41 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closeSelectionOverlay,
         toggleSelectionOverlay,
     });
+    /**
+     * The armed Agent switch, as the composer is presenting it right now.
+     *
+     * One decision, shared with the send control, so the chip and the button
+     * cannot say different things about the same choice: the picker showing a
+     * checkmark on Sonnet 4.6 while the chip still read GPT 5.6 Sol is the defect
+     * this removes.
+     */
+    const armedComposerTarget = resolveArmedComposerContinuation({
+        armedContinuationTarget: props.armedContinuationTarget,
+        hasSendableContent,
+        dictationHoldsSubmit: Boolean(micPressHandler) && micActive,
+    });
+    /**
+     * The mark on the engine chip: the armed Agent while one is armed, otherwise
+     * the Agent running this Session.
+     *
+     * Scoped to the chip on purpose. `agentId` above still resolves the RUNNING
+     * Agent, because permission modes, model options and session modes are facts
+     * about what is running — only this one control is about what runs next.
+     */
+    const engineChipAgentId: AgentId = (
+        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
+            ? armedComposerTarget.agentId
+            : agentId
+    );
     const engineChipLabel = React.useMemo(() => {
+        // Selection IS the selection. An armed target with a model chosen names
+        // that model; an armed target still on the Agent's own defaults names the
+        // Agent, because no model has been chosen to name.
+        if (armedComposerTarget) {
+            return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
+        }
         return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
-    }, [hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+    }, [armedComposerTarget, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
     }, [props.extraActionChips]);
@@ -2692,7 +2742,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         actionBarIsCollapsed,
         hasAnyActions,
         tint: theme.colors.composer.chipTint,
-        agentId,
+        // The engine control names what runs NEXT, so it follows the armed target.
+        agentId: engineChipAgentId,
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
@@ -2768,12 +2819,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
         envVarsCount: props.envVarsCount,
         onEnvVarsPress: handleEnvVarsPress,
-        agentId,
+        // The engine chip names what runs NEXT, so it follows the armed target.
+        agentId: engineChipAgentId,
         hasAgentSelection: hasAgent,
         agentChipAnchorRef,
         agentLabel: resolvedAgentLabel,
         engineLabel: engineChipLabel,
         onAgentPress: handleAgentPress,
+        onAgentIntent: props.onAgentPickerIntent,
         machineChipAnchorRef,
         onMachinePress: handleMachinePress,
         machineName: props.machineName,

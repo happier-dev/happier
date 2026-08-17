@@ -4812,10 +4812,12 @@ deps: {
         toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} més…`,
         agentContinuation: {
             currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Executant aquesta sessió.`,
+            currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Utilitzat per última vegada en aquesta sessió.`,
+            currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Últim informat per a aquesta sessió.`,
             armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Seleccionat per al teu missatge següent.`,
             detailTitle: ({ agent }: { agent: string }) => `Continua amb ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continua amb ${agent}`,
-            detailDescription: 'La conversa es manté. No s’envia res fins al pròxim missatge.',
+            detailDescription: 'La conversa recent es manté com a text; les imatges i els fitxers no. No s’envia res fins al pròxim missatge.',
             announcement: ({ agent }: { agent: string }) => `${agent} seleccionat per al missatge següent. No s’ha enviat res.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Aquesta sessió ha continuat de ${from_} a ${to}`,
             checking: 'S’està comprovant la disponibilitat…',
@@ -4839,6 +4841,10 @@ deps: {
                 conflictingDestination: ({ agent }: { agent: string }) => `No s’ha enviat res. Aquest missatge ja té una altra destinació, així que no pot canviar també aquesta sessió a ${agent}. Treu-ne una de les dues i torna a enviar.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’ha aturat, però el canvi a ${agent} no s’ha completat. El teu missatge no s’ha enviat.`,
                 switched: ({ agent }: { agent: string }) => `Aquesta sessió ara és ${agent}, però el teu missatge no s’ha enviat. Torna a enviar-lo.`,
+                /** Compact status for the collapsed composer banner badge. */
+                badgeLabel: 'Canvi d’Agent',
+                /** Delegates to the Session’s existing resume owner; never a second start path. */
+                resumeAction: 'Reprèn la sessió',
                 unknown: 'Happier no ha pogut confirmar què ha passat. Comprova aquesta sessió abans de tornar a enviar.',
             },
         },

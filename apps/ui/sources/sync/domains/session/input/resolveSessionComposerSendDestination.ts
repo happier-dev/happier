@@ -33,12 +33,25 @@ export type SessionComposerSendDestination =
         localId: string;
     }>
     /**
-     * The armed promise cannot be kept by this send, and the send must not
-     * happen anyway. `conflictingDestination` — the send would reach something
-     * that is not this Session's Agent. `armedTargetUnreachable` — there is no
-     * machine to run the transition on.
+     * The send must not happen. `conflictingDestination` — the send would reach
+     * something that is not this Session's Agent. `armedTargetUnreachable` —
+     * there is no machine to run the transition on.
+     * `unreconciledTransitionOutcome` — a previous transition may already have
+     * admitted this input and nothing has established whether it did.
      */
-    | Readonly<{ kind: 'refused'; reason: 'conflictingDestination' | 'armedTargetUnreachable' }>;
+    | Readonly<{
+        kind: 'refused';
+        reason: 'conflictingDestination' | 'armedTargetUnreachable' | 'unreconciledTransitionOutcome';
+    }>;
+
+/**
+ * Whether a previous transition on this Session has settled.
+ *
+ * `unreconciled` is the `outcome_unknown` window only: the daemon could not say
+ * whether the reader's input was admitted, and the composer disposition owner
+ * has not yet read canonical facts that answer it.
+ */
+export type SessionComposerPendingTransitionOutcome = 'settled' | 'unreconciled';
 
 export function resolveSessionComposerSendDestination(params: Readonly<{
     route: SessionComposerSendRoute;
@@ -59,8 +72,25 @@ export function resolveSessionComposerSendDestination(params: Readonly<{
     armedContinuationLocalId: string | null;
     /** The machine hosting the Session. The transition only runs there. */
     machineId: string | null;
+    /**
+     * Whether an earlier transition's effect on this Session is established.
+     * Owned by the composer disposition owner, which reconciles it from
+     * canonical Session/message facts.
+     */
+    pendingTransitionOutcome: SessionComposerPendingTransitionOutcome;
 }>): SessionComposerSendDestination {
     const { armedContinuation, armedContinuationLocalId, machineId, route } = params;
+
+    // First, and for every route. An unestablished outcome may already have
+    // admitted the reader's input; the retained localId dedupes a repeat of the
+    // SAME armed switch, but nothing protects a submission that mints a fresh
+    // identity — a disarmed composer, a voice route, an execution run. Refusing
+    // for the length of the reconciliation is the only way this path cannot
+    // duplicate what the reader already sent.
+    if (params.pendingTransitionOutcome === 'unreconciled') {
+        return { kind: 'refused', reason: 'unreconciledTransitionOutcome' };
+    }
+
     if (armedContinuation === null) return { kind: route };
 
     // A voice adapter or an execution run is not this Session's Agent, so an

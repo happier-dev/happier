@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 type NavigatorLike = {
     maxTouchPoints?: number;
     userAgent?: string;
@@ -56,6 +58,23 @@ export function isCoarsePrimaryPointerEnvironment(): boolean {
     if (matchMedia('(pointer: coarse)') || matchMedia('(hover: none)')) return true;
     const nav = readNavigator();
     return typeof nav?.maxTouchPoints === 'number' && nav.maxTouchPoints > 0;
+}
+
+/**
+ * True when the host's primary pointer can announce intent BEFORE it activates
+ * something.
+ *
+ * A mouse or trackpad has to travel over a control to click it, and a keyboard has
+ * to focus it, so both give a surface a usable head start — hundreds of
+ * milliseconds — on work that would otherwise start at the click. A finger gives
+ * none: press-in is roughly one frame before activation.
+ *
+ * Deliberately built on {@link isCoarsePrimaryPointerEnvironment}, which already
+ * owns "can the PRIMARY pointer hover", rather than adding a second reading of the
+ * same media queries.
+ */
+export function isHoverCapablePrimaryPointer(): boolean {
+    return Platform.OS === 'web' && !isCoarsePrimaryPointerEnvironment();
 }
 
 export function isWebMobileLikeViewport(params: Readonly<{ width: number; height: number }>): boolean {

@@ -97,6 +97,7 @@ import {
     isConnectedServiceCredentialHealthStatusUsable,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
+    type SessionAgentTransitionResultV1,
 } from '@happier-dev/protocol';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSession } from '@/sync/domains/state/storage';
@@ -178,7 +179,13 @@ import {
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { confirmNonSteerableSend } from '@/components/sessions/agentInput/confirmNonSteerableSend';
 import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
-import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
+import {
+    continueSessionWithArmedAgent,
+    reconcileArmedAgentContinuationDisposition,
+    type ArmedAgentContinuationCanonicalFacts,
+    type ArmedAgentContinuationLabels,
+    type ArmedAgentContinuationNotice,
+} from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 import {
     resolveSessionComposerSendDestination,
     type SessionComposerSendDestination,
@@ -2465,6 +2472,27 @@ function SessionViewLoaded({
     const staleSessionRunnerBanner = useComposerBannerCollapse('staleSessionRunner');
     const authRecoveryBanner = useComposerBannerCollapse('authRecovery');
     const pendingQueueResumeFailedBanner = useComposerBannerCollapse('pendingQueueResumeFailed');
+    const agentTransitionOutcomeBanner = useComposerBannerCollapse('agentTransitionOutcome');
+    // The last armed-switch outcome that still has something to say.
+    //
+    // This screen holds the FACT; `continueSessionWithArmedAgent` owns what it
+    // MEANS — which recovery is factually safe, whether the draft and the armed
+    // row survive, and whether the composer may submit again. A refusal never
+    // reaches the daemon at all, so it carries its own already-resolved sentence
+    // rather than pretending to be a transition result.
+    const [armedContinuationOutcome, setArmedContinuationOutcome] = React.useState<
+        | Readonly<{ kind: 'refusal'; message: string }>
+        | Readonly<{
+            kind: 'outcome';
+            result: SessionAgentTransitionResultV1;
+            labels: ArmedAgentContinuationLabels;
+            targetAgentId: string | null;
+            localId: string;
+            /** Canonical Session/message facts have been read since the call returned. */
+            reconciled: boolean;
+        }>
+        | null
+    >(null);
     const [
         resolvedStaleSessionRunnerFingerprint,
         setResolvedStaleSessionRunnerFingerprint,
@@ -3233,6 +3261,94 @@ function SessionViewLoaded({
         usageLimitRecoveryPresentation?.issueFingerprint,
         usageLimitRecoveryResumePromptMode,
     ]);
+    // --- Armed-switch outcome: automatic reconciliation from canonical facts ---
+    //
+    // An `outcome_unknown` is the only arm the daemon could not establish, and it
+    // is the only one worth re-deciding here. Reconciliation reads canonical
+    // Session and message truth through the owners that already publish it — no
+    // status operation of its own, no polling, and no Check-status control handed
+    // to the reader — then feeds those facts back through the SAME disposition
+    // owner that decided the daemon's answer.
+    //
+    // A stored outcome belongs to one Session. If this screen is ever reused
+    // across a route change, carrying it over would attach one Session's failure
+    // to another's composer.
+    React.useEffect(() => {
+        setArmedContinuationOutcome(null);
+    }, [sessionId]);
+    const armedContinuationAwaitingReconcile = armedContinuationOutcome?.kind === 'outcome'
+        && armedContinuationOutcome.result.type === 'outcome_unknown'
+        && !armedContinuationOutcome.reconciled;
+    React.useEffect(() => {
+        if (!armedContinuationAwaitingReconcile) return;
+        let cancelled = false;
+        // A refused refresh settles the window too. The composer is held only for
+        // the length of the attempt: staying blocked forever on a fact that may
+        // never arrive would be a worse failure than the notice this leaves up.
+        void Promise.allSettled([
+            sync.ensureSessionVisibleForMessageRoute(sessionId, {
+                forceRefresh: true,
+                ...(sessionRouteServerId ? { serverId: sessionRouteServerId } : {}),
+            }),
+            sync.refreshSessionMessages(sessionId),
+        ]).then(() => {
+            if (cancelled) return;
+            setArmedContinuationOutcome((current) => (
+                current?.kind === 'outcome' && !current.reconciled
+                    ? { ...current, reconciled: true }
+                    : current
+            ));
+        });
+        return () => { cancelled = true; };
+    }, [armedContinuationAwaitingReconcile, sessionId, sessionRouteServerId]);
+
+    // Canonical facts are read at the moment reconciliation reports them settled,
+    // which is exactly when they can have changed. Reading canonical admission
+    // imperatively keeps this off a transcript-wide subscription that would
+    // re-derive on every streamed row for a banner that changes about twice.
+    //
+    // `sessionRuntimeStatusSource` is the same live runtime-status owner
+    // `isSessionActive` reads further down; this is not a second interpretation
+    // of it, just an earlier read of the one source.
+    const armedContinuationDisposition = React.useMemo(() => {
+        if (armedContinuationOutcome === null) return null;
+        if (armedContinuationOutcome.kind === 'refusal') return null;
+        // A definite arm is the daemon's own account of what it just did, so the
+        // Session view beside it is trustworthy. An indeterminate one usually
+        // means the transport failed, which is exactly when the local view is
+        // suspect — so those facts are withheld until reconciliation refreshed
+        // them.
+        const factsAreReadable = armedContinuationOutcome.result.type !== 'outcome_unknown'
+            || armedContinuationOutcome.reconciled;
+        const facts: ArmedAgentContinuationCanonicalFacts | null = factsAreReadable
+            ? {
+                currentAgentId: liveComposerState.agentId,
+                sessionActive: sessionRuntimeStatusSource.active === true,
+                inputAdmitted: hasCanonicalOutboundHandoffForLocalId(
+                    sessionId,
+                    armedContinuationOutcome.localId,
+                ),
+            }
+            : null;
+        return reconcileArmedAgentContinuationDisposition({
+            result: armedContinuationOutcome.result,
+            labels: armedContinuationOutcome.labels,
+            targetAgentId: armedContinuationOutcome.targetAgentId,
+            facts,
+        });
+    }, [armedContinuationOutcome, liveComposerState.agentId, sessionId, sessionRuntimeStatusSource.active]);
+    // Memoized because it feeds the composer badge list: a fresh object every
+    // render would invalidate that memo on every turn commit for a banner that
+    // changes about twice in a Session's life.
+    const armedContinuationNotice = React.useMemo<ArmedAgentContinuationNotice | null>(() => (
+        armedContinuationOutcome?.kind === 'refusal'
+            ? { tone: 'warning', message: armedContinuationOutcome.message, recovery: 'none' }
+            : armedContinuationDisposition?.notice ?? null
+    ), [armedContinuationDisposition, armedContinuationOutcome]);
+    // The composer's own gate, owned by the send-destination resolver.
+    const pendingTransitionOutcome = armedContinuationDisposition?.send === 'block'
+        ? 'unreconciled'
+        : 'settled';
     const sessionStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         const usageBadge = usageLimitStatusBadgePresentation
             ? [{
@@ -3292,14 +3408,42 @@ function SessionViewLoaded({
                 onPress: pendingQueueResumeFailedBanner.toggle,
             } satisfies AgentInputStatusBadge]
             : [];
+        const agentTransitionOutcomeBadge = armedContinuationNotice
+            ? [{
+                key: 'session-agentTransition-outcome',
+                testID: 'session.agentTransitionOutcome.badge',
+                label: t('session.agentContinuation.transition.badgeLabel'),
+                tone: armedContinuationNotice.tone === 'warning' ? 'warning' : 'neutral',
+                ...buildComposerBannerBadgeAccessibility({
+                    // Collapsing demotes the banner to this badge, so the badge has
+                    // to carry the whole sentence to assistive tech.
+                    statusLabel: armedContinuationNotice.message,
+                    collapsed: agentTransitionOutcomeBanner.collapsed,
+                    expandHint: t('session.composerBanners.showBannerAction'),
+                    collapseHint: t('session.composerBanners.hideBannerAction'),
+                }),
+                icon: (tint: string) => (
+                    <Icon
+                        name={armedContinuationNotice.tone === 'warning' ? 'warning-circle' : 'info'}
+                        size={14}
+                        color={tint}
+                    />
+                ),
+                onPress: agentTransitionOutcomeBanner.toggle,
+            } satisfies AgentInputStatusBadge]
+            : [];
         return [
             ...usageBadge,
             ...staleRunnerBadge,
             ...authRecoveryBadge,
             ...pendingQueueBadge,
+            ...agentTransitionOutcomeBadge,
             ...sessionWorkStateBadges,
         ];
     }, [
+        agentTransitionOutcomeBanner.collapsed,
+        agentTransitionOutcomeBanner.toggle,
+        armedContinuationNotice,
         authRecoveryBanner.collapsed,
         authRecoveryBanner.toggle,
         authSurfaceState,
@@ -3434,11 +3578,26 @@ function SessionViewLoaded({
     // `readServerEnabledBit(...) === true` and applies the catalog's dependency
     // closure, so this is the gate — not a second interpretation beside it. It is
     // read once, here, and handed to the one owner that can arm a switch.
-    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching');
+    //
+    // Scoped to THIS Session's server, not the sidebar's selection. The switch
+    // runs on the Session's machine against its own server, and neither the
+    // daemon nor the server re-gates the transition, so this decision's scope is
+    // the whole gate: an aggregate over other selected servers would let an
+    // unrelated server's setting decide whether this Session may switch Agent.
+    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+        scopeKind: 'spawn',
+        serverId: capabilityServerId,
+    });
+    // Read here rather than beside the composer's other draft work because the
+    // armed Agent is a Session draft value like the rest, and the picker below is
+    // the one owner that writes it.
+    const activeServerAccountScope = useActiveServerAccountScope();
     const inSessionAgentPicker = useInSessionAgentPickerControls({
         sessionId,
+        accountScope: activeServerAccountScope,
         currentAgentId: liveComposerState.agentId,
         currentAgentLabel,
+        currentAgentSessionActive: session.active,
         entries: sessionAgentCatalogEntries,
         favoriteBackendTargetKeys: settings.favoriteBackendTargetKeysV1,
         featureEnabled: agentSwitchingEnabled,
@@ -3458,8 +3617,15 @@ function SessionViewLoaded({
         return {
             agentId: intent.selection.agentId,
             label: entry?.title ?? intent.selection.agentId,
+            // The picker's own words for the chosen model, so the composer's engine
+            // chip names it exactly as the row the reader just tapped did.
+            modelLabel: inSessionAgentPicker.armedContinuationModelLabel,
         };
-    }, [inSessionAgentPicker.armedContinuation, sessionAgentCatalogEntries]);
+    }, [
+        inSessionAgentPicker.armedContinuation,
+        inSessionAgentPicker.armedContinuationModelLabel,
+        sessionAgentCatalogEntries,
+    ]);
     const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
         if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
         return isConnectedServiceCredentialHealthStatusUsable(
@@ -3766,7 +3932,6 @@ function SessionViewLoaded({
     const inputComposerRestoreTransientStateRef = React.useRef<(state: AgentInputLocalUiStateV1 | null) => void>(
         noopInputComposerRestoreTransientState,
     );
-    const activeServerAccountScope = useActiveServerAccountScope();
     const captureComposerSemanticDraftSnapshot = React.useCallback((): ComposerSemanticDraftSnapshot => ({
         recipient: readSessionDraftValue(activeServerAccountScope, sessionId, 'routing.recipient'),
         executionRunDelivery: readSessionDraftValue(activeServerAccountScope, sessionId, 'routing.executionRunDelivery'),
@@ -4120,6 +4285,16 @@ function SessionViewLoaded({
         }
     }, [agentId, capabilityServerId, controlMachineTarget, executionRunsEnabled, resumeCapabilityOptions, router, session, sessionId, settings]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
+
+    // The committed-but-inactive recovery. The banner offers it only once
+    // canonical facts say the Session has no live runtime, and it does nothing
+    // itself: starting a Session belongs to `handleResumeSession`, which every
+    // other inactive-session affordance already uses. A successful start makes
+    // the notice untrue, so it goes.
+    const handleArmedContinuationResume = React.useCallback(async () => {
+        const resumed = await handleResumeSession({ silent: false });
+        if (resumed) setArmedContinuationOutcome(null);
+    }, [handleResumeSession]);
 
     useSessionResumeRequestListener(
         sessionId,
@@ -4760,20 +4935,35 @@ function SessionViewLoaded({
                 armedContinuation: inSessionAgentPicker.armedContinuation,
                 armedContinuationLocalId: inSessionAgentPicker.armedContinuationLocalId,
                 machineId: typeof machineId === 'string' ? machineId : null,
+                pendingTransitionOutcome,
             });
             const presentRefusedArmedSend = (
                 refused: Extract<SessionComposerSendDestination, { kind: 'refused' }>,
             ): void => {
-                Modal.alert(
-                    t('common.error'),
-                    refused.reason === 'conflictingDestination'
-                        ? t('session.agentContinuation.transition.conflictingDestination', {
-                            agent: armedContinuationTargetLabel,
-                        })
-                        : t('session.agentContinuation.transition.rejected.targetUnavailable', {
-                            agent: armedContinuationTargetLabel,
-                        }),
-                );
+                // A refusal is a rejection before any effect: the draft and the armed
+                // row both survive, and the ordinary send is the retry once the reader
+                // has resolved the conflict. It reaches the same composer banner as
+                // every other outcome instead of a modal the reader has to dismiss
+                // before they can act on it.
+                if (refused.reason !== 'unreconciledTransitionOutcome') {
+                    setArmedContinuationOutcome({
+                        kind: 'refusal',
+                        message: refused.reason === 'conflictingDestination'
+                            ? t('session.agentContinuation.transition.conflictingDestination', {
+                                agent: armedContinuationTargetLabel,
+                            })
+                            : t('session.agentContinuation.transition.rejected.targetUnavailable', {
+                                agent: armedContinuationTargetLabel,
+                            }),
+                    });
+                    return;
+                }
+                // `unreconciledTransitionOutcome` is the banner already on screen
+                // saying the previous outcome is unestablished. Overwriting it would
+                // replace a live fact with a restatement — but a refused send has to be
+                // visible, so a collapsed banner is re-expanded through the same
+                // collapse owner rather than given a second announcement channel.
+                if (agentTransitionOutcomeBanner.collapsed) agentTransitionOutcomeBanner.toggle();
             };
             const dispatchArmedContinuation = async (
                 destination: Extract<SessionComposerSendDestination, { kind: 'armedAgentContinuation' }>,
@@ -4784,7 +4974,7 @@ function SessionViewLoaded({
                 }>,
                 onAdmitted: () => void,
             ): Promise<void> => {
-                const { disposition } = await continueSessionWithArmedAgent({
+                const { disposition, result } = await continueSessionWithArmedAgent({
                     machineId: destination.machineId,
                     serverId: sessionRouteServerId,
                     sessionId,
@@ -4807,9 +4997,20 @@ function SessionViewLoaded({
                 if (disposition.arm === 'clear') {
                     inSessionAgentPicker.clearArmedContinuation();
                 }
-                if (disposition.failureMessage !== null) {
-                    Modal.alert(t('common.error'), disposition.failureMessage);
-                }
+                // The outcome itself is recorded, not its rendering: the banner
+                // re-derives what to say (and what is safe to offer) through the
+                // disposition owner as canonical facts arrive.
+                setArmedContinuationOutcome({
+                    kind: 'outcome',
+                    result,
+                    labels: {
+                        sourceAgentLabel: currentAgentLabel,
+                        targetAgentLabel: armedContinuationTargetLabel,
+                    },
+                    targetAgentId: destination.intent.selection.agentId,
+                    localId: destination.localId,
+                    reconciled: false,
+                });
                 // Only canonical admission of this exact localId clears the draft.
                 // Every other outcome leaves the composer as the reader left it and
                 // has already said why.
@@ -4839,7 +5040,21 @@ function SessionViewLoaded({
                         }
                         setIsUploadingAttachments(true);
 
-                        if (!isSessionActive && isResumable) {
+                        // The destination is decided before anything can start an
+                        // Agent. Resuming an inactive Session starts the SOURCE
+                        // Agent — the one the reader chose to leave — and that is
+                        // not undoable: it spends provider work, can consume queued
+                        // input, and can make the transition fail non-idle. So the
+                        // one decision owner is consulted first and the resume is a
+                        // consequence of it, not a step that runs before it and has
+                        // to be lived with.
+                        const attachmentSendDestination = resolveSendDestination('sessionAgent');
+                        if (attachmentSendDestination.kind === 'refused') {
+                            presentRefusedArmedSend(attachmentSendDestination);
+                            return;
+                        }
+                        if (attachmentSendDestination.kind === 'sessionAgent'
+                            && !isSessionActive && isResumable) {
                             const resumed = await handleResumeSession();
                             if (!resumed) {
                                 throw new Error(t('session.resumeFailed'));
@@ -4917,11 +5132,6 @@ function SessionViewLoaded({
                                 removeSubmittedAttachmentDraftsFromCurrent();
                             }
                         };
-                        const attachmentSendDestination = resolveSendDestination('sessionAgent');
-                        if (attachmentSendDestination.kind === 'refused') {
-                            presentRefusedArmedSend(attachmentSendDestination);
-                            return;
-                        }
                         if (attachmentSendDestination.kind === 'armedAgentContinuation') {
                             await dispatchArmedContinuation(
                                 attachmentSendDestination,
@@ -5356,6 +5566,27 @@ function SessionViewLoaded({
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
+            {armedContinuationNotice && !agentTransitionOutcomeBanner.collapsed ? (
+                <ComposerAuxiliaryFrame>
+                    <SessionWarningActionBanner
+                        testID="session.agentTransitionOutcome.banner"
+                        tone={armedContinuationNotice.tone}
+                        title={armedContinuationNotice.message}
+                        {...(armedContinuationNotice.recovery === 'resumeSession'
+                            ? {
+                                actionTestID: 'session.agentTransitionOutcome.resume',
+                                actionLabel: t('session.agentContinuation.transition.resumeAction'),
+                                actionAccessibilityLabel: t('session.agentContinuation.transition.resumeAction'),
+                                actionBusy: isResuming,
+                                disabled: isResuming || !hasWriteAccess,
+                                // Delegated, never re-implemented: this is the same
+                                // resume owner every other inactive-session path uses.
+                                onActionPress: handleArmedContinuationResume,
+                            }
+                            : {})}
+                    />
+                </ComposerAuxiliaryFrame>
+            ) : null}
             {visibleUsageLimitRecoveryPresentation ? (
                 <ComposerAuxiliaryFrame>
                     <SessionWarningActionBanner
@@ -5405,6 +5636,7 @@ function SessionViewLoaded({
                 agentType={liveComposerState.agentId}
                 armedContinuationTarget={armedContinuationTarget}
                 composeAgentPickerOptions={inSessionAgentPicker.composeAgentPickerOptions}
+                onAgentPickerIntent={inSessionAgentPicker.onAgentPickerIntent}
                 onAgentPickerVisibilityChange={inSessionAgentPicker.onAgentPickerVisibilityChange}
                 agentPickerSelectedOptionId={inSessionAgentPicker.agentPickerSelectedOptionId}
                 attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}

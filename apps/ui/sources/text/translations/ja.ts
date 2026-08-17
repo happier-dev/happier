@@ -5412,10 +5412,12 @@ localTailscale: {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションを実行中です。`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションで最後に使用されました。`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションで最後に報告されました。`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。次のメッセージ用に選択済みです。`,
       detailTitle: ({ agent }: { agent: string }) => `${agent} で続ける`,
       sendLabel: ({ agent }: { agent: string }) => `${agent} で続ける`,
-      detailDescription: '会話はそのまま引き継がれます。次のメッセージを送るまで何も送信されません。',
+      detailDescription: '最近の会話はテキストとして引き継がれます。画像やファイルは引き継がれません。次のメッセージを送るまで何も送信されません。',
       announcement: ({ agent }: { agent: string }) => `次のメッセージ用に ${agent} を選択しました。まだ何も送信されていません。`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `このセッションは ${from_} から ${to} に引き継がれました`,
       checking: "利用可否を確認しています…",
@@ -5439,6 +5441,10 @@ localTailscale: {
         conflictingDestination: ({ agent }: { agent: string }) => `何も送信されていません。このメッセージには別の宛先がすでにあるため、同時にこのセッションを ${agent} に切り替えることはできません。どちらかを解除してから、もう一度送信してください。`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} は停止しましたが、${agent} への切り替えは完了しませんでした。メッセージは送信されていません。`,
         switched: ({ agent }: { agent: string }) => `このセッションは ${agent} になりましたが、メッセージは送信されていません。もう一度送信してください。`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'エージェントの切り替え',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'セッションを再開',
         unknown: 'Happier は結果を確認できませんでした。もう一度送信する前にこのセッションを確認してください。',
       },
     },

@@ -4962,10 +4962,12 @@ export const zhHans: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。正在运行此会话。`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次使用。`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次报告。`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。已选择用于你的下一条消息。`,
       detailTitle: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
-      detailDescription: '对话会保留。在你发送下一条消息前不会发送任何内容。',
+      detailDescription: '最近的对话会以文本形式保留；图片和文件不会。在你发送下一条消息前不会发送任何内容。',
       announcement: ({ agent }: { agent: string }) => `已选择 ${agent} 用于下一条消息，尚未发送任何内容。`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `此会话已从 ${from_} 转由 ${to} 继续`,
       checking: "正在检查可用性…",
@@ -4989,6 +4991,10 @@ export const zhHans: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `尚未发送任何内容。这条消息已经有另一个目标，因此不能同时把此会话切换到 ${agent}。请去掉其中之一后重新发送。`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切换到 ${agent} 未完成。你的消息未发送。`,
         switched: ({ agent }: { agent: string }) => `此会话现在是 ${agent}，但你的消息未发送。请重新发送。`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: '切换 Agent',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: '恢复会话',
         unknown: 'Happier 无法确认发生了什么。请先检查此会话再重新发送。',
       },
     },

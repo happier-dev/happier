@@ -36,6 +36,11 @@ export const MOTION_ANIMATIONS = [
     'rowExit',
     /** A finished row travelling to another section, and the list re-laying-out around it. */
     'sectionMigration',
+    /**
+     * The composer's send control changing shape — between the circular send and the
+     * armed "Continue with {Agent}" button that hugs its logo and label.
+     */
+    'composerSubmitShape',
     /** The indeterminate running spinner. */
     'spinner',
     /** The once-a-second elapsed clock on a running row. */
@@ -76,6 +81,11 @@ const MOTION_REDUCED_MOTION_TABLE = {
     // reads as two lists.
     rowExit: { springRole: 'rowEnter' },
     sectionMigration: { springRole: 'reflow' },
+    // The send control travels on the same spring as an arriving row: it is one
+    // small control resizing, not a list re-laying-out. Under reduced motion it
+    // settles instantly — the control still becomes the other shape, which is the
+    // fact it carries; only the travel is removed.
+    composerSubmitShape: { springRole: 'rowEnter' },
     // The ring is a timing, not a spring. Under reduced motion it still appears and still leaves —
     // it just stops fading out over 90 ms. An indicator that cannot be seen to arrive is worse than
     // one that arrives abruptly, so this is `settleInstantly`, never `substitute`.

@@ -65,6 +65,17 @@ export type AgentInputChipPickerOption = Readonly<{
      */
     applyLabel?: string;
     preserveFocusOnExternalSelectionChange?: boolean;
+    /**
+     * A non-selection state mark for the row's indicator slot — drawn only when the
+     * row is NOT the selection, so it stands in the checkmark's place rather than
+     * beside it.
+     *
+     * It exists for the one fact a checkmark cannot carry: which option is the one
+     * in use right now, once the selection has moved somewhere else. The producer
+     * supplies the rendered glyph so this type keeps no opinion about which mark
+     * means what — the composer's applied-runtime marker owner does.
+     */
+    statusMarker?: React.ReactNode;
     railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;
     disabled?: boolean;

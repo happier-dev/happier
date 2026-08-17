@@ -34,8 +34,31 @@ vi.mock('react-native-mmkv', () => {
 
 type SessionDraftValueFieldId =
     | 'routing.recipient'
+    | 'routing.agentContinuation'
     | 'routing.executionRunDelivery'
     | 'structuredInput.mentions';
+
+type SessionArmedAgentContinuation = Readonly<{
+    backendTargetKey: string;
+    intent: Readonly<{
+        v: 1;
+        mode: 'same_session';
+        sourceAgentId: string;
+        selection: Readonly<{ v: 1; agentId: string }>;
+    }>;
+    modelLabel: string | null;
+}>;
+
+const armedContinuation: SessionArmedAgentContinuation = {
+    backendTargetKey: 'builtInAgent:codex',
+    intent: {
+        v: 1,
+        mode: 'same_session',
+        sourceAgentId: 'claude',
+        selection: { v: 1, agentId: 'codex' },
+    },
+    modelLabel: null,
+};
 
 type ComposerStructuredInputMention =
     | Readonly<{
@@ -64,6 +87,7 @@ type ComposerStructuredInputMention =
 
 type SessionDraftValueByFieldId = Readonly<{
     'routing.recipient': ParticipantRecipientV1 | null;
+    'routing.agentContinuation': SessionArmedAgentContinuation;
     'routing.executionRunDelivery': 'prompt' | 'steer_if_supported' | 'interrupt';
     'structuredInput.mentions': readonly ComposerStructuredInputMention[];
 }>;
@@ -160,16 +184,56 @@ describe('session draft-value store', () => {
 
         expect(draftValues.SESSION_DRAFT_VALUE_FIELD_IDS).toEqual([
             'routing.recipient',
+            'routing.agentContinuation',
             'routing.executionRunDelivery',
             'structuredInput.mentions',
         ]);
+    });
+
+    it('keeps an armed Agent across a reload, sheds it at outbound handoff, and holds it through a composer clear', async () => {
+        const draftValues = await importStore();
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation', armedContinuation, { now: 100 });
+        draftValues.invalidateSessionDraftValuesCache(scopeA);
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation')).toEqual(armedContinuation);
+
+        // The live picker stays armed through a composer action, so the persisted
+        // half must too: one choice, one lifetime. Cancelling is its own gesture.
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.recipient', recipient, { now: 100 });
+        draftValues.clearSessionDraftValues(scopeA, 'sessionA', { lifecycle: 'composerCleared' });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.recipient')).toBeUndefined();
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation')).toEqual(armedContinuation);
+
+        // The arm leaves with the message that consumed it.
+        draftValues.clearSessionDraftValues(scopeA, 'sessionA', { lifecycle: 'outboundHandoff' });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation')).toBeUndefined();
+    });
+
+    it('refuses an armed Agent with no row to point at rather than restoring half of one', async () => {
+        const draftValues = await importStore();
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation', armedContinuation, { now: 100 });
+        draftValues.writeSessionDraftValue(
+            scopeA,
+            'sessionA',
+            'routing.agentContinuation',
+            { ...armedContinuation, backendTargetKey: '' },
+            { now: 200 },
+        );
+
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation')).toEqual(armedContinuation);
     });
 
     it('uses the named semantic draft-value TTL configuration for every registered field', async () => {
         const catalog = await importFieldCatalog();
 
         expect(catalog.SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS).toBeGreaterThan(0);
-        for (const fieldId of ['routing.recipient', 'routing.executionRunDelivery', 'structuredInput.mentions'] as const) {
+        for (const fieldId of [
+            'routing.recipient',
+            'routing.agentContinuation',
+            'routing.executionRunDelivery',
+            'structuredInput.mentions',
+        ] as const) {
             expect(catalog.SESSION_DRAFT_VALUE_FIELDS[fieldId].clearOn.ttlDays).toBe(
                 catalog.SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS,
             );

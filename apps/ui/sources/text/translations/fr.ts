@@ -4796,10 +4796,12 @@ export const fr: TranslationStructure = {
         toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} de plus…`,
         agentContinuation: {
             currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Exécute cette session.`,
+            currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent utilisé par cette session.`,
+            currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent signalé pour cette session.`,
             armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Sélectionné pour votre prochain message.`,
             detailTitle: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continuer avec ${agent}`,
-            detailDescription: 'Votre conversation est conservée. Rien n’est envoyé avant votre prochain message.',
+            detailDescription: 'Votre conversation récente est conservée sous forme de texte ; les images et les fichiers ne le sont pas. Rien n’est envoyé avant votre prochain message.',
             announcement: ({ agent }: { agent: string }) => `${agent} sélectionné pour le prochain message. Rien n’a été envoyé.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Cette session a continué de ${from_} à ${to}`,
             checking: 'Vérification de la disponibilité…',
@@ -4823,6 +4825,10 @@ export const fr: TranslationStructure = {
                 conflictingDestination: ({ agent }: { agent: string }) => `Rien n’a été envoyé. Ce message a déjà une autre destination, il ne peut donc pas aussi faire passer cette session à ${agent}. Retirez l’un des deux et renvoyez.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’est arrêté, mais le passage à ${agent} n’a pas abouti. Votre message n’a pas été envoyé.`,
                 switched: ({ agent }: { agent: string }) => `Cette session utilise maintenant ${agent}, mais votre message n’a pas été envoyé. Renvoyez-le.`,
+                /** Compact status for the collapsed composer banner badge. */
+                badgeLabel: 'Changement d’Agent',
+                /** Delegates to the Session’s existing resume owner; never a second start path. */
+                resumeAction: 'Reprendre la session',
                 unknown: 'Happier n’a pas pu confirmer ce qui s’est passé. Vérifiez cette session avant de renvoyer.',
             },
         },

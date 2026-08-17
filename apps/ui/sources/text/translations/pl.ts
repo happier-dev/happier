@@ -5164,10 +5164,12 @@ export const pl: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Prowadzi tę sesję.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ostatnio używany przez tę sesję.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ostatnio zgłoszony dla tej sesji.`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Wybrany do następnej wiadomości.`,
       detailTitle: ({ agent }: { agent: string }) => `Kontynuuj z ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Kontynuuj z ${agent}`,
-      detailDescription: 'Rozmowa zostaje zachowana. Nic nie zostanie wysłane do następnej wiadomości.',
+      detailDescription: 'Ostatnia część rozmowy zostaje zachowana jako tekst; obrazy i pliki nie. Nic nie zostanie wysłane do następnej wiadomości.',
       announcement: ({ agent }: { agent: string }) => `Wybrano ${agent} do następnej wiadomości. Nic nie zostało wysłane.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Ta sesja została przejęta z ${from_} na ${to}`,
       checking: "Sprawdzanie dostępności…",
@@ -5191,6 +5193,10 @@ export const pl: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `Nic nie zostało wysłane. Ta wiadomość ma już inny cel, więc nie może jednocześnie przełączyć tej sesji na ${agent}. Usuń jedno z dwóch i wyślij ponownie.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} został zatrzymany, ale przełączenie na ${agent} nie zostało ukończone. Twoja wiadomość nie została wysłana.`,
         switched: ({ agent }: { agent: string }) => `Ta sesja to teraz ${agent}, ale Twoja wiadomość nie została wysłana. Wyślij ją ponownie.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Zmiana Agenta',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Wznów sesję',
         unknown: 'Happier nie mógł potwierdzić, co się stało. Sprawdź tę sesję przed ponownym wysłaniem.',
       },
     },

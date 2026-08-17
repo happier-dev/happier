@@ -215,12 +215,22 @@ function AgentInputChipPickerOptionButton(
             {normalizeNodeForView(props.option.railAction.icon)}
           </Pressable>
         ) : null}
-        <Icon
-          name="check"
-          size={14}
-          color={props.checkColor}
-          style={props.selected ? null : { opacity: 0 }}
-        />
+        {/*
+          * One indicator slot, three states: the checkmark for the selection; the
+          * producer's state mark for a row that is not the selection but is still
+          * the one in use; an invisible checkmark otherwise, so every label in the
+          * rail keeps the same width whatever the row is doing.
+          */}
+        {!props.selected && props.option.statusMarker ? (
+          normalizeNodeForView(props.option.statusMarker)
+        ) : (
+          <Icon
+            name="check"
+            size={14}
+            color={props.checkColor}
+            style={props.selected ? null : { opacity: 0 }}
+          />
+        )}
       </View>
     </>
   );

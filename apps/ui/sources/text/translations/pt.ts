@@ -5263,10 +5263,12 @@ export const pt: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} mais…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. A executar esta sessão.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Usado pela última vez nesta sessão.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Último reportado para esta sessão.`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selecionado para a sua próxima mensagem.`,
       detailTitle: ({ agent }: { agent: string }) => `Continuar com ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continuar com ${agent}`,
-      detailDescription: 'A sua conversa mantém-se. Nada é enviado até à próxima mensagem.',
+      detailDescription: 'A sua conversa recente mantém-se como texto; as imagens e os ficheiros não. Nada é enviado até à próxima mensagem.',
       announcement: ({ agent }: { agent: string }) => `${agent} selecionado para a próxima mensagem. Nada foi enviado.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Esta sessão continuou de ${from_} para ${to}`,
       checking: "Verificando disponibilidade…",
@@ -5290,6 +5292,10 @@ export const pt: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `Nada foi enviado. Esta mensagem já tem outro destino, então não pode também trocar esta sessão para ${agent}. Remova um dos dois e envie de novo.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} parou, mas a troca para ${agent} não foi concluída. Sua mensagem não foi enviada.`,
         switched: ({ agent }: { agent: string }) => `Esta sessão agora é ${agent}, mas sua mensagem não foi enviada. Envie de novo.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Troca de Agente',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Retomar sessão',
         unknown: 'O Happier não conseguiu confirmar o que aconteceu. Verifique esta sessão antes de enviar de novo.',
       },
     },

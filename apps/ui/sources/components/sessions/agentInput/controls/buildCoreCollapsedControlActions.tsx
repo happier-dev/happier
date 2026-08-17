@@ -75,11 +75,13 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
             id: 'agent',
             label: opts.engineLabel ?? t(getAgentCore(opts.agentType).displayNameKey),
             icon: (
+                // `agentId`, not `agentType`: this row IS the engine chip, collapsed, so it
+                // draws the mark the chip draws — which follows an armed Agent switch.
                 <AgentIcon
-                    agentId={opts.agentType}
+                    agentId={opts.agentId}
                     size={16}
                     color={opts.tint}
-                    style={{ transform: [{ scale: getAgentPickerIconScale(opts.agentType) }] }}
+                    style={{ transform: [{ scale: getAgentPickerIconScale(opts.agentId) }] }}
                     testID="agent-input-agent-action-logo"
                 />
             ),

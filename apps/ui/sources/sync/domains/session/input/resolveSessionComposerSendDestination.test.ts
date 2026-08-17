@@ -13,6 +13,7 @@ const ARMED: ComposerAgentContinuationIntentV1 = {
 const REACHABLE = {
     armedContinuationLocalId: 'armed-local-1',
     machineId: 'machine-1',
+    pendingTransitionOutcome: 'settled',
 } as const;
 
 describe('resolveSessionComposerSendDestination', () => {
@@ -22,6 +23,7 @@ describe('resolveSessionComposerSendDestination', () => {
             armedContinuation: null,
             armedContinuationLocalId: null,
             machineId: 'machine-1',
+            pendingTransitionOutcome: 'settled',
         })).toEqual({ kind: 'sessionAgent' });
     });
 
@@ -77,12 +79,14 @@ describe('resolveSessionComposerSendDestination', () => {
             armedContinuation: null,
             armedContinuationLocalId: null,
             machineId: 'machine-1',
+            pendingTransitionOutcome: 'settled',
         })).toEqual({ kind: 'voiceAdapter' });
         expect(resolveSessionComposerSendDestination({
             route: 'executionRun',
             armedContinuation: null,
             armedContinuationLocalId: null,
             machineId: 'machine-1',
+            pendingTransitionOutcome: 'settled',
         })).toEqual({ kind: 'executionRun' });
     });
 
@@ -95,13 +99,38 @@ describe('resolveSessionComposerSendDestination', () => {
             armedContinuation: ARMED,
             armedContinuationLocalId: 'armed-local-1',
             machineId: null,
+            pendingTransitionOutcome: 'settled',
         })).toEqual({ kind: 'refused', reason: 'armedTargetUnreachable' });
         expect(resolveSessionComposerSendDestination({
             route: 'sessionAgent',
             armedContinuation: ARMED,
             armedContinuationLocalId: null,
             machineId: 'machine-1',
+            pendingTransitionOutcome: 'settled',
         })).toEqual({ kind: 'refused', reason: 'armedTargetUnreachable' });
+    });
+
+    it('refuses every send while a transition outcome is still unreconciled', () => {
+        // An `outcome_unknown` may already have admitted the reader's message.
+        // Until canonical facts say so, a second submission is the one way this
+        // path can duplicate it — and a send that quietly mints a fresh identity
+        // (the arm cleared, a voice route, an execution run) is exactly the one
+        // the dedupe identity cannot protect.
+        expect(resolveSessionComposerSendDestination({
+            route: 'sessionAgent',
+            armedContinuation: ARMED,
+            armedContinuationLocalId: 'armed-local-1',
+            machineId: 'machine-1',
+            pendingTransitionOutcome: 'unreconciled',
+        })).toEqual({ kind: 'refused', reason: 'unreconciledTransitionOutcome' });
+
+        expect(resolveSessionComposerSendDestination({
+            route: 'sessionAgent',
+            armedContinuation: null,
+            armedContinuationLocalId: null,
+            machineId: 'machine-1',
+            pendingTransitionOutcome: 'unreconciled',
+        })).toEqual({ kind: 'refused', reason: 'unreconciledTransitionOutcome' });
     });
 
     it('identifies the TRANSITION, so an edited draft retries the same switch', () => {

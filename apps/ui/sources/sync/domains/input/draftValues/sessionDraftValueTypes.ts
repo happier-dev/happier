@@ -1,5 +1,8 @@
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
-import { ParticipantRecipientV1Schema } from '@happier-dev/protocol';
+import {
+    ComposerAgentContinuationIntentV1Schema,
+    ParticipantRecipientV1Schema,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export const SessionComposerExecutionRunDeliveryModeSchema = z.enum([
@@ -151,8 +154,37 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
     z.array(ComposerStructuredInputMentionSchema).readonly(),
 );
 
+/**
+ * The Agent the reader armed for their next message, exactly as the picker holds
+ * it — the wire intent, the catalog row it was chosen from (so a Session with
+ * several rows resolving to the same Agent restores the row that was tapped), and
+ * the picker's own words for the chosen model, which the composer's engine chip
+ * names.
+ *
+ * It lives in the Session draft because it is one half of a single composer
+ * decision whose other half — the draft text — already survives a remount.
+ * Keeping the two at different lifetimes is what let a reader navigate away and
+ * come back to their message with the Agent choice silently gone.
+ *
+ * The submission identity is deliberately NOT here. It identifies one transition
+ * attempt, is minted from the arm on demand, and a restored arm is a fresh
+ * attempt; persisting it would carry a spent dedupe key across a remount.
+ */
+export const SessionArmedAgentContinuationSchema = z.object({
+    backendTargetKey: z.string().trim().min(1),
+    intent: ComposerAgentContinuationIntentV1Schema,
+    // Null when the target is on its own defaults, which is the absence of a model
+    // choice rather than a model called default. An unreadable arm is dropped
+    // whole: a restored arm that named the wrong model would be worse than none.
+    modelLabel: z.string().min(1).nullable(),
+}).strict();
+
+export type SessionArmedAgentContinuation = z.infer<typeof SessionArmedAgentContinuationSchema>;
+
 export type SessionDraftValueByFieldId = Readonly<{
     'routing.recipient': ParticipantRecipientV1 | null;
+    /** The armed target Agent for the next message; see the schema above. */
+    'routing.agentContinuation': SessionArmedAgentContinuation;
     'routing.executionRunDelivery': SessionComposerExecutionRunDeliveryMode;
     'structuredInput.mentions': readonly ComposerStructuredInputMention[];
 }>;
@@ -161,6 +193,7 @@ export type SessionDraftValueFieldId = keyof SessionDraftValueByFieldId;
 
 export const SessionDraftValueFieldSchemas = {
     'routing.recipient': ParticipantRecipientV1Schema.nullable(),
+    'routing.agentContinuation': SessionArmedAgentContinuationSchema,
     'routing.executionRunDelivery': SessionComposerExecutionRunDeliveryModeSchema,
     'structuredInput.mentions': ComposerStructuredInputMentionsSchema,
 } satisfies {

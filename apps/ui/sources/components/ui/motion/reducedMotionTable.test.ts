@@ -23,7 +23,7 @@ describe('reduced-motion mapping table', () => {
             expect(resolveMotionPresentation(animation, false)).toBe('animate');
             expect(typeof resolveMotionPresentation(animation, true)).toBe('string');
         }
-        expect(MOTION_ANIMATIONS).toHaveLength(8);
+        expect(MOTION_ANIMATIONS).toHaveLength(9);
     });
 
     it('derives every spring-backed row from the spring table instead of restating it', () => {
@@ -58,6 +58,8 @@ describe('reduced-motion mapping table', () => {
             rowEnter: 'settleInstantly',
             rowExit: 'settleInstantly',
             sectionMigration: 'settleInstantly',
+            // The send control still becomes the other shape; only the travel goes.
+            composerSubmitShape: 'settleInstantly',
             // A static mark replaces the rotation; the row never loses its status.
             spinner: 'substitute',
             // Slowed, never stopped: this is the only remaining evidence of liveness once the

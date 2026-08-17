@@ -26,6 +26,16 @@ export function createAgentSelectionActionChip(params: Readonly<{
     chipStyle: (pressed: boolean) => any;
     textStyle: any;
     onPress: () => void;
+    /**
+     * The reader is reaching for this chip.
+     *
+     * Hover, focus and press-in all mean the same thing here, and all three are
+     * wired because no single one covers every host: a pointer hovers, a keyboard
+     * focuses, and a finger only ever presses. Opening the picker asks the Session's
+     * machine what it can continue with, and that question is worth starting while
+     * the pointer is still travelling.
+     */
+    onIntent?: () => void;
 }>): React.ReactNode {
     const testID = 'agent-input-agent-chip';
     const iconScale = getAgentPickerIconScale(params.agentId);
@@ -35,6 +45,9 @@ export function createAgentSelectionActionChip(params: Readonly<{
             key="agent"
             testID={testID}
             onPress={params.onPress}
+            onHoverIn={params.onIntent}
+            onPressIn={params.onIntent}
+            onFocus={params.onIntent}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >

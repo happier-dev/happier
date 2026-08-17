@@ -5485,10 +5485,12 @@ export const it: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Esegue questa sessione.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ultimo usato da questa sessione.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ultimo segnalato per questa sessione.`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selezionato per il tuo prossimo messaggio.`,
       detailTitle: ({ agent }: { agent: string }) => `Continua con ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continua con ${agent}`,
-      detailDescription: 'La conversazione resta. Non viene inviato nulla fino al prossimo messaggio.',
+      detailDescription: 'La conversazione recente resta come testo; immagini e file no. Non viene inviato nulla fino al prossimo messaggio.',
       announcement: ({ agent }: { agent: string }) => `${agent} selezionato per il prossimo messaggio. Non è stato inviato nulla.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Questa sessione è continuata da ${from_} a ${to}`,
       checking: "Verifica della disponibilità…",
@@ -5512,6 +5514,10 @@ export const it: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `Non è stato inviato nulla. Questo messaggio ha già un’altra destinazione, quindi non può anche passare questa sessione a ${agent}. Rimuovine uno dei due e invia di nuovo.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} si è arrestato, ma il passaggio a ${agent} non è stato completato. Il messaggio non è stato inviato.`,
         switched: ({ agent }: { agent: string }) => `Questa sessione ora usa ${agent}, ma il messaggio non è stato inviato. Invialo di nuovo.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Cambio di Agente',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Riprendi sessione',
         unknown: 'Happier non è riuscito a confermare cosa è successo. Controlla questa sessione prima di inviare di nuovo.',
       },
     },

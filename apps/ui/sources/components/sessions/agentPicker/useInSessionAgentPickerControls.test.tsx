@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resetSessionDraftValuesCachesForTests } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import { clearPersistedSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
 import { t } from '@/text';
+
+import { APPLIED_RUNTIME_MARKER_ICON } from '@/components/sessions/agentInput/appliedRuntimeMarker';
 
 import { useInSessionAgentPickerControls } from './useInSessionAgentPickerControls';
 import type {
@@ -33,10 +37,15 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const detailSelectionChangeRef = vi.hoisted(() => ({
     current: null as null | ((next: unknown) => void),
 }));
+const detailModelSummaryRef = vi.hoisted(() => ({ current: null as string | null | undefined }));
 
 vi.mock('./buildSessionAgentPickerDetailContent', () => ({
-    buildSessionAgentPickerDetailContent: (params: { onSelectionChange: (next: unknown) => void }) => {
+    buildSessionAgentPickerDetailContent: (params: {
+        onSelectionChange: (next: unknown) => void;
+        modelSummary?: string;
+    }) => {
         detailSelectionChangeRef.current = params.onSelectionChange;
+        detailModelSummaryRef.current = params.modelSummary;
         return null;
     },
 }));
@@ -47,6 +56,13 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 
 vi.mock('@/agents/registry/registryUi', () => ({
     getAgentPickerIconScale: () => 1,
+}));
+
+// The host's pointer capability is a platform boundary, and it decides WHEN this
+// hook asks its machine anything. Held here so both answers can be exercised.
+const hoverCapablePrimaryPointer = vi.hoisted(() => ({ current: false }));
+vi.mock('@/utils/platform/webMobileHeuristics', () => ({
+    isHoverCapablePrimaryPointer: () => hoverCapablePrimaryPointer.current,
 }));
 
 function entry(
@@ -105,13 +121,16 @@ type HookProps = Readonly<{
     source?: SessionAgentContinuationSourceState;
     machine?: SessionAgentContinuationMachineTarget;
     featureEnabled?: boolean;
+    sessionActive?: boolean | null;
 }>;
 
 async function renderControls(props: HookProps = {}) {
     return renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
         sessionId: hookProps.sessionId ?? 'session-1',
+        accountScope: null,
         currentAgentId: 'claude',
         currentAgentLabel: 'Claude Code',
+        currentAgentSessionActive: hookProps.sessionActive ?? true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
         featureEnabled: hookProps.featureEnabled ?? true,
         source: hookProps.source ?? supportedSource,
@@ -136,9 +155,14 @@ async function openPicker(hook: Awaited<ReturnType<typeof renderControls>>) {
 
 describe('useInSessionAgentPickerControls', () => {
     beforeEach(() => {
+        // The armed choice is a Session draft value now, so each case starts from
+        // an empty draft rather than inheriting the previous one's arm.
+        resetSessionDraftValuesCachesForTests();
+        clearPersistedSessionDraftValues(null);
         announceAccessibilityMessage.mockClear();
         machineRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockResolvedValue(AVAILABLE);
+        hoverCapablePrimaryPointer.current = false;
     });
 
     it('offers the rest of the Agent catalog beside the Agent already running', async () => {
@@ -167,6 +191,7 @@ describe('useInSessionAgentPickerControls', () => {
         // Asking when the popover opens is too late: the machine round trip and the
         // popover's own mount take about the same time, so the popover would open
         // at one width and grow by the width of the rail when the answers land.
+        // With no pointer able to announce intent, that leaves asking on sight.
         const hook = await renderControls();
         await act(async () => { await Promise.resolve(); });
 
@@ -181,6 +206,77 @@ describe('useInSessionAgentPickerControls', () => {
             'builtInAgent:codex',
         ]);
         expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for the reader to reach for the chip when the pointer can say so first', async () => {
+        // A pointer has to travel over the Agent chip to click it, so intent is a
+        // real signal and Sessions the reader never approaches cost nothing.
+        hoverCapablePrimaryPointer.current = true;
+        const hook = await renderControls();
+        await act(async () => { await Promise.resolve(); });
+
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerIntent();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // Asked on approach, and the rail is decided before the popover is opened.
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks the running Agent once the selection has moved, and never before', async () => {
+        const hook = await renderControls({ sessionActive: true });
+        await openPicker(hook);
+
+        // Nothing else is running competing with the selection yet, so the row is
+        // simply the selection and carries only its checkmark.
+        expect(optionsOf(hook.getCurrent())[0]?.statusMarker).toBeUndefined();
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+
+        // The checkmark has travelled, so the running row takes the marker the model
+        // list already draws beside this Session's applied model.
+        const [currentOption] = optionsOf(hook.getCurrent());
+        expect(currentOption?.statusMarker).toBeTruthy();
+        expect((currentOption?.statusMarker as { props?: { name?: string } })?.props?.name)
+            .toBe(APPLIED_RUNTIME_MARKER_ICON.running);
+        // A glyph is not an accessible state, so the two rows are told apart in words.
+        expect(currentOption?.accessibilityLabel).toBe(
+            t('session.agentContinuation.currentAgentAccessibilityLabel', { agent: 'Claude Code' }),
+        );
+        expect(optionsOf(hook.getCurrent())[1]?.accessibilityLabel).toBe(
+            t('session.agentContinuation.armedAccessibilityLabel', { agent: 'codex' }),
+        );
+    });
+
+    it('never claims the Agent is running when the Session is not', async () => {
+        // The model list two columns away shows a clock for an inactive Session's
+        // applied model. The Agent row reads from the same owner, so the popover
+        // cannot say "running" on one side and "last used" on the other.
+        const hook = await renderControls({ sessionActive: false });
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+
+        const [currentOption] = optionsOf(hook.getCurrent());
+        expect((currentOption?.statusMarker as { props?: { name?: string } })?.props?.name)
+            .toBe(APPLIED_RUNTIME_MARKER_ICON.lastUsed);
+        expect(currentOption?.accessibilityLabel).toBe(
+            t('session.agentContinuation.currentAgentLastUsedAccessibilityLabel', { agent: 'Claude Code' }),
+        );
     });
 
     it('asks nothing at all for a Session whose picker could never offer a switch', async () => {
@@ -262,6 +358,22 @@ describe('useInSessionAgentPickerControls', () => {
         // The continuation meaning is one line in the model section's subtitle slot,
         // never a standalone description block.
         expect(codexOption?.detailDescription).toBeUndefined();
+    });
+
+    // The line under the model section is the only place this Session says what a
+    // switch carries. The target is started fresh and handed a bounded TEXT replay
+    // of the recent conversation, so earlier images and files do not travel with
+    // it, and the reader is told exactly that rather than "your conversation
+    // carries over".
+    it('states what a switch actually carries, media limitation included', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+
+        optionsOf(hook.getCurrent())[1]?.renderDetailContent?.();
+
+        expect(detailModelSummaryRef.current).toBe(t('session.agentContinuation.detailDescription'));
+        expect(detailModelSummaryRef.current).toContain('as text');
+        expect(detailModelSummaryRef.current).toContain('images and files');
     });
 
     it('arms nothing until a row is deliberately selected', async () => {

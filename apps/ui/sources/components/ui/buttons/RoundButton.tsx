@@ -34,6 +34,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 8,
         borderRadius: 9999,
     },
+    // Applied only when a leading mark is present, so a title-only button keeps
+    // the exact single-child layout it has always had.
+    contentContainerWithLeading: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    leadingSlot: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     text: {
         ...Typography.default('semiBold'),
         fontWeight: '600',
@@ -45,6 +55,14 @@ export const RoundButton = React.memo((props: {
     size?: RoundButtonSize,
     display?: RoundButtonDisplay,
     title?: any,
+    /**
+     * A mark drawn before the title, inside the same fill.
+     *
+     * The button still hugs its content — the mark widens it rather than sitting in
+     * a fixed box — so a logo-and-label button is this primitive with one more
+     * child, not a second pill implementation beside it.
+     */
+    leading?: React.ReactNode,
     style?: StyleProp<ViewStyle>,
     textStyle?: StyleProp<TextStyle>,
     disabled?: boolean,
@@ -115,9 +133,10 @@ export const RoundButton = React.memo((props: {
                 props.style])}
             onPress={doAction}
         >
-            <View 
+            <View
                 style={[
-                    styles.contentContainer
+                    styles.contentContainer,
+                    props.leading ? styles.contentContainerWithLeading : null,
                 ]}
             >
                 {display.gradient ? (
@@ -133,7 +152,12 @@ export const RoundButton = React.memo((props: {
                         <ActivitySpinner color={display.textColor} size='small' />
                     </View>
                 )}
-                <Text 
+                {props.leading ? (
+                    <View style={[styles.leadingSlot, { opacity: doLoading ? 0 : 1 }]}>
+                        {props.leading}
+                    </View>
+                ) : null}
+                <Text
                     style={[
                         iOSUIKit.title3, 
                         styles.text,

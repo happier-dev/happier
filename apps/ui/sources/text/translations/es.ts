@@ -5143,10 +5143,12 @@ export const es: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} más…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ejecutando esta sesión.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Usado por última vez en esta sesión.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Último informado para esta sesión.`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Seleccionado para tu próximo mensaje.`,
       detailTitle: ({ agent }: { agent: string }) => `Continuar con ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Continuar con ${agent}`,
-      detailDescription: 'Tu conversación se mantiene. No se envía nada hasta tu próximo mensaje.',
+      detailDescription: 'Tu conversación reciente se mantiene como texto; las imágenes y los archivos no. No se envía nada hasta tu próximo mensaje.',
       announcement: ({ agent }: { agent: string }) => `${agent} seleccionado para el próximo mensaje. No se ha enviado nada.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Esta sesión continuó de ${from_} a ${to}`,
       checking: "Comprobando disponibilidad…",
@@ -5170,6 +5172,10 @@ export const es: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `No se ha enviado nada. Este mensaje ya tiene otro destino, así que no puede cambiar además esta sesión a ${agent}. Quita uno de los dos y vuelve a enviar.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} se detuvo, pero el cambio a ${agent} no se completó. Tu mensaje no se envió.`,
         switched: ({ agent }: { agent: string }) => `Esta sesión ahora es ${agent}, pero tu mensaje no se envió. Vuelve a enviarlo.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Cambio de Agente',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Reanudar sesión',
         unknown: 'Happier no pudo confirmar qué ocurrió. Revisa esta sesión antes de volver a enviar.',
       },
     },

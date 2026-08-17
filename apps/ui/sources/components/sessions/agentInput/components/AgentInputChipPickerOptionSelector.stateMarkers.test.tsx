@@ -48,10 +48,58 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
 
         expect(armed?.props.accessibilityState?.selected).toBe(true);
         expect(running?.props.accessibilityState?.selected).toBe(false);
-        // The running Agent no longer carries a marker of its own — the send button
-        // names the armed target instead — but its row must still say what it is.
         expect(running?.props.accessibilityLabel).toBe(RUNNING.accessibilityLabel);
         expect(armed?.props.accessibilityLabel).toBe(ARMED.accessibilityLabel);
+    });
+
+    it("gives an unselected row its own state mark, in the checkmark's own slot", async () => {
+        const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
+
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[{
+                    id: "agents",
+                    options: [
+                        { ...RUNNING, statusMarker: React.createElement("RunningMark", { testID: "running-mark" }) },
+                        ARMED,
+                    ],
+                }]}
+                focusedOptionId={ARMED.id}
+                selectedOptionId={ARMED.id}
+                onFocusOption={() => {}}
+                variant="rail"
+            />,
+        );
+
+        const running = screen.findByTestId(`agent-input-chip-picker.option:${RUNNING.id}`);
+        expect(running?.findAllByType("RunningMark" as never).length).toBe(1);
+        // It stands IN the slot rather than beside it: the row that is the selection
+        // shows a checkmark and nothing else, so a row can never show both.
+        const armed = screen.findByTestId(`agent-input-chip-picker.option:${ARMED.id}`);
+        expect(armed?.findAllByType("RunningMark" as never).length).toBe(0);
+    });
+
+    it('drops the state mark the moment that row becomes the selection again', async () => {
+        const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
+
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[{
+                    id: "agents",
+                    options: [
+                        { ...RUNNING, statusMarker: React.createElement("RunningMark", { testID: "running-mark" }) },
+                        ARMED,
+                    ],
+                }]}
+                focusedOptionId={RUNNING.id}
+                selectedOptionId={RUNNING.id}
+                onFocusOption={() => {}}
+                variant="rail"
+            />,
+        );
+
+        const running = screen.findByTestId(`agent-input-chip-picker.option:${RUNNING.id}`);
+        expect(running?.findAllByType("RunningMark" as never).length).toBe(0);
     });
 
     it("publishes a blocked row as disabled rather than only dimming it", async () => {

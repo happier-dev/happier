@@ -16,6 +16,12 @@ import type { Settings } from '@/sync/domains/settings/settings';
  */
 export type SessionAgentPickerSelection = Readonly<{
     modelId: string;
+    /**
+     * What the pane called {@link modelId}, or null while the row is still on the
+     * Agent's own settings. Carried rather than re-derived so the composer's engine
+     * chip can name an armed model in the exact words the reader just selected.
+     */
+    modelLabel: string | null;
     sessionModeId: string | null;
     configOverrides: Readonly<Record<string, string>>;
 }>;
@@ -75,6 +81,7 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
             favoriteEngine={params.favoriteEngine}
             onSelectionChange={(next) => params.onSelectionChange({
                 modelId: next.modelId,
+                modelLabel: next.modelLabel,
                 sessionModeId: next.sessionModeId,
                 configOverrides: next.configOverrides,
             })}

@@ -4476,10 +4476,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
             agentContinuation: {
                 currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。正在執行這個工作階段。`,
+                currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此工作階段上次使用。`,
+                currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此工作階段上次回報。`,
                 armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。已選擇用於你的下一則訊息。`,
                 detailTitle: ({ agent }: { agent: string }) => `繼續使用 ${agent}`,
                 sendLabel: ({ agent }: { agent: string }) => `繼續使用 ${agent}`,
-                detailDescription: '對話會保留。在你傳送下一則訊息前不會傳送任何內容。',
+                detailDescription: '最近的對話會以文字形式保留；圖片和檔案不會。在你傳送下一則訊息前不會傳送任何內容。',
                 announcement: ({ agent }: { agent: string }) => `已選擇 ${agent} 用於下一則訊息，尚未送出任何內容。`,
                 dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `這個工作階段已從 ${from_} 轉由 ${to} 繼續`,
                 checking: '正在檢查可用性…',
@@ -4503,6 +4505,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     conflictingDestination: ({ agent }: { agent: string }) => `尚未傳送任何內容。這則訊息已經有另一個目標，因此不能同時把此工作階段切換到 ${agent}。請去掉其中之一後重新傳送。`,
                     sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切換到 ${agent} 未完成。你的訊息未傳送。`,
                     switched: ({ agent }: { agent: string }) => `此工作階段現在是 ${agent}，但你的訊息未傳送。請重新傳送。`,
+                    /** Compact status for the collapsed composer banner badge. */
+                    badgeLabel: '切換 Agent',
+                    /** Delegates to the Session’s existing resume owner; never a second start path. */
+                    resumeAction: '繼續工作階段',
                     unknown: 'Happier 無法確認發生了什麼。請先檢查此工作階段再重新傳送。',
                 },
             },

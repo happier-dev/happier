@@ -5625,10 +5625,12 @@ export const ru: TranslationStructure = {
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     agentContinuation: {
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ведёт эту сессию.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз использовался в этой сессии.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз сообщался для этой сессии.`,
       armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Выбран для следующего сообщения.`,
       detailTitle: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
       sendLabel: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
-      detailDescription: 'Разговор сохраняется. Ничего не отправится до вашего следующего сообщения.',
+      detailDescription: 'Недавний разговор сохраняется как текст; изображения и файлы — нет. Ничего не отправится до вашего следующего сообщения.',
       announcement: ({ agent }: { agent: string }) => `${agent} выбран для следующего сообщения. Ничего не отправлено.`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Эта сессия продолжена с ${from_} на ${to}`,
       checking: "Проверка доступности…",
@@ -5652,6 +5654,10 @@ export const ru: TranslationStructure = {
         conflictingDestination: ({ agent }: { agent: string }) => `Ничего не отправлено. У этого сообщения уже есть другой адресат, поэтому оно не может заодно переключить сессию на ${agent}. Уберите одно из двух и отправьте снова.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} остановлен, но переключение на ${agent} не завершилось. Ваше сообщение не отправлено.`,
         switched: ({ agent }: { agent: string }) => `Теперь эта сессия — ${agent}, но ваше сообщение не отправлено. Отправьте его ещё раз.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Смена агента',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Возобновить сессию',
         unknown: 'Happier не смог подтвердить результат. Проверьте сессию, прежде чем отправлять снова.',
       },
     },

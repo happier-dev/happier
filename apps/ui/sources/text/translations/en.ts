@@ -4794,10 +4794,12 @@ export const en = {
         toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} more…`,
         agentContinuation: {
             currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Running this Session.`,
+            currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Last used by this Session.`,
+            currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Last reported for this Session.`,
             armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selected for your next message.`,
             detailTitle: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continue with ${agent}`,
-            detailDescription: 'Your conversation carries over. Nothing is sent until your next message.',
+            detailDescription: 'Your recent conversation carries over as text; images and files don’t. Nothing is sent until your next message.',
             announcement: ({ agent }: { agent: string }) => `${agent} selected for the next message. Nothing has been sent.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Continued this Session from ${from_} to ${to}`,
             checking: 'Checking availability…',
@@ -4821,6 +4823,10 @@ export const en = {
                 conflictingDestination: ({ agent }: { agent: string }) => `Nothing was sent. This message already has another destination, so it can’t also switch this Session to ${agent}. Clear one of the two and send again.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} stopped, but the switch to ${agent} didn’t complete. Your message wasn’t sent.`,
                 switched: ({ agent }: { agent: string }) => `This Session is now ${agent}, but your message wasn’t sent. Send it again.`,
+                /** Compact status for the collapsed composer banner badge. */
+                badgeLabel: 'Agent switch',
+                /** Delegates to the Session’s existing resume owner; never a second start path. */
+                resumeAction: 'Resume session',
                 unknown: 'Happier couldn’t confirm what happened. Check this Session before sending again.',
             },
         },

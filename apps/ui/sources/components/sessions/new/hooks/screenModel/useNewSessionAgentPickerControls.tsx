@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import { NewSessionFavoriteModelsDetail } from '@/components/sessions/new/components/NewSessionFavoriteModelsDetail';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
+import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker/useSessionAgentPickerControls';
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -19,7 +19,6 @@ import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { t } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import {
     readRememberedEngineSelection,
@@ -652,42 +651,37 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                     const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
                     applyEngineSelection(entry, nextSelection);
                 },
+                // New Session and the in-session picker show the same Agent the
+                // same way because they render the SAME owner, not two copies of
+                // it. New Session supplies no `modelSummary`: nothing is running
+                // here, so there is no continuation to describe.
                 renderDetailContent: () => {
                     const selection = getEngineSelectionForTargetKey(entry.targetKey);
-                    const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
+                    return buildSessionAgentPickerDetailContent({
                         backendTarget: entry.target,
+                        selectedMachineId: params.selectedMachineId,
+                        capabilityServerId: params.capabilityServerId,
+                        cwd: params.selectedPath,
+                        profileId: effectiveProfileId,
+                        connectedServices: resolveConnectedServicesForEntry(entry),
                         settings: params.settings,
+                        refreshProbe: params.refreshProbe,
+                        selection: { ...selection, modelLabel: null },
+                        favoriteModelSelections: params.favoriteModelSelections ?? [],
+                        onToggleFavoriteModel: params.setFavoriteModelSelections ? (model) => {
+                            handleToggleFavoriteModel(entry, model);
+                        } : undefined,
+                        favoriteEngine: params.setFavoriteBackendTargetKeys ? {
+                            favorite,
+                            onToggle: () => {
+                                handleToggleFavoriteBackendTarget(entry.targetKey);
+                            },
+                        } : undefined,
+                        onSelectionChange: (nextSelection) => {
+                            engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
+                            applyEngineSelection(entry, nextSelection);
+                        },
                     });
-                    const detailConnectedServices = resolveConnectedServicesForEntry(entry);
-                    return (
-                        <NewSessionEngineOptionDetail
-                            backendTarget={entry.target}
-                            selectedMachineId={params.selectedMachineId}
-                            capabilityServerId={params.capabilityServerId}
-                            cwd={params.selectedPath}
-                            profileId={effectiveProfileId}
-                            capabilityProbeContext={capabilityProbeContext}
-                            connectedServices={detailConnectedServices}
-                            refreshProbe={params.refreshProbe}
-                            selectedModelId={selection.modelId}
-                            selectedSessionModeId={selection.sessionModeId}
-                            selectedConfigOverrides={selection.configOverrides}
-                            favoriteModelSelections={params.favoriteModelSelections ?? []}
-                            onToggleFavoriteModel={params.setFavoriteModelSelections ? (model) => {
-                                handleToggleFavoriteModel(entry, model);
-                            } : undefined}
-                            favoriteEngine={params.setFavoriteBackendTargetKeys ? {
-                                favorite,
-                                onToggle: () => {
-                                    handleToggleFavoriteBackendTarget(entry.targetKey);
-                                },
-                            } : undefined}
-                            onSelectionChange={(nextSelection) => {
-                                engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
-                                applyEngineSelection(entry, nextSelection);
-                            }}
-                        />
-                    );
                 },
             }),
         });
