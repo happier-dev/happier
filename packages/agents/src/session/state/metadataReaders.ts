@@ -3,6 +3,7 @@ import {
   parseBackendTargetKeyV2,
 } from '@happier-dev/protocol/plugins/agents';
 import {
+  SessionModelSelectionIntentV1Schema,
   resolveSessionModelSelectionIntentV1,
   type ProviderBoundModelRef,
   type SessionModelSelectionIntentV1,
@@ -64,6 +65,36 @@ export function resolveModelSelectionIntentFromSessionMetadata(
     legacy: obj[MODEL_OVERRIDE_KEY],
     agentTargetKey,
   });
+}
+
+/**
+ * Whether the Session's persisted model intent binds it to a model Provider
+ * connection.
+ *
+ * Agent-native fork is impossible for such a Session: the fork lifecycle owner
+ * refuses every non-replay strategy so Provider authorization completes before
+ * any vendor-side fork side effect. The UI must not offer a Native card that can
+ * only ever be refused, so the daemon gate and the card gate read this one fact
+ * instead of each deriving it from raw metadata.
+ *
+ * Unlike `resolveModelSelectionIntentFromSessionMetadata` this needs no agent
+ * target key. Only the canonical carrier is consulted, and that is complete:
+ * `modelOverrideV1` cannot express a connection at all, and the shared effective-
+ * source rule already gives a Provider-bound canonical selection priority over
+ * any legacy override however recent.
+ */
+export function isProviderBoundSessionMetadata(metadata: unknown): boolean {
+  const record = asRecord(metadata);
+  if (!record) return false;
+  const parsed = SessionModelSelectionIntentV1Schema.safeParse(record[MODEL_SELECTION_INTENT_KEY]);
+  if (!parsed.success) {
+    // An intent that declares a connection but does not parse is still evidence
+    // of binding; treating it as unbound would offer the refused Native route.
+    const selection = asRecord(asRecord(record[MODEL_SELECTION_INTENT_KEY])?.selection);
+    const connectionId = selection?.providerConnectionId;
+    return typeof connectionId === 'string' && connectionId.trim().length > 0;
+  }
+  return parsed.data.selection?.providerConnectionId != null;
 }
 
 /**

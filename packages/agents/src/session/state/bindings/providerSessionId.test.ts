@@ -149,3 +149,67 @@ describe('providerSessionId session-state binding', () => {
     });
   });
 });
+
+describe('providerSessionId matched continuity proof', () => {
+  const PROOF = { kind: 'transcriptPath', value: '/home/u/.claude/x/claude-1.jsonl' } as const;
+
+  it('writes the id and its catalog-declared proof in one metadata update', () => {
+    expect(providerSessionIdBinding.write({}, {
+      value: { metadataKey: 'claudeSessionId', value: 'claude-1', continuityProof: PROOF },
+    })).toEqual({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    });
+  });
+
+  it('clears a stale proof when the same key is rewritten without one', () => {
+    // `REQ-STATE-01`: a proof proves exactly one id. A proofless id write must
+    // not inherit the previous id's proof, or a resume would target the wrong
+    // native conversation.
+    expect(providerSessionIdBinding.write({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    }, {
+      value: { metadataKey: 'claudeSessionId', value: 'claude-2' },
+    })).toEqual({ claudeSessionId: 'claude-2' });
+  });
+
+  it('clears the proof when a bare-string id write replaces a proven id', () => {
+    expect(providerSessionIdBinding.write({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    }, {
+      value: 'claude-2',
+    })).toEqual({ claudeSessionId: 'claude-2' });
+  });
+
+  it('treats an unparseable proof as no proof rather than trusting it', () => {
+    expect(providerSessionIdBinding.write({
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    }, {
+      value: {
+        metadataKey: 'claudeSessionId',
+        value: 'claude-2',
+        continuityProof: { kind: 'sessionFile', value: '/tmp/x' } as never,
+      },
+    })).toEqual({ claudeSessionId: 'claude-2' });
+  });
+
+  it('drops a proof for an Agent whose catalog declares no proof field', () => {
+    expect(providerSessionIdBinding.write({}, {
+      value: { metadataKey: 'codexSessionId', value: 'codex-1', continuityProof: PROOF },
+    })).toEqual({ codexSessionId: 'codex-1' });
+  });
+
+  it('leaves the proof untouched when the id write is a no-op', () => {
+    const metadata = {
+      claudeSessionId: 'claude-1',
+      claudeTranscriptPath: '/home/u/.claude/x/claude-1.jsonl',
+    };
+    expect(writeProviderSessionIdSessionState(metadata, {
+      metadataKey: 'claudeSessionId',
+      value: '   ',
+    })).toBe(metadata);
+  });
+});

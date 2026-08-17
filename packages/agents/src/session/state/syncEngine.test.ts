@@ -158,6 +158,27 @@ describe('createSessionStateSyncEngine', () => {
     ]);
   });
 
+  it('preserves session lookup timeouts from the metadata update port', async () => {
+    const engine = createSessionStateSyncEngine({
+      capabilities: {
+        display: {
+          title: { supported: true },
+        },
+      },
+      metadataPort: {
+        update: async () => ({ ok: false, reason: 'session_lookup_timeout' }),
+      },
+    });
+
+    await expect(engine.writeHappierField({
+      sessionId: 'c123456789012345678901234',
+      fieldId: 'display.title',
+      value: 'Renamed',
+      reason: 'user-mutation',
+      metadataReason: 'test-title',
+    })).resolves.toEqual({ ok: false, reason: 'session_lookup_timeout' });
+  });
+
   it('reports unsupported when metadata writes target a field not declared in capabilities', async () => {
     const portUpdates: unknown[] = [];
     const engine = createSessionStateSyncEngine({

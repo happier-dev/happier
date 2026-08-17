@@ -20,7 +20,11 @@ import { sessionRunnerRuntimeBinding } from './sessionRunnerRuntime.js';
 import { sessionWorkStateBinding } from './workState.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
-import { getLegacyProviderSessionIdMetadataKeys, providerSessionIdBinding } from './providerSessionId.js';
+import {
+  getLegacyProviderSessionIdMetadataKeys,
+  getVendorResumeContinuityProofMetadataKeys,
+  providerSessionIdBinding,
+} from './providerSessionId.js';
 
 const SESSION_STATE_METADATA_BINDINGS = {
   'identity.runtimeDescriptor': runtimeDescriptorBinding,
@@ -82,6 +86,12 @@ export function clearSessionStateFieldFromMetadata(
       break;
     case 'identity.providerSessionId':
       for (const key of getLegacyProviderSessionIdMetadataKeys()) {
+        delete next[key];
+      }
+      // A continuity proof only proves the id it was produced with, so clearing
+      // the id must clear the proof (`REQ-STATE-01`); leaving one behind would
+      // let a later id inherit a foreign proof.
+      for (const key of getVendorResumeContinuityProofMetadataKeys()) {
         delete next[key];
       }
       break;

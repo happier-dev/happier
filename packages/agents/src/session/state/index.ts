@@ -79,10 +79,18 @@ export {
   writeSessionUsageLimitRecoverySessionState,
 } from './bindings/usageLimitRecovery.js';
 export {
+  getLegacyProviderSessionIdMetadataKeys,
+  getVendorResumeContinuityProofMetadataKey,
+  getVendorResumeContinuityProofMetadataKeys,
   readProviderSessionIdSessionState,
   writeProviderSessionIdSessionState,
   type ProviderSessionIdMetadataKey,
 } from './bindings/providerSessionId.js';
+export {
+  projectCurrentAgentSessionView,
+  type CurrentAgentSessionViewStatePolicyV1,
+  type ProjectCurrentAgentSessionViewParamsV1,
+} from './projectCurrentAgentSessionView.js';
 export {
   resolveTimestampedFieldUpdate,
   type TimestampedFieldStaleBehavior,
@@ -115,6 +123,7 @@ export {
   type InferredPermissionModeIntent,
 } from './sources/permissionModeInference.js';
 export {
+  isProviderBoundSessionMetadata,
   readActiveSessionModelSelectionFromMetadata,
   resolveModelSelectionIntentFromSessionMetadata,
   resolveMetadataStringOverrideV1,

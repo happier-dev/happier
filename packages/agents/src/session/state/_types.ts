@@ -1,4 +1,5 @@
 import type {
+  AgentNativeContinuityProofV1,
   SessionMetadata,
   SessionStateCapabilitiesV1,
   SessionStateFieldClass,
@@ -13,6 +14,12 @@ import type { TimestampedFieldStaleBehavior } from './policies/timestampedFieldU
 
 export type SessionStateDirection = 'happierMetadata' | 'happierToProvider' | 'providerToHappier';
 export type SessionStateApplyReason = 'user-mutation' | 'spawn' | 'reconciliation';
+export type MetadataUpdateFailureReason =
+  | 'unsupported'
+  | 'conflict'
+  | 'forbidden'
+  | 'session_lookup_timeout'
+  | 'unknown_error';
 
 export type RuntimeFacetCtx = Readonly<{
   sessionId: string;
@@ -55,7 +62,7 @@ export interface MetadataUpdatePort {
     }>,
   ): Promise<
     | Readonly<{ ok: true; version: number }>
-    | Readonly<{ ok: false; reason: 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error' }>
+    | Readonly<{ ok: false; reason: MetadataUpdateFailureReason }>
   >;
 }
 
@@ -80,6 +87,17 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
       ? SessionStateFieldValue<F> | Readonly<{
         value: SessionStateFieldValue<F>;
         metadataKey: string;
+        /**
+         * Matched continuity proof for the id in `value`, written to the target
+         * Agent's catalog-declared proof key in the same metadata update.
+         *
+         * It travels inside this envelope rather than as its own field so a
+         * proof can never be published independently of the id it proves
+         * (`REQ-STATE-01`). Omitting it, or passing `null`, CLEARS any existing
+         * proof: a proof only proves the exact id it was produced with, so an
+         * id write with no proof must not inherit the previous one.
+         */
+        continuityProof?: AgentNativeContinuityProofV1 | null;
       }>
     : F extends 'intent.model'
       ? SessionModelSelectionIntentV1

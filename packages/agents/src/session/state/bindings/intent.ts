@@ -9,12 +9,14 @@ import type {
   SessionMetadata,
 } from '@happier-dev/protocol';
 import {
+  projectSessionModelSelectionIntentToLegacyModelOverrideV1,
+  SessionModelSelectionIntentV1Schema,
+} from '@happier-dev/protocol/providers/model-selection';
+import {
   AcpConfigOptionOverridesV1Schema,
   AcpSessionModeOverrideV1Schema,
   ModelOverrideV1Schema,
-  projectSessionModelSelectionIntentToLegacyModelOverrideV1,
-  SessionModelSelectionIntentV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/overrides';
 
 import { parsePermissionIntentAlias } from '../../../permissions/index.js';
 import { resolveTimestampedFieldUpdate } from '../../timestamps/resolveTimestampedFieldUpdate.js';

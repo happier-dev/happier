@@ -20,6 +20,7 @@ import {
 import { getSessionStateFieldDescriptor } from './fieldRegistry.js';
 import { emitSessionStateTelemetry, sanitizeSessionStateErrorCode } from './telemetry.js';
 import type {
+  MetadataUpdateFailureReason,
   RuntimeFacetCtx,
   SessionStateApplyReason,
   SessionStateDisposable,
@@ -51,7 +52,7 @@ export type SessionStateMetadataWriteResult =
     version: number;
     provider?: SessionStateApplyResult;
   }>
-  | Readonly<{ ok: false; reason: 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error' }>
+  | Readonly<{ ok: false; reason: MetadataUpdateFailureReason }>
   | Readonly<{
     ok: false;
     reason: 'durable_delivery_unavailable';

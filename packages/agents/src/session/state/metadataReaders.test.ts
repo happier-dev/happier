@@ -1,9 +1,61 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isProviderBoundSessionMetadata,
   readActiveSessionModelSelectionFromMetadata,
   resolveModelSelectionIntentFromSessionMetadata,
 } from './metadataReaders.js';
+
+describe('isProviderBoundSessionMetadata', () => {
+  function intent(selection: unknown): Record<string, unknown> {
+    return { modelSelectionIntentV1: { v: 1, updatedAt: 4, selection } };
+  }
+
+  it('reports a canonical intent that names a Provider connection', () => {
+    expect(isProviderBoundSessionMetadata(intent({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_work',
+      modelId: 'provider-model',
+    }))).toBe(true);
+  });
+
+  it('does not report a native selection, a cleared intent, or absent metadata', () => {
+    expect(isProviderBoundSessionMetadata(intent({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'gpt-5',
+    }))).toBe(false);
+    expect(isProviderBoundSessionMetadata(intent(null))).toBe(false);
+    expect(isProviderBoundSessionMetadata({ flavor: 'codex' })).toBe(false);
+    expect(isProviderBoundSessionMetadata(null)).toBe(false);
+  });
+
+  it('ignores the legacy override carrier, which cannot express a connection', () => {
+    expect(isProviderBoundSessionMetadata({
+      modelOverrideV1: { v: 1, updatedAt: 9, modelId: 'legacy-native' },
+    })).toBe(false);
+  });
+
+  it('stays bound when a newer legacy override sits beside a Provider-bound canonical intent', () => {
+    // The shared effective-source rule gives a Provider-bound canonical
+    // selection priority over any legacy override however recent, so the
+    // key-free read agrees with the target-keyed resolver.
+    expect(isProviderBoundSessionMetadata({
+      ...intent({
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'provider-model',
+      }),
+      modelOverrideV1: { v: 1, updatedAt: 99, modelId: 'legacy-native' },
+    })).toBe(true);
+  });
+
+  it('fails closed on a malformed intent that still declares a connection', () => {
+    expect(isProviderBoundSessionMetadata({
+      modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+    })).toBe(true);
+  });
+});
 
 describe('resolveModelSelectionIntentFromSessionMetadata', () => {
   it('normalizes legacy input only after the exact target is supplied', () => {

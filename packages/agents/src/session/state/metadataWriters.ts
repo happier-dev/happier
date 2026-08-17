@@ -39,6 +39,12 @@ export {
 
 export { normalizeLegacyAgentVocabularySessionMetadata } from './legacyAgentVocabularyMetadata.js';
 
+export {
+  projectCurrentAgentSessionView,
+  type CurrentAgentSessionViewStatePolicyV1,
+  type ProjectCurrentAgentSessionViewParamsV1,
+} from './projectCurrentAgentSessionView.js';
+
 export type SessionStateMetadataUpdateV1<F extends SessionStateFieldId = SessionStateFieldId> = Readonly<{
   fieldId: F;
   value: SessionStateFieldValue<F>;
