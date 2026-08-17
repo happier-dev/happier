@@ -19,6 +19,34 @@ type RenderSqliteUrl = (params: Readonly<{
     }>;
 }>) => string;
 
+const SQLITE_URL_PROCESS_ENV_KEYS = [
+    'HAPPIER_SQLITE_BUSY_TIMEOUT_MS',
+    'HAPPY_SQLITE_BUSY_TIMEOUT_MS',
+    'HAPPIER_SQLITE_CONNECTION_LIMIT',
+    'HAPPY_SQLITE_CONNECTION_LIMIT',
+] as const;
+
+function withDefaultSqliteUrlProcessEnv<T>(run: () => T): T {
+    const previousValues = new Map(
+        SQLITE_URL_PROCESS_ENV_KEYS.map((key) => [key, process.env[key]] as const),
+    );
+    for (const key of SQLITE_URL_PROCESS_ENV_KEYS) {
+        delete process.env[key];
+    }
+    try {
+        return run();
+    } finally {
+        for (const key of SQLITE_URL_PROCESS_ENV_KEYS) {
+            const previousValue = previousValues.get(key);
+            if (typeof previousValue === 'string') {
+                process.env[key] = previousValue;
+            } else {
+                delete process.env[key];
+            }
+        }
+    }
+}
+
 describe('applyEnvOverridesToEnvText', () => {
     it('rejects env override keys with newlines', () => {
         expect(() => applyEnvOverridesToEnvText('PORT=3005\n', { 'BAD\nKEY': '1' })).toThrow(/env override/i);
@@ -149,14 +177,14 @@ describe('renderSelfHostServerEnvText', () => {
     });
 
     it('renders Windows sqlite DATABASE_URL in the Prisma-compatible drive-letter form', () => {
-        const rendered = renderSelfHostServerEnvText({
+        const rendered = withDefaultSqliteUrlProcessEnv(() => renderSelfHostServerEnvText({
             port: 3005,
             host: '127.0.0.1',
             dataDir: 'C:\\Users\\me\\Happier QA\\self-host\\data',
             filesDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\files',
             dbDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\pglite',
             platform: 'win32',
-        });
+        }));
 
         expect(rendered).toContain(
             'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
@@ -164,14 +192,14 @@ describe('renderSelfHostServerEnvText', () => {
     });
 
     it('renders generated sqlite DATABASE_URL with the server-light bounded connection pool by default', () => {
-        const rendered = renderSelfHostServerEnvText({
+        const rendered = withDefaultSqliteUrlProcessEnv(() => renderSelfHostServerEnvText({
             port: 3005,
             host: '127.0.0.1',
             dataDir: '/tmp/happier-data',
             filesDir: '/tmp/happier-data/files',
             dbDir: '/tmp/happier-data/pglite',
             platform: 'darwin',
-        });
+        }));
 
         expect(rendered).toContain(
             'DATABASE_URL=file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',

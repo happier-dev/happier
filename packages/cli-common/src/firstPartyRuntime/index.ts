@@ -86,8 +86,6 @@ export { FirstPartyVersionIdConflictError } from './copyRuntimePayloadTree.js';
 export { pruneRetainedVersions } from './pruneRetainedVersions.js';
 export type { FirstPartyPruneRetainedVersionsResult } from './pruneRetainedVersions.js';
 
-export { rollbackVersionedPayload } from './rollbackVersionedPayload.js';
-export type { FirstPartyRollbackResult } from './rollbackVersionedPayload.js';
 export { uninstallManagedFirstPartyComponent } from './uninstallManagedFirstPartyComponent.js';
 export type { UninstallManagedFirstPartyComponentResult } from './uninstallManagedFirstPartyComponent.js';
 

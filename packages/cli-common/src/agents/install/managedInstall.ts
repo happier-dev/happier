@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
-import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join, relative } from 'node:path';
+import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
 import type { AgentCliInstallPlatform, AgentCliManagedInstallSpec } from '@happier-dev/agents';
@@ -54,52 +54,31 @@ type GitHubReleasePayload = Readonly<{
   assets?: unknown;
 }>;
 
-const CODEX_GITHUB_RELEASE_MAX_FILE_BYTES = 320 * 1024 * 1024;
-
-function resolveGitHubReleaseExtractionLimits(
-  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>,
-): Readonly<{ maxFileBytes: number }> | undefined {
-  if (
-    managedInstall.githubRepo.trim().toLowerCase() !== 'openai/codex'
-    || managedInstall.binaryName.trim().toLowerCase() !== 'codex'
-  ) {
-    return undefined;
-  }
-
-  // rust-v0.145.0's checksum-verified arm64 macOS archive contains one
-  // 271,134,288-byte executable. Keep other release archives on the shared
-  // 256 MiB default; a Codex binary beyond 320 MiB fails closed for remeasurement.
-  return { maxFileBytes: CODEX_GITHUB_RELEASE_MAX_FILE_BYTES };
-}
-
 function resolveManagedAgentInstallDir(agentId: string, env: NodeJS.ProcessEnv): string {
   // On-disk layout contract: existing installs live under tools/providers/<agentId>. Kept during the agent-vocabulary rename (R.16) to avoid a data migration.
   return join(resolveHappyHomeDirFromEnvironment(env), 'tools', 'providers', agentId);
 }
 
-function resolveStagedManagedAgentCommandPath(
+function resolveManagedAgentCommandPathInInstallDir(
   runtimeSpec: AgentCliRuntimeDescriptor,
-  stage: 'current' | 'next',
+  installDir: string,
   env: NodeJS.ProcessEnv,
 ): string {
   const currentPath = resolveAgentCliManagedCommandPathForRuntime(runtimeSpec, {
     happyHomeDir: resolveHappyHomeDirFromEnvironment(env),
     processEnv: env,
   });
-  const currentSegment = join('current', 'bin');
-  const targetSegment = join(stage, 'bin');
-  if (!currentPath.includes(currentSegment)) {
-    throw new Error(`Managed agent path missing ${currentSegment}: ${currentPath}`);
+  const currentInstallDir = join(resolveManagedAgentInstallDir(runtimeSpec.id, env), 'current');
+  const commandRelativePath = relative(currentInstallDir, currentPath);
+  if (
+    !commandRelativePath
+    || commandRelativePath === '..'
+    || commandRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+    || isAbsolute(commandRelativePath)
+  ) {
+    throw new Error(`Managed agent path is outside ${currentInstallDir}: ${currentPath}`);
   }
-  return currentPath.replace(currentSegment, targetSegment);
-}
-
-function resolveStagedManagedAgentWorkspaceDir(
-  runtimeSpec: AgentCliRuntimeDescriptor,
-  stage: 'current' | 'next',
-  env: NodeJS.ProcessEnv,
-): string {
-  return join(dirname(resolveStagedManagedAgentCommandPath(runtimeSpec, stage, env)), '..', 'workspace');
+  return join(installDir, commandRelativePath);
 }
 
 function buildManagedPackageInstallEnvironment(env: NodeJS.ProcessEnv, workspaceDir: string): NodeJS.ProcessEnv {
@@ -386,76 +365,88 @@ export async function installManagedPackageAgentCli(params: Readonly<{
   }
 
   const installRoot = resolveManagedAgentInstallDir(params.runtimeSpec.id, params.env);
-  const nextDir = join(installRoot, 'next');
-  const workspaceDir = join(nextDir, 'workspace');
-  const launcherPath = resolveStagedManagedAgentCommandPath(params.runtimeSpec, 'next', params.env);
-  const launcherWorkspaceDir = resolveStagedManagedAgentWorkspaceDir(params.runtimeSpec, 'current', params.env);
-  const runtimePathEntries = resolveJavaScriptRuntimePathEntries({
-    processEnv: params.env,
-    runtimeCommand: jsRuntimeCommand,
+  const scratchDir = await createManagedToolScratchDir({
+    installDir: installRoot,
+    prefix: params.runtimeSpec.id,
   });
-
-  await rm(nextDir, { recursive: true, force: true });
-  await mkdir(workspaceDir, { recursive: true });
-  await writeFile(
-    join(workspaceDir, 'package.json'),
-    // happier-provider- is a persisted artifact name inside existing managed installs; kept in R.16.
-    JSON.stringify({ name: `happier-provider-${params.runtimeSpec.id}`, private: true, version: '0.0.0' }, null, 2),
-    'utf8',
-  );
-
-  const childEnv = buildManagedPackageInstallEnvironment(params.env, workspaceDir);
-  if (runtimePathEntries.length > 0) {
-    childEnv.PATH = [...runtimePathEntries, String(childEnv.PATH ?? params.env.PATH ?? '')]
-      .filter((value) => value.length > 0)
-      .join(delimiter);
-  }
-  const addArgs = ['--dir', workspaceDir, 'add', params.managedInstall.packageName, '--ignore-scripts'];
-  const spawn = params.deps.spawnSync ?? spawnSync;
-  const result = spawn(pnpmCommand, addArgs, {
-    cwd: workspaceDir,
-    encoding: 'utf8',
-    env: childEnv,
-    windowsHide: true,
-  });
-  params.appendCommandLog(
-    params.logPath,
-    pnpmCommand,
-    addArgs,
-    String(result.stdout ?? ''),
-    String(result.stderr ?? ''),
-    result.status ?? null,
-    result.signal ?? null,
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if ((result.status ?? 1) !== 0) {
-    throw new Error(String(result.stderr ?? '').trim() || `pnpm add failed (${result.status ?? 'unknown'})`);
-  }
-
-  if (params.managedInstall.packageBinarySetup?.kind === 'opencode_platform_binary') {
-    const materialized = await materializeOpenCodeManagedPackageBinary({
-      workspaceDir,
-      platform: params.platform,
-      env: childEnv,
-      spawnSync: spawn,
+  try {
+    const candidateDir = join(scratchDir, 'candidate');
+    const workspaceDir = join(candidateDir, 'workspace');
+    const launcherPath = resolveManagedAgentCommandPathInInstallDir(params.runtimeSpec, candidateDir, params.env);
+    const launcherWorkspaceDir = join(installRoot, 'current', 'workspace');
+    const runtimePathEntries = resolveJavaScriptRuntimePathEntries({
+      processEnv: params.env,
+      runtimeCommand: jsRuntimeCommand,
     });
-    params.appendLogLine(params.logPath, `# opencode platform package: ${materialized.packageName}`);
+
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, 'package.json'),
+      // happier-provider- is a persisted artifact name inside existing managed installs; kept in R.16.
+      JSON.stringify({ name: `happier-provider-${params.runtimeSpec.id}`, private: true, version: '0.0.0' }, null, 2),
+      'utf8',
+    );
+
+    const childEnv = buildManagedPackageInstallEnvironment(params.env, workspaceDir);
+    if (runtimePathEntries.length > 0) {
+      childEnv.PATH = [...runtimePathEntries, String(childEnv.PATH ?? params.env.PATH ?? '')]
+        .filter((value) => value.length > 0)
+        .join(delimiter);
+    }
+    const addArgs = ['--dir', workspaceDir, 'add', params.managedInstall.packageName, '--ignore-scripts'];
+    const spawn = params.deps.spawnSync ?? spawnSync;
+    const result = spawn(pnpmCommand, addArgs, {
+      cwd: workspaceDir,
+      encoding: 'utf8',
+      env: childEnv,
+      windowsHide: true,
+    });
+    params.appendCommandLog(
+      params.logPath,
+      pnpmCommand,
+      addArgs,
+      String(result.stdout ?? ''),
+      String(result.stderr ?? ''),
+      result.status ?? null,
+      result.signal ?? null,
+    );
+    if (result.error) {
+      throw result.error;
+    }
+    if ((result.status ?? 1) !== 0) {
+      throw new Error(String(result.stderr ?? '').trim() || `pnpm add failed (${result.status ?? 'unknown'})`);
+    }
+
+    if (params.managedInstall.packageBinarySetup?.kind === 'opencode_platform_binary') {
+      const materialized = await materializeOpenCodeManagedPackageBinary({
+        workspaceDir,
+        platform: params.platform,
+        env: childEnv,
+        spawnSync: spawn,
+      });
+      params.appendLogLine(params.logPath, `# opencode platform package: ${materialized.packageName}`);
+    }
+
+    await writeManagedPackageLauncher({
+      outputPath: launcherPath,
+      workspaceDir: launcherWorkspaceDir,
+      binaryName: params.managedInstall.binaryName,
+      runtimePathEntries,
+    });
+
+    await promoteManagedCurrentInstall({
+      installRoot,
+      candidatePath: candidateDir,
+      reportWarning: (message) => params.appendLogLine(params.logPath, `# ${message}`),
+    });
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true });
   }
-
-  await writeManagedPackageLauncher({
-    outputPath: launcherPath,
-    workspaceDir: launcherWorkspaceDir,
-    binaryName: params.managedInstall.binaryName,
-    runtimePathEntries,
-  });
-
-  await promoteManagedCurrentInstall({ installRoot, candidatePath: nextDir });
 }
 
 async function resolveManagedBinaryAsset(params: Readonly<{
   managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  platform: AgentCliInstallPlatform;
   deps: ManagedInstallDeps;
   env: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{ name: string; url: string; digest: string | null }>> {
@@ -466,12 +457,17 @@ async function resolveManagedBinaryAsset(params: Readonly<{
   });
 
   const assets = normalizeGitHubReleaseAssets(release);
-  const selected = preferredGitHubReleaseAssetNames(params.managedInstall.binaryName)
+  const declaredAssetName = params.managedInstall.assetNameByPlatform
+    ? params.managedInstall.assetNameByPlatform[params.platform][resolveManagedAssetArch(process.arch)]
+    : null;
+  const selected = (declaredAssetName
+    ? [declaredAssetName]
+    : preferredGitHubReleaseAssetNames(params.managedInstall.binaryName))
     .map((name) => assets.find((asset) => asset.name === name))
     .find(Boolean);
   if (!selected) {
     throw new Error(
-      `No ${params.managedInstall.binaryName} release asset found for ${process.platform}/${process.arch}`,
+      `No ${params.managedInstall.binaryName} release asset found for ${params.platform}/${process.arch}`,
     );
   }
   if (!selected.digest) {
@@ -479,6 +475,11 @@ async function resolveManagedBinaryAsset(params: Readonly<{
   }
 
   return { name: selected.name, url: selected.browser_download_url, digest: selected.digest };
+}
+
+function resolveManagedAssetArch(arch: string): 'arm64' | 'x64' {
+  if (arch === 'arm64' || arch === 'x64') return arch;
+  throw new Error(`Unsupported managed GitHub release architecture: ${arch}`);
 }
 
 function normalizeGitHubReleaseAssets(release: unknown): GitHubReleaseAsset[] {
@@ -571,6 +572,7 @@ function preferredGitHubReleaseAssetNames(binaryName: string): string[] {
 export async function installManagedBinaryAgentCli(params: Readonly<{
   runtimeSpec: AgentCliRuntimeDescriptor;
   managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  platform: AgentCliInstallPlatform;
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: ManagedInstallDeps;
@@ -579,6 +581,7 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
   const installRoot = resolveManagedAgentInstallDir(params.runtimeSpec.id, params.env);
   const asset = await resolveManagedBinaryAsset({
     managedInstall: params.managedInstall,
+    platform: params.platform,
     deps: params.deps,
     env: params.env,
   });
@@ -589,8 +592,13 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
   try {
     const archivePath = join(scratchDir, asset.name);
     const extractDir = join(scratchDir, 'extract');
-    const nextDir = join(installRoot, 'next');
-    const nextBinPath = resolveStagedManagedAgentCommandPath(params.runtimeSpec, 'next', params.env);
+    const candidateDir = join(scratchDir, 'candidate');
+    const candidateBinPath = resolveManagedAgentCommandPathInInstallDir(
+      params.runtimeSpec,
+      candidateDir,
+      params.env,
+    );
+    const archiveEntries = params.managedInstall.archiveEntriesByPlatform?.[params.platform];
 
     await (params.deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset)({
       url: asset.url,
@@ -599,19 +607,34 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
       userAgent: 'happier-cli',
     });
 
-    await rm(nextDir, { recursive: true, force: true });
-    await mkdir(dirname(nextBinPath), { recursive: true });
-    const extractionLimits = resolveGitHubReleaseExtractionLimits(params.managedInstall);
+    await mkdir(dirname(candidateBinPath), { recursive: true });
     await (params.deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset)({
       archivePath,
       archiveName: asset.name,
       extractDir,
-      outputPath: nextBinPath,
-      ...(extractionLimits ? { maxFileBytes: extractionLimits.maxFileBytes } : {}),
+      outputPath: candidateBinPath,
+      outputDir: candidateDir,
+      archiveEntries,
+      archiveExtractionLimits: params.managedInstall.archiveExtractionLimits,
     });
 
+    for (const entry of archiveEntries ?? []) {
+      const installedPath = join(candidateDir, ...entry.destinationPath.split('/'));
+      const installedStat = await stat(installedPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!installedStat?.isFile()) {
+        throw new Error(`[github-release] required archive member was not staged: ${entry.archivePath}`);
+      }
+    }
+
     params.appendLogLine(params.logPath, `# asset: ${asset.name}`);
-    await promoteManagedCurrentInstall({ installRoot, candidatePath: nextDir });
+    await promoteManagedCurrentInstall({
+      installRoot,
+      candidatePath: candidateDir,
+      reportWarning: (message) => params.appendLogLine(params.logPath, `# ${message}`),
+    });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
   }

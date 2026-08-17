@@ -11,9 +11,13 @@ import {
   readCliNodeWorkspaceRuntimeIdentity,
 } from './copyCliNodeRuntimePayload.js';
 
-function writeWorkspacePackage(root: string, source: string): void {
+function writeWorkspacePackage(
+  root: string,
+  source: string,
+  packageName = '@happier-dev/protocol',
+): void {
   const packageJson = `${JSON.stringify({
-    name: '@happier-dev/protocol',
+    name: packageName,
     private: true,
     type: 'module',
     exports: { '.': './dist/index.js' },
@@ -67,6 +71,55 @@ it('rejects workspace package bytes that do not match the admitted runtime ident
       packageNames: admittedIdentity.packageNames,
       expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
     })).toThrow(/does not match its dist publication/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('preserves hidden workspace runtime files when pinning an admitted runtime root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-cli-runtime-hidden-file-'));
+  try {
+    const packageName = '@happier-dev/plugins-example';
+    const runtimeRoot = join(root, 'runtime-artifact');
+    const packageRoot = join(runtimeRoot, 'node_modules', '@happier-dev', 'plugins-example');
+    mkdirSync(runtimeRoot, { recursive: true });
+    writeFileSync(join(runtimeRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli-runtime-fixture',
+      dependencies: { [packageName]: 'workspace:*' },
+      bundledDependencies: [packageName],
+    }), 'utf8');
+    writeWorkspacePackage(
+      packageRoot,
+      'export const generation = "admitted";\n',
+      packageName,
+    );
+    mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+    writeFileSync(
+      join(packageRoot, '.happier-plugin', 'plugin.json'),
+      '{"id":"happier.example"}\n',
+      'utf8',
+    );
+
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
+      repoRoot: root,
+      hostPackageDir: runtimeRoot,
+    });
+    const payloadDir = join(root, 'pinned-runner');
+
+    expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+      runtimeRoot,
+      payloadDir,
+      packageNames: admittedIdentity.packageNames,
+      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+    })).not.toThrow();
+    expect(existsSync(join(
+      payloadDir,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+      '.happier-plugin',
+      'plugin.json',
+    ))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

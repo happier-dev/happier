@@ -49,7 +49,50 @@ describe('extractGitHubReleaseAsset', () => {
         await expect(readFile(join(rootDir, 'extract', 'codex-command-runner.exe'), 'utf8')).resolves.toBe('runner');
     });
 
-    it('forwards an explicit per-file ceiling without changing the shared default', async () => {
+    it('publishes only the declared runtime files from a provider package archive', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-layout-'));
+        tempDirs.push(rootDir);
+
+        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
+            const extractDir = join(rootDir, 'extract');
+            await mkdir(join(extractDir, 'bin'), { recursive: true });
+            await mkdir(join(extractDir, 'codex-path'), { recursive: true });
+            await mkdir(join(extractDir, 'codex-resources'), { recursive: true });
+            await writeFile(join(extractDir, 'bin', 'codex.exe'), 'codex', 'utf8');
+            await writeFile(join(extractDir, 'bin', 'codex-code-mode-host.exe'), 'host', 'utf8');
+            await writeFile(join(extractDir, 'codex-resources', 'codex-command-runner.exe'), 'runner', 'utf8');
+            await writeFile(join(extractDir, 'codex-resources', 'codex-windows-sandbox-setup.exe'), 'sandbox', 'utf8');
+            await writeFile(join(extractDir, 'codex-path', 'rg.exe'), 'undeclared', 'utf8');
+        });
+
+        const outputDir = join(rootDir, 'next');
+        await extractGitHubReleaseAsset({
+            archivePath: join(rootDir, 'codex-package.tar.gz'),
+            archiveName: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
+            extractDir: join(rootDir, 'extract'),
+            outputPath: join(outputDir, 'bin', 'codex.exe'),
+            archiveEntries: [
+                { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+                { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+                {
+                    archivePath: 'codex-resources/codex-command-runner.exe',
+                    destinationPath: 'codex-resources/codex-command-runner.exe',
+                },
+                {
+                    archivePath: 'codex-resources/codex-windows-sandbox-setup.exe',
+                    destinationPath: 'codex-resources/codex-windows-sandbox-setup.exe',
+                },
+            ],
+        });
+
+        await expect(readFile(join(outputDir, 'bin', 'codex.exe'), 'utf8')).resolves.toBe('codex');
+        await expect(readFile(join(outputDir, 'bin', 'codex-code-mode-host.exe'), 'utf8')).resolves.toBe('host');
+        await expect(readFile(join(outputDir, 'codex-resources', 'codex-command-runner.exe'), 'utf8')).resolves.toBe('runner');
+        await expect(readFile(join(outputDir, 'codex-resources', 'codex-windows-sandbox-setup.exe'), 'utf8')).resolves.toBe('sandbox');
+        await expect(readFile(join(outputDir, 'codex-path', 'rg.exe'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('forwards explicit per-file and expanded-byte ceilings without changing other shared limits', async () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
         tempDirs.push(rootDir);
 
@@ -64,11 +107,17 @@ describe('extractGitHubReleaseAsset', () => {
             archiveName: 'codex-aarch64-apple-darwin.tar.gz',
             extractDir: join(rootDir, 'extract'),
             outputPath: join(rootDir, 'current', 'bin', 'codex'),
-            maxFileBytes: 320 * 1024 * 1024,
+            archiveExtractionLimits: {
+                maxFileBytes: 384 * 1024 * 1024,
+                maxExpandedBytes: 384 * 1024 * 1024,
+            },
         });
 
         expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(expect.objectContaining({
-            limits: { maxFileBytes: 320 * 1024 * 1024 },
+            limits: {
+                maxFileBytes: 384 * 1024 * 1024,
+                maxExpandedBytes: 384 * 1024 * 1024,
+            },
         }));
     });
 

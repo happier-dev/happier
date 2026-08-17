@@ -45,10 +45,12 @@ export {
 } from './managedJavaScriptRuntime.js';
 export { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 export { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
+export { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 export { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
 export {
   extractExactWheelAsset,
   installPypiWheelAsset,
+  isPypiWheelAssetVersionSatisfied,
   normalizePypiProjectName,
   PypiWheelAssetError,
   readInstalledPypiWheelAsset,

@@ -44,6 +44,7 @@ export type PypiWheelAssetCompatibilityProbe = (params: Readonly<{
 
 export type InstalledPypiWheelAssetMetadata = Readonly<{
   sourceKind: 'managed_pypi_wheel_asset';
+  installOwnerId?: string;
   distribution: string;
   version: string;
   wheelFilename: string;
@@ -88,6 +89,7 @@ function isInstalledMetadata(value: unknown): value is InstalledPypiWheelAssetMe
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.sourceKind === 'managed_pypi_wheel_asset'
+    && (record.installOwnerId === undefined || typeof record.installOwnerId === 'string')
     && typeof record.distribution === 'string'
     && typeof record.version === 'string'
     && typeof record.wheelFilename === 'string'
@@ -252,6 +254,7 @@ async function promoteCandidate(params: Readonly<{
 
 export async function installPypiWheelAsset(params: Readonly<{
   installRoot: string;
+  installOwnerId?: string;
   distribution: string;
   versionSpecifier: string;
   assetPathByPlatform: PypiWheelAssetPlatformMap;
@@ -332,6 +335,9 @@ export async function installPypiWheelAsset(params: Readonly<{
     const promotedExecutablePath = join(versionDir, 'bin', commandBasenameFromAsset(resolved.assetPath));
     const metadata: InstalledPypiWheelAssetMetadata = {
       sourceKind: 'managed_pypi_wheel_asset',
+      ...(params.installOwnerId
+        ? { installOwnerId: params.installOwnerId }
+        : {}),
       distribution: resolved.distribution,
       version: resolved.version,
       wheelFilename: resolved.filename,

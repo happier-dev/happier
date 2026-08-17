@@ -31,12 +31,12 @@ function currentAgentInstallPlatform() {
 }
 
 function currentCodexReleaseAssetName() {
-  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-aarch64-apple-darwin.tar.gz';
-  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-x86_64-apple-darwin.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-aarch64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-x86_64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-aarch64-pc-windows-msvc.exe.zip';
-  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-x86_64-pc-windows-msvc.exe.zip';
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-package-aarch64-apple-darwin.tar.gz';
+  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-package-x86_64-apple-darwin.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-package-aarch64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-package-x86_64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-package-aarch64-pc-windows-msvc.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-package-x86_64-pc-windows-msvc.tar.gz';
   throw new Error(`Unsupported test arch: ${process.platform}/${process.arch}`);
 }
 
@@ -1084,10 +1084,13 @@ test('installAgentCli installs managed github-release CLIs into the managed agen
           downloadedArchivePath = destinationPath;
           await writeFile(destinationPath, 'archive', 'utf8');
         },
-        extractGitHubReleaseAsset: async ({ outputPath }) => {
-          await mkdir(dirname(outputPath), { recursive: true });
-          await writeFile(outputPath, '#!/bin/sh\necho codex\n', 'utf8');
-          await chmod(outputPath, 0o755);
+        extractGitHubReleaseAsset: async ({ outputDir, archiveEntries }) => {
+          for (const entry of archiveEntries) {
+            const destinationPath = join(outputDir, ...entry.destinationPath.split('/'));
+            await mkdir(dirname(destinationPath), { recursive: true });
+            await writeFile(destinationPath, entry.archivePath, 'utf8');
+            await chmod(destinationPath, 0o755);
+          }
         },
       },
     });
@@ -1098,7 +1101,56 @@ test('installAgentCli installs managed github-release CLIs into the managed agen
 
     const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     const binary = await readFile(managedPath, 'utf8');
-    assert.match(binary, /echo codex/);
+    assert.match(binary, /bin\/codex/);
+    const companionName = process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host';
+    assert.match(
+      await readFile(join(dirname(managedPath), companionName), 'utf8'),
+      /codex-code-mode-host/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('installAgentCli keeps the previous managed release active when a required archive member is missing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-agent-install-managed-binary-incomplete-'));
+  try {
+    const homeDir = join(dir, 'home');
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    await mkdir(dirname(managedPath), { recursive: true });
+    await writeFile(managedPath, 'previous codex', 'utf8');
+
+    const result = await installAgentCli({
+      agentId: 'codex',
+      platform: currentAgentInstallPlatform(),
+      skipIfInstalled: false,
+      env: {
+        ...process.env,
+        HAPPIER_HOME_DIR: homeDir,
+        PATH: '',
+      },
+      deps: {
+        fetchGitHubLatestRelease: async () => ({
+          tag_name: 'rust-v0.147.0',
+          assets: [{
+            name: currentCodexReleaseAssetName(),
+            browser_download_url: 'https://example.invalid/codex-package.tar.gz',
+            digest: 'sha256:feedface',
+          }],
+        }),
+        downloadGitHubReleaseAsset: async ({ destinationPath }) => {
+          await writeFile(destinationPath, 'archive', 'utf8');
+        },
+        extractGitHubReleaseAsset: async ({ outputPath }) => {
+          await mkdir(dirname(outputPath), { recursive: true });
+          await writeFile(outputPath, 'incomplete next codex', 'utf8');
+        },
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.errorMessage ?? '', /required archive member/i);
+    assert.equal(await readFile(managedPath, 'utf8'), 'previous codex');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

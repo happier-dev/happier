@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     promoteVersionedPayload,
-    rollbackVersionedPayload,
     resolveInstalledFirstPartyComponentPaths,
 } from './index.js';
 
@@ -89,7 +88,7 @@ describe('promoteVersionedPayload', () => {
         }
     });
 
-    it('keeps the managed wrapper executable and switches its exact bytes through current, previous, and rollback', async () => {
+    it('keeps the managed wrapper executable and exact release metadata in current and previous payloads', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-promote-versioned-payload-managed-runtime-'));
         const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
 
@@ -126,20 +125,6 @@ describe('promoteVersionedPayload', () => {
             await expect(readFile(join(paths.previousPath, 'tools', 'unpacked', 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'utf8'))
                 .resolves.toBe('CLIProxyAPI third-party notices 1.0.0\n');
 
-            const rollback = await rollbackVersionedPayload({
-                componentId: 'happier-cli',
-                processEnv: env,
-            });
-            expect(rollback).toMatchObject({
-                currentVersionId: '1.0.0',
-                previousVersionId: '2.0.0',
-            });
-            expect(await readFile(currentWrapper, 'utf8')).toBe('managed-runtime-1.0.0\n');
-            expect(await readFile(previousWrapper, 'utf8')).toBe('managed-runtime-2.0.0\n');
-            await expect(readFile(join(paths.currentPath, 'tools', 'unpacked', 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'utf8'))
-                .resolves.toBe('CLIProxyAPI third-party notices 1.0.0\n');
-            await expect(readFile(join(paths.previousPath, 'tools', 'unpacked', 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'utf8'))
-                .resolves.toBe('CLIProxyAPI third-party notices 2.0.0\n');
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }

@@ -12,6 +12,7 @@ const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
     'HAPPIER_DB_PROVIDER',
     'HAPPIER_FILES_BACKEND',
     'HAPPIER_SERVER_UI_DIR',
+    'HAPPIER_SERVER_UI_DEPLOYMENT_ID',
     'HAPPIER_SQLITE_AUTO_MIGRATE',
     'HAPPIER_SQLITE_MIGRATIONS_DIR',
     'HAPPIER_SERVER_LIGHT_DATA_DIR',
@@ -27,6 +28,7 @@ const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
 const SELF_HOST_SERVER_ENV_INSTALLER_OWNED_OVERRIDE_KEYS = new Set<string>([
     'HAPPIER_SERVER_UI_DIR',
     'HAPPIER_SERVER_LIGHT_UI_DIR',
+    'HAPPIER_SERVER_UI_DEPLOYMENT_ID',
 ]);
 
 export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
@@ -39,6 +41,7 @@ export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
     sqliteAutoMigrate: string;
     sqliteMigrationsDir: string;
     uiDir?: string;
+    uiDeploymentId?: string;
     nodeModulesPath?: string;
     prismaEnginePath?: string;
 }>): string {
@@ -54,6 +57,7 @@ export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
         `PORT=${params.port}`,
         `HAPPIER_SERVER_HOST=${params.host}`,
         ...(uiDir ? [`HAPPIER_SERVER_UI_DIR=${uiDir}`] : []),
+        ...(params.uiDeploymentId ? [`HAPPIER_SERVER_UI_DEPLOYMENT_ID=${params.uiDeploymentId}`] : []),
         'METRICS_ENABLED=false',
         'HAPPIER_DB_PROVIDER=sqlite',
         `DATABASE_URL=${params.databaseUrl}`,
@@ -81,6 +85,7 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     filesDir: string;
     dbDir: string;
     uiDir?: string;
+    uiDeploymentId?: string;
     serverBinDir?: string;
     arch?: string;
     platform?: NodeJS.Platform;
@@ -135,6 +140,7 @@ export function renderSelfHostServerEnvText(params: Readonly<{
         sqliteAutoMigrate: autoMigrateSqlite,
         sqliteMigrationsDir: migrationsDir,
         uiDir,
+        uiDeploymentId: params.uiDeploymentId,
         nodeModulesPath,
         prismaEnginePath,
     });

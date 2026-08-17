@@ -108,6 +108,19 @@ function parseVersionSpecifier(specifier: string): ParsedSpecifier {
   return { ok: true, predicates };
 }
 
+export function isPypiWheelAssetVersionSatisfied(
+  version: string,
+  specifier: string,
+): boolean {
+  const parsedVersion = parseSimpleVersion(version);
+  const parsedSpecifier = parseVersionSpecifier(specifier);
+  return Boolean(
+    parsedVersion
+    && parsedSpecifier.ok
+    && parsedSpecifier.predicates.every((predicate) => predicate(parsedVersion)),
+  );
+}
+
 function parseWheelFilename(filename: string, distribution: string): Readonly<{
   version: string;
   platforms: readonly WheelPlatformCompatibility[];

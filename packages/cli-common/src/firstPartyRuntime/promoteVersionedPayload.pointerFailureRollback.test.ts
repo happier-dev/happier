@@ -256,7 +256,7 @@ describe('promoteVersionedPayload pointer swap atomicity', () => {
         });
     }, 60_000);
 
-    it('rejects unsafe public and marker-derived version ids before filesystem mutation', async () => {
+    it('rejects unsafe public version ids before filesystem mutation', async () => {
         await withPlatform('linux', async () => {
             const homeDir = await mkdtemp(join(tmpdir(), 'happier-unsafe-version-id-'));
             const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
@@ -265,8 +265,6 @@ describe('promoteVersionedPayload pointer swap atomicity', () => {
                 const {
                     promoteVersionedPayload,
                     resolveFirstPartyVersionInstallPath,
-                    resolveInstalledFirstPartyComponentPaths,
-                    rollbackVersionedPayload,
                 } = await import('./index.js');
                 for (const versionId of [
                     '../escape',
@@ -295,32 +293,6 @@ describe('promoteVersionedPayload pointer swap atomicity', () => {
                 })).rejects.toMatchObject({
                     code: 'FIRST_PARTY_VERSION_ID_INVALID',
                 });
-
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '1.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '1.0.0', 'first-version'),
-                });
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '2.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '2.0.0', 'second-version'),
-                });
-                const paths = resolveInstalledFirstPartyComponentPaths({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                });
-                await writeFile(join(paths.installRoot, 'previous.version'), '../escape\n', 'utf8');
-
-                await expect(rollbackVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                })).rejects.toMatchObject({
-                    code: 'FIRST_PARTY_VERSION_ID_INVALID',
-                });
-                expect(await readFile(paths.binaryPath, 'utf8')).toBe('second-version');
             } finally {
                 await rm(homeDir, { recursive: true, force: true });
             }
@@ -369,188 +341,6 @@ describe('promoteVersionedPayload pointer swap atomicity', () => {
                 });
                 expect(await readFile(paths.binaryPath, 'utf8')).toBe('first-version');
             } finally {
-                await rm(homeDir, { recursive: true, force: true });
-            }
-        });
-    }, 60_000);
-
-    it.each(['linux', 'win32'] as const)(
-        'restores the complete B state on %s when rollback cannot publish the current marker',
-        async (platform) => {
-            await withPlatform(platform, async () => {
-                const homeDir = await mkdtemp(join(tmpdir(), `happier-rollback-marker-failure-${platform}-`));
-                const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
-
-                try {
-                    const {
-                        promoteVersionedPayload,
-                        resolveInstalledFirstPartyComponentPaths,
-                        rollbackVersionedPayload,
-                    } = await import('./index.js');
-
-                    await promoteVersionedPayload({
-                        componentId: 'happier-cli',
-                        processEnv: env,
-                        versionId: '1.0.0',
-                        stagedPayloadPath: await createPayload(homeDir, '1.0.0', 'first-version'),
-                    });
-                    await promoteVersionedPayload({
-                        componentId: 'happier-cli',
-                        processEnv: env,
-                        versionId: '2.0.0',
-                        stagedPayloadPath: await createPayload(homeDir, '2.0.0', 'second-version'),
-                    });
-
-                    const paths = resolveInstalledFirstPartyComponentPaths({
-                        componentId: 'happier-cli',
-                        processEnv: env,
-                    });
-                    markerFailurePlan.enabled = true;
-                    markerFailurePlan.markerName = 'current.version';
-                    markerFailurePlan.callCount = 0;
-
-                    await expect(rollbackVersionedPayload({
-                        componentId: 'happier-cli',
-                        processEnv: env,
-                    })).rejects.toThrow(/marker write failure/i);
-
-                    expect(await readFile(paths.binaryPath, 'utf8')).toBe('second-version');
-                    expect(await readFile(join(paths.installRoot, 'current.version'), 'utf8')).toBe('2.0.0\n');
-                    expect(await readlink(paths.currentPath)).toBe(
-                        platform === 'win32'
-                            ? join(paths.versionsDir, '2.0.0')
-                            : 'versions/2.0.0',
-                    );
-                    expect(await readFile(join(paths.previousPath, 'happier.exe'), 'utf8')).toBe('first-version');
-                    expect(await readFile(join(paths.installRoot, 'previous.version'), 'utf8')).toBe('1.0.0\n');
-                } finally {
-                    markerFailurePlan.enabled = false;
-                    markerFailurePlan.markerName = '';
-                    markerFailurePlan.partialContents = null;
-                    markerFailurePlan.callCount = 0;
-                    await rm(homeDir, { recursive: true, force: true });
-                }
-            });
-        },
-        60_000,
-    );
-
-    it('removes both previous publications when rollback has no versioned current payload to preserve', async () => {
-        await withPlatform('linux', async () => {
-            const homeDir = await mkdtemp(join(tmpdir(), 'happier-rollback-without-current-version-'));
-            const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
-
-            try {
-                const {
-                    promoteVersionedPayload,
-                    resolveFirstPartyInstallLayout,
-                    resolveInstalledFirstPartyComponentPaths,
-                    rollbackVersionedPayload,
-                    writeInstalledVersionMarker,
-                } = await import('./index.js');
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '1.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '1.0.0', 'first-version'),
-                });
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '2.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '2.0.0', 'second-version'),
-                });
-
-                const layout = resolveFirstPartyInstallLayout({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                });
-                const paths = resolveInstalledFirstPartyComponentPaths({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                });
-                await writeInstalledVersionMarker({
-                    layout,
-                    marker: 'current',
-                    versionId: null,
-                });
-
-                await expect(rollbackVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                })).resolves.toEqual({
-                    currentVersionId: '1.0.0',
-                    previousVersionId: null,
-                });
-                expect(await readFile(paths.binaryPath, 'utf8')).toBe('first-version');
-                await expect(lstat(paths.previousPath)).rejects.toMatchObject({ code: 'ENOENT' });
-                await expect(lstat(join(paths.installRoot, 'previous.version'))).rejects.toMatchObject({ code: 'ENOENT' });
-            } finally {
-                await rm(homeDir, { recursive: true, force: true });
-            }
-        });
-    }, 60_000);
-
-    it('restores an unversioned current payload when rollback marker publication fails', async () => {
-        await withPlatform('linux', async () => {
-            const homeDir = await mkdtemp(join(tmpdir(), 'happier-legacy-rollback-marker-failure-'));
-            const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
-
-            try {
-                const {
-                    promoteVersionedPayload,
-                    resolveFirstPartyInstallLayout,
-                    resolveInstalledFirstPartyComponentPaths,
-                    rollbackVersionedPayload,
-                    writeInstalledVersionMarker,
-                } = await import('./index.js');
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '1.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '1.0.0', 'first-version'),
-                });
-                await promoteVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                    versionId: '2.0.0',
-                    stagedPayloadPath: await createPayload(homeDir, '2.0.0', 'second-version'),
-                });
-
-                const layout = resolveFirstPartyInstallLayout({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                });
-                const paths = resolveInstalledFirstPartyComponentPaths({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                });
-                await writeInstalledVersionMarker({
-                    layout,
-                    marker: 'current',
-                    versionId: null,
-                });
-                await rm(paths.currentPath, { recursive: true, force: true });
-                await mkdir(paths.currentPath, { recursive: true });
-                await writeFile(join(paths.currentPath, 'happier'), 'legacy-current', 'utf8');
-
-                markerFailurePlan.enabled = true;
-                markerFailurePlan.markerName = 'current.version';
-                markerFailurePlan.callCount = 0;
-                await expect(rollbackVersionedPayload({
-                    componentId: 'happier-cli',
-                    processEnv: env,
-                })).rejects.toThrow(/marker write failure/i);
-
-                expect(await readFile(join(paths.currentPath, 'happier'), 'utf8')).toBe('legacy-current');
-                await expect(lstat(join(paths.installRoot, 'current.version'))).rejects.toMatchObject({ code: 'ENOENT' });
-                expect(await readFile(join(paths.previousPath, 'happier'), 'utf8')).toBe('first-version');
-                expect(await readFile(join(paths.installRoot, 'previous.version'), 'utf8')).toBe('1.0.0\n');
-            } finally {
-                markerFailurePlan.enabled = false;
-                markerFailurePlan.markerName = '';
-                markerFailurePlan.partialContents = null;
-                markerFailurePlan.callCount = 0;
                 await rm(homeDir, { recursive: true, force: true });
             }
         });

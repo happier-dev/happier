@@ -12,6 +12,7 @@ export const githubReleaseBinaryRuntimeInstallModeHandler: RuntimeInstallModeHan
         await installManagedBinaryAgentCli({
             runtimeSpec,
             managedInstall: plan.managedInstall as Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>,
+            platform: plan.platform,
             env,
             logPath: lifecycleContext.logPath,
             deps,

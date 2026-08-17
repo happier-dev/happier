@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process';
+import { win32 } from 'node:path';
 
 export type WindowsProtectedPathKind = 'directory' | 'file';
 
@@ -42,6 +43,12 @@ type WindowsAclSnapshot = Readonly<{
 
 const LOCAL_SYSTEM_SID = 'S-1-5-18';
 const WINDOWS_SID_PATTERN = /^S-\d(?:-\d+)+$/u;
+const WINDOWS_ACL_STDERR_LIMIT = 512;
+const WINDOWS_ACL_COMMAND_PATHS = Object.freeze({
+  'whoami.exe': ['whoami.exe'],
+  'icacls.exe': ['icacls.exe'],
+  'powershell.exe': ['WindowsPowerShell', 'v1.0', 'powershell.exe'],
+} satisfies Readonly<Record<string, readonly string[]>>);
 const WINDOWS_ACL_INSPECTION_SCRIPT = [
   '& {',
   'param([string]$Path)',
@@ -64,15 +71,52 @@ const WINDOWS_ACL_INSPECTION_SCRIPT = [
   '} ',
 ].join('\n');
 
+function readEnvironmentValueCaseInsensitive(env: NodeJS.ProcessEnv, name: string): string | null {
+  const expected = name.toLowerCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() === expected && typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function resolveWindowsProtectedAclCommand(command: string, env: NodeJS.ProcessEnv = process.env): string {
+  const windowsRoot = readEnvironmentValueCaseInsensitive(env, 'SystemRoot')
+    ?? readEnvironmentValueCaseInsensitive(env, 'WINDIR');
+  if (!windowsRoot) {
+    throw new Error(`Cannot run Windows protected ACL command ${command}: SystemRoot and WINDIR are unavailable`);
+  }
+  const relativePath = WINDOWS_ACL_COMMAND_PATHS[command as keyof typeof WINDOWS_ACL_COMMAND_PATHS];
+  if (!relativePath) {
+    throw new Error(`Unsupported Windows protected ACL command: ${command}`);
+  }
+  return win32.join(windowsRoot, 'System32', ...relativePath);
+}
+
+function summarizeCommandStderr(stderr: string): string {
+  const normalized = stderr.trim().replace(/\s+/gu, ' ');
+  if (!normalized) return '<empty>';
+  if (normalized.length <= WINDOWS_ACL_STDERR_LIMIT) return normalized;
+  return `${normalized.slice(0, WINDOWS_ACL_STDERR_LIMIT)}…`;
+}
+
+function commandFailure(command: string, result: WindowsProtectedAclCommandResult): Error {
+  return new Error(
+    `Windows protected ACL command failed: ${command} (exit ${result.exitCode}, stderr ${JSON.stringify(summarizeCommandStderr(result.stderr))})`,
+  );
+}
+
 function defaultRunCommand(command: string, args: readonly string[]): Promise<WindowsProtectedAclCommandResult> {
+  const nativeCommand = resolveWindowsProtectedAclCommand(command);
   return new Promise((resolve, reject) => {
-    execFile(command, [...args], {
+    execFile(nativeCommand, [...args], {
       encoding: 'utf8',
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     }, (error, stdout, stderr) => {
       if (error && typeof error.code !== 'number') {
-        reject(new Error(`Windows protected ACL command could not start: ${command}`));
+        reject(new Error(`Windows protected ACL command could not start: ${nativeCommand}`));
         return;
       }
       resolve({
@@ -85,13 +129,14 @@ function defaultRunCommand(command: string, args: readonly string[]): Promise<Wi
 }
 
 function defaultRunCommandSync(command: string, args: readonly string[]): WindowsProtectedAclCommandResult {
-  const result = spawnSync(command, [...args], {
+  const nativeCommand = resolveWindowsProtectedAclCommand(command);
+  const result = spawnSync(nativeCommand, [...args], {
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 1024 * 1024,
   });
   if (result.error) {
-    throw new Error(`Windows protected ACL command could not start: ${command}`);
+    throw new Error(`Windows protected ACL command could not start: ${nativeCommand}`);
   }
   return {
     exitCode: result.status ?? 1,
@@ -184,7 +229,7 @@ export function createWindowsProtectedAclBoundary(params: Readonly<{
   let currentUserSidPromise: Promise<string> | null = null;
   const runChecked = async (command: string, args: readonly string[]) => {
     const result = await runCommand(command, args);
-    if (result.exitCode !== 0) throw new Error(`Windows protected ACL command failed: ${command}`);
+    if (result.exitCode !== 0) throw commandFailure(command, result);
     return result;
   };
   const resolveSid = () => currentUserSidPromise ??= runChecked('whoami.exe', ['/user', '/fo', 'csv', '/nh'])
@@ -212,7 +257,7 @@ export function createWindowsProtectedAclBoundarySync(params: Readonly<{
   let currentUserSid: string | null = null;
   const runChecked = (command: string, args: readonly string[]) => {
     const result = runCommand(command, args);
-    if (result.exitCode !== 0) throw new Error(`Windows protected ACL command failed: ${command}`);
+    if (result.exitCode !== 0) throw commandFailure(command, result);
     return result;
   };
   const resolveSid = () => currentUserSid ??= parseCurrentUserSid(

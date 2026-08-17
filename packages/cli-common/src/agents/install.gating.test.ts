@@ -17,13 +17,46 @@ function expectedOhMyPiReleaseAssetName(): string | null {
 }
 
 function expectedCodexReleaseAssetName(): string | null {
-  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-aarch64-apple-darwin.tar.gz';
-  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-x86_64-apple-darwin.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-aarch64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-x86_64-unknown-linux-musl.tar.gz';
-  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-aarch64-pc-windows-msvc.exe.zip';
-  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-x86_64-pc-windows-msvc.exe.zip';
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'codex-package-aarch64-apple-darwin.tar.gz';
+  if (process.platform === 'darwin' && process.arch === 'x64') return 'codex-package-x86_64-apple-darwin.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'arm64') return 'codex-package-aarch64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'linux' && process.arch === 'x64') return 'codex-package-x86_64-unknown-linux-musl.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'arm64') return 'codex-package-aarch64-pc-windows-msvc.tar.gz';
+  if (process.platform === 'win32' && process.arch === 'x64') return 'codex-package-x86_64-pc-windows-msvc.tar.gz';
   return null;
+}
+
+function expectedCodexArchiveEntries() {
+  if (process.platform === 'win32') {
+    return [
+      { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+      { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+      {
+        archivePath: 'codex-resources/codex-command-runner.exe',
+        destinationPath: 'codex-resources/codex-command-runner.exe',
+      },
+      {
+        archivePath: 'codex-resources/codex-windows-sandbox-setup.exe',
+        destinationPath: 'codex-resources/codex-windows-sandbox-setup.exe',
+      },
+    ];
+  }
+  return [
+    { archivePath: 'bin/codex', destinationPath: 'bin/codex' },
+    { archivePath: 'bin/codex-code-mode-host', destinationPath: 'bin/codex-code-mode-host' },
+  ];
+}
+
+async function materializeDeclaredArchiveEntries(params: Readonly<{
+  outputDir?: string;
+  archiveEntries?: ReadonlyArray<Readonly<{ archivePath: string; destinationPath: string }>>;
+}>): Promise<void> {
+  if (!params.outputDir || !params.archiveEntries) throw new Error('Expected a declared archive layout');
+  for (const entry of params.archiveEntries) {
+    const destinationPath = join(params.outputDir, ...entry.destinationPath.split('/'));
+    await mkdir(dirname(destinationPath), { recursive: true });
+    await writeFile(destinationPath, '#!/bin/sh\nexit 0\n', 'utf8');
+  }
 }
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -611,6 +644,10 @@ describe('installAgentCli vendor_recipe execution gating', () => {
   });
 
   it('preserves Codex archive asset selection through the generic GitHub-release path', async () => {
+    // openai/codex rust-v0.147.0's digest-verified Windows x64 package contains
+    // a 298,668,336-byte executable. Keep the generic archive defaults narrow,
+    // but require the Codex override to admit that observed release artifact.
+    const observedCodexWindowsExecutableBytes = 298_668_336;
     const expectedAssetName = expectedCodexReleaseAssetName();
     if (!expectedAssetName) return;
 
@@ -620,7 +657,12 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     const extractCalls: Array<Readonly<{
       archiveName: string;
       outputPath: string;
-      maxFileBytes?: number;
+      outputDir?: string;
+      archiveEntries?: ReadonlyArray<Readonly<{ archivePath: string; destinationPath: string }>>;
+      archiveExtractionLimits?: Readonly<{
+        maxFileBytes: number;
+        maxExpandedBytes: number;
+      }>;
     }>> = [];
     try {
       const platform = resolvePlatformFromNodePlatform(process.platform);
@@ -660,10 +702,11 @@ describe('installAgentCli vendor_recipe execution gating', () => {
             extractCalls.push({
               archiveName: params.archiveName,
               outputPath: params.outputPath,
-              maxFileBytes: params.maxFileBytes,
+              outputDir: params.outputDir,
+              archiveEntries: params.archiveEntries,
+              archiveExtractionLimits: params.archiveExtractionLimits,
             });
-            await mkdir(dirname(params.outputPath), { recursive: true });
-            await writeFile(params.outputPath, '#!/bin/sh\nexit 0\n', 'utf8');
+            await materializeDeclaredArchiveEntries(params);
           },
         },
       });
@@ -675,21 +718,24 @@ describe('installAgentCli vendor_recipe execution gating', () => {
       expect(downloadCalls[0]?.url).toBe(`https://example.test/${expectedAssetName}`);
       expect(downloadCalls[0]?.destinationPath).toContain(expectedAssetName);
       expect(downloadCalls[0]?.digest).toBe('sha256:codexdigest');
-      expect(extractCalls).toEqual([
-        {
-          archiveName: expectedAssetName,
-          outputPath: join(
-            homeDir,
-            'tools',
-            'providers',
-            'codex',
-            'next',
-            'bin',
-            process.platform === 'win32' ? 'codex.exe' : 'codex',
-          ),
-          maxFileBytes: 320 * 1024 * 1024,
+      expect(extractCalls[0]?.archiveExtractionLimits?.maxFileBytes).toBeGreaterThanOrEqual(observedCodexWindowsExecutableBytes);
+      expect(extractCalls).toHaveLength(1);
+      const extractCall = extractCalls[0];
+      expect(extractCall).toMatchObject({
+        archiveName: expectedAssetName,
+        archiveEntries: expectedCodexArchiveEntries(),
+        archiveExtractionLimits: {
+          maxFileBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 384 * 1024 * 1024,
         },
-      ]);
+      });
+      expect(extractCall?.outputDir).toContain(join('tools', 'providers', 'codex', '.tmp'));
+      expect(extractCall?.outputDir).toMatch(/[/\\]candidate$/);
+      expect(extractCall?.outputPath).toBe(join(
+        extractCall?.outputDir ?? '',
+        'bin',
+        process.platform === 'win32' ? 'codex.exe' : 'codex',
+      ));
       const installedPath = join(
         homeDir,
         'tools',
@@ -756,8 +802,7 @@ describe('installAgentCli vendor_recipe execution gating', () => {
             await writeFile(params.destinationPath, 'archive-bytes', 'utf8');
           },
           extractGitHubReleaseAsset: async (params) => {
-            await mkdir(dirname(params.outputPath), { recursive: true });
-            await writeFile(params.outputPath, '#!/bin/sh\nexit 0\n', 'utf8');
+            await materializeDeclaredArchiveEntries(params);
           },
         },
       });

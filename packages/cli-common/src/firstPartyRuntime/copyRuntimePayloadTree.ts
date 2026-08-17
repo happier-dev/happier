@@ -155,21 +155,22 @@ async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function cleanupBackupPathBestEffort(backupPath: string): Promise<void> {
-  for (let attempt = 1; attempt <= BACKUP_CLEANUP_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      await rm(toRuntimeFsPath(backupPath), { recursive: true, force: true });
-      return;
-    } catch (error) {
-      if (!isRetryableRenameError(error)) {
-        throw error;
-      }
-      if (attempt === BACKUP_CLEANUP_MAX_ATTEMPTS) {
-        return;
-      }
-      await sleep(BACKUP_CLEANUP_RETRY_DELAY_MS);
+export async function removeRuntimePayloadPath(path: string): Promise<void> {
+    for (let attempt = 1; attempt <= BACKUP_CLEANUP_MAX_ATTEMPTS; attempt += 1) {
+        try {
+            await rm(toRuntimeFsPath(path), { recursive: true, force: true });
+            return;
+        } catch (error) {
+            if (!isRetryableRenameError(error) || attempt === BACKUP_CLEANUP_MAX_ATTEMPTS) {
+                throw error;
+            }
+            await sleep(BACKUP_CLEANUP_RETRY_DELAY_MS);
+        }
     }
-  }
+}
+
+async function cleanupBackupPathBestEffort(backupPath: string): Promise<void> {
+    await removeRuntimePayloadPath(backupPath).catch(() => undefined);
 }
 
 async function pruneSkippedPayloadPathsRecursively(rootDir: string, currentDir: string = rootDir): Promise<void> {

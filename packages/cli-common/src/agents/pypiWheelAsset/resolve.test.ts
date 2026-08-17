@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isPypiWheelAssetVersionSatisfied,
   resolvePypiWheelAsset,
   type PypiWheelAssetSimpleIndex,
 } from './resolve.js';
@@ -56,6 +57,13 @@ function resolve(params: ResolveParams) {
 }
 
 describe('resolvePypiWheelAsset', () => {
+  it('evaluates installed versions with the same supported specifier contract used for selection', () => {
+    expect(isPypiWheelAssetVersionSatisfied('0.1.5', '>=0.1.3,<0.2.0')).toBe(true);
+    expect(isPypiWheelAssetVersionSatisfied('0.2.0', '>=0.1.3,<0.2.0')).toBe(false);
+    expect(isPypiWheelAssetVersionSatisfied('0.1.5rc1', '>=0.1.3,<0.2.0')).toBe(false);
+    expect(isPypiWheelAssetVersionSatisfied('0.1.5', '~=0.1.3')).toBe(false);
+  });
+
   it.each([
     ['darwin-arm64', undefined, 'google_antigravity-0.1.4-py3-none-macosx_14_0_arm64.whl', 'c'.repeat(64)],
     ['linux-x64', 'glibc', 'google_antigravity-0.1.5-py3-none-manylinux_2_17_x86_64.whl', 'e'.repeat(64)],

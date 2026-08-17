@@ -11,6 +11,7 @@ export {
 } from './install.js';
 export {
   normalizePypiProjectName,
+  isPypiWheelAssetVersionSatisfied,
   resolvePypiWheelAsset,
   type PypiWheelAssetFetchJson,
   type PypiWheelAssetResolution,

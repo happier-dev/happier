@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 
-import { isAgentCliPathRunnable, resolveExplicitJavaScriptRuntimeCommand, resolveJavaScriptRuntimeCommand } from './index.js';
+import {
+    isAgentCliPathRunnable,
+    readExplicitJavaScriptRuntimeCommand,
+    resolveExplicitJavaScriptRuntimeCommand,
+    resolveJavaScriptRuntimeCommand,
+} from './index.js';
 
 function makeExecutableFile(path: string, content: string): void {
   writeFileSync(path, content, 'utf8');
@@ -137,7 +142,24 @@ describe('managedJavaScriptRuntime binary-safe selection', () => {
         })).toBe(null);
     });
 
-    it('expands ~ and resolves Windows runtime wrapper shims for explicit overrides', () => {
+    it('expands ~ for explicit Windows runtime overrides', () => {
+        const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+        if (!originalPlatformDescriptor) {
+            throw new Error('Expected process.platform to be configurable for this test');
+        }
+        Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+        try {
+            expect(readExplicitJavaScriptRuntimeCommand({
+                USERPROFILE: 'C:\\Users\\alice',
+                HAPPIER_JS_RUNTIME_PATH: '~/bin/happier-js-runtime',
+            })).toBe('C:\\Users\\alice\\bin\\happier-js-runtime');
+        } finally {
+            Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+        }
+    });
+
+    it('resolves Windows runtime wrapper shims for explicit overrides', () => {
         const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
         if (!originalPlatformDescriptor) {
             throw new Error('Expected process.platform to be configurable for this test');
@@ -146,16 +168,15 @@ describe('managedJavaScriptRuntime binary-safe selection', () => {
 
         try {
             const root = join(tmpdir(), `happier-cli-common-runtime-override-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-            const binDir = join(root, 'home', 'bin');
+            const binDir = join(root, 'bin');
             mkdirSync(binDir, { recursive: true });
 
             const runtimePath = join(binDir, 'happier-js-runtime.cmd');
             makeExecutableFile(runtimePath, '@echo off\r\n');
 
             expect(resolveExplicitJavaScriptRuntimeCommand({
-                HOME: join(root, 'home'),
                 PATH: '',
-                HAPPIER_JS_RUNTIME_PATH: '~/bin/happier-js-runtime',
+                HAPPIER_JS_RUNTIME_PATH: join(binDir, 'happier-js-runtime'),
             })?.toLowerCase()).toBe(runtimePath.toLowerCase());
         } finally {
             Object.defineProperty(process, 'platform', originalPlatformDescriptor);

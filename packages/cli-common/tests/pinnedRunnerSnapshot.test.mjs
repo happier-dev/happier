@@ -94,6 +94,40 @@ test('selects the newest structurally ready immutable runner and ignores a newer
   });
 });
 
+test('selects ready snapshots from an explicit snapshot store override', async (t) => {
+  const mutableCliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-mutable-store-'));
+  const snapshotCliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-override-store-'));
+  t.after(async () => Promise.all([
+    rm(mutableCliDir, { recursive: true, force: true }),
+    rm(snapshotCliDir, { recursive: true, force: true }),
+  ]));
+  const mutableEntrypoint = join(mutableCliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(mutableEntrypoint), { recursive: true });
+  await writeFile(mutableEntrypoint, 'export {};\n', 'utf8');
+
+  const ready = await writeReadySnapshot({
+    cliDir: snapshotCliDir,
+    workspaceRuntimeIdentity: 'b'.repeat(64),
+    mtimeMs: 1_000,
+  });
+
+  assert.equal(resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint), null);
+  assert.deepEqual(
+    resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint, {
+      snapshotsDir: join(snapshotCliDir, '.runner-snapshots'),
+    }),
+    {
+      snapshotsDir: join(snapshotCliDir, '.runner-snapshots'),
+      snapshotIdentity: ready.snapshotIdentity,
+      snapshotRoot: ready.snapshotRoot,
+      snapshotEntrypoint: ready.snapshotEntrypoint,
+      fingerprint: ready.fingerprint,
+      runtimeAssetIdentity: createHash('sha256').update('managed-runtime\n').digest('hex'),
+      workspaceRuntimeIdentity: 'b'.repeat(64),
+    },
+  );
+});
+
 test('rejects a newer snapshot missing a required runtime sidecar', async (t) => {
   const cliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-sidecar-'));
   t.after(async () => rm(cliDir, { recursive: true, force: true }));

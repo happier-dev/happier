@@ -380,9 +380,24 @@ function writeCliDistWorkspaceRuntimeIdentity(params = {}) {
   if (!/^[a-f0-9]{64}$/.test(workspaceRuntimeIdentity)) {
     throw new Error('[cli-dist-manifest] invalid workspace runtime identity');
   }
+  const workspaceRuntimePackages = params.workspaceRuntimePackages;
+  if (
+    workspaceRuntimePackages !== undefined
+    && (
+      !Array.isArray(workspaceRuntimePackages)
+      || workspaceRuntimePackages.length === 0
+      || new Set(workspaceRuntimePackages).size !== workspaceRuntimePackages.length
+      || workspaceRuntimePackages.some(
+        (packageName) => !/^@happier-dev\/[a-z0-9][a-z0-9._-]*$/.test(packageName),
+      )
+    )
+  ) {
+    throw new Error('[cli-dist-manifest] invalid workspace runtime packages');
+  }
   const manifest = {
     ...manifestResult.manifest,
     workspaceRuntimeIdentity,
+    ...(workspaceRuntimePackages !== undefined ? { workspaceRuntimePackages } : {}),
   };
   writeFileSync(
     manifestResult.manifestPath,
