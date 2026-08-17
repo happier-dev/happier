@@ -202,6 +202,7 @@ export type QuotaApi = Readonly<{
     machineId: string;
     ownerId?: string;
     leaseMs: number;
+    signal?: AbortSignal;
   }>) => Promise<Readonly<{ acquired: boolean; leaseUntil: number }>>;
   updateConnectedServiceCredentialHealth?: (args: Readonly<{
     serviceId: ConnectedServiceId;

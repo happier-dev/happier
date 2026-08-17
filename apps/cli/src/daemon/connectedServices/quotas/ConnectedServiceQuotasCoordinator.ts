@@ -2921,7 +2921,11 @@ export class ConnectedServiceQuotasCoordinator {
         let expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
         try {
           // Lease acquisition is a mutation. Do not start it after expiry and always await it once started.
-          const lease = await this.acquireQuotaFetchLease({ serviceId, profileId });
+          const lease = await this.acquireQuotaFetchLease({
+            serviceId,
+            profileId,
+            signal: deadlineAtMs === null ? undefined : deadlineController.signal,
+          });
           if (deadlineExceeded()) {
             outcome = result('incomplete', 'deadline_exceeded');
             return outcome;
@@ -3248,6 +3252,7 @@ export class ConnectedServiceQuotasCoordinator {
   private async acquireQuotaFetchLease(input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    signal?: AbortSignal;
   }>): Promise<Readonly<{ type: 'acquired' } | { type: 'contended'; leaseUntil: number }>> {
     if (typeof this.api.acquireConnectedServiceRefreshLease !== 'function' || !this.machineIdProvider) {
       return { type: 'acquired' };
@@ -3261,6 +3266,7 @@ export class ConnectedServiceQuotasCoordinator {
       machineId,
       ...(ownerIdRaw ? { ownerId: ownerIdRaw } : {}),
       leaseMs: this.quotaFetchLeaseMs,
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     if (lease.acquired) return { type: 'acquired' };
     return { type: 'contended', leaseUntil: Number(lease.leaseUntil ?? 0) };

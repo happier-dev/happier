@@ -7978,6 +7978,71 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(fetcher.fetch).not.toHaveBeenCalled();
   });
 
+  it('settles an aggregate group probe when refresh-lease acquisition exceeds its deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+      const credentials: Credentials = {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      };
+      const acquireConnectedServiceRefreshLease = vi.fn((input: Readonly<{ signal?: AbortSignal }>) => (
+        new Promise<Readonly<{ acquired: boolean; leaseUntil: number }>>((resolve) => {
+          input.signal?.addEventListener('abort', () => resolve({ acquired: false, leaseUntil: 0 }), { once: true });
+        })
+      ));
+      const fetcher: ConnectedServiceQuotaFetcher = {
+        serviceId: 'openai-codex',
+        fetch: vi.fn(async () => null),
+      };
+      const api = {
+        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+        getAccountEncryptionModeUncached: vi.fn(async () => 'plain' as const),
+        getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+        getConnectedServiceCredentialPlain: vi.fn(async () => null),
+        getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+        getConnectedServiceCredentialSealed: vi.fn(async () => null),
+        getConnectedServiceAuthGroup: vi.fn(async () => null),
+        acquireConnectedServiceRefreshLease,
+      } as unknown as QuotaApi;
+      const coordinator = new ConnectedServiceQuotasCoordinator({
+        api,
+        credentials,
+        quotaFetchers: [fetcher],
+        now: () => Date.now(),
+        randomBytes: (length: number) => randomBytes(length),
+        discoveryEnabled: false,
+        runtimeQuotaSnapshots,
+        machineIdProvider: () => 'machine-1',
+      });
+
+      const probePromise = coordinator.probeGroupQuotaSnapshots({
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileIds: ['primary'],
+        deadlineAtMs: Date.now() + 50,
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      const outcome = await Promise.race([
+        probePromise,
+        Promise.resolve('still_pending' as const),
+      ]);
+
+      expect(outcome).toEqual({
+        status: 'incomplete',
+        requestedProfileCount: 1,
+        completedProfileCount: 0,
+        completedProfileIds: [],
+        reason: 'deadline_exceeded',
+      });
+      expect(acquireConnectedServiceRefreshLease.mock.calls[0]?.[0].signal?.aborted).toBe(true);
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('probes requested group member quota snapshots for pre-turn selection', async () => {
     const now = 1_000_000;
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
