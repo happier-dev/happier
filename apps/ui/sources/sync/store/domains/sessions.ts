@@ -62,7 +62,7 @@ import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
-import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { parsePermissionIntentAlias, resolveMetadataStringOverrideStateV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
     applyReachableTargetsToSessionListRenderables,
 } from '../buildSessionListViewDataWithServerScope';
@@ -838,8 +838,17 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const mergedPermissionMode = mergedPermission.mode;
                 const mergedPermissionModeUpdatedAt = mergedPermission.updatedAt;
 
-                const modelOverride = resolveMetadataStringOverrideV1(session.metadata, 'modelOverrideV1', 'modelId');
-                const metadataModelId = modelOverride?.value ?? null;
+                // State-aware on purpose: an explicit CLEAR is an override with a
+                // timestamp, not an absent key. The Agent transition writes one when the
+                // armed switch chose no model, and it is the only thing that can retire a
+                // client-local selection made for the DEPARTED Agent — the selectability
+                // clamp below cannot, because a freeform-capable target (Claude) accepts
+                // any id, so the source Agent's model survived the cutover, named the
+                // composer chip and was handed to the target's resume.
+                const modelOverride = resolveMetadataStringOverrideStateV1(session.metadata, 'modelOverrideV1', 'modelId');
+                const metadataModelId = modelOverride === null
+                    ? null
+                    : (modelOverride.state === 'set' ? modelOverride.value : 'default');
                 const metadataModelUpdatedAt = modelOverride?.updatedAt ?? null;
 
                 let mergedModelMode =
