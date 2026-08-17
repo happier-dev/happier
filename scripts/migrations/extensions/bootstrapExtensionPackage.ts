@@ -112,10 +112,17 @@ function validateExtensionId(params: Readonly<{ extensionId: string; canonicalAg
 
 function assertCanonicalTemplateFiles(files: readonly TemplateFile[]): void {
   const paths = new Set(files.map((file) => file.relativePath));
-  for (const required of ['package.json', 'tsconfig.json', 'src/index.ts', 'src/manifest.ts', 'src/activate.ts']) {
+  for (const required of ['package.json', 'tsconfig.json', 'src/index.ts']) {
     if (!paths.has(required)) throw new Error(`Missing canonical template file '${required}'`);
   }
-  for (const retired of ['src/cli.ts', 'src/ui/index.ts', 'src/agent/index.ts', 'src/agent/definition.ts']) {
+  for (const retired of [
+    'src/manifest.ts',
+    'src/activate.ts',
+    'src/cli.ts',
+    'src/ui/index.ts',
+    'src/agent/index.ts',
+    'src/agent/definition.ts',
+  ]) {
     if (paths.has(retired)) throw new Error(`Retired template file '${retired}' must not be scaffolded`);
   }
   const source = files.map((file) => file.content).join('\n');
