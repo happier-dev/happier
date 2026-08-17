@@ -2,6 +2,10 @@ import { readDisplayableSessionWorkStateV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { buildHappierReplayPromptFromDialog } from '../replay/happierReplayPrompt.js';
+import {
+  resolveMetadataStringOverrideStateV1,
+  resolveMetadataStringOverrideV1,
+} from '../../sessionControls/metadata.js';
 import { AGENTS_CORE } from '../../manifest.js';
 import { AGENT_IDS } from '../../types.js';
 import {
@@ -140,7 +144,18 @@ describe('projectCurrentAgentSessionView', () => {
       target: { agentId: 'codex', updatedAtMs: UPDATED_AT },
     });
 
-    expect(next.modelOverrideV1).toBeUndefined();
+    // Deleting the key is invisible to every reader that arbitrates a LOCAL
+    // selection against the metadata timestamp, so the source Agent's model id
+    // survived the cutover in the composer and was handed to the target's
+    // spawn. The canonical clear tombstone is what those readers can observe.
+    expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: UPDATED_AT, modelId: null });
+    expect(resolveMetadataStringOverrideStateV1(next, 'modelOverrideV1', 'modelId')).toEqual({
+      state: 'cleared',
+      updatedAt: UPDATED_AT,
+    });
+    // Set-only readers must still see "no model chosen": the target starts on
+    // its own default.
+    expect(resolveMetadataStringOverrideV1(next, 'modelOverrideV1', 'modelId')).toBeNull();
     expect(next.sessionModeOverrideV1).toBeUndefined();
     expect(next.acpSessionModeOverrideV1).toBeUndefined();
   });
@@ -235,7 +250,7 @@ describe('projectCurrentAgentSessionView — handoff carry policy', () => {
     expect(next.opencodeServerBaseUrl).toBeUndefined();
     expect(next.agentRuntimeDescriptorV1).toBeUndefined();
     expect(next.sessionWorkStateV1).toBeUndefined();
-    expect(next.modelOverrideV1).toBeUndefined();
+    expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 42, modelId: null });
   });
 
   /**

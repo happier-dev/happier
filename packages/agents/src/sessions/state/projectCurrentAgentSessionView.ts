@@ -180,6 +180,22 @@ export function projectCurrentAgentSessionView(params: Readonly<{
   const modelId = typeof params.target.modelId === 'string' ? params.target.modelId.trim() : '';
   if (modelId) {
     next.modelOverrideV1 = { v: 1, updatedAt, modelId };
+  } else if ((params.agentScopedCurrentState ?? 'clear') === 'clear') {
+    // A DELETED key is indistinguishable from "never set", and the model
+    // selection is the one Agent-scoped intent that ALSO lives as a
+    // client-local pending value arbitrated by timestamp against this key. So
+    // deleting it left the source Agent's model id as the newest surviving
+    // opinion: the composer kept naming it and the target's resume was handed
+    // it, which is how an armed switch that chose no model started the target
+    // on the previous Agent's model — and the target then refused every
+    // message.
+    //
+    // The canonical clear tombstone (`ModelOverrideV1Schema` declares
+    // `modelId` nullable for exactly this) is an observable fact carrying the
+    // cutover's timestamp: set-only readers still see "no model chosen" — the
+    // target's own default — while every timestamp arbiter can now see that
+    // the selection was cleared, and when.
+    next.modelOverrideV1 = { v: 1, updatedAt, modelId: null };
   }
 
   const modeId = typeof params.target.sessionModeId === 'string' ? params.target.sessionModeId.trim() : '';
