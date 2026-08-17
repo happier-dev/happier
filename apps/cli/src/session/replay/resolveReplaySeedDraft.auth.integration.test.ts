@@ -214,7 +214,7 @@ describe('resolveReplaySeedDraft auth propagation', () => {
         maxSeedChars: 2000,
         candidateLimit: 1,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: 'unavailable' });
   });
 
   it('keeps non-auth transcript failures as a null seed result', async () => {
@@ -253,6 +253,6 @@ describe('resolveReplaySeedDraft auth propagation', () => {
         maxSeedChars: 2000,
         candidateLimit: 1,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: 'unavailable' });
   });
 });

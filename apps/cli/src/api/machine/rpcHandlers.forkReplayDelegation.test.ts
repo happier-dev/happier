@@ -117,8 +117,15 @@ function primeParent(flavor: string, extraMetadata: Record<string, unknown> = {}
   });
 }
 
+/**
+ * `POST /v1/sessions` echoes the row carrying the exact creation metadata the
+ * caller posted, lineage envelopes included. Echoing it here rather than pinning
+ * a hand-written bag keeps the fixture honest: the creator authenticates the
+ * returned row against the requested source recipe, and a row that dropped those
+ * envelopes is a shape the server never answers with.
+ */
 function primeChildRow(): void {
-  getOrCreateSessionByTag.mockResolvedValue({
+  getOrCreateSessionByTag.mockImplementation(async (params: { metadata: Record<string, unknown> }) => ({
     session: {
       id: 'sess_child',
       seq: 0,
@@ -127,13 +134,13 @@ function primeChildRow(): void {
       active: false,
       activeAt: 0,
       encryptionMode: 'plain',
-      metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+      metadata: JSON.stringify(params.metadata),
       metadataVersion: 0,
       agentState: null,
       agentStateVersion: 0,
       dataEncryptionKey: null,
     },
-  });
+  }));
 }
 
 describe('session.fork replay branch — canonical creation delegation', () => {
@@ -295,6 +302,57 @@ describe('session.fork replay branch — canonical creation delegation', () => {
     });
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'sess_child' });
+  });
+
+  // The caller's `requestId` is the identity of ONE fork attempt, and it is the
+  // only part of the request that outlives this process. Deriving the creation
+  // tag from it is what makes a retry idempotent ACROSS a daemon restart: the
+  // server's tag-keyed get-or-create rejoins the row the first attempt made
+  // rather than committing a second child. A tag minted from a fresh UUID makes
+  // every retry a new Session, and an in-process result cache cannot help once
+  // the process is gone.
+  it('derives the creation identity from the caller attempt id so a retry rejoins one row', async () => {
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const handler = registerForkHandler(spawnSession);
+    const request = {
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      requestId: 'attempt-7',
+    };
+
+    await expect(handler(request)).resolves.toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    await expect(handler(request)).resolves.toMatchObject({ ok: true, childSessionId: 'sess_child' });
+
+    const tags = getOrCreateSessionByTag.mock.calls.map((call) => (call[0] as { tag: string }).tag);
+    expect(tags).toHaveLength(2);
+    expect(tags[0]).toContain('attempt-7');
+    expect(tags[1]).toBe(tags[0]);
+  });
+
+  it('re-attempts a failed fork instead of replaying the failure to the caller', async () => {
+    const spawnSession = vi.fn()
+      .mockResolvedValueOnce({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'machine hiccup',
+      })
+      .mockResolvedValue({ type: 'success', sessionId: 'sess_child' });
+    const handler = registerForkHandler(spawnSession);
+    const request = {
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      requestId: 'attempt-8',
+    };
+
+    await expect(handler(request)).resolves.toMatchObject({ ok: false });
+
+    // Retry is the user's only recovery. A cached failure makes the button inert
+    // for as long as the entry lives, with nothing on screen saying so.
+    await expect(handler(request)).resolves.toMatchObject({ ok: true, childSessionId: 'sess_child' });
   });
 
   it('creates no child when the source seed cannot be resolved', async () => {

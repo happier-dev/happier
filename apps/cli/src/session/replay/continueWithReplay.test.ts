@@ -75,6 +75,13 @@ function primeSourceTranscript(): void {
   ]);
 }
 
+/**
+ * What `POST /v1/sessions` actually answers with: the row carrying the exact
+ * creation metadata this call just posted, lineage envelopes included. The
+ * creator authenticates the returned row against the requested source recipe, so
+ * a fixture that dropped those envelopes would be testing a shape the server
+ * never produces.
+ */
 function createdChildRow(): Record<string, unknown> {
   return {
     id: 'sess_child',
@@ -84,7 +91,22 @@ function createdChildRow(): Record<string, unknown> {
     active: false,
     activeAt: 0,
     encryptionMode: 'plain',
-    metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+    metadata: JSON.stringify({
+      path: '/repo',
+      flavor: 'claude',
+      forkV1: {
+        v: 1,
+        parentSessionId: 'sess_prev',
+        parentCutoffSeqInclusive: SOURCE_SESSION_SEQ,
+        strategy: 'replay',
+      },
+      replaySeedV1: {
+        v: 1,
+        seedText: 'seed text',
+        sourceSessionId: 'sess_prev',
+        sourceCutoffSeqInclusive: SOURCE_SESSION_SEQ,
+      },
+    }),
     metadataVersion: 0,
     agentState: null,
     agentStateVersion: 0,

@@ -31,7 +31,6 @@ import {
   SessionMcpSelectionV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   SessionSpawnSourceContextV1Schema,
-  AsyncTtlCache,
   type ConnectedServiceBindingsV1,
   type SessionForkRpcResult,
   type SessionSpawnSourceContextV1,
@@ -131,16 +130,18 @@ import {
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 
-// Fork requests are idempotent per caller-supplied requestId: transport-level
-// retries (machine RPC ack timeouts) must join the in-flight fork instead of
-// committing a second provider-side fork. Results are cached briefly so a
-// late retry replays the same outcome.
-const SESSION_FORK_RESULT_SUCCESS_TTL_MS = 10 * 60_000;
-const SESSION_FORK_RESULT_FAILURE_TTL_MS = 60_000;
-const sessionForkRequestCache = new AsyncTtlCache<SessionForkRpcResult>({
-  successTtlMs: SESSION_FORK_RESULT_SUCCESS_TTL_MS,
-  errorTtlMs: SESSION_FORK_RESULT_FAILURE_TTL_MS,
-});
+// Fork requests are idempotent per caller-supplied requestId: a transport-level
+// retry (machine RPC ack timeout) joins the fork already running instead of
+// committing a second provider-side fork.
+//
+// Only the IN-FLIGHT work is held here. Idempotency for a retry that arrives
+// after the first attempt finished — including one that arrives after this
+// daemon restarted — is owned durably by the creation tag: the attempt id is
+// what the tag is derived from, and the server's tag-keyed get-or-create rejoins
+// the row the first attempt made. A process-local result cache could not answer
+// that at all, and caching a FAILURE additionally made Retry inert for as long
+// as the entry lived, with nothing on screen saying so.
+const inFlightSessionForks = new Map<string, Promise<SessionForkRpcResult>>();
 
 
 function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly<{
@@ -1203,7 +1204,17 @@ export function registerMachineRpcHandlers(params: Readonly<{
     // fork-specific nonce to guarantee unique spawn keys without leaking extra env vars to the child.
     // The nonce is also per-strategy: spawnSession is idempotent by nonce, so a later strategy reusing
     // an earlier strategy's nonce would ack that earlier spawn instead of spawning its own child.
-    const baseSpawnNonce = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${forkRequestId || randomUUID()}`;
+    //
+    // With a caller attempt id this identity is DURABLE — the same request yields
+    // the same value in a later process — so it is what both the spawn nonce and
+    // the creation tag are built from. The cutoff is deliberately left out of it:
+    // a `latest` retry can resolve a different head, and that must still be the
+    // same attempt rather than a second child. Callers with no attempt identity
+    // keep the content-plus-uuid form, which is per-attempt by construction.
+    const forkAttemptIdentity = forkRequestId
+      ? `fork:${parentSessionId}:${forkRequestId}`
+      : `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
+    const baseSpawnNonce = forkAttemptIdentity;
 
     // Compensation for an ACCEPTED (pending) fork spawn whose resolution failed:
     // the child process may still register a session later; clean it up in the
@@ -1527,8 +1538,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    // The fork ingress keeps its own per-attempt tag and its `:replay` spawn nonce.
-    const creationTag = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
+    // The row tag IS the attempt identity, not a separate random one. Diverging
+    // the two meant a retry acked the first attempt's spawn by nonce while asking
+    // the server for a brand-new row under a fresh tag.
+    const creationTag = forkAttemptIdentity;
 
     let childSessionId: string;
     try {
@@ -1604,17 +1617,18 @@ export function registerMachineRpcHandlers(params: Readonly<{
       return await executeSessionFork();
     }
     const forkRequestKey = `${parsed.data.parentSessionId}:${forkRequestId}`;
-    return await sessionForkRequestCache.runDedupe(forkRequestKey, async () => {
-      const cached = sessionForkRequestCache.get(forkRequestKey);
-      if (cached?.kind === 'success' && sessionForkRequestCache.isFresh(cached)) {
-        return cached.value;
+    const running = inFlightSessionForks.get(forkRequestKey);
+    if (running) return await running;
+
+    const forkPromise = executeSessionFork();
+    inFlightSessionForks.set(forkRequestKey, forkPromise);
+    try {
+      return await forkPromise;
+    } finally {
+      if (inFlightSessionForks.get(forkRequestKey) === forkPromise) {
+        inFlightSessionForks.delete(forkRequestKey);
       }
-      const result = await executeSessionFork();
-      sessionForkRequestCache.setSuccess(forkRequestKey, result, {
-        ttlMs: result.ok === true ? SESSION_FORK_RESULT_SUCCESS_TTL_MS : SESSION_FORK_RESULT_FAILURE_TTL_MS,
-      });
-      return result;
-    });
+    }
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {

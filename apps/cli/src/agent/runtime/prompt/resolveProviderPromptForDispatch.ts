@@ -176,10 +176,18 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
         ? (fittedSeedText ? `${fittedSeedText}\n\n${params.userText}` : params.userText)
         : seedResolution.providerPrompt;
 
+    // Applied means DELIVERED. When the reservation leaves no room the fit yields
+    // nothing and the provider receives only the user's text, so reporting the
+    // seed as applied would let every backend's settle branch retire it — and
+    // retiring blanks `seedText`, destroying the whole replay context for a
+    // prompt that carried none of it. Undelivered is unsettled: the seed stays
+    // for the next dispatch, which may well have room.
+    const seedDelivered = seedResolution.seedApplied && fittedSeedText.length > 0;
+
     return {
         providerPrompt: `${promptBody}\n\n${sessionReferenceBlock}`,
         meta,
-        seedApplied: seedResolution.seedApplied,
+        seedApplied: seedDelivered,
         seedText: fittedSeedText || seedResolution.seedText,
         settleReplaySeedOnProviderAcceptance: seedResolution.settleReplaySeedOnProviderAcceptance,
     };

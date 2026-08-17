@@ -570,6 +570,65 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
     expect(result?.dialog).toEqual([]);
   });
 
+  /**
+   * A hole in the middle of the conversation is invisible: every unreadable row
+   * is skipped with `continue` and the surviving dialog looks complete. The
+   * hydrator is where the row-level count and the segment-level failure become
+   * ONE fact the seed can state honestly.
+   */
+  it('reports the replay as incomplete when an examined row could not be read', async () => {
+    const result = await hydrateAgainst((url, res) => {
+      if (/^\/v2\/sessions\/sess_empty_source$/u.test(url.pathname)) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ session: EMPTY_SOURCE_SESSION }));
+        return;
+      }
+      if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          messages: [
+            { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'readable' } } } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: 'bm90LWRlY3J5cHRhYmxl' } },
+          ],
+        }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    expect(result?.dialog.map((item) => item.text)).toEqual(['readable']);
+    expect(result?.historyIncomplete).toBe(true);
+  });
+
+  it('does not report incompleteness when every examined row was read', async () => {
+    const result = await hydrateAgainst((url, res) => {
+      if (/^\/v2\/sessions\/sess_empty_source$/u.test(url.pathname)) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ session: EMPTY_SOURCE_SESSION }));
+        return;
+      }
+      if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          messages: [
+            { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'readable' } } } },
+          ],
+        }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    expect(result?.dialog.map((item) => item.text)).toEqual(['readable']);
+    expect(result?.historyIncomplete).toBe(false);
+  });
+
   it('still reports a failed transcript retrieval as a failed hydration', async () => {
     // Control: the same empty result must NOT be produced when the transcript
     // page could not be read at all.

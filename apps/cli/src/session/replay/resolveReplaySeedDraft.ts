@@ -1,5 +1,10 @@
-import { buildHappierReplayPromptFromDialog, type HappierReplayStrategy, type HappierReplayDialogItem } from '@happier-dev/agents';
-import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import {
+  buildHappierReplayPromptFromDialog,
+  type HappierReplayContinuity,
+  type HappierReplayStrategy,
+  type HappierReplayDialogItem,
+} from '@happier-dev/agents';
+import type { LlmTaskRunnerConfigV1, SessionWorkStateV1 } from '@happier-dev/protocol';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
@@ -10,9 +15,26 @@ import { hydrateVoiceReplayDialogFromTranscript } from './hydrateVoiceReplayDial
 import { runReplaySummaryForDialog } from './summary/runReplaySummaryForDialog';
 
 export type ReplaySeedSource =
+  /** A different Session really is this seed's predecessor: fork, sourceContext, continue-with-replay. */
   | Readonly<{
       kind: 'fork_chain';
       previousSessionId: string;
+      upToSeqInclusive?: number;
+    }>
+  /**
+   * The in-place Agent transition: the seed is built from THIS Session's own
+   * history because only the Agent running it changed.
+   *
+   * It is a source kind rather than a flag beside `fork_chain` so the framing
+   * and the Session it is built from cannot disagree — the transition used to
+   * pass its own Session as `previousSessionId`, and the seed then told the
+   * target Agent it was continuing from a previous Session with that Session's
+   * own id printed as its predecessor. Retrieval is identical: the same
+   * fork-chain walk, from the same starting Session.
+   */
+  | Readonly<{
+      kind: 'same_session_agent_change';
+      sessionId: string;
       upToSeqInclusive?: number;
     }>
   | Readonly<{
@@ -20,6 +42,11 @@ export type ReplaySeedSource =
       previousSessionId: string;
       transcriptEpoch: number;
     }>;
+
+/** The Session whose history this seed replays, whatever the source kind calls it. */
+function readSourceSessionId(source: ReplaySeedSource): string {
+  return source.kind === 'same_session_agent_change' ? source.sessionId : source.previousSessionId;
+}
 
 /**
  * "There is nothing to replay" and "the bounded retrieval failed" are different
@@ -58,16 +85,23 @@ export async function resolveReplaySeedDraft(params: Readonly<{
   maxSeedChars: number;
   candidateLimit: number;
   maxTextChars?: number;
+  /**
+   * The departing Agent's work state, for the same-Session Agent transition whose cutover clears
+   * the field (section 8). A replay-seeded NEW Session has no departing Agent and passes nothing.
+   * The framing owner beneath bounds and escapes it inside the same total cap as the transcript.
+   */
+  workState?: SessionWorkStateV1 | null;
   summaryRunner?: LlmTaskRunnerConfigV1 | null;
   deps?: Readonly<{
     runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   }>;
 }>): Promise<ReplaySeedDraftResolution> {
+  const sourceSessionId = readSourceSessionId(params.source);
   const hydrated =
-    params.source.kind === 'fork_chain'
+    params.source.kind !== 'voice_session.v1'
       ? await hydrateReplayDialogFromForkChain({
           credentials: params.credentials,
-          startingSessionId: params.source.previousSessionId,
+          startingSessionId: sourceSessionId,
           limit: params.candidateLimit,
           maxTextChars: params.maxTextChars,
           wantSynopsisText: params.strategy === 'summary_plus_recent',
@@ -99,7 +133,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
       try {
         const generated = await (params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog)({
           cwd: params.cwd,
-          parentSessionId: params.source.previousSessionId,
+          parentSessionId: sourceSessionId,
           runner: params.summaryRunner,
           dialog: hydrated.dialog,
         });
@@ -116,13 +150,23 @@ export async function resolveReplaySeedDraft(params: Readonly<{
   const effectiveStrategy: HappierReplayStrategy =
     params.strategy === 'summary_plus_recent' && summaryText ? 'summary_plus_recent' : 'recent_messages';
 
+  const continuity: HappierReplayContinuity =
+    params.source.kind === 'same_session_agent_change' ? 'same_session_agent_change' : 'previous_session';
+
   const seedDraft = buildHappierReplayPromptFromDialog({
-    previousSessionId: params.source.previousSessionId,
+    previousSessionId: sourceSessionId,
+    continuity,
     strategy: effectiveStrategy,
     recentMessagesCount: params.recentMessagesCount,
     summaryText,
     dialog: hydrated.dialog,
+    workState: params.workState ?? null,
     maxPromptChars: params.maxSeedChars,
+    // The retrieval owner is the only one that can see a hole; carrying the fact
+    // here is what stops the seed from presenting partial history as the whole
+    // conversation. A retrieval that cannot report it says nothing rather than
+    // claiming completeness it never established.
+    historyIncomplete: (hydrated as { historyIncomplete?: boolean }).historyIncomplete === true,
   }).trim();
 
   // Retrieval succeeded; the rows simply carry nothing replayable. Nothing

@@ -232,8 +232,8 @@ export function replaySeedSourceRecipeConflicts(
  * The row is committed here from the already-resolved recipe, the launched
  * runner attaches to it through `existingSessionId`, and one orphan settlement
  * covers a launch failure. This tree's `getOrCreateSessionByTag` returns no
- * `created` flag, so the source-recipe check runs unconditionally against the
- * returned row — correct for both the create and the rejoin outcome.
+ * `created` flag, so the returned row must prove the requested source lineage
+ * itself — correct for both the create and the rejoin outcome.
  */
 async function createReplaySeededSpawnedSession(args: Readonly<{
   params: CreateSpawnedSessionParams;
@@ -268,34 +268,33 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     );
   }
 
-  // A reused creation identity must name the same immutable source recipe.
+  // A creation identity must be answered by a row that PROVES the requested
+  // lineage — positive evidence, not merely the absence of a contradiction.
   //
-  // This tree's `getOrCreateSessionByTag` returns no `created` flag, so the
-  // check runs unconditionally against the returned row — correct for both the
-  // create and the rejoin outcome. The row's own bytes supply the one signal
-  // that does distinguish them safely: a row this call just created always
-  // carries metadata this daemon can decode, because it just encoded it. Stored
-  // bytes we cannot decode therefore mean a pre-existing row whose lineage
-  // cannot be authenticated, and attaching a runner to it would silently seed
-  // the caller's continuation from an unverified source. Fail closed.
+  // This tree's `getOrCreateSessionByTag` returns no `created` flag, so the row
+  // this call gets back may be one it never created, and the check runs
+  // unconditionally. That is why absence is not innocent: a row whose metadata
+  // will not decode, or that carries no source recipe at all, contradicts
+  // nothing — the recipe reader returns null and the conflict check answers
+  // `false` for want of anything to compare — and the caller's seed and runner
+  // would then attach to a Session this call never authenticated.
   //
-  // Absent metadata bytes are a different case: nothing to contradict, so the
-  // recipe check simply finds no conflict evidence and creation proceeds.
+  // The create outcome pays nothing for this: a row this call just created
+  // always carries the recipe it just encoded, so it always proves its own
+  // lineage. Consumption keeps these fields (it blanks `seedText` and spreads
+  // the rest), so an exact retry after the child has already run still rejoins.
   const ownerMetadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: session });
-  const hasStoredMetadataBytes =
-    typeof (session as { metadata?: unknown } | null)?.metadata === 'string'
-    && String((session as { metadata: string }).metadata).trim().length > 0;
-  if (ownerMetadata === null && hasStoredMetadataBytes) {
+  const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(
+    ownerMetadata as Readonly<Record<string, unknown>> | null,
+  );
+  if (persistedSourceRecipe === null) {
     throw createCodedError(
-      'Existing Session metadata could not be authenticated against the requested source recipe',
+      'Existing Session creation candidate could not be authenticated',
       'creation_conflict',
       { sessionId },
     );
   }
-  if (replaySeedSourceRecipeConflicts(
-    readPersistedReplaySeedSourceRecipe(ownerMetadata as Readonly<Record<string, unknown>> | null),
-    replaySeededCreation.sourceRecipe,
-  )) {
+  if (replaySeedSourceRecipeConflicts(persistedSourceRecipe, replaySeededCreation.sourceRecipe)) {
     throw createCodedError(
       'Existing Session was created from a different source recipe',
       'creation_conflict',

@@ -175,6 +175,26 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
   };
 });
 
+/**
+ * What `POST /v1/sessions` answers with: the row carrying the exact creation
+ * metadata the caller just posted, lineage envelopes included. Echoing it keeps
+ * the fixture honest — the canonical creator authenticates the returned row
+ * against the requested source recipe, and a row that dropped those envelopes is
+ * a shape the server never produces.
+ */
+function echoCreatedSessionRow(
+  response: Readonly<{ status: number; data: { session: Record<string, unknown> } }>,
+) {
+  return async (_url: unknown, body?: unknown) => {
+    const posted = (body as { metadata?: unknown } | undefined)?.metadata;
+    if (typeof posted !== 'string') return response;
+    return {
+      ...response,
+      data: { ...response.data, session: { ...response.data.session, metadata: posted } },
+    };
+  };
+}
+
 describe('registerMachineRpcHandlers', () => {
   beforeEach(() => {
     // Many tests spy on axios.get; restore between tests so mockResolvedValueOnce
@@ -1730,7 +1750,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -1748,7 +1768,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     updateSessionMetadataWithRetryMock.mockClear();
 
@@ -1870,7 +1890,7 @@ describe('registerMachineRpcHandlers', () => {
       } as any);
 
     postSpy
-      .mockResolvedValueOnce({
+      .mockImplementationOnce(echoCreatedSessionRow({
         status: 200,
         data: {
           session: {
@@ -1888,7 +1908,7 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      } as any)
+      }) as any)
       .mockResolvedValueOnce({ status: 200, data: { success: true, archivedAt: 11 } } as any);
 
     const result = await handler!({
@@ -2140,7 +2160,7 @@ describe('registerMachineRpcHandlers', () => {
         data: { messages },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -2158,7 +2178,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       directory: '/repo',
@@ -2263,7 +2283,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -2281,7 +2301,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     try {
       const result = await handler!({
@@ -2605,7 +2625,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -2623,7 +2643,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -2766,7 +2786,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -2784,7 +2804,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     updateSessionMetadataWithRetryMock.mockClear();
 
@@ -2924,7 +2944,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -2942,7 +2962,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -3177,7 +3197,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -3195,7 +3215,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -3300,7 +3320,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -3318,7 +3338,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       directory: '/repo',
@@ -3441,7 +3461,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -3459,7 +3479,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -3584,7 +3604,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -3602,7 +3622,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -4237,7 +4257,7 @@ describe('registerMachineRpcHandlers', () => {
           ],
         },
       } as any);
-    vi.spyOn(axios, 'post').mockResolvedValueOnce({
+    vi.spyOn(axios, 'post').mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -4255,7 +4275,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const authError = {
       name: 'HttpStatusError',
@@ -4625,7 +4645,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -4643,7 +4663,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -4812,7 +4832,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -4830,7 +4850,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     updateSessionMetadataWithRetryMock.mockClear();
 
@@ -6436,7 +6456,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -6454,7 +6474,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     updateSessionMetadataWithRetryMock.mockClear();
 
@@ -6616,7 +6636,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -6634,7 +6654,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     const result = await handler!({
       v: 1,
@@ -6775,7 +6795,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    postSpy.mockResolvedValueOnce({
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
       status: 200,
       data: {
         session: {
@@ -6793,7 +6813,7 @@ describe('registerMachineRpcHandlers', () => {
           dataEncryptionKey: null,
         },
       },
-    } as any);
+    }) as any);
 
     updateSessionMetadataWithRetryMock.mockClear();
 

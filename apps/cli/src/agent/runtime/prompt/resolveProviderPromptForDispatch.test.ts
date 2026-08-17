@@ -7,11 +7,13 @@ import {
     buildMentionRefForKindV1,
 } from '@happier-dev/protocol';
 
+import { buildHappierReplayPromptFromDialog } from '@happier-dev/agents';
+
 import {
     ResolvedMentionContextTooLargeError,
     resolveProviderPromptForDispatch,
 } from './resolveProviderPromptForDispatch';
-import { configuration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 
 /**
  * D-27's total bound, at the one prompt-finalization owner.
@@ -188,7 +190,21 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
         // here. Without one shared total the prompt exceeds the configured seed cap by up to
         // the reference bound every time a replayed session carries an @session mention.
         const { session } = createSession({ withPendingSeed: true });
-        const oversizedSeed = 'S'.repeat(configuration.replaySeedMaxChars);
+        // A REAL sealed seed at the configured cap. A synthetic run of characters
+        // would not exercise the fit at all: the fit gives way through the seed's
+        // own frame/transcript/footer grammar, which only the builder emits.
+        const oversizedSeed = buildHappierReplayPromptFromDialog({
+            previousSessionId: 'sess-source-1',
+            strategy: 'recent_messages',
+            recentMessagesCount: 500,
+            dialog: Array.from({ length: 200 }, (_unused, index) => ({
+                role: index % 2 === 0 ? ('User' as const) : ('Assistant' as const),
+                createdAt: index,
+                text: 'T'.repeat(2_000),
+            })),
+            maxPromptChars: configuration.replaySeedMaxChars,
+        }).trim();
+        expect(oversizedSeed.length).toBeGreaterThan(configuration.replaySeedMaxChars - 3_000);
         session.getMetadataSnapshot = () => ({
             replaySeedV1: {
                 v: 1,
@@ -218,6 +234,57 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
         expect(brief.length).toBeLessThanOrEqual(configuration.replaySeedMaxChars);
         // The loss is stated, never silent.
         expect(resolution.providerPrompt).toContain('omitted to fit the replay budget');
+    });
+
+    // Settling a seed destroys it — the consume updater blanks `seedText`. So the
+    // one outcome that must never happen is retiring a seed the provider never
+    // received. When the reference block's reservation leaves no room at all, the
+    // fit yields nothing and the prompt is the user's own text; reporting
+    // `seedApplied` there would let every backend's settle branch erase the whole
+    // replay context for a prompt that carried none of it.
+    it('reports no applied seed when the fit leaves no room to deliver any of it', async () => {
+        const previousMaxSeedChars = process.env.HAPPIER_REPLAY_MAX_SEED_CHARS;
+        // The smallest supported cap, so the reference block alone reserves the
+        // whole budget without building a 120k-character block.
+        process.env.HAPPIER_REPLAY_MAX_SEED_CHARS = '500';
+        reloadConfiguration();
+        try {
+            const { session } = createSession({ withPendingSeed: true });
+            session.getMetadataSnapshot = () => ({
+                replaySeedV1: {
+                    v: 1,
+                    seedText: 'S'.repeat(configuration.replaySeedMaxChars),
+                    sourceSessionId: 'sess-source-1',
+                    sourceCutoffSeqInclusive: 7,
+                    createdAtMs: 500,
+                },
+            });
+
+            const resolution = await resolveProviderPromptForDispatch({
+                session,
+                userText: 'do the thing',
+                allowSeed: true,
+                localId: 'local-1',
+                nowMs: 1_000,
+                refreshMetadataBeforeRead: false,
+                meta: metaWith([SESSION_MENTION]),
+            });
+
+            // Control: this is the no-room case, not an ordinary clip — the block
+            // survives whole and not one character of the seed was delivered.
+            expect(resolution.providerPrompt).toContain('<happier_session_reference>');
+            expect(resolution.providerPrompt).toContain('do the thing');
+            expect(resolution.providerPrompt).not.toContain('SSSSSSSSSS');
+
+            expect(resolution.seedApplied).toBe(false);
+        } finally {
+            if (previousMaxSeedChars === undefined) {
+                delete process.env.HAPPIER_REPLAY_MAX_SEED_CHARS;
+            } else {
+                process.env.HAPPIER_REPLAY_MAX_SEED_CHARS = previousMaxSeedChars;
+            }
+            reloadConfiguration();
+        }
     });
 
     it('leaves the reference block whole and does not touch a prompt with no applied seed', async () => {

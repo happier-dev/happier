@@ -145,7 +145,21 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
    * (e.g. replay strategy `summary_plus_recent`).
    */
   wantSynopsisText?: boolean;
-}>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
+}>): Promise<{
+  dialog: HappierReplayDialogItem[];
+  sourceCutoffSeqInclusive: number;
+  synopsisText?: string | null;
+  /**
+   * The chain was read, but not all of it: a segment could not be fetched or
+   * opened, or the decoder examined rows it could not read. The returned dialog
+   * is then a conversation WITH HOLES, and only this owner can say so — every
+   * skip beneath it is a `continue`.
+   *
+   * Distinct from a `null` result: `null` means the retrieval failed and what the
+   * source holds is unknown; this means part of it is known to be missing.
+   */
+  historyIncomplete: boolean;
+} | null> {
   const maxDepth =
     typeof params.maxDepth === 'number' && Number.isFinite(params.maxDepth)
       ? Math.max(1, Math.min(25, Math.floor(params.maxDepth)))
@@ -198,6 +212,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
    * that trivially cannot fail was the one that failed.
    */
   let segmentContentUnavailable = false;
+  let unreadableRowCount = 0;
   let sourceCutoffSeqInclusive = 0;
   let synopsisText: string | null = null;
   const wantSynopsisText = params.wantSynopsisText === true;
@@ -242,6 +257,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     if (encryptionMode === 'plain') {
       const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars, maxDialogItems: params.limit });
       dialogs.push(...slice.dialog);
+      unreadableRowCount += slice.unreadableRowCount;
       const pageSynopsisText = slice.latestSynopsisText;
       if (segment.sessionId === params.startingSessionId) {
         sourceCutoffSeqInclusive = cutoff;
@@ -315,6 +331,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       maxDialogItems: params.limit,
     });
     dialogs.push(...slice.dialog);
+    unreadableRowCount += slice.unreadableRowCount;
     const pageSynopsisText = slice.latestSynopsisText;
     if (segment.sessionId === params.startingSessionId) {
       sourceCutoffSeqInclusive = cutoff;
@@ -373,5 +390,14 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   if (dialogs.length === 0 && segmentContentUnavailable) return null;
   dialogs.sort((a, b) => a.createdAt - b.createdAt);
   const dialog = dialogs.length > params.limit ? dialogs.slice(dialogs.length - params.limit) : dialogs;
-  return { dialog, sourceCutoffSeqInclusive, synopsisText };
+  return {
+    dialog,
+    sourceCutoffSeqInclusive,
+    synopsisText,
+    // ONE incompleteness fact for the whole chain: a segment that could not be
+    // read at all and a row the decoder could not read are the same loss to the
+    // reader of the seed. The count bound below drops OLDEST items to fit and is
+    // marked by the framer, so it is not a hole and is not folded in here.
+    historyIncomplete: segmentContentUnavailable || unreadableRowCount > 0,
+  };
 }

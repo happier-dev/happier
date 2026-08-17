@@ -204,8 +204,46 @@ describe('createSpawnedSession — Replay-seeded creation', () => {
     });
   });
 
-  it('treats absent persisted metadata as absence of conflict evidence', async () => {
+  // POSITIVE lineage, not merely the absence of a contradiction. Creation is
+  // get-or-create, so the returned row may be one this call never created, and a
+  // row that names no source recipe contradicts nothing — the conflict check has
+  // nothing to compare and answers `false`. Proceeding there attaches the
+  // caller's seed and runner to a Session whose lineage was never authenticated.
+  // A row this call DID create always carries the recipe, because this call just
+  // wrote it, so requiring the recipe costs the create path nothing.
+  it('refuses a creation candidate that carries no source recipe at all', async () => {
     getOrCreateSessionByTag.mockResolvedValue({ session: rawSession(null) });
+
+    await expect(createSpawnedSession(replaySeededParams())).rejects.toMatchObject({
+      code: 'creation_conflict',
+    });
+
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+    // Never created here, so never settled here.
+    expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('refuses an ordinary pre-existing Session that happens to answer this tag', async () => {
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: rawSession({ path: '/repo', summary: { text: 'somebody else', updatedAt: 1 } }),
+    });
+
+    await expect(createSpawnedSession(replaySeededParams())).rejects.toMatchObject({
+      code: 'creation_conflict',
+    });
+
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+  });
+
+  it('accepts a rejoin whose persisted recipe names the requested source', async () => {
+    // Consumption blanks `seedText` and keeps the rest, so an exact retry after
+    // the child has already run still rejoins rather than creating a second row.
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: rawSession({
+        ...CANONICAL_METADATA,
+        replaySeedV1: { ...(CANONICAL_METADATA.replaySeedV1 as Record<string, unknown>), seedText: '' },
+      }),
+    });
     spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess_child' });
 
     await expect(createSpawnedSession(replaySeededParams())).resolves.toMatchObject({

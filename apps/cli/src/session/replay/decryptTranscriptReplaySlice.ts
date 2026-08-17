@@ -13,6 +13,11 @@ export function decryptTranscriptReplaySlice(params: Readonly<{
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
   maxDialogItems?: number;
-}>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
+}>): Readonly<{
+  dialog: HappierReplayDialogItem[];
+  latestSynopsisText: string | null;
+  /** Examined rows the decoder could not read; see `decryptTranscriptReplayCore`. */
+  unreadableRowCount: number;
+}> {
   return decryptTranscriptReplayCore(params);
 }

@@ -393,6 +393,7 @@ export {
 export {
   buildHappierReplayPromptFromDialog,
   fitHappierReplaySeedWithinTotalBudget,
+  type HappierReplayContinuity,
   type HappierReplayDialogItem,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';

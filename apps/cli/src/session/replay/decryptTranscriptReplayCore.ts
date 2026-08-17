@@ -63,10 +63,26 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
   maxDialogItems?: number;
-}>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
+}>): Readonly<{
+  dialog: HappierReplayDialogItem[];
+  latestSynopsisText: string | null;
+  /**
+   * Examined rows this decoder could not read at all — malformed envelopes and
+   * ciphertext it has no key for.
+   *
+   * Every skip in the loop below is a `continue`, so without this count the
+   * caller cannot tell "the source carries nothing more" from "part of the
+   * conversation is missing", and the seed ends up presenting a conversation
+   * with holes in it as the whole conversation. Rows that decoded fine but carry
+   * nothing replayable — events, reasoning, empty turns — are READ, not missing,
+   * and are not counted.
+   */
+  unreadableRowCount: number;
+}> {
   const maxDialogItems = normalizePositiveInt(params.maxDialogItems, 200, { min: 1, max: 10_000 });
   const out: Array<{ role: 'User' | 'Assistant'; createdAt: number; seq: number | null; text: string }> = [];
   let bestSynopsis: { synopsis: string; updatedAtMs: number; seqTo: number } | null = null;
+  let unreadableRowCount = 0;
 
   for (let index = 0; index < (params.rows ?? []).length; index += 1) {
     const row = params.rows[index]!;
@@ -107,7 +123,12 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         },
       });
       const item = extracted.item;
-      if (!item) continue;
+      if (!item) {
+        // Nothing came out AND the payload never resolved: the row could not be
+        // read, rather than read and found ineligible.
+        if (!decryptedValue || typeof decryptedValue !== 'object') unreadableRowCount += 1;
+        continue;
+      }
       const rawText = item.text ?? item.summary;
       if (!rawText) continue;
       out.push({
@@ -117,6 +138,8 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         text: truncateReplayText(rawText, params.maxTextChars),
       });
     } catch {
+      // Tolerate corrupted rows, and record that the replay cannot claim to be complete.
+      unreadableRowCount += 1;
       continue;
     }
   }
@@ -130,5 +153,6 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   return {
     dialog: bounded.map(({ seq: _seq, ...rest }) => rest),
     latestSynopsisText: bestSynopsis?.synopsis ?? null,
+    unreadableRowCount,
   };
 }
