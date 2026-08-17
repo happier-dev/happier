@@ -346,6 +346,21 @@ interface AgentInputProps {
     onAgentClick?: () => void;
     agentPickerTitle?: string;
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
+    /**
+     * Extends the composer's own current-Agent rows with more of the Agent catalog,
+     * for surfaces that offer other Agents alongside the running one. It receives
+     * the rows this composer built and returns the complete list. `agentPickerOptions`
+     * still replaces the list outright when a caller owns the whole projection.
+     */
+    composeAgentPickerOptions?: (
+        currentAgentOptions: ReadonlyArray<AgentInputChipPickerOption>,
+    ) => ReadonlyArray<AgentInputChipPickerOption>;
+    /**
+     * The Agent picker opened or closed. Lets a caller defer work that is only
+     * worth doing once the user is actually choosing an Agent — a live capability
+     * probe, for instance — instead of on every composer mount.
+     */
+    onAgentPickerVisibilityChange?: (visible: boolean) => void;
     agentPickerSelectedOptionId?: string | null;
     onAgentPickerSelect?: (id: string) => void;
     agentPickerApplyLabel?: string;
@@ -361,6 +376,14 @@ interface AgentInputProps {
     resumePopover?: AgentInputContentPopoverConfig;
     resumeIsChecking?: boolean;
     isSendDisabled?: boolean;
+    /**
+     * The Agent the in-session picker has armed for the next message, or null.
+     *
+     * The composer does not act on it — the session's send owner does — but the
+     * send control names it, because pressing send with a target armed continues
+     * this Session with that Agent rather than the one running now.
+     */
+    armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
     isSending?: boolean;
     disabled?: boolean;
     minHeight?: number;
@@ -1990,6 +2013,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         };
     }, [effectiveModelPolicy.appliedModelId, modelOptions, props.sessionActive]);
 
+    // One line under the section label: what is running, and when a change to it
+    // takes effect. Anything a provider adds beyond that stays a note, so the
+    // ordinary case is a label, a line and the models — never a paragraph.
+    const modelApplyTiming = React.useMemo(() => (
+        effectiveModelPolicy.applyScope === 'spawn_only'
+            ? t('agentInput.model.applyTimingNewSession')
+            : t('agentInput.model.applyTimingNextMessage')
+    ), [effectiveModelPolicy.applyScope]);
+
     const modelNotes = React.useMemo(() => {
         if (props.sessionActive === false) {
             return [t('agentInput.model.selectedForResume')];
@@ -2239,7 +2271,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ...(option.modelOptions ? { modelOptions: option.modelOptions } : {}),
             }))}
             selectedModelId={effectiveModelPolicy.selectedModelId}
-            modelSummary={appliedModelPresentation?.summary}
+            modelSummary={appliedModelPresentation?.summary
+                ? `${appliedModelPresentation.summary} · ${modelApplyTiming}`
+                : modelApplyTiming}
             modelNotes={modelNotes}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
@@ -2287,25 +2321,33 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
+    const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
+        props.agentType
+            ? {
+                id: `engine:${props.agentType}`,
+                label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                icon: (
+                    <AgentIcon
+                        agentId={props.agentType}
+                        size={12}
+                        style={{ transform: [{ scale: getAgentPickerIconScale(props.agentType) }] }}
+                    />
+                ),
+            }
+            : null
+    ), [props.agentLabel, props.agentType]);
+
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
-        if (!hasInternalAgentPickerOptions || !props.agentType) return [];
+        if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];
         return [{
-            id: `engine:${props.agentType}`,
-            label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
-            icon: (
-                <AgentIcon
-                    agentId={props.agentType}
-                    size={12}
-                    style={{ transform: [{ scale: getAgentPickerIconScale(props.agentType) }] }}
-                />
-            ),
+            ...currentAgentPickerRow,
             deferRenderDetailContent: true,
             deferredDetailContentCacheKey: `session-engine:${props.agentType}`,
             renderDetailContent: () => renderResolvedEngineDetail('carded'),
         }];
     }, [
+        currentAgentPickerRow,
         hasInternalAgentPickerOptions,
-        props.agentLabel,
         props.agentType,
         renderResolvedEngineDetail,
     ]);
@@ -2314,8 +2356,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if ((props.agentPickerOptions?.length ?? 0) > 0) {
             return props.agentPickerOptions ?? [];
         }
-        return internalAgentPickerOptions;
-    }, [internalAgentPickerOptions, props.agentPickerOptions]);
+        const composeAgentPickerOptions = props.composeAgentPickerOptions;
+        if (!composeAgentPickerOptions) {
+            return internalAgentPickerOptions;
+        }
+        // With nothing of its own to configure, the running Agent is still worth naming —
+        // but only once a caller has actually contributed another Agent to choose between.
+        // Otherwise a lone, inert row would open a picker that offers no decision.
+        const ownsCurrentAgentDetail = internalAgentPickerOptions.length > 0;
+        const currentAgentOptions = ownsCurrentAgentDetail
+            ? internalAgentPickerOptions
+            : (currentAgentPickerRow ? [currentAgentPickerRow] : []);
+        const composed = composeAgentPickerOptions(currentAgentOptions);
+        if (!ownsCurrentAgentDetail && composed.length <= currentAgentOptions.length) {
+            return [];
+        }
+        return composed;
+    }, [
+        currentAgentPickerRow,
+        internalAgentPickerOptions,
+        props.agentPickerOptions,
+        props.composeAgentPickerOptions,
+    ]);
 
     const effectiveAgentPickerSelectedOptionId = React.useMemo(() => {
         if (typeof props.agentPickerSelectedOptionId === 'string' && props.agentPickerSelectedOptionId.length > 0) {
@@ -2402,6 +2464,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         activeExtraCollapsedPopoverChip,
         closeSelectionOverlay,
     });
+
+    const onAgentPickerVisibilityChange = props.onAgentPickerVisibilityChange;
+    React.useEffect(() => {
+        onAgentPickerVisibilityChange?.(showAgentPicker);
+    }, [onAgentPickerVisibilityChange, showAgentPicker]);
 
     const effectivePermissionLabel = React.useMemo(() => {
         return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
@@ -3072,6 +3139,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         canStop={canStopFromComposer}
                         micPressHandler={micPressHandler}
                         micActive={micActive}
+                        armedContinuationTarget={props.armedContinuationTarget ?? null}
                         onSend={handleSend}
                         onStop={handleAbortPress}
                     />

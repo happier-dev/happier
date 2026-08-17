@@ -63,7 +63,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                             key={option.id}
                             testID={`agent-input-chip-picker.top-selector-option:${option.id}`}
                             accessibilityRole="button"
-                            accessibilityLabel={option.label}
+                            accessibilityLabel={option.accessibilityLabel ?? option.label}
                             accessibilityState={{
                                 selected: props.selectedOptionId === option.id,
                                 disabled,

@@ -94,6 +94,7 @@ import { useNewSessionCheckoutSelectionState } from '@/components/sessions/new/h
 import { useNewSessionProfileEditPersistence } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileEditPersistence';
 import { buildNewSessionScreenVariantModel } from '@/components/sessions/new/hooks/screenModel/buildNewSessionScreenVariantModel';
 import { useNewSessionAgentInputPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputPresentation';
+import { useNewSessionSourceContext } from '@/components/sessions/new/sourceContext/useNewSessionSourceContext';
 import { useNewSessionTranscriptStorageState } from '@/components/sessions/new/hooks/screenModel/useNewSessionTranscriptStorageState';
 import { useNewSessionAgentAuthoringOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentAuthoringOptionsState';
 import { useNewSessionPermissionModeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPermissionModeState';
@@ -346,6 +347,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
     // New-session capability gating should be evaluated in spawn scope (target server),
     // not in main selection scope (which can be a multi-server group).
+    // The continuation recipe rides the same one-shot temp-data channel as every
+    // other rich New Session handoff; removing the chip clears only this value.
+    const sourceContextState = useNewSessionSourceContext({
+        seed: tempSessionData,
+        targetServerId: targetServerId ?? null,
+    });
     const automationsSupport = useAutomationsSupport({ scopeKind: 'spawn', serverId: targetServerId });
     const automationFeatureEnabled = automationsSupport?.enabled === true;
 
@@ -1630,7 +1637,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         authoringContext: newSessionAuthoringContext,
         currentAuthoringDraft,
         effectiveAutomationDraft,
-        canCreate,
+        canCreate: canCreateFromAuthoring,
         buildCurrentPersistedDraft,
         persistDraftIfEnabled,
         disableDraftPersistence,
@@ -1672,6 +1679,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         draftScope,
         launchUserAttemptId,
     });
+
+    // V1 requires the source Session and the target to share a server. Block
+    // submission rather than silently dropping the continuation recipe; the user
+    // can switch back or remove the chip.
+    const canCreate = canCreateFromAuthoring && !sourceContextState.serverMismatch;
 
     const onLaunchUserAttemptIdChange = React.useCallback((nextUserAttemptId: string | null) => {
         const normalized = typeof nextUserAttemptId === 'string' && nextUserAttemptId.trim().length > 0
@@ -1769,6 +1781,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         launchIntentSignature,
         launchUserAttemptId,
         onLaunchUserAttemptIdChange,
+        sourceContext: sourceContextState.sourceContext,
     });
 
     const {
@@ -1808,6 +1821,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         targetServerId,
         targetServerName,
         mcpChip,
+        sourceContextChip: sourceContextState.chip,
         directSessionsFeatureEnabled,
         supportsDirectTranscriptStorage,
         transcriptStorage,

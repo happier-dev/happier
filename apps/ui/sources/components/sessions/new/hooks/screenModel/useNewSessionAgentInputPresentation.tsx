@@ -105,6 +105,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     targetServerId: string | null;
     targetServerName: string;
     mcpChip?: AgentInputExtraActionChip | null;
+    /** The removable "continue from this Session" chip, when one is attached. */
+    sourceContextChip?: AgentInputExtraActionChip | null;
     directSessionsFeatureEnabled: boolean;
     supportsDirectTranscriptStorage: boolean;
     transcriptStorage: NewSessionTranscriptStorage;
@@ -242,6 +244,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         targetServerId: params.targetServerId,
         targetServerName: params.targetServerName,
         mcpChip: params.mcpChip,
+        sourceContextChip: params.sourceContextChip,
         directSessionsFeatureEnabled: params.directSessionsFeatureEnabled,
         supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,
         transcriptStorage: params.transcriptStorage,

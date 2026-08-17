@@ -273,4 +273,67 @@ describe('AgentInputChipPickerPanel', () => {
 
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('favorites');
     });
+
+    it('lets the focused option name its own apply outcome', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            applyLabel="Use"
+            options={[
+                { id: 'engine:claude', label: 'Claude', detailDescription: 'Current Agent' } as any,
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    detailDescription: 'Another Agent',
+                    applyLabel: 'Continue with Codex',
+                    onApply: () => {},
+                } as any,
+            ]}
+            selectedOptionId="engine:claude"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        // The panel-wide label still applies to a row that does not name its own outcome.
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.applyLabel).toBe('Use');
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:engine:codex');
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.applyLabel)
+            .toBe('Continue with Codex');
+    });
+
+    it('does not apply an option that owns an explicit apply action when it is merely focused', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const onApply = vi.fn();
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'engine:claude', label: 'Claude', detailDescription: 'Current Agent' } as any,
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    detailDescription: 'Another Agent',
+                    applyLabel: 'Continue with Codex',
+                    onApply,
+                } as any,
+            ]}
+            selectedOptionId="engine:claude"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:engine:codex');
+
+        expect(onApply).not.toHaveBeenCalled();
+        expect(onSelect).not.toHaveBeenCalled();
+
+        // `deferAgentInputPopoverClose` uses `setTimeout(0)` on web; nothing should be scheduled.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(onRequestClose).not.toHaveBeenCalled();
+    });
 });

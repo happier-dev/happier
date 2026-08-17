@@ -268,8 +268,8 @@ vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({
   canForkConversation: () => false,
 }));
 
-vi.mock('@/sync/domains/sessionFork/executeSessionForkAction', () => ({
-  executeSessionForkAction: vi.fn(),
+vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
+  openSessionForkStrategyFlow: vi.fn(),
 }));
 
 vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({

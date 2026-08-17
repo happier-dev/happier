@@ -41,10 +41,9 @@ import { AttachmentsMessageRow } from '@/components/sessions/attachments/message
 import { SessionMediaInlineImages } from '@/components/sessions/sessionMedia/SessionMediaInlineImages';
 import { SessionMediaUnavailableItems } from '@/components/sessions/sessionMedia/SessionMediaUnavailableItems';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
-import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
-import { completeSessionForkNavigation } from '@/components/sessions/transcript/forkContext/completeSessionForkNavigation';
+import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
@@ -70,7 +69,6 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
 import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
   resolveTranscriptMarkdownFileLink,
 } from '@/components/sessions/transcript/resolveTranscriptMarkdownFileLink';
@@ -1473,49 +1471,60 @@ function ForkMessageButton(props: {
   const { theme } = useUnistyles();
   const router = useRouter();
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
-  const [isForking, setIsForking] = React.useState(false);
   const hitSlop = Platform.OS === 'web' ? undefined : 15;
   const executionRunsEnabled = props.forkCommon.executionRunsEnabled;
+  const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
   const sessionReplayStrategy = props.forkCommon.sessionReplayStrategy;
   const sessionReplaySummaryRunner = props.forkCommon.sessionReplaySummaryRunnerV1;
   const sessionReplayMaxSeedChars = props.forkCommon.sessionReplayMaxSeedChars;
 
-  const handlePress = React.useCallback(async () => {
-    if (isForking || !props.isForkAllowed()) return;
-    setIsForking(true);
-    try {
-      const reachableMachineTarget = readMachineTargetForSession(props.sessionId);
-      const replaySummaryRunner =
-        executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' && sessionReplaySummaryRunner
-          ? sessionReplaySummaryRunner
-          : undefined;
-      const result = await forkSession({
-        machineId: reachableMachineTarget?.machineId ?? sessionForkSupportSource?.metadata?.machineId,
-        serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
-        parentSessionId: props.sessionId,
-        forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
-        ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
-        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
-      });
-      if (result.ok !== true) {
-        Modal.alert(t('common.error'), result.errorMessage || t('errors.failedToForkSession'));
-        return;
-      }
-      const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
-      await completeSessionForkNavigation({
-        childSessionId: result.childSessionId,
-        parentSessionId: props.sessionId,
-        navigate: (childSessionId) => router.push(`/session/${childSessionId}` as never),
-        restoredDraftText: restored,
-        sourceMessageId: props.messageId,
-        writeForkInitialPrompt: true,
-      });
-    } catch (e) {
-      Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToForkSession'));
-    } finally {
-      setIsForking(false);
-    }
-  }, [executionRunsEnabled, isForking, props.isForkAllowed, props.messageId, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, router, sessionForkSupportSource?.metadata?.machineId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
+  // A launcher only. Choosing Native, Replay or Configure happens before any
+  // fork effect is issued, and the modal — not this button — owns the progress
+  // of the operation it starts.
+  const handlePress = React.useCallback(() => {
+    if (!props.isForkAllowed()) return;
+    const reachableMachineTarget = readMachineTargetForSession(props.sessionId);
+    const serverId = resolveServerIdForSessionIdFromLocalCache(props.sessionId) ?? null;
+    const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
+    openSessionForkStrategyFlow({
+      sessionId: props.sessionId,
+      forkSupportSource: sessionForkSupportSource,
+      serverId,
+      machineId: reachableMachineTarget?.machineId ?? sessionForkSupportSource?.metadata?.machineId ?? null,
+      forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
+      settings: {
+        sessionReplayEnabled,
+        sessionReplayMaxSeedChars,
+        sessionReplayStrategy,
+        sessionReplaySummaryRunnerV1: sessionReplaySummaryRunner,
+      },
+      replayEnabled: sessionReplayEnabled,
+      executionRunsEnabled,
+      restoredDraftText: restored,
+      sourceMessageId: props.messageId,
+      sourcePreview: restored,
+      writeForkInitialPrompt: true,
+      navigateToSession: (childSessionId) => {
+        router.push(`/session/${childSessionId}` as never);
+      },
+      navigateToNewSession: (route) => {
+        router.push(route as any);
+      },
+    });
+  }, [
+    executionRunsEnabled,
+    props.isForkAllowed,
+    props.messageId,
+    props.restoredDraftText,
+    props.sessionId,
+    props.upToSeqInclusive,
+    router,
+    sessionForkSupportSource,
+    sessionReplayEnabled,
+    sessionReplayMaxSeedChars,
+    sessionReplayStrategy,
+    sessionReplaySummaryRunner,
+  ]);
 
   if (!sessionForkSupportSource) return null;
 
@@ -1534,18 +1543,13 @@ function ForkMessageButton(props: {
         props.invertedActionsLayout ? styles.webActionButtonInverted : null,
         props.invertedActionsLayout ? styles.messageActionButtonInvertedSpacing : null,
         pressed && styles.copyMessageButtonPressed,
-        isForking && styles.copyMessageButtonPressed,
       ]}
     >
-      {isForking ? (
-        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-      ) : (
-        <Icon
-          name="git-branch"
-          size={14}
-          color={theme.colors.text.secondary}
-        />
-      )}
+      <Icon
+        name="git-branch"
+        size={14}
+        color={theme.colors.text.secondary}
+      />
     </Pressable>
   );
 }

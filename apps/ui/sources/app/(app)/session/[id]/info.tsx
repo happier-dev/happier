@@ -40,7 +40,7 @@ import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orches
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
-import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
+import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
 import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import {
@@ -459,6 +459,11 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const profiles = Array.isArray(profilesSetting) ? profilesSetting : [];
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
+    // The four fields the fork request's Replay options are derived from, read
+    // narrowly so this screen does not subscribe to the whole settings object.
+    const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
+    const sessionReplayStrategy = useSetting('sessionReplayStrategy');
+    const sessionReplaySummaryRunnerV1 = useSetting('sessionReplaySummaryRunnerV1');
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const { openMoveSheet } = useSessionListMoveSheet();
     const sharingSupported = useSessionSharingSupport();
@@ -817,18 +822,44 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [handleExitAfterSessionMutation, hideInactiveSessions, sessionActionTarget]);
     const [archivingSession, performArchive] = useHappyAction(handleArchive);
 
-    const handleForkAction = useCallback(async () => {
-        const res = await executeSessionForkAction({
-            execute: executor.execute as any,
+    // A launcher only, exactly like the Session header: strategy is chosen
+    // before any fork effect is issued, from every UI entry point.
+    const performFork = useCallback(() => {
+        openSessionForkStrategyFlow({
             sessionId: session.id,
-            context: { defaultSessionId: session.id, surface: 'ui_button', placement: 'session_info' } as any,
+            forkSupportSource: session,
+            serverId: sessionServerId ?? null,
+            machineId: reachableMachineId ?? (typeof session.metadata?.machineId === 'string'
+                ? session.metadata.machineId
+                : null),
+            forkPoint: { type: 'latest' },
+            settings: {
+                sessionReplayEnabled,
+                sessionReplayMaxSeedChars,
+                sessionReplayStrategy,
+                sessionReplaySummaryRunnerV1,
+            },
+            replayEnabled: sessionReplayEnabled,
+            executionRunsEnabled: executionRunsEnabled === true,
+            navigateToSession: (childSessionId) => {
+                router.push(routeScope.buildHref(childSessionId) as any);
+            },
+            navigateToNewSession: (route) => {
+                router.push(route as any);
+            },
         });
-        if (!res.ok) {
-            throw new HappyError(res.error || t('errors.failedToForkSession'), false);
-        }
-    }, [executor.execute, router, session.id]);
-
-    const [forkingSession, performFork] = useHappyAction(handleForkAction);
+    }, [
+        executionRunsEnabled,
+        reachableMachineId,
+        routeScope,
+        router,
+        session,
+        sessionReplayEnabled,
+        sessionReplayMaxSeedChars,
+        sessionReplayStrategy,
+        sessionReplaySummaryRunnerV1,
+        sessionServerId,
+    ]);
 
     const handleNewSessionSameSetup = useCallback(() => {
         const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
@@ -1030,7 +1061,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             subtitle={t('sessionInfo.forkSessionSubtitle')}
                             icon={<Icon name="git-branch" size={29} color={theme.colors.accent.blue} />}
                             onPress={performFork}
-                            loading={forkingSession}
                         />
                     )}
                     <Item

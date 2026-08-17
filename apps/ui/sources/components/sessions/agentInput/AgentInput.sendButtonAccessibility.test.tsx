@@ -15,6 +15,14 @@ const multiTextInputHandleMocks = vi.hoisted(() => ({
 }));
 const useActiveSuggestionsMock = vi.hoisted(() => vi.fn(() => [[], -1, () => {}, () => {}] as const));
 
+// The Agent mark is a rendering boundary that reaches the generated Agent
+// catalog, which this composer harness does not install. Stub it so the send
+// button's own contract — the accessible name, and which glyph it picks — is
+// what the test exercises.
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
+
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -289,6 +297,82 @@ describe('AgentInput (send button accessibility)', () => {
             autocompleteSuggestions,
             expect.objectContaining({ wrapAround: true }),
         );
+
+        await screen.unmount();
+    });
+
+    it('names the armed Agent switch on the control that commits it', async () => {
+        // Pressing send with a target armed does not only send: it stops the
+        // current runtime and continues this Session with that Agent. The words
+        // live on the send control, at the moment of consequence, and they live
+        // there whether or not the Agent's mark is drawn — a glyph reads as
+        // nothing to a screen reader.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        // `t` is stubbed to its key here; the rendered words are asserted against
+        // the real catalog in agentContinuationSubmitPresentation.test.ts.
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+
+        await screen.unmount();
+    });
+
+    it('keeps the ordinary send name when no Agent switch is armed', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('common.send');
+
+        await screen.unmount();
+    });
+
+    it('draws every armed Agent\u2019s own mark, with no per-Agent exception', async () => {
+        // A mixed treatment would silently rank Agents as recognisable or not.
+        // The reader has just seen this exact mark beside the Agent\u2019s name in
+        // the rail, so it is never met cold.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'kimi', label: 'Kimi' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        const marks = send.findAllByType('AgentIcon' as any);
+        expect(marks.map((node) => node.props?.agentId)).toEqual(['kimi']);
+        expect(send.findAllByType('Icon' as any).some((node) => node.props?.name === 'arrow-up'))
+            .toBe(false);
 
         await screen.unmount();
     });

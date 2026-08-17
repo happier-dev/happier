@@ -35,6 +35,7 @@ import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabil
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { CodexBackendMode } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
@@ -234,6 +235,12 @@ export function useCreateNewSession(params: Readonly<{
     launchIntentSignature: string;
     launchUserAttemptId?: string | null;
     onLaunchUserAttemptIdChange?: (userAttemptId: string | null) => void;
+    /**
+     * "Create this Session as a continuation of that one." Required semantics,
+     * not an ignorable hint: it is carried on the spawn options rather than
+     * dropped when the user leaves the chip attached.
+     */
+    sourceContext?: SessionSpawnSourceContextV1 | null;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
 }> {
@@ -715,6 +722,7 @@ export function useCreateNewSession(params: Readonly<{
                         serverId: resolvedTargetServerId,
                         approvedNewDirectoryCreation: true,
                         agentModeUpdatedAt: normalizedAcpModeId ? spawnPermissionModeUpdatedAt : null,
+                        sourceContext: current.sourceContext ?? null,
                     }),
                     ...spawnSessionExtras,
                     spawnNonce: launchAttempt.spawnNonce,

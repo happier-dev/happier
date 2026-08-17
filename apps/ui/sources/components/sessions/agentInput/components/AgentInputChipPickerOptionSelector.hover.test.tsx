@@ -153,7 +153,9 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
             throw new Error("Expected option row to render");
         }
         expect(row.type).toBe("View");
-        expect(row.props.accessibilityRole).toBeUndefined();
+        // The web row is a plain View that behaves as a button, so it has to say
+        // so: without the role, assistive technology reads a group of text.
+        expect(row.props.accessibilityRole).toBe("button");
         expect(row.props.tabIndex).toBe(0);
 
         await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");

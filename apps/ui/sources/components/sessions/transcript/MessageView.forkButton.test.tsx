@@ -10,6 +10,7 @@ import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 const routerPushSpy = vi.fn();
 const forkSessionSpy = vi.fn();
+const openSessionForkStrategyFlowSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
@@ -180,6 +181,10 @@ vi.mock('@/sync/ops', () => ({
   forkSession: (...args: any[]) => forkSessionSpy(...args),
 }));
 
+vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
+  openSessionForkStrategyFlow: (...args: any[]) => openSessionForkStrategyFlowSpy(...args),
+}));
+
 vi.mock('@/sync/sync', () => ({
   sync: {
     submitMessage: vi.fn(),
@@ -247,6 +252,7 @@ describe('MessageView (fork button)', () => {
   beforeEach(() => {
     routerPushSpy.mockReset();
     forkSessionSpy.mockReset();
+    openSessionForkStrategyFlowSpy.mockReset();
     ensureSessionVisibleSpy.mockReset();
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
@@ -311,7 +317,6 @@ describe('MessageView (fork button)', () => {
   });
 
   it('renders fork button left of copy when replay is enabled and message has seq', async () => {
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
     const { MessageView } = await import('./MessageView');
 
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
@@ -322,7 +327,6 @@ describe('MessageView (fork button)', () => {
   });
 
   it('renders fork button for user-text messages (left of copy)', async () => {
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
     const { MessageView } = await import('./MessageView');
 
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
@@ -357,8 +361,7 @@ describe('MessageView (fork button)', () => {
     expect(forkSessionSpy).not.toHaveBeenCalled();
   });
 
-  it('rechecks the current surface grant before a stale mounted fork handler can call the RPC', async () => {
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
+  it('rechecks the current surface grant before a stale mounted fork handler can open the strategy modal', async () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
     const allowedInteraction = {
@@ -390,6 +393,7 @@ describe('MessageView (fork button)', () => {
     await act(async () => {
       await stalePress();
     });
+    expect(openSessionForkStrategyFlowSpy).not.toHaveBeenCalled();
     expect(forkSessionSpy).not.toHaveBeenCalled();
   });
 
@@ -424,7 +428,6 @@ describe('MessageView (fork button)', () => {
   });
 
   it('keeps the committed fork grant authoritative through an abandoned same-session denied render', async () => {
-    forkSessionSpy.mockResolvedValue({ ok: false, errorMessage: 'expected test stop' });
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
     const allowedInteraction = {
@@ -471,7 +474,7 @@ describe('MessageView (fork button)', () => {
     await act(async () => {
       await stalePress();
     });
-    expect(forkSessionSpy).toHaveBeenCalledTimes(1);
+    expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       tree.update(renderMessage(deniedInteraction));
@@ -493,7 +496,7 @@ describe('MessageView (fork button)', () => {
     expect(screen.findByTestId('transcript-message-fork:m1')).toBeNull();
   });
 
-  it('forks before a committed user message and restores it as a draft', async () => {
+  it('opens the strategy modal for a committed user message with its exact cutoff and restored draft', async () => {
     sessionMetadata = { machineId: 'm-stale', path: '/workspace/repo', homeDir: '/workspace' };
     projectForSession = {
       key: {
@@ -509,8 +512,6 @@ describe('MessageView (fork button)', () => {
         metadata: { host: 'workstation.local' },
       },
     };
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
-    ensureSessionVisibleSpy.mockResolvedValueOnce(true);
     const { MessageView } = await import('./MessageView');
 
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
@@ -520,83 +521,44 @@ describe('MessageView (fork button)', () => {
     expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
     await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
-    expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      parentSessionId: 's1',
+    // No fork effect is issued before the user has chosen a strategy.
+    expect(forkSessionSpy).not.toHaveBeenCalled();
+    expect(routerPushSpy).not.toHaveBeenCalled();
+    expect(updateSessionDraftSpy).not.toHaveBeenCalled();
+    expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledTimes(1);
+    expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
       forkPoint: { type: 'seq', upToSeqInclusive: 5 },
       serverId: 'server-a',
+      restoredDraftText: 'hi',
+      sourcePreview: 'hi',
+      sourceMessageId: 'm1',
+      writeForkInitialPrompt: true,
     }));
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
-    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('child-1', { forceRefresh: true });
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('child-1', 'hi');
-    expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
-      'child-1',
-      expect.any(Function),
-    );
-    expect(updateSessionDraftSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      ensureSessionVisibleSpy.mock.invocationCallOrder[0],
-    );
-    expect(ensureSessionVisibleSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      routerPushSpy.mock.invocationCallOrder[0],
-    );
   });
 
-  it('waits for the child session to become visible before persisting forkInitialPromptV1', async () => {
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
-    let resolveVisible: (() => void) | null = null;
-    ensureSessionVisibleSpy.mockReturnValueOnce(new Promise<boolean>((resolve) => {
-      resolveVisible = () => resolve(true);
-    }));
+  it('navigates to the fork child through the session route once the modal opens it', async () => {
     const { MessageView } = await import('./MessageView');
-
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
 
     const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
-    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
-    act(() => {
-      screen.pressByTestId('transcript-message-fork:m1');
-    });
-
-    expect(patchSessionMetadataWithRetrySpy).not.toHaveBeenCalled();
-    expect(routerPushSpy).not.toHaveBeenCalled();
-
-    await act(async () => {
-      const { storage } = await import('@/sync/domains/state/storage');
-      const state = storage.getState();
-      state.sessions['child-1'] = {
-        id: 'child-1',
-        seq: 1,
-        createdAt: 0,
-        activeAt: 0,
-        metadata: {
-          path: '/tmp/project',
-          host: 'localhost',
-          forkV1: {
-            v: 1,
-            parentSessionId: 's1',
-            parentCutoffSeqInclusive: 5,
-            createdAtMs: 1,
-            strategy: 'message',
-          },
-        },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 1,
-        updatedAt: 0,
-        active: true,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 'online',
-      };
-      resolveVisible?.();
-      await flushHookEffects({ cycles: 1, turns: 1 });
-    });
-
+    const flowArgs = openSessionForkStrategyFlowSpy.mock.calls[0]?.[0] as any;
+    await act(async () => { await flowArgs.navigateToSession('child-1'); });
     expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
-    expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
-      'child-1',
-      expect.any(Function),
-    );
+  });
+
+  it('carries the replay seed settings the account resolves', async () => {
+    const { MessageView } = await import('./MessageView');
+    const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
+
+    const flowArgs = openSessionForkStrategyFlowSpy.mock.calls[0]?.[0] as any;
+    expect(flowArgs.replayEnabled).toBe(true);
+    expect(flowArgs.settings).toEqual(expect.objectContaining({ sessionReplayEnabled: true }));
   });
 
   it('renders fork button when replay is disabled but provider supports native fork-at-message', async () => {
@@ -612,9 +574,8 @@ describe('MessageView (fork button)', () => {
     expect(screen.findByTestId('transcript-message-fork:m1')?.props.accessibilityLabel).toBe('session.forking.forkFromMessageA11y');
   });
 
-  it('still delegates fork when session metadata machineId is missing', async () => {
+  it('still opens the strategy modal when session metadata machineId is missing', async () => {
     sessionMetadata = {};
-    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
@@ -624,29 +585,21 @@ describe('MessageView (fork button)', () => {
     await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
     expect(modalAlertSpy).not.toHaveBeenCalled();
-    expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      parentSessionId: 's1',
+    expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
       forkPoint: { type: 'seq', upToSeqInclusive: 5 },
-      machineId: undefined,
+      machineId: null,
       serverId: 'server-a',
     }));
   });
 
-  it('shows a loader while fork request is in flight', async () => {
-    let resolveFork: ((value: unknown) => void) | null = null;
-    forkSessionSpy.mockReturnValueOnce(new Promise((resolve) => {
-      resolveFork = resolve;
-    }));
-
+  it('keeps the row button inert instead of owning fork progress, which the modal shows', async () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
     const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
-    act(() => {
-      screen.pressByTestId('transcript-message-fork:m1');
-    });
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
     await act(async () => {
       await flushHookEffects({ cycles: 1, turns: 1 });
     });
@@ -654,11 +607,7 @@ describe('MessageView (fork button)', () => {
     const forkButton = screen.findByTestId('transcript-message-fork:m1');
     expect(forkButton).toBeTruthy();
     if (!forkButton) throw new Error('expected fork button');
-    expect(forkButton.findAll((node: any) => node.props?.accessibilityRole === 'progressbar').length).toBeGreaterThan(0);
-
-    await act(async () => {
-      resolveFork?.({ ok: true, childSessionId: 'child-loading' });
-      await flushHookEffects({ cycles: 1, turns: 1 });
-    });
+    expect(forkButton.findAll((node: any) => node.props?.accessibilityRole === 'progressbar')).toHaveLength(0);
+    expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledTimes(1);
   });
 });

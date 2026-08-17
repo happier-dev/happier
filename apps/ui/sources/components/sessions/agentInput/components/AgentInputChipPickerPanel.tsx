@@ -227,7 +227,7 @@ export function AgentInputChipPickerPanel(
                     }
                     deferAgentInputPopoverClose(props.onRequestClose);
                   }}
-                  applyLabel={props.applyLabel ?? t("common.use")}
+                  applyLabel={focusedOption.applyLabel ?? props.applyLabel ?? t("common.use")}
                   onSelectDetailOption={(id) => {
                     props.onSelect(id);
                   }}

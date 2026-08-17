@@ -442,6 +442,10 @@ vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
 }));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
     supportsEffectiveLocalControlForSession: () => true,
+    // The in-session Agent picker reads this to decide whether a transcript can be
+    // handed to another Agent. An absent `direct` flag means it can, which is the
+    // ordinary case these read-cursor tests exercise.
+    resolveEffectiveSessionRuntimeControlSurface: () => ({ sessionStorage: {} }),
 }));
 vi.mock('@/sync/domains/models/modelOptions', () => ({
     findModelOptionForEffectiveModelId: (options: readonly any[], id: string) =>

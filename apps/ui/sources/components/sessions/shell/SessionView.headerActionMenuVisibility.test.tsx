@@ -694,7 +694,9 @@ describe('SessionView header action menu visibility', () => {
     expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeUndefined();
   });
 
-  it('shows neutral background copy in the header without making the composer busy or hiding execution runs', async () => {
+  it('keeps background activity out of the header without hiding execution runs', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000_000));
     windowDimensionsState.width = 420;
     sessionExecutionRunsSupportedState.supported = true;
     sessionState.session = {
@@ -705,12 +707,14 @@ describe('SessionView header action menu visibility', () => {
       latestTurnStatus: 'completed',
       latestTurnStatusObservedAt: 999_000,
       runtimeActivityState: 'active',
+      runtimeActivityRevision: 1,
       runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 999_000,
     };
 
     const screen = await renderSessionView();
 
-    expect(screen.findByTestId('session-header-background-activity-status')).toBeDefined();
+    expect(screen.findByTestId('session-header-background-activity-status')).toBeNull();
     expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openRuns');
   });
 

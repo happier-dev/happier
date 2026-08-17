@@ -81,7 +81,7 @@ describe('AgentInputChipPickerTopSelector', () => {
                             id: 'providers',
                             label: 'Providers',
                             options: [
-                                { id: 'codex', label: 'Codex', subtitle: 'OpenAI', icon: React.createElement('EngineIcon', { size: 24 }) },
+                                { id: 'codex', label: 'Codex', subtitle: 'OpenAI', icon: React.createElement('EngineIcon', { testID: 'codex-icon', size: 24 }) },
                                 { id: 'claude', label: 'Claude' },
                             ],
                         },
@@ -115,8 +115,11 @@ describe('AgentInputChipPickerTopSelector', () => {
         expect(Boolean(codexStyle.boxShadow || codexStyle.elevation)).toBe(true);
         expect(claudeStyle.backgroundColor).toBe('transparent');
 
-        const codexIconChild = codexButton?.props.children.props.children;
-        expect(codexIconChild.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
+        // Located by identity rather than by child position: a chip renders its
+        // icon plus any state marker, so a positional reach breaks the moment a
+        // second child exists without telling us anything about the icon.
+        const codexIcon = screen.findByTestId('codex-icon');
+        expect(codexIcon?.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
 
         await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:claude');
         expect(onFocusOption).toHaveBeenCalledWith('claude');

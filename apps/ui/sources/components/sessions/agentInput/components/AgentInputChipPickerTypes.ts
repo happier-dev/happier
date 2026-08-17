@@ -23,6 +23,13 @@ export type AgentInputChipPickerOption = Readonly<{
     icon?: React.ReactNode;
     subtitle?: string;
     /**
+     * Overrides the row's accessible name when the label alone would drop state a
+     * sighted reader gets from the row itself — a checkmark is a glyph, not an
+     * accessible state, and a row whose meaning is carried visually still owes a
+     * screen reader that meaning in words.
+     */
+    accessibilityLabel?: string;
+    /**
      * When true, the option is visually de-emphasized (e.g. CLI not detected),
      * but can still be focused/inspected in detailed pickers.
      */
@@ -49,6 +56,12 @@ export type AgentInputChipPickerOption = Readonly<{
     onDetailAction?: () => void;
     onSelectImmediate?: () => void;
     closeOnSelectImmediate?: boolean;
+    /**
+     * Label for this option's apply affordance. Options can carry different
+     * consequences in one picker, so a row may name its own outcome instead of
+     * inheriting the panel-wide label.
+     */
+    applyLabel?: string;
     preserveFocusOnExternalSelectionChange?: boolean;
     railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;

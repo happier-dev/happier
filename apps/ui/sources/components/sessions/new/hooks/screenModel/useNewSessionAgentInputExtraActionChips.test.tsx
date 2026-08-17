@@ -210,4 +210,98 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         expect(React.isValidElement(renderedContent)).toBe(true);
         expect((renderedContent as React.ReactElement<{ maxHeight: number }>).props.maxHeight).toBe(300);
     });
+
+    it('emits a supplied source-context chip first so its composer badge leads the attachment row', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+
+        const sourceContextChip = {
+            key: 'session-source-context',
+            composerAttachmentBadge: { key: 'session-source-context', label: 'From that session' },
+            render: () => null,
+        } as unknown as AgentInputExtraActionChip;
+
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'claude',
+                agentOptionState: null,
+                setAgentOptionState: vi.fn(),
+                showAutomationActionChips: true,
+                automationDraft: {
+                    enabled: false,
+                    name: '',
+                    description: '',
+                    scheduleKind: 'interval',
+                    everyMinutes: 60,
+                    cronExpr: '0 * * * *',
+                    timezone: null,
+                },
+                automationLabel: 'Automate',
+                onAutomationChange: vi.fn(),
+                showServerPickerChip: false,
+                targetServerId: null,
+                targetServerName: 'Server A',
+                directSessionsFeatureEnabled: false,
+                supportsDirectTranscriptStorage: false,
+                transcriptStorage: 'persisted',
+                onTranscriptStorageChange: vi.fn(),
+                selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null,
+                windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(),
+                onActionShortcutPress: vi.fn(),
+                sourceContextChip,
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        expect(chips[0]).toBe(sourceContextChip);
+        expect(chips.filter((chip) => chip.key === 'session-source-context')).toHaveLength(1);
+    });
+
+    it('emits no source-context chip for an ordinary new Session', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'claude',
+                agentOptionState: null,
+                setAgentOptionState: vi.fn(),
+                showAutomationActionChips: true,
+                automationDraft: {
+                    enabled: false,
+                    name: '',
+                    description: '',
+                    scheduleKind: 'interval',
+                    everyMinutes: 60,
+                    cronExpr: '0 * * * *',
+                    timezone: null,
+                },
+                automationLabel: 'Automate',
+                onAutomationChange: vi.fn(),
+                showServerPickerChip: false,
+                targetServerId: null,
+                targetServerName: 'Server A',
+                directSessionsFeatureEnabled: false,
+                supportsDirectTranscriptStorage: false,
+                transcriptStorage: 'persisted',
+                onTranscriptStorageChange: vi.fn(),
+                selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null,
+                windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(),
+                onActionShortcutPress: vi.fn(),
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        expect(chips.some((chip) => chip.key === 'session-source-context')).toBe(false);
+    });
 });

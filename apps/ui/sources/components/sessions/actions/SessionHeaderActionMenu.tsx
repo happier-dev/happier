@@ -18,7 +18,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
-import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
+import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
 import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import {
@@ -167,6 +167,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const voice = useSetting('voice');
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
+  const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const sessionServerId = usePreferredServerIdForSession(props.sessionId);
   const readStateSignature = storage((state) =>
     buildSessionHeaderReadStateSignature(state, props.sessionId),
@@ -423,16 +424,27 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         if (actionId === 'session.fork') {
-          fireAndForget((async () => {
-            const res = await executeSessionForkAction({
-              execute: executor.execute as any,
+          // A launcher only. The header must not also run the old auto-strategy
+          // path behind the modal: the user chooses Native, Replay or Configure
+          // before any fork effect is issued.
+          deferOnWeb(() => {
+            openSessionForkStrategyFlow({
               sessionId: props.sessionId,
-              context: { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
+              forkSupportSource: session,
+              serverId: sessionServerId ?? null,
+              machineId: reachableMachineId ?? session.metadata?.machineId ?? null,
+              forkPoint: { type: 'latest' },
+              settings,
+              replayEnabled: sessionReplayEnabled,
+              executionRunsEnabled: executionRunsEnabled === true,
+              navigateToSession: (childSessionId) => {
+                router.push((`/session/${childSessionId}`) as any);
+              },
+              navigateToNewSession: (route) => {
+                router.push(route as any);
+              },
             });
-            if (!res.ok) {
-              Modal.alert(t('common.error'), String(res.error ?? t('errors.failedToForkSession')));
-            }
-          })(), { tag: 'SessionHeaderActionMenu.execute.sessionFork' });
+          });
           return;
         }
         if (actionId === 'session.handoff') {

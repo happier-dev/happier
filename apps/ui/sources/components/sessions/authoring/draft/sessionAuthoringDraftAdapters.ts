@@ -3,6 +3,7 @@ import {
     buildBackendTargetKey,
     isBuiltInAgentTarget,
     type BackendTargetRefV1,
+    type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
@@ -721,6 +722,12 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
     serverId?: string | null;
     approvedNewDirectoryCreation?: boolean;
     agentModeUpdatedAt?: number | null;
+    /**
+     * "Create this Session as a continuation of that one." It is an explicit
+     * parameter rather than a draft field because it belongs to one authoring
+     * attempt, not to the user's persisted configuration.
+     */
+    sourceContext?: SessionSpawnSourceContextV1 | null;
 }>): SpawnSessionOptions {
     const backendTarget = resolveDraftBackendTarget(params.draft);
     const codexBackendMode = resolveCanonicalCodexBackendMode({
@@ -780,6 +787,7 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
             ? { connectedServicesUpdatedAt: params.draft.connectedServicesUpdatedAt }
             : {}),
         ...(params.draft.mcpSelection ? { mcpSelection: params.draft.mcpSelection } : {}),
+        ...(params.sourceContext ? { sourceContext: params.sourceContext } : {}),
     };
 }
 

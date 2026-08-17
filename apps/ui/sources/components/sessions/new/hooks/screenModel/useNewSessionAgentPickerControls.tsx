@@ -4,9 +4,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import { NewSessionFavoriteModelsDetail } from '@/components/sessions/new/components/NewSessionFavoriteModelsDetail';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
+import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker/useSessionAgentPickerControls';
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import {
@@ -25,10 +25,7 @@ import {
     readRememberedEngineSelection,
     type RememberedEngineSelectionsByScopeV1,
 } from '@/sync/domains/sessionAuthoring/rememberedEngineSelections';
-import {
-    sortItemsByFavoriteTargetKey,
-    toggleFavoriteBackendTargetKey,
-} from '@/sync/domains/sessionAuthoring/favoriteBackendTargets';
+import { toggleFavoriteBackendTargetKey } from '@/sync/domains/sessionAuthoring/favoriteBackendTargets';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import {
     favoriteModelSelectionMatchesBackend,
@@ -549,117 +546,6 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
         if (params.resolvedBackendEntries.length <= 1) {
             return undefined;
         }
-        const favoriteBackendTargetKeySet = new Set(params.favoriteBackendTargetKeys ?? []);
-        const sortedBackendEntries = sortItemsByFavoriteTargetKey(
-            params.resolvedBackendEntries,
-            params.favoriteBackendTargetKeys ?? [],
-            (entry) => entry.targetKey,
-        );
-        const resolved = sortedBackendEntries.map((entry) => {
-            const isCompatibleWithSelectedProfile = !profileForAgentSelection || compatibleBackendTargetKeys.has(entry.targetKey);
-            const selectable = params.isBackendEntrySelectable(entry);
-            const isFavoriteBackend = favoriteBackendTargetKeySet.has(entry.targetKey);
-            const disabled = !isCompatibleWithSelectedProfile;
-            const connectedServices = resolveConnectedServicesForEntry(entry);
-            const connectedServicesCacheKeyPart = buildConnectedServicesPayloadCacheKeyPart(connectedServices);
-            const muted = !selectable && !disabled;
-            const subtitle = !isCompatibleWithSelectedProfile
-                ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
-                : undefined;
-
-            return {
-                id: entry.targetKey,
-                label: entry.title,
-                icon: (
-                    <AgentIcon
-                        agentId={entry.iconAgentId}
-                        size={12}
-                        style={{ transform: [{ scale: getAgentPickerIconScale(entry.iconAgentId) }] }}
-                    />
-                ),
-                subtitle,
-                disabled,
-                muted: muted || disabled,
-                railAction: params.setFavoriteBackendTargetKeys ? {
-                    testID: `new-session-engine-favorite-rail:${entry.targetKey}`,
-                    accessibilityLabel: isFavoriteBackend ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
-                    selected: isFavoriteBackend,
-                    icon: <EngineFavoritePickerIcon favorite={isFavoriteBackend} />,
-                    onPress: () => {
-                        handleToggleFavoriteBackendTarget(entry.targetKey);
-                    },
-                } : undefined,
-                closeOnSelectImmediate: false,
-                deferRenderDetailContent: true,
-                deferredDetailContentCacheKey: [
-                    'new-session-engine',
-                    params.capabilityServerId,
-                    params.selectedMachineId ?? '',
-                    entry.targetKey,
-                    params.selectedPath ?? '',
-                    effectiveProfileId ?? '',
-                    connectedServicesCacheKeyPart,
-                ].join(':'),
-                onSelectImmediate: () => {
-                    if (disabled) return;
-                    params.onRememberAgentPickerView?.({
-                        kind: 'backend',
-                        backendTargetKey: entry.targetKey,
-                    });
-                    const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
-                    applyEngineSelection(entry, nextSelection);
-                },
-                renderDetailContent: () => {
-                    const selection = getEngineSelectionForTargetKey(entry.targetKey);
-                    const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
-                        backendTarget: entry.target,
-                        settings: params.settings,
-                    });
-                    const detailConnectedServices = resolveConnectedServicesForEntry(entry);
-                    return (
-                        <NewSessionEngineOptionDetail
-                            backendTarget={entry.target}
-                            selectedMachineId={params.selectedMachineId}
-                            capabilityServerId={params.capabilityServerId}
-                            cwd={params.selectedPath}
-                            profileId={effectiveProfileId}
-                            capabilityProbeContext={capabilityProbeContext}
-                            connectedServices={detailConnectedServices}
-                            refreshProbe={params.refreshProbe}
-                            selectedModelId={selection.modelId}
-                            selectedSessionModeId={selection.sessionModeId}
-                            selectedConfigOverrides={selection.configOverrides}
-                            favoriteModelSelections={params.favoriteModelSelections ?? []}
-                            onToggleFavoriteModel={params.setFavoriteModelSelections ? (model) => {
-                                handleToggleFavoriteModel(entry, model);
-                            } : undefined}
-                            favoriteEngine={params.setFavoriteBackendTargetKeys ? {
-                                favorite: isFavoriteBackend,
-                                onToggle: () => {
-                                    handleToggleFavoriteBackendTarget(entry.targetKey);
-                                },
-                            } : undefined}
-                            onSelectionChange={(nextSelection) => {
-                                engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
-                                applyEngineSelection(entry, nextSelection);
-                            }}
-                        />
-                    );
-                },
-            };
-        });
-        const available: AgentInputChipPickerOption[] = [];
-        const muted: AgentInputChipPickerOption[] = [];
-        const disabledOptions: AgentInputChipPickerOption[] = [];
-        for (const option of resolved) {
-            if (option.disabled) {
-                disabledOptions.push(option);
-            } else if (option.muted) {
-                muted.push(option);
-            } else {
-                available.push(option);
-            }
-        }
         const favoriteModelSelections = params.favoriteModelSelections ?? [];
         const favoriteBackendEntries = params.resolvedBackendEntries.filter((entry) => (
             !profileForAgentSelection || compatibleBackendTargetKeys.has(entry.targetKey)
@@ -720,7 +606,91 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
                 },
             }]
             : [];
-        return [...favoriteModelsOption, ...available, ...muted, ...disabledOptions];
+        return buildSessionAgentPickerOptions({
+            entries: params.resolvedBackendEntries,
+            favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
+            leadingOptions: favoriteModelsOption,
+            resolvePresentation: (entry) => {
+                const isCompatibleWithSelectedProfile = !profileForAgentSelection || compatibleBackendTargetKeys.has(entry.targetKey);
+                const disabled = !isCompatibleWithSelectedProfile;
+                const selectable = params.isBackendEntrySelectable(entry);
+                return {
+                    subtitle: isCompatibleWithSelectedProfile
+                        ? undefined
+                        : t('newSession.aiBackendNotCompatibleWithSelectedProfile'),
+                    disabled,
+                    muted: disabled || !selectable,
+                };
+            },
+            resolveRailAction: ({ entry, favorite }) => (params.setFavoriteBackendTargetKeys ? {
+                testID: `new-session-engine-favorite-rail:${entry.targetKey}`,
+                accessibilityLabel: favorite ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
+                selected: favorite,
+                icon: <EngineFavoritePickerIcon favorite={favorite} />,
+                onPress: () => {
+                    handleToggleFavoriteBackendTarget(entry.targetKey);
+                },
+            } : undefined),
+            resolveBehavior: ({ entry, presentation, favorite }) => ({
+                closeOnSelectImmediate: false,
+                deferRenderDetailContent: true,
+                deferredDetailContentCacheKey: [
+                    'new-session-engine',
+                    params.capabilityServerId,
+                    params.selectedMachineId ?? '',
+                    entry.targetKey,
+                    params.selectedPath ?? '',
+                    effectiveProfileId ?? '',
+                    buildConnectedServicesPayloadCacheKeyPart(resolveConnectedServicesForEntry(entry)),
+                ].join(':'),
+                onSelectImmediate: () => {
+                    if (presentation.disabled) return;
+                    params.onRememberAgentPickerView?.({
+                        kind: 'backend',
+                        backendTargetKey: entry.targetKey,
+                    });
+                    const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
+                    applyEngineSelection(entry, nextSelection);
+                },
+                renderDetailContent: () => {
+                    const selection = getEngineSelectionForTargetKey(entry.targetKey);
+                    const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
+                        backendTarget: entry.target,
+                        settings: params.settings,
+                    });
+                    const detailConnectedServices = resolveConnectedServicesForEntry(entry);
+                    return (
+                        <NewSessionEngineOptionDetail
+                            backendTarget={entry.target}
+                            selectedMachineId={params.selectedMachineId}
+                            capabilityServerId={params.capabilityServerId}
+                            cwd={params.selectedPath}
+                            profileId={effectiveProfileId}
+                            capabilityProbeContext={capabilityProbeContext}
+                            connectedServices={detailConnectedServices}
+                            refreshProbe={params.refreshProbe}
+                            selectedModelId={selection.modelId}
+                            selectedSessionModeId={selection.sessionModeId}
+                            selectedConfigOverrides={selection.configOverrides}
+                            favoriteModelSelections={params.favoriteModelSelections ?? []}
+                            onToggleFavoriteModel={params.setFavoriteModelSelections ? (model) => {
+                                handleToggleFavoriteModel(entry, model);
+                            } : undefined}
+                            favoriteEngine={params.setFavoriteBackendTargetKeys ? {
+                                favorite,
+                                onToggle: () => {
+                                    handleToggleFavoriteBackendTarget(entry.targetKey);
+                                },
+                            } : undefined}
+                            onSelectionChange={(nextSelection) => {
+                                engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
+                                applyEngineSelection(entry, nextSelection);
+                            }}
+                        />
+                    );
+                },
+            }),
+        });
     }, [
         applyEngineSelection,
         compatibleBackendTargetKeys,
@@ -779,52 +749,37 @@ export function useNewSessionAgentPickerControls(rawParams: Readonly<{
         agentPickerOptionsSignature,
     );
 
-    const agentPickerSelectedOptionId = React.useMemo(() => {
-        const fallbackOptionId = params.selectedBackendEntry?.targetKey ?? params.selectedBackendTargetKey;
-        const pickerOptions = stableAgentPickerOptions ?? [];
-        if (params.rememberedAgentPickerView?.kind === 'favoriteModels') {
-            const hasFavoriteModelsOption = pickerOptions.some((option) => option.id === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID);
-            if (hasFavoriteModelsOption) {
-                return FAVORITE_MODELS_AGENT_PICKER_OPTION_ID;
-            }
+    const rememberedAgentPickerView = params.rememberedAgentPickerView;
+    const preferredOptionId = React.useMemo(() => {
+        if (rememberedAgentPickerView?.kind === 'favoriteModels') {
+            return FAVORITE_MODELS_AGENT_PICKER_OPTION_ID;
         }
-        const rememberedView = params.rememberedAgentPickerView;
-        if (rememberedView?.kind === 'backend') {
-            const hasRememberedBackendOption = pickerOptions.some((option) => option.id === rememberedView.backendTargetKey);
-            if (hasRememberedBackendOption) {
-                return rememberedView.backendTargetKey;
-            }
+        if (rememberedAgentPickerView?.kind === 'backend') {
+            return rememberedAgentPickerView.backendTargetKey;
         }
-        return fallbackOptionId;
-    }, [
-        params.rememberedAgentPickerView,
-        params.selectedBackendEntry?.targetKey,
-        params.selectedBackendTargetKey,
-        stableAgentPickerOptions,
-    ]);
+        return null;
+    }, [rememberedAgentPickerView]);
 
-    const agentPickerSelectStateRef = useLatestRef({
-        applyEngineSelection,
-        getEngineSelectionForTargetKey,
-        onRememberAgentPickerView: params.onRememberAgentPickerView,
-        resolvedBackendEntries: params.resolvedBackendEntries,
-    });
-    const handleAgentPickerSelect = React.useCallback((selectedId: string) => {
-        if (selectedId === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) {
-            agentPickerSelectStateRef.current.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
-            return;
-        }
-        const state = agentPickerSelectStateRef.current;
-        const nextEntry = state.resolvedBackendEntries.find((entry) => entry.targetKey === selectedId) ?? null;
-        if (nextEntry) {
-            state.onRememberAgentPickerView?.({
+    const {
+        agentPickerSelectedOptionId,
+        handleAgentPickerSelect,
+    } = useSessionAgentPickerControls({
+        options: stableAgentPickerOptions,
+        selectableEntries: params.resolvedBackendEntries,
+        fallbackOptionId: params.selectedBackendEntry?.targetKey ?? params.selectedBackendTargetKey,
+        preferredOptionId,
+        onSelectEntry: (nextEntry) => {
+            params.onRememberAgentPickerView?.({
                 kind: 'backend',
                 backendTargetKey: nextEntry.targetKey,
             });
-            const nextSelection = state.getEngineSelectionForTargetKey(nextEntry.targetKey);
-            state.applyEngineSelection(nextEntry, nextSelection);
-        }
-    }, [agentPickerSelectStateRef]);
+            applyEngineSelection(nextEntry, getEngineSelectionForTargetKey(nextEntry.targetKey));
+        },
+        onSelectNonEntryOption: (selectedId) => {
+            if (selectedId !== FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) return;
+            params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
+        },
+    });
 
     const agentClickStateRef = useLatestRef({
         selectableBackendEntries,

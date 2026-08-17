@@ -44,6 +44,12 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      * New-session wants one refresh button that can also refresh CLI detection.
      */
     refreshProbe?: OptionPickerProbeState | null;
+    /**
+     * One short line under the model section's label. Surface-supplied because it
+     * is the only part of this pane whose truth depends on the caller: nothing is
+     * running on the New Session screen, and something is in a live Session.
+     */
+    modelSummary?: string;
     selectedModelId?: string | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
@@ -327,7 +333,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         <AgentInputEngineDetail
             modelOptions={modelOptions}
             selectedModelId={canonicalSelectedModelId}
-            modelNotes={[]}
+            modelNotes={props.modelSummary ? [props.modelSummary] : []}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
             modelProbe={unifiedProbe}

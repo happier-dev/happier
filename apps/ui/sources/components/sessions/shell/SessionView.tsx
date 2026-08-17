@@ -76,8 +76,9 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
 import { Modal } from '@/modal';
 import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
-import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { buildNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
+import { sessionAbort, resumeSession } from '@/sync/ops';
+import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useMachine, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSocketStatus, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import {
@@ -92,6 +93,7 @@ import {
 } from '@happier-dev/agents';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    buildBackendTargetKey,
     isConnectedServiceCredentialHealthStatusUsable,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
@@ -176,6 +178,12 @@ import {
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { confirmNonSteerableSend } from '@/components/sessions/agentInput/confirmNonSteerableSend';
 import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
+import {
+    resolveSessionComposerSendDestination,
+    type SessionComposerSendDestination,
+    type SessionComposerSendRoute,
+} from '@/sync/domains/session/input/resolveSessionComposerSendDestination';
 import { submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
 import { createSyncBackedSubmitPort } from '@/sync/domains/session/input/syncBackedSubmitPort';
 import { isSessionLocallyAttached } from '@/sync/domains/session/control/sessionLocalControl';
@@ -303,6 +311,10 @@ import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceSc
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useInSessionAgentPickerControls } from '@/components/sessions/agentPicker/useInSessionAgentPickerControls';
+import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -965,52 +977,9 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
 
     const badgeLabel =
         props.sessionAutomationsEnabledCount > 99 ? '99+' : String(props.sessionAutomationsEnabledCount);
-    const headerRuntimeStatusSource = useSessionRuntimeStatusSource(props.session);
-    const sessionStatus = useSessionStatus(headerRuntimeStatusSource, {
-        subscribeToSession: false,
-        subscribeToTranscript: false,
-    });
-    const showResumingStatus = sessionStatus.state === 'resuming';
-    const showBackgroundActivityStatus = sessionStatus.state === 'background_active';
 
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {showResumingStatus || showBackgroundActivityStatus ? (
-                <View
-                    testID={showResumingStatus
-                        ? 'session-header-resuming-status'
-                        : 'session-header-background-activity-status'}
-                    style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                        maxWidth: 132,
-                        marginRight: 4,
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: theme.colors.border.default,
-                        backgroundColor: theme.colors.surface.inset,
-                    }}
-                >
-                    {showResumingStatus ? (
-                        <ActivitySpinner size={12} color={sessionStatus.statusColor} />
-                    ) : null}
-                    <Text
-                        numberOfLines={1}
-                        style={{
-                            color: theme.colors.text.secondary,
-                            fontSize: 12,
-                            lineHeight: 16,
-                            fontWeight: '600',
-                            minWidth: 0,
-                        }}
-                    >
-                        {showResumingStatus ? t('session.resuming') : sessionStatus.statusText}
-                    </Text>
-                </View>
-            ) : null}
             <SessionHeaderActionMenu
                 sessionId={props.sessionId}
                 session={props.session}
@@ -3417,6 +3386,80 @@ function SessionViewLoaded({
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
     ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
+    const sessionAgentCatalogEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
+        enabledAgentIds,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    }), [enabledAgentIds, settings.acpCatalogSettingsV1, settings.backendEnabledByTargetKey]);
+    const sessionAgentCurrentTargetKey = React.useMemo(() => buildBackendTargetKey(
+        sessionActionDefaultBackend?.backendTarget
+        ?? { kind: 'builtInAgent', agentId: liveComposerState.agentId },
+    ), [liveComposerState.agentId, sessionActionDefaultBackend?.backendTarget]);
+    const sessionMachineRecord = useMachine(typeof machineId === 'string' ? machineId : '');
+    // Each successful connect stamps a new value, which is exactly the lifetime a
+    // continuation inspection may be trusted for.
+    const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
+    const agentContinuationSource = React.useMemo(() => ({
+        currentBackendTargetKey: sessionAgentCurrentTargetKey,
+        // Whether THIS Session's transcript is Happier's or its Agent's own, from
+        // the canonical Session-scoped owner. The Agent-level `sessionStorage.direct`
+        // capability is a different question — Claude Code and Codex both declare it
+        // — so reading it here would block every ordinary Session.
+        storageKind: getSessionStorageKind(session),
+        canEditSession: hasWriteAccess,
+        machinePresence: sessionMachineRecord
+            ? (isMachineOnline(sessionMachineRecord) ? 'online' as const : 'offline' as const)
+            : 'unknown' as const,
+    }), [hasWriteAccess, session, sessionAgentCurrentTargetKey, sessionMachineRecord]);
+    // `session.continuation.inspect` is answered by the machine hosting the
+    // Session, and only for as long as this realtime connection lasts.
+    const agentContinuationMachine = React.useMemo(() => ({
+        machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
+        serverId: sessionRouteServerId,
+        connectionGeneration: socketConnectionGeneration,
+    }), [machineId, sessionRouteServerId, socketConnectionGeneration]);
+    // What a target Agent's own model/mode/config detail resolves against. Same
+    // machine, server and folder as this Session, so the models offered for the
+    // target are the models it would actually run with here.
+    const agentContinuationTargetDetail = React.useMemo(() => ({
+        settings,
+        capabilityServerId,
+        machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
+        cwd: (session.metadata?.path as string | undefined) ?? null,
+        profileId: liveComposerState.profileId ?? null,
+    }), [capabilityServerId, liveComposerState.profileId, machineId, session.metadata?.path, settings]);
+    const currentAgentLabel = t(getAgentCore(liveComposerState.agentId).displayNameKey);
+    // `sessions.agentSwitching` is server-represented and fails closed. The
+    // canonical decision runtime reads the server bit as
+    // `readServerEnabledBit(...) === true` and applies the catalog's dependency
+    // closure, so this is the gate — not a second interpretation beside it. It is
+    // read once, here, and handed to the one owner that can arm a switch.
+    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching');
+    const inSessionAgentPicker = useInSessionAgentPickerControls({
+        sessionId,
+        currentAgentId: liveComposerState.agentId,
+        currentAgentLabel,
+        entries: sessionAgentCatalogEntries,
+        favoriteBackendTargetKeys: settings.favoriteBackendTargetKeysV1,
+        featureEnabled: agentSwitchingEnabled,
+        source: agentContinuationSource,
+        machine: agentContinuationMachine,
+        detail: agentContinuationTargetDetail,
+    });
+    // The armed target, resolved once against the same catalog the rail offered
+    // it from. The send control names it and the send path carries it, so both
+    // read one value rather than each deriving its own label.
+    const armedContinuationTarget = React.useMemo(() => {
+        const intent = inSessionAgentPicker.armedContinuation;
+        if (intent === null) return null;
+        const entry = sessionAgentCatalogEntries.find((catalogEntry) => (
+            catalogEntry.providerAgentId === intent.selection.agentId
+        ));
+        return {
+            agentId: intent.selection.agentId,
+            label: entry?.title ?? intent.selection.agentId,
+        };
+    }, [inSessionAgentPicker.armedContinuation, sessionAgentCatalogEntries]);
     const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
         if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
         return isConnectedServiceCredentialHealthStatusUsable(
@@ -3988,36 +4031,19 @@ function SessionViewLoaded({
                     { confirmText: t('common.continue') },
                 );
                 if (wantsReplay) {
+                    // Continuation is authored through the canonical New Session
+                    // screen with this Session attached as source context, so the
+                    // one Replay-seeded creation owner creates the child. The
+                    // legacy `session.continueWithReplay` RPC stays a
+                    // compatibility ingress with no UI product use.
                     try {
-                        const permissionOverride = getPermissionModeOverrideForSpawn(session);
-                        const modelOverride = getModelOverrideForSpawn(session);
-                        const summaryRunner =
-                            executionRunsEnabled && replayCfg.strategy === 'summary_plus_recent'
-                                ? (settings.sessionReplaySummaryRunnerV1 ?? null)
-                                : null;
-                        const spawnResult: any = await continueSessionWithReplay({
+                        router.push(buildNewSessionSourceContextNavigation({
+                            session,
+                            sourceSessionId: sessionId,
+                            forkPoint: { type: 'latest' },
+                            serverId: capabilityServerId ?? null,
                             machineId: resumeMachineId,
-                            serverId: capabilityServerId,
-                            directory: resumeDirectory,
-                            approvedNewDirectoryCreation: true,
-                            agent: agentId,
-                            ...(permissionOverride ? permissionOverride : {}),
-                            ...(modelOverride ? modelOverride : {}),
-                            replay: {
-                                previousSessionId: sessionId,
-                                strategy: replayCfg.strategy,
-                                recentMessagesCount: replayCfg.recentMessagesCount,
-                                maxSeedChars: replayCfg.maxSeedChars,
-                                ...(summaryRunner ? { summaryRunner } : {}),
-                            },
-                        });
-                        if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
-                            maybeAlert(t('session.resumeFailed'));
-                            return false;
-                        }
-
-                        await sync.refreshSessions();
-                        router.push(buildSessionHref(spawnResult.sessionId) as any);
+                        }) as any);
                         return true;
                     } catch (e) {
                         maybeAlert(e instanceof Error ? e.message : t('session.resumeFailed'));
@@ -4667,6 +4693,10 @@ function SessionViewLoaded({
                 requestMountedTranscriptFollow();
             };
             const clearAfterOutboundHandoff = () => {
+                // Composer admission ends at the durable/optimistic outbound handoff. Runtime
+                // wake and provider delivery continue through their canonical session/Pending
+                // projections and must not keep the submit button in a local sending state.
+                setIsComposerSendPending(false);
                 const didClear = clearComposerAfterOutboundHandoff({
                     snapshot: sendSnapshot,
                     clearDraftForSessionIfCurrentValueMatches,
@@ -4702,6 +4732,90 @@ function SessionViewLoaded({
                     restoreAttachmentDraftsFromSnapshot(attachmentDraftsForRestore);
                 }
                 return didRestore;
+            };
+
+            // Destination selection for a true send (section 3.3).
+            //
+            // An ordinary send reaches `submitSessionUserMessage`, the canonical
+            // message owner, and the Session keeps the Agent it has. When the
+            // in-session picker armed another Agent, the very same submission goes
+            // through `session.agentTransition` instead, which stops the source
+            // runtime, commits the target, and admits this exact localId through that
+            // same message owner on the far side of the cutover. They are
+            // alternatives: an armed send must never quietly reach the current Agent,
+            // which is precisely the failure this decision exists to remove.
+            //
+            // The decision itself lives in `resolveSessionComposerSendDestination`
+            // rather than inline here, because inline is exactly where it was missing
+            // for the whole program with no test able to see it. This screen keeps only
+            // the routing facts each existing resolver already owns.
+            //
+            // The armed value is produced only behind the `sessions.agentSwitching`
+            // gate, so this inherits that decision rather than re-deriving it.
+            const armedContinuationTargetLabel = armedContinuationTarget?.label ?? '';
+            const resolveSendDestination = (
+                route: SessionComposerSendRoute,
+            ): SessionComposerSendDestination => resolveSessionComposerSendDestination({
+                route,
+                armedContinuation: inSessionAgentPicker.armedContinuation,
+                armedContinuationLocalId: inSessionAgentPicker.armedContinuationLocalId,
+                machineId: typeof machineId === 'string' ? machineId : null,
+            });
+            const presentRefusedArmedSend = (
+                refused: Extract<SessionComposerSendDestination, { kind: 'refused' }>,
+            ): void => {
+                Modal.alert(
+                    t('common.error'),
+                    refused.reason === 'conflictingDestination'
+                        ? t('session.agentContinuation.transition.conflictingDestination', {
+                            agent: armedContinuationTargetLabel,
+                        })
+                        : t('session.agentContinuation.transition.rejected.targetUnavailable', {
+                            agent: armedContinuationTargetLabel,
+                        }),
+                );
+            };
+            const dispatchArmedContinuation = async (
+                destination: Extract<SessionComposerSendDestination, { kind: 'armedAgentContinuation' }>,
+                outboundForTransition: Readonly<{
+                    text: string;
+                    displayText?: string;
+                    metaOverrides?: Record<string, unknown>;
+                }>,
+                onAdmitted: () => void,
+            ): Promise<void> => {
+                const { disposition } = await continueSessionWithArmedAgent({
+                    machineId: destination.machineId,
+                    serverId: sessionRouteServerId,
+                    sessionId,
+                    localId: destination.localId,
+                    intent: destination.intent,
+                    input: {
+                        text: outboundForTransition.text,
+                        ...(outboundForTransition.displayText !== undefined
+                            ? { displayText: outboundForTransition.displayText }
+                            : {}),
+                        ...(outboundForTransition.metaOverrides
+                            ? { meta: outboundForTransition.metaOverrides }
+                            : {}),
+                    },
+                    sourceAgentLabel: currentAgentLabel,
+                    targetAgentLabel: armedContinuationTargetLabel,
+                });
+                // The armed row is dropped only once it stops being a truthful
+                // promise about the next message.
+                if (disposition.arm === 'clear') {
+                    inSessionAgentPicker.clearArmedContinuation();
+                }
+                if (disposition.failureMessage !== null) {
+                    Modal.alert(t('common.error'), disposition.failureMessage);
+                }
+                // Only canonical admission of this exact localId clears the draft.
+                // Every other outcome leaves the composer as the reader left it and
+                // has already said why.
+                if (disposition.draft !== 'clear') return;
+                outboundHandoffLocalId = destination.localId;
+                onAdmitted();
             };
 
             if (hasAttachments) {
@@ -4803,6 +4917,31 @@ function SessionViewLoaded({
                                 removeSubmittedAttachmentDraftsFromCurrent();
                             }
                         };
+                        const attachmentSendDestination = resolveSendDestination('sessionAgent');
+                        if (attachmentSendDestination.kind === 'refused') {
+                            presentRefusedArmedSend(attachmentSendDestination);
+                            return;
+                        }
+                        if (attachmentSendDestination.kind === 'armedAgentContinuation') {
+                            await dispatchArmedContinuation(
+                                attachmentSendDestination,
+                                {
+                                    text: outbound.text,
+                                    ...(outbound.displayText !== undefined
+                                        ? { displayText: outbound.displayText }
+                                        : {}),
+                                    ...(outbound.metaOverrides ? { metaOverrides: outbound.metaOverrides } : {}),
+                                },
+                                () => {
+                                    clearAttachmentsAfterProjectionHandoff();
+                                    if (shouldSendReviewComments) {
+                                        clearSentReviewCommentDrafts();
+                                    }
+                                    recordOutboundAccepted();
+                                },
+                            );
+                            return;
+                        }
                         const result = await submitSessionUserMessage(sessionSubmitPort, {
                             sessionId,
                             session: sessionRuntimeStatusSource,
@@ -4906,6 +5045,14 @@ function SessionViewLoaded({
                     : null;
 
             if (voiceComposerRouting?.kind === 'adapter_text') {
+                // An armed switch is a promise about where the next message goes. A
+                // voice adapter is a different destination entirely, so sending here
+                // would leave that promise unkept and silent.
+                const voiceDestination = resolveSendDestination('voiceAdapter');
+                if (voiceDestination.kind === 'refused') {
+                    presentRefusedArmedSend(voiceDestination);
+                    return;
+                }
                 setIsComposerSendPending(true);
                 fireAndForget((async () => {
                     try {
@@ -4967,6 +5114,13 @@ function SessionViewLoaded({
             );
 
             if (executionRunSend) {
+                // Same reasoning as the voice route: an execution run is not this
+                // Session's Agent, so an armed switch cannot ride along unremarked.
+                const executionRunDestination = resolveSendDestination('executionRun');
+                if (executionRunDestination.kind === 'refused') {
+                    presentRefusedArmedSend(executionRunDestination);
+                    return;
+                }
                 setIsComposerSendPending(true);
                 fireAndForget((async () => {
                     try {
@@ -4997,6 +5151,32 @@ function SessionViewLoaded({
                 try {
                     const readyForSend = await directSessionTakeover.ensureReadyForSend();
                     if (!readyForSend) {
+                        return;
+                    }
+
+                    const sendDestination = resolveSendDestination('sessionAgent');
+                    if (sendDestination.kind === 'refused') {
+                        presentRefusedArmedSend(sendDestination);
+                        return;
+                    }
+                    if (sendDestination.kind === 'armedAgentContinuation') {
+                        await dispatchArmedContinuation(
+                            sendDestination,
+                            {
+                                text: outbound.text,
+                                ...(outbound.displayText !== undefined
+                                    ? { displayText: outbound.displayText }
+                                    : {}),
+                                ...(outbound.metaOverrides ? { metaOverrides: outbound.metaOverrides } : {}),
+                            },
+                            () => {
+                                clearAfterOutboundHandoff();
+                                if (shouldSendReviewComments) {
+                                    clearSentReviewCommentDrafts();
+                                }
+                                recordOutboundAccepted();
+                            },
+                        );
                         return;
                     }
 
@@ -5223,6 +5403,10 @@ function SessionViewLoaded({
                 inputComposerCaptureTransientStateRef={inputComposerCaptureTransientStateRef}
                 inputComposerRestoreTransientStateRef={inputComposerRestoreTransientStateRef}
                 agentType={liveComposerState.agentId}
+                armedContinuationTarget={armedContinuationTarget}
+                composeAgentPickerOptions={inSessionAgentPicker.composeAgentPickerOptions}
+                onAgentPickerVisibilityChange={inSessionAgentPicker.onAgentPickerVisibilityChange}
+                agentPickerSelectedOptionId={inSessionAgentPicker.agentPickerSelectedOptionId}
                 attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}
                 onAttachmentsAdded={attachmentsUploadsEnabled ? addAttachments : undefined}
                 hasSendableAttachments={hasIncludedReviewCommentDrafts || (attachmentsUploadsEnabled && attachmentDrafts.length > 0)}

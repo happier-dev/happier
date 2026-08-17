@@ -175,6 +175,7 @@ function AgentInputChipPickerOptionButton(
     } | undefined;
     try { maybeEvent?.stopPropagation?.(); } catch {}
     try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
+    if (props.option.disabled === true) return;
     props.onPress();
   };
 
@@ -227,7 +228,12 @@ function AgentInputChipPickerOptionButton(
     return (
       <WebClickableView
         testID={testID}
-        accessibilityLabel={props.option.label}
+        accessibilityRole="button"
+        accessibilityLabel={props.option.accessibilityLabel ?? props.option.label}
+        accessibilityState={{
+          disabled: props.option.disabled === true,
+          selected: props.selected,
+        }}
         onClick={activateFromWebEvent}
         onKeyDown={(event) => {
           const key = String(event?.key ?? "");
@@ -237,7 +243,7 @@ function AgentInputChipPickerOptionButton(
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        tabIndex={0}
+        tabIndex={props.option.disabled === true ? -1 : 0}
         style={buildOptionRowStyle({ pressed: false })}
       >
         {content}
@@ -249,8 +255,16 @@ function AgentInputChipPickerOptionButton(
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      accessibilityLabel={props.option.label}
-      onPress={props.onPress}
+      accessibilityLabel={props.option.accessibilityLabel ?? props.option.label}
+      accessibilityState={{
+        disabled: props.option.disabled === true,
+        selected: props.selected,
+      }}
+      disabled={props.option.disabled === true}
+      onPress={() => {
+        if (props.option.disabled === true) return;
+        props.onPress();
+      }}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       style={(state) => buildOptionRowStyle(state as WebHoverablePressableState)}

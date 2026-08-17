@@ -39,6 +39,11 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     windowsTerminalAvailable: boolean;
     onWindowsRemoteSessionLaunchModeChange: (next: WindowsRemoteSessionLaunchMode) => void;
     onActionShortcutPress: (actionId: ActionId) => void;
+    /**
+     * The removable "continue from this Session" chip, when this authoring
+     * attempt carries a source context. Owned by `useNewSessionSourceContext`.
+     */
+    sourceContextChip?: AgentInputExtraActionChip | null;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.showServerPickerChip) return null;
@@ -87,6 +92,12 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         }) ?? [];
         const chips: AgentInputExtraActionChip[] = [];
 
+        // First: it is the one chip that changes what this Session *is* rather
+        // than how it is configured, and its composer badge should lead the
+        // attachment row.
+        if (params.sourceContextChip) {
+            chips.push(params.sourceContextChip);
+        }
         if (params.connectedServicesAuthChip) {
             chips.push(params.connectedServicesAuthChip);
         }
@@ -129,6 +140,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.selectedMachineIsWindows,
         params.setAgentOptionState,
         params.showAutomationActionChips,
+        params.sourceContextChip,
         params.windowsRemoteSessionLaunchMode,
         params.windowsTerminalAvailable,
         params.onWindowsRemoteSessionLaunchModeChange,

@@ -28,6 +28,7 @@ const resumeSessionSpy = vi.hoisted(() =>
         errorMessage: 'Daemon RPC is not available',
     })),
 );
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const continueSessionWithReplaySpy = vi.hoisted(() =>
     vi.fn(async (..._args: any[]) => ({
         type: 'success' as const,
@@ -201,7 +202,7 @@ installSessionShellCommonModuleMocks({
         return createExpoRouterMock({
             pathname: '/',
             router: {
-                push: vi.fn(),
+                push: (...args: any[]) => routerPushSpy(...args),
                 back: vi.fn(),
                 replace: vi.fn(),
                 setParams: vi.fn(),
@@ -710,6 +711,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             errorMessage: 'Daemon RPC is not available',
         }));
         continueSessionWithReplaySpy.mockReset();
+        routerPushSpy.mockReset();
         continueSessionWithReplaySpy.mockResolvedValue({
             type: 'success',
             sessionId: 's2',
@@ -892,6 +894,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         expect(storage.getState().sessions.s1?.resumingAt).not.toBeNull();
         expect(findAgentInput(screen).props.value).toBe('');
+        expect(findAgentInput(screen).props.isSending).toBe(false);
         expect(findAgentInput(screen).props.connectionStatus?.text).toBe('session.resuming');
         expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
 
@@ -1236,7 +1239,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('uses the reachable machine target for replay resume when direct resume is unavailable', async () => {
+    it('authors a replay continuation through New Session with source context instead of the legacy creator', async () => {
         settingsState.current = {
             experiments: true,
             featureToggles: {},
@@ -1248,10 +1251,6 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             sessionReplaySummaryRunnerV1: null,
         };
         canResumeSessionWithOptionsSpy.mockReturnValue(false);
-        continueSessionWithReplaySpy.mockResolvedValue({
-            type: 'success',
-            sessionId: 's-replayed',
-        });
         modalMockState.current?.spies.confirm.mockResolvedValue(true);
         modalMockState.current?.spies.alert.mockClear();
 
@@ -1263,13 +1262,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
         expect(modalMockState.current?.spies.confirm).toHaveBeenCalledTimes(1);
-        expect(continueSessionWithReplaySpy).toHaveBeenCalledTimes(1);
-        expect(continueSessionWithReplaySpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                machineId: 'm-target',
-                directory: '/tmp/target',
-            }),
-        );
+        // The legacy Replay creator is no longer a UI product path; creation goes
+        // through the canonical New Session + sourceContext owner.
+        expect(continueSessionWithReplaySpy).not.toHaveBeenCalled();
+        expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new',
+            params: expect.objectContaining({ dataId: expect.any(String) }),
+        }));
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
 
         await screen.unmount();

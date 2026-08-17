@@ -347,6 +347,11 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     clearActiveViewingSessionId: () => {},
     markSessionVisible: () => {},
     markSessionHidden: () => {},
+    // The surface-activation hook subscribes to viewing resets. These gating tests
+    // never reset, so a no-op unsubscribe and a fixed version are faithful.
+    subscribeActiveViewingSessionReset: () => () => {},
+    getActiveViewingSessionResetVersion: () => 0,
+    registerSessionVisibleSurface: () => () => {},
 }));
 vi.mock('@/sync/sync', () => ({
     sync: {
