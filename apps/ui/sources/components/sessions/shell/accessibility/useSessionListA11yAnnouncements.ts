@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { AccessibilityInfo, Platform } from 'react-native';
 
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import type { BlockedReason } from '@/components/ui/treeDragDrop';
 import { t } from '@/text';
 import type { SessionListInstructionBlockReason, SessionListTreeDropResult } from '../drop-resolution/sessionListTreeTypes';
@@ -20,27 +20,6 @@ export type UseSessionListA11yAnnouncementsResult = Readonly<{
     announceDropResult: (announcement: SessionListA11yDropAnnouncement) => void;
     announceSelectionCount: (announcement: Readonly<{ count: number }>) => void;
 }>;
-
-function announce(message: string): void {
-    if (!message) return;
-    if (Platform.OS === 'web') {
-        const doc = (globalThis as { document?: Document }).document;
-        if (!doc?.body) return;
-        const region = ensureWebLiveRegion(doc);
-        region.textContent = '';
-        const timer = setTimeout(() => {
-            region.textContent = message;
-        }, 30);
-        void timer;
-        return;
-    }
-
-    try {
-        AccessibilityInfo.announceForAccessibility?.(message);
-    } catch {
-        // Accessibility announcements are best effort.
-    }
-}
 
 function formatBlockedReason(reason: BlockedReason): string {
     switch (reason) {
@@ -109,19 +88,19 @@ function formatDropAnnouncement(input: SessionListA11yDropAnnouncement): string 
 
 export function useSessionListA11yAnnouncements(): UseSessionListA11yAnnouncementsResult {
     const announcePickedUp = React.useCallback((subject: SessionListA11yAnnouncementSubject) => {
-        announce(t('sessionsList.dragA11yPickedUp', { item: subject.label }));
+        announceAccessibilityMessage(t('sessionsList.dragA11yPickedUp', { item: subject.label }));
     }, []);
 
     const announceCancelled = React.useCallback((subject: SessionListA11yAnnouncementSubject) => {
-        announce(t('sessionsList.dragA11yCancelled', { item: subject.label }));
+        announceAccessibilityMessage(t('sessionsList.dragA11yCancelled', { item: subject.label }));
     }, []);
 
     const announceDropResult = React.useCallback((drop: SessionListA11yDropAnnouncement) => {
-        announce(formatDropAnnouncement(drop));
+        announceAccessibilityMessage(formatDropAnnouncement(drop));
     }, []);
 
     const announceSelectionCount = React.useCallback((selection: Readonly<{ count: number }>) => {
-        announce(t('sessionsList.selectionA11ySelectedCount', { count: selection.count }));
+        announceAccessibilityMessage(t('sessionsList.selectionA11ySelectedCount', { count: selection.count }));
     }, []);
 
     return React.useMemo(() => ({
@@ -130,20 +109,4 @@ export function useSessionListA11yAnnouncements(): UseSessionListA11yAnnouncemen
         announceDropResult,
         announceSelectionCount,
     }), [announceCancelled, announceDropResult, announcePickedUp, announceSelectionCount]);
-}
-
-function ensureWebLiveRegion(doc: Document): HTMLElement {
-    const existing = doc.querySelector<HTMLElement>('[data-session-list-live-region="true"]');
-    if (existing) return existing;
-    const region = doc.createElement('div');
-    region.setAttribute('data-session-list-live-region', 'true');
-    region.setAttribute('aria-live', 'polite');
-    region.setAttribute('aria-atomic', 'true');
-    region.style.position = 'absolute';
-    region.style.left = '-10000px';
-    region.style.width = '1px';
-    region.style.height = '1px';
-    region.style.overflow = 'hidden';
-    doc.body.appendChild(region);
-    return region;
 }

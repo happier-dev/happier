@@ -535,6 +535,14 @@ export const Item = React.memo<ItemProps>((props) => {
         );
     }, [chevronSize, showAccessory, theme.colors.text.secondary]);
 
+    // `loading` already renders a spinner and blocks the press; without `busy`
+    // that progress is a sighted-only signal, so it is merged here at the row
+    // owner rather than by each caller. An idle row publishes nothing.
+    const resolvedAccessibilityState = React.useMemo<AccessibilityState | undefined>(() => {
+        if (!loading) return accessibilityState;
+        return { ...(accessibilityState ?? {}), busy: true };
+    }, [accessibilityState, loading]);
+
     const [isHovered, setIsHovered] = React.useState(false);
     React.useEffect(() => {
         // Keep hover state coherent with disabled/loading changes.
@@ -818,7 +826,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 {...(isWeb && webRole ? { role: webRole } : undefined)}
                 accessibilityRole={accessibilityRole ?? 'button'}
-                accessibilityState={accessibilityState}
+                accessibilityState={resolvedAccessibilityState}
                 accessibilityLabel={accessibilityLabel}
                 accessibilityHint={accessibilityHint}
                 {...(isWeb && accessibilityState != null && accessibilityState.expanded != null
