@@ -16,6 +16,18 @@ test('release-actor-guard action supports trusted actors and URL-encodes actor p
   assert.match(raw, /\|@uri/, 'action should URL-encode actor when building GitHub API URLs');
 });
 
+test('release-actor-guard retries transient GitHub API failures at its shared HTTP boundary', () => {
+  const actionPath = resolve(repoRoot, '.github', 'actions', 'release-actor-guard', 'action.yml');
+  const raw = fs.readFileSync(actionPath, 'utf8');
+
+  assert.match(raw, /github_api_get_status\(\)/, 'the action should own GitHub API retry policy in one helper');
+  assert.match(raw, /--retry 3/);
+  assert.match(raw, /--retry-delay 1/);
+  assert.match(raw, /--retry-max-time 90/);
+  assert.match(raw, /--retry-all-errors/);
+  assert.equal((raw.match(/curl -sS/g) ?? []).length, 1, 'all guard API reads should use the shared retrying helper');
+});
+
 test('deploy workflows trust the release bot actor for push-triggered deployments', async () => {
   const deployOnPath = resolve(repoRoot, '.github', 'workflows', 'deploy-on-deploy-branch.yml');
   const deployPath = resolve(repoRoot, '.github', 'workflows', 'deploy.yml');

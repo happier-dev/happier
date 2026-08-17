@@ -104,6 +104,24 @@ runs:
           done
         fi
 
+        github_api_get_status() {
+          local endpoint="$1"
+          local token="$2"
+          local response_file="$3"
+          curl -sS \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --retry 3 \
+            --retry-delay 1 \
+            --retry-max-time 90 \
+            --retry-all-errors \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${token}" \
+            "$endpoint" \
+            -o "$response_file" \
+            -w "%{http_code}"
+        }
+
         fallback_repo_admin() {
           if [ -z "${REPO_TOKEN:-}" ]; then
             echo "Missing repo token for release actor guard fallback." >&2
@@ -117,14 +135,12 @@ runs:
           actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
           endpoint="https://api.github.com/repos/${REPO}/collaborators/${actor_enc}/permission"
           resp_file="$(mktemp)"
-          status="$(curl -sS \
-            --connect-timeout 10 \
-            --max-time 30 \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${REPO_TOKEN}" \
-            "$endpoint" \
-            -o "$resp_file" \
-            -w "%{http_code}")"
+          if ! status="$(github_api_get_status "$endpoint" "$REPO_TOKEN" "$resp_file")"; then
+            echo "Unable to reach GitHub while determining repo permission for '${ACTOR}'." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+          fi
 
           if [ "$status" != "200" ]; then
             echo "Unable to determine repo permission for '${ACTOR}' (HTTP ${status})." >&2
@@ -153,14 +169,12 @@ runs:
         actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
         endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${actor_enc}"
         resp_file="$(mktemp)"
-        status="$(curl -sS \
-          --connect-timeout 10 \
-          --max-time 30 \
-          -H "Accept: application/vnd.github+json" \
-          -H "Authorization: Bearer ${APP_TOKEN}" \
-          "$endpoint" \
-          -o "$resp_file" \
-          -w "%{http_code}")"
+        if ! status="$(github_api_get_status "$endpoint" "$APP_TOKEN" "$resp_file")"; then
+          echo "Unable to reach GitHub while checking team membership for '${ACTOR}'." >&2
+          cat "$resp_file" >&2 || true
+          rm -f "$resp_file"
+          exit 1
+        fi
 
         case "$status" in
           200)
