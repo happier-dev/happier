@@ -1,0 +1,134 @@
+<!doctype html>
+<!--
+  Cloudflare Pages serves this file, with a real HTTP 404 status, for any path
+  that matches neither a static asset nor a rule in public/_redirects. It is the
+  entire fix for the soft-404 problem described at the top of _redirects — no
+  configuration, no Worker, no wrangler setting. Its existence IS the fix.
+
+  Deliberately standalone: no Vite entry, no module script, no external CSS.
+  Vite copies public/ verbatim, so this ships exactly as written and renders
+  even if the app bundle is broken or absent.
+
+  Verify after deploy:
+    curl -sI https://happier.dev/zzz-nope-123 | head -1   # expect: HTTP/2 404
+    curl -s  https://happier.dev/robots.txt | head -1     # expect: "# https://happier.dev/robots.txt"
+-->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Page not found — Happier</title>
+        <meta name="robots" content="noindex, follow" />
+        <meta name="theme-color" content="#050507" />
+        <meta name="color-scheme" content="dark" />
+        <link rel="icon" type="image/png" sizes="96x96" href="/icons/favicon-96.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+        <style>
+            /* Tokens copied from src/styles/globals.css :root — kept literal so
+               this page has no build-time dependency on the app's CSS. */
+            :root {
+                --bg: #050507;
+                --fg: #fafafc;
+                --muted: #9a9aa5;
+                --line: rgba(255, 255, 255, 0.08);
+                --accent: #f5b547;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                height: 100%;
+            }
+            body {
+                margin: 0;
+                background: var(--bg);
+                color: var(--fg);
+                font-family:
+                    'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+                    sans-serif;
+                -webkit-font-smoothing: antialiased;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 32px;
+            }
+            main {
+                width: 100%;
+                max-width: 34rem;
+            }
+            .mark {
+                height: 28px;
+                width: auto;
+                margin-bottom: 48px;
+            }
+            .code {
+                font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                color: var(--accent);
+                margin: 0 0 14px;
+            }
+            h1 {
+                font-size: clamp(2rem, 7vw, 3rem);
+                line-height: 1.05;
+                letter-spacing: -0.03em;
+                font-weight: 800;
+                margin: 0 0 16px;
+            }
+            p {
+                color: var(--muted);
+                font-size: 1.0625rem;
+                line-height: 1.6;
+                margin: 0 0 32px;
+            }
+            ul {
+                list-style: none;
+                margin: 0;
+                padding: 24px 0 0;
+                border-top: 1px solid var(--line);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px 24px;
+            }
+            a {
+                color: var(--fg);
+                text-decoration: none;
+                border-bottom: 1px solid var(--line);
+                padding-bottom: 2px;
+                transition: border-color 200ms ease;
+            }
+            a:hover {
+                border-color: var(--accent);
+            }
+            .home {
+                display: inline-block;
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 0.9375rem;
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <img class="mark" src="/images/_opt/logotype-light-320.png" alt="Happier" width="128" height="28" />
+            <p class="code">Error 404</p>
+            <h1>This page doesn&rsquo;t exist.</h1>
+            <p>
+                The link may be out of date, or the address slightly off. Everything Happier has is one of the doors
+                below.
+            </p>
+            <a class="home" href="/">Back to happier.dev</a>
+            <ul>
+                <li><a href="https://docs.happier.dev/">Docs</a></li>
+                <li><a href="https://guides.happier.dev/">Guides</a></li>
+                <li><a href="https://app.happier.dev/">Web app</a></li>
+                <li><a href="https://github.com/happier-dev/happier">GitHub</a></li>
+                <li><a href="https://discord.gg/W6Pb8KuHfg">Discord</a></li>
+            </ul>
+        </main>
+    </body>
+</html>

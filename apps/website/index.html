@@ -1,779 +1,326 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Happier - AI Coding Companion for Claude Code, Codex, Gemini, OpenCode and more</title>
-  <meta name="description" content="Open-source, end-to-end encrypted companion app for AI coding agents. Run Claude Code, Codex, Gemini, OpenCode, Kilo, Kimi, Qwen, and Augment on your computer and continue from your phone." />
-  <meta name="robots" content="index,follow" />
-  <meta name="color-scheme" content="light dark" />
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0f" />
-
-  <meta property="og:title" content="Happier - AI Coding Companion for Claude Code, Codex, Gemini, OpenCode and more" />
-  <meta property="og:description" content="Open-source, end-to-end encrypted companion app for AI coding agents. Run Claude Code, Codex, Gemini, OpenCode, Kilo, Kimi, Qwen, and Augment on your computer and continue from your phone." />
-  <meta property="og:type" content="website" />
-  <meta name="twitter:card" content="summary_large_image" />
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="/images/favicon.png" />
-  <link rel="apple-touch-icon" href="/images/favicon.png" />
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lexend:wght@500;600;700;800&display=swap" rel="stylesheet">
-
-  <!-- Preload critical images -->
-  <link rel="preload" as="image" href="/images/logotype-light.png" />
-  <link rel="preload" as="image" href="/images/logotype-dark.png" />
-
-  <!-- Styles -->
-  <link rel="stylesheet" href="/src/styles.css" />
-
-  <!-- Prevent theme flash + enable progressive enhancement hooks -->
-  <script>
-    (function () {
-      document.documentElement.classList.add('js');
-      let stored = null;
-      try {
-        stored = localStorage.getItem('theme');
-      } catch {}
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const theme = stored === 'dark' || stored === 'light' ? stored : (prefersDark ? 'dark' : 'light');
-      document.documentElement.classList.toggle('dark', theme === 'dark');
-    })();
-  </script>
-</head>
-<body class="bg-white dark:bg-[#0a0a0f] text-gray-900 dark:text-gray-100 antialiased transition-colors duration-300">
-  <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] rounded-lg bg-white/90 dark:bg-[#0a0a0f]/90 px-4 py-2 text-sm font-semibold text-gray-900 dark:text-white ring-1 ring-gray-200 dark:ring-gray-800 shadow-lg">
-    Skip to content
-  </a>
-
-  <!-- Navigation -->
-  <nav class="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-[#0a0a0f]/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex items-center justify-between h-16">
-        <!-- Logo -->
-        <a href="/" class="flex items-center gap-2">
-          <img src="/images/logotype-light.png" alt="Happier" class="h-8 hidden dark:block" height="32" decoding="async" />
-          <img src="/images/logotype-dark.png" alt="Happier" class="h-8 dark:hidden" height="32" decoding="async" />
-        </a>
-
-        <!-- Desktop Nav -->
-        <div class="hidden md:flex items-center gap-8">
-          <a href="#features" class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Features</a>
-          <a href="#get-started" class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Get Started</a>
-          <a href="#self-host" class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Self-host</a>
-          <a href="#security" class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Security</a>
-          <a href="https://github.com/happier-dev/happier" target="_blank" rel="noopener noreferrer" class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors flex items-center gap-1.5">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-            GitHub
-          </a>
-        </div>
-
-        <!-- Right Side -->
-        <div class="flex items-center gap-4">
-          <!-- Theme Toggle -->
-          <button id="theme-toggle" class="p-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" aria-label="Toggle theme" type="button">
-            <svg class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-            <svg class="w-5 h-5 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
-          </button>
-
-          <!-- CTA Button -->
-          <a href="#get-started" class="hidden sm:inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-dark rounded-lg transition-colors">
-            Get Started
-          </a>
-
-          <!-- Mobile Menu Button -->
-          <button id="mobile-menu-btn" class="md:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Open menu" type="button" aria-expanded="false" aria-controls="mobile-menu">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Mobile Menu -->
-    <div id="mobile-menu" class="hidden md:hidden border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-[#0a0a0f]" aria-hidden="true">
-      <div class="px-4 py-4 space-y-3">
-        <a href="#features" class="block text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Features</a>
-        <a href="#get-started" class="block text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Get Started</a>
-        <a href="#self-host" class="block text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Self-host</a>
-        <a href="#security" class="block text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Security</a>
-        <a href="https://github.com/happier-dev/happier" target="_blank" rel="noopener noreferrer" class="block text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">GitHub</a>
-        <a href="#get-started" class="block w-full text-center px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-dark rounded-lg transition-colors">Get Started</a>
-      </div>
-    </div>
-  </nav>
-
-  <main id="main">
-  <!-- Hero Section -->
-  <section class="relative min-h-screen flex items-center justify-center pt-16 overflow-hidden">
-    <!-- Background Gradient -->
-    <div class="absolute inset-0 bg-gradient-to-b from-gray-50 via-white to-white dark:from-[#0a0a0f] dark:via-[#0d0d14] dark:to-[#0a0a0f]"></div>
-    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-accent/10 via-transparent to-transparent"></div>
-
-    <!-- Grid Pattern -->
-    <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAgTSAwIDIwIEwgNDAgMjAgTSAyMCAwIEwgMjAgNDAgTSAwIDMwIEwgNDAgMzAgTSAzMCAwIEwgMzAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgxMjgsMTI4LDEyOCwwLjA1KSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-50 dark:opacity-30"></div>
-
-    <div class="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-      <div class="animate-fade-in">
-        <!-- Badge -->
-        <div class="inline-flex items-center gap-2 px-4 py-2 mt-12 mb-12 text-sm font-medium rounded-full bg-accent/10 text-accent border border-accent/20">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-          Open Source • End-to-End Encrypted • Self-hostable
-        </div>
-
-        <!-- Headline -->
-        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-regular tracking-tight mb-6">
-          <span class="text-gray-900 dark:text-white">Your AI Coding Sessions,</span>
-          <br />
-          <span class="bg-gradient-to-r from-accent to-primary-400 bg-clip-text text-transparent">Everywhere You Go</span>
-        </h1>
-
-        <!-- Subheadline -->
-        <p class="text-lg sm:text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto mt-10 mb-10">
-          Run <strong class="text-gray-900 dark:text-white">Claude Code</strong>, <strong class="text-gray-900 dark:text-white">Codex</strong>, <strong class="text-gray-900 dark:text-white">OpenCode</strong>, <strong class="text-gray-900 dark:text-white">Pi</strong>, <strong class="text-gray-900 dark:text-white">Gemini</strong>, <strong class="text-gray-900 dark:text-white">Kilo</strong>, <strong class="text-gray-900 dark:text-white">Kimi</strong>, <strong class="text-gray-900 dark:text-white">Qwen</strong>, and <strong class="text-gray-900 dark:text-white">Augment</strong> on your computer — then continue seamlessly from your phone, browser, or desktop app.
-        </p>
-
-        <!-- Self-host Callout -->
-        <div class="max-w-3xl mx-auto mb-12">
-          <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-gray-200/80 dark:border-white/10 bg-white/70 dark:bg-black/20 px-5 py-4 shadow-lg">
-            <div class="flex items-start gap-3">
-              <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
-              </div>
-              <div class="text-left">
-                <p class="font-semibold text-gray-900 dark:text-white">Fully self-hostable</p>
-                <p class="text-sm text-gray-600 dark:text-gray-400">
-                  Run the whole stack on your machine, in one command.
-                </p>
-              </div>
-            </div>
-            <a href="#self-host" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-colors">
-              Self-hosting
-              <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
-            </a>
-          </div>
-        </div>
-
-        <!-- CTA Buttons -->
-        <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
-          <a href="#get-started" class="w-full sm:w-auto inline-flex items-center justify-center px-8 py-4 text-base font-semibold text-white bg-accent hover:bg-accent-dark rounded-xl transition-all hover:scale-105 shadow-lg shadow-accent/25">
-            Get Started
-            <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
-          </a>
-          <a href="https://github.com/happier-dev/happier" target="_blank" rel="noopener noreferrer" class="w-full sm:w-auto inline-flex items-center justify-center px-8 py-4 text-base font-semibold text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-all hover:scale-105">
-            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-            View on GitHub
-          </a>
-        </div>
-
-        <!-- Install Command -->
-        <div class="inline-flex items-center gap-3 px-6 py-3 bg-gray-900 dark:bg-gray-800 rounded-xl text-sm font-mono">
-          <span class="text-gray-400">$</span>
-          <code class="text-accent">curl -fsSL https://happier.dev/install | bash</code>
-          <button id="copy-install" class="p-1.5 rounded-md hover:bg-gray-700 transition-colors" aria-label="Copy command">
-            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- App Store Badges -->
-      <div class="flex flex-wrap items-center justify-center gap-4 mt-8">
-        <a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center h-12 min-w-[165px] transition-transform hover:scale-105">
-          <img src="/images/badges/app-store.svg" alt="Download on the App Store" class="h-12" decoding="async" />
-        </a>
-        <a href="https://github.com/happier-dev/happier/releases/download/ui-mobile-v0.1.2/happier-production-android-v0.1.2.apk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center gap-2 h-12 min-w-[165px] px-5 rounded-xl bg-gray-900 dark:bg-white/10 text-white dark:text-white border border-gray-700 dark:border-white/20 hover:bg-gray-700 dark:hover:bg-white/20 transition-all hover:scale-105 text-sm font-medium">
-          <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-          <span>Download APK</span>
-        </a>
-      </div>
-
-      <!-- Scroll Indicator -->
-      <div class="h-16 w-full mt-2 flex items-center justify-center">
-        <div class="animate-bounce">
-          <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Providers Section -->
-  <section class="reveal mt-6 py-12 bg-gray-50 dark:bg-[#0d0d14] border-y border-gray-200 dark:border-gray-800">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <p class="text-center text-sm text-gray-500 dark:text-gray-500 mb-8">Works with the major AI coding agent ecosystems</p>
-      <div class="flex flex-wrap items-center justify-center gap-8 sm:gap-16">
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>
-          <span class="font-semibold">Claude Code</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.8956zm16.0993 3.8558L12.6 8.3829l2.02-1.1638a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.1408 1.6465 4.4708 4.4708 0 0 1 .5765 3.0137zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>
-          <span class="font-semibold">Codex</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <span class="font-semibold">OpenCode</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <span class="font-semibold">Pi</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <svg class="w-8 h-8" viewBox="0 0 24 24" fill="currentColor"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>
-          <span class="font-semibold">Gemini</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <span class="font-semibold">Kimi</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <span class="font-semibold">Qwen</span>
-        </div>
-        <div class="flex items-center gap-3 text-gray-400 dark:text-gray-500">
-          <span class="font-semibold">Augment</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Features Section -->
-  <section id="features" class="reveal py-20 bg-white dark:bg-[#0a0a0f]">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="text-center mb-14">
-        <div class="inline-flex items-center gap-2 px-4 py-2 mb-6 text-sm font-semibold rounded-full bg-accent/10 text-accent border border-accent/20">
-          Built for real-world agent workflows
-        </div>
-        <h2 class="text-3xl sm:text-5xl tracking-tight text-gray-900 dark:text-white mb-4">
-          Powerful features, tailored to you
-        </h2>
-        <p class="text-lg text-gray-600 dark:text-gray-400 max-w-3xl mx-auto">
-          Everything you need to make AI-assisted coding portable, collaborative, and reliable — without sacrificing privacy.
-        </p>
-      </div>
-
-      <!-- Feature grid -->
-      <div class="rounded-3xl border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/[0.02] overflow-hidden">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y divide-gray-200 dark:divide-white/10 lg:divide-y-0 lg:divide-x">
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Collaborative Sessions</h3>
-            <p class="text-gray-600 dark:text-gray-400">Share sessions with teammates and friends using private or public links, with username-first social flows on compatible servers.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Expanded Provider Ecosystem</h3>
-            <p class="text-gray-600 dark:text-gray-400">Use Claude Code, Codex, Gemini, OpenCode, Kilo, Kimi, Qwen, and Augment with one consistent session experience.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Multi-server Workflows</h3>
-            <p class="text-gray-600 dark:text-gray-400">Use personal, team, and self-hosted servers side-by-side. Switch fast and keep accounts scoped per server.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Git-aware File Browser</h3>
-            <p class="text-gray-600 dark:text-gray-400">Inspect changed files and real per-turn diffs in-session, with optional experimental Git operations when you want to act directly.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Steering + Pending Queue</h3>
-            <p class="text-gray-600 dark:text-gray-400">For compatible backends, steer the active turn mid-run (manual or auto), or queue/edit/reorder/discard messages before execution.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Modes, Models, Permissions</h3>
-            <p class="text-gray-600 dark:text-gray-400">Choose permission policy and, when supported, switch mode/model per session with clear apply timing (immediate or next-turn).</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 1.105-.895 2-2 2s-2-.895-2-2 .895-2 2-2 2 .895 2 2zm10 1a10 10 0 01-15.364 8.364L4 21l.636-2.636A10 10 0 1122 12z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Notification-aware Routing</h3>
-            <p class="text-gray-600 dark:text-gray-400">Jump to the exact session from a notification, including automatic server switching in multi-server setups.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h10M7 16h10M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Voice Options (Cloud, BYO, Local)</h3>
-            <p class="text-gray-600 dark:text-gray-400">Use Happier Voice, your own ElevenLabs account, or local/device STT/TTS for flexible voice workflows.</p>
-          </div>
-
-          <div class="p-8">
-            <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-5">
-              <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a7 7 0 11-14 0m14 0a7 7 0 10-14 0m14 0v6a2 2 0 01-2 2H7a2 2 0 01-2-2v-6m4 4h6"></path></svg>
-            </div>
-            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">Built-in Bug Reports</h3>
-            <p class="text-gray-600 dark:text-gray-400">Report issues from app settings with optional diagnostics; server owners can disable bug report features when needed.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Feature screenshots / “table” -->
-      <div class="mt-20 text-center">
-        <h3 class="text-3xl sm:text-5xl tracking-tight text-gray-900 dark:text-white mb-4">
-          Comprehensive control of your coding sessions
-        </h3>
-        <p class="text-lg text-gray-600 dark:text-gray-400 max-w-3xl mx-auto">
-          Explore the workflow at a glance. Switch categories to see the product area and the feature explanation.
-        </p>
-      </div>
-
-      <div class="mt-10 rounded-3xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0d0d14] overflow-hidden shadow-[0_40px_120px_-60px_rgba(16,185,129,0.35)]">
-        <div class="px-4 sm:px-6 py-5 border-b border-gray-200 dark:border-white/10 overflow-x-auto no-scrollbar">
-          <div class="inline-flex items-center gap-1 p-1 rounded-full bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10" role="tablist" aria-label="Feature categories">
-            <button type="button" id="feature-tab-sessions" class="feature-tab is-active px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="sessions" role="tab" aria-selected="true" aria-controls="feature-panel">Sessions</button>
-            <button type="button" id="feature-tab-collaboration" class="feature-tab px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="collaboration" role="tab" aria-selected="false" aria-controls="feature-panel">Collaboration</button>
-            <button type="button" id="feature-tab-history" class="feature-tab px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="history" role="tab" aria-selected="false" aria-controls="feature-panel">History</button>
-            <button type="button" id="feature-tab-queue" class="feature-tab px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="queue" role="tab" aria-selected="false" aria-controls="feature-panel">Queue</button>
-            <button type="button" id="feature-tab-encryption" class="feature-tab px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="encryption" role="tab" aria-selected="false" aria-controls="feature-panel">Encryption</button>
-            <button type="button" id="feature-tab-providers" class="feature-tab px-4 py-2 text-sm font-semibold rounded-full" data-feature-tab="providers" role="tab" aria-selected="false" aria-controls="feature-panel">Providers</button>
-          </div>
-        </div>
-
-        <div class="px-6 sm:px-10 pt-10 pb-6 text-center">
-          <p id="feature-tabs-title" class="text-xl sm:text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-            Sessions you can trust
-          </p>
-          <p id="feature-tabs-desc" class="text-gray-600 dark:text-gray-400 max-w-3xl mx-auto">
-            Persistent sessions, reliable resume, and full history across devices — designed for long-running agent workflows.
-          </p>
-        </div>
-
-        <div class="px-4 sm:px-8 pb-10">
-          <div id="feature-panel" class="rounded-2xl border border-gray-200/80 dark:border-white/10 bg-white/60 dark:bg-black/20 overflow-hidden shadow-2xl" role="tabpanel" aria-labelledby="feature-tab-sessions">
-            <img id="feature-tabs-image" src="/images/screens/sessions.svg" alt="Sessions overview screenshot" class="w-full h-auto" loading="lazy" decoding="async" fetchpriority="low" />
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Get Started Section -->
-  <section id="get-started" class="reveal py-16 bg-gray-50 dark:bg-[#0d0d14]">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <!-- Section Header -->
-      <div class="text-center mb-16">
-        <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          Get Started in Minutes
-        </h2>
-        <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-          Set up Happier and start coding from anywhere in just four simple steps.
-        </p>
-      </div>
-
-      <!-- Steps -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-        <!-- Step 1 -->
-        <div class="relative">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-bold text-lg">1</div>
-            <div class="hidden lg:block flex-1 h-px bg-gray-300 dark:bg-gray-700"></div>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Download the App</h3>
-          <p class="text-gray-600 dark:text-gray-400">Get Happier from the App Store or Google Play on your mobile device.</p>
-        </div>
-
-        <!-- Step 2 -->
-        <div class="relative">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-bold text-lg">2</div>
-            <div class="hidden lg:block flex-1 h-px bg-gray-300 dark:bg-gray-700"></div>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Install the CLI</h3>
-          <p class="text-gray-600 dark:text-gray-400">Run <code class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-sm">curl -fsSL https://happier.dev/install | bash</code> on your computer (npm remains available as a fallback).</p>
-        </div>
-
-        <!-- Step 3 -->
-        <div class="relative">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-bold text-lg">3</div>
-            <div class="hidden lg:block flex-1 h-px bg-gray-300 dark:bg-gray-700"></div>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Pair Your Device</h3>
-          <p class="text-gray-600 dark:text-gray-400">Scan the QR code in the app to securely connect your phone to your computer.</p>
-        </div>
-
-        <!-- Step 4 -->
-        <div class="relative">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-bold text-lg">4</div>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Start Coding</h3>
-          <p class="text-gray-600 dark:text-gray-400">Run <code class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-sm">happier</code> instead of <code class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-sm">claude</code> and code from anywhere!</p>
-        </div>
-      </div>
-
-      <!-- Code Examples -->
-      <div class="mt-16 max-w-3xl mx-auto">
-        <div class="bg-gray-900 rounded-2xl overflow-hidden shadow-2xl">
-          <div class="flex items-center gap-2 px-4 py-3 bg-gray-800 border-b border-gray-700">
-            <div class="w-3 h-3 rounded-full bg-red-500"></div>
-            <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-            <div class="w-3 h-3 rounded-full bg-green-500"></div>
-            <span class="ml-2 text-sm text-gray-400">Terminal</span>
-          </div>
-          <div class="p-6 font-mono text-sm">
-            <div class="text-gray-400"># Instead of running claude directly:</div>
-            <div class="text-gray-500 line-through mt-2">$ claude</div>
-            <div class="mt-4 text-gray-400"># Use happier to enable remote access:</div>
-            <div class="text-accent mt-2">$ happier</div>
-            <div class="mt-4 text-gray-400"># Or for other providers:</div>
-            <div class="text-accent mt-2">$ happier codex</div>
-            <div class="text-accent">$ happier opencode</div>
-            <div class="text-accent">$ happier gemini</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Self-host Section -->
-  <section id="self-host" class="reveal py-24 bg-white dark:bg-[#0a0a0f]">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="grid lg:grid-cols-2 gap-16 items-center">
-        <!-- Content -->
-        <div>
-          <div class="inline-flex items-center gap-2 px-3 py-1.5 mb-6 text-sm font-medium rounded-full bg-accent/10 text-accent border border-accent/20">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-2.21 0-4 1.79-4 4v6h8v-6c0-2.21-1.79-4-4-4z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18h12"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 8V6a3 3 0 016 0v2"></path></svg>
-            Fully Self-hostable
-          </div>
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">
-            Own the stack.
-            <span class="text-accent">Stay independent.</span>
-          </h2>
-          <p class="text-lg text-gray-600 dark:text-gray-400 mb-8">
-            Happier runs on your own machine — server, web UI, and daemon. You can use it as-is, audit it, or tailor it to your workflow.
-          </p>
-
-          <!-- Highlights -->
-          <div class="space-y-6">
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">One-command install</h3>
-                <p class="text-gray-600 dark:text-gray-400">Install Happier in one command, then self-host the relay with the Happier CLI’s guided setup.</p>
-              </div>
-            </div>
-
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Easy daily run</h3>
-                <p class="text-gray-600 dark:text-gray-400">Start everything with a single command — the server, daemon, and UI gateway.</p>
-              </div>
-            </div>
-
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 1.105-.895 2-2 2s-2-.895-2-2 .895-2 2-2 2 .895 2 2zm10 1a10 10 0 01-15.364 8.364L4 21l.636-2.636A10 10 0 1122 12z"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Secure remote access</h3>
-                <p class="text-gray-600 dark:text-gray-400">Optional Tailscale integration gives you an HTTPS URL so your phone can connect securely from anywhere.</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Commands -->
-          <div class="mt-10 max-w-xl">
-            <div class="bg-gray-900 rounded-2xl overflow-hidden shadow-2xl">
-              <div class="flex items-center gap-2 px-4 py-3 bg-gray-800 border-b border-gray-700">
-                <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                <span class="ml-2 text-sm text-gray-400">Terminal</span>
-              </div>
-              <div class="p-6 font-mono text-sm">
-                <div class="text-gray-400"># Install Happier (one command):</div>
-                <div class="text-accent mt-2">$ curl -fsSL https://happier.dev/install | bash</div>
-                <div class="mt-4 text-gray-400"># Self-host the relay on this machine:</div>
-                <div class="text-accent mt-2">$ happier relay host install --mode system</div>
-                <div class="mt-4 text-gray-400"># Check status anytime:</div>
-                <div class="text-accent mt-2">$ happier relay host status</div>
-              </div>
-            </div>
-            <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
-              Prefer npm? Power users can still install with <code class="text-xs">npm install -g @happier-dev/cli</code>.
-              <a href="https://github.com/happier-dev/happier/tree/main/apps/stack" target="_blank" rel="noopener noreferrer" class="text-accent hover:text-accent-dark font-semibold transition-colors">Self-host docs</a>
-            </p>
-          </div>
-        </div>
-
-        <!-- Visual -->
-        <div class="relative">
-          <div class="rounded-3xl border border-gray-200/80 dark:border-white/10 bg-white/60 dark:bg-black/20 p-8 shadow-2xl">
-            <div class="flex items-center gap-3 mb-8">
-              <div class="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center">
-                <svg class="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h18M3 17h18"></path></svg>
-              </div>
-              <div>
-                <p class="text-sm text-gray-500 dark:text-gray-500">Runs locally</p>
-                <p class="text-xl font-semibold text-gray-900 dark:text-white">Your machine • your data</p>
-              </div>
-            </div>
-
-            <div class="space-y-4">
-              <div class="flex items-center justify-between rounded-2xl border border-gray-200/80 dark:border-white/10 bg-white/70 dark:bg-black/30 px-4 py-3">
-                <div class="flex items-center gap-3">
-                  <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
-                  <span class="font-semibold text-gray-900 dark:text-white">Server</span>
-                </div>
-                <span class="text-xs text-gray-500 dark:text-gray-500">localhost</span>
-              </div>
-              <div class="flex items-center justify-between rounded-2xl border border-gray-200/80 dark:border-white/10 bg-white/70 dark:bg-black/30 px-4 py-3">
-                <div class="flex items-center gap-3">
-                  <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
-                  <span class="font-semibold text-gray-900 dark:text-white">Web UI</span>
-                </div>
-                <span class="text-xs text-gray-500 dark:text-gray-500">served locally</span>
-              </div>
-              <div class="flex items-center justify-between rounded-2xl border border-gray-200/80 dark:border-white/10 bg-white/70 dark:bg-black/30 px-4 py-3">
-                <div class="flex items-center gap-3">
-                  <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
-                  <span class="font-semibold text-gray-900 dark:text-white">Daemon</span>
-                </div>
-                <span class="text-xs text-gray-500 dark:text-gray-500">providers + sessions</span>
-              </div>
-            </div>
-
-            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-800">
-              <p class="text-sm text-gray-600 dark:text-gray-400">
-                Optional: publish a secure HTTPS URL to your phone with Tailscale.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Security Section -->
-  <section id="security" class="reveal py-24 bg-white dark:bg-[#0a0a0f]">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="grid lg:grid-cols-2 gap-16 items-center">
-        <!-- Content -->
-        <div>
-          <div class="inline-flex items-center gap-2 px-3 py-1.5 mb-6 text-sm font-medium rounded-full bg-accent/10 text-accent border border-accent/20">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-            Security First
-          </div>
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">
-            Your Code is Your Code.
-            <span class="text-accent">Private. Always.</span>
-          </h2>
-          <p class="text-lg text-gray-600 dark:text-gray-400 mb-8">
-            Happier is designed with privacy as a foundation, not an afterthought. We use the same encryption technology trusted by Signal.
-          </p>
-
-          <!-- Security Features -->
-          <div class="space-y-6">
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">End-to-End Encryption</h3>
-                <p class="text-gray-600 dark:text-gray-400">Built using TweetNaCl, the same cryptographic library used by Signal. Your data is encrypted before it leaves your device.</p>
-              </div>
-            </div>
-
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Zero-Knowledge Architecture</h3>
-                <p class="text-gray-600 dark:text-gray-400">Servers cannot read your data. Encryption keys never leave your devices. We literally cannot access your code.</p>
-              </div>
-            </div>
-
-            <div class="flex gap-4">
-              <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"></path></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Built in Switzerland</h3>
-                <p class="text-gray-600 dark:text-gray-400">Developed in Switzerland with a strong focus on data protection, privacy laws, and developer transparency.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Visual -->
-        <div class="relative">
-          <div class="aspect-square rounded-3xl bg-gradient-to-br from-accent/20 via-primary-500/10 to-transparent p-8 flex items-center justify-center">
-            <div class="w-full max-w-sm">
-              <!-- Lock Animation Visual -->
-              <div class="relative">
-                <div class="absolute inset-0 bg-accent/20 blur-3xl rounded-full"></div>
-                <svg class="relative w-full h-auto text-accent" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="100" cy="100" r="80" stroke="currentColor" stroke-width="2" stroke-dasharray="8 4" class="opacity-30" />
-                  <circle cx="100" cy="100" r="60" stroke="currentColor" stroke-width="2" class="opacity-50" />
-                  <path d="M100 60V80" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                  <rect x="70" y="80" width="60" height="50" rx="8" fill="currentColor" class="opacity-20" stroke="currentColor" stroke-width="2" />
-                  <circle cx="100" cy="105" r="8" fill="currentColor" />
-                  <path d="M100 105V120" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                  <path d="M80 60C80 48.954 88.954 40 100 40C111.046 40 120 48.954 120 60V80H80V60Z" stroke="currentColor" stroke-width="4" fill="none" />
-                </svg>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Community Section -->
-  <section class="reveal py-20 bg-gray-50 dark:bg-[#0d0d14]">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-      <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-        Built by Developers, for Developers
-      </h2>
-      <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-12">
-        Happier is completely open-source. We built this because we wanted a more powerful, more social way to interact with AI agents — and we want to build it in the open, shaped by the people who actually use it.
-      </p>
-
-      <!-- Values -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
-        <div class="p-6">
-          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4">
-            <svg class="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Open Development</h3>
-          <p class="text-gray-600 dark:text-gray-400">Transparent discussions, public roadmap, and visible progress. See exactly what we're building.</p>
-        </div>
-
-        <div class="p-6">
-          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4">
-            <svg class="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Fast Feedback Loops</h3>
-          <p class="text-gray-600 dark:text-gray-400">Quick responses on issues and pull requests. We iterate rapidly based on real user needs.</p>
-        </div>
-
-        <div class="p-6">
-          <div class="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-4">
-            <svg class="w-6 h-6 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path></svg>
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Real Developer Pain</h3>
-          <p class="text-gray-600 dark:text-gray-400">Focus on solving actual problems, not chasing hype. Every feature has a real use case behind it.</p>
-        </div>
-      </div>
-
-      <!-- CTA -->
-      <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-        <a href="https://github.com/happier-dev/happier" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-6 py-3 text-base font-medium text-white bg-gray-900 dark:bg-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 rounded-xl transition-colors">
-          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          Star on GitHub
-        </a>
-        <a href="https://github.com/happier-dev/happier/issues" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-6 py-3 text-base font-medium text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-colors">
-          Report an Issue
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Get Started Section -->
-  <section id="ready-to-be-happier" class="reveal py-24 bg-white dark:bg-[#0a0a0f]">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-      <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-        Ready to Be Happier?
-      </h2>
-      <p class="text-lg text-gray-600 dark:text-gray-400 mb-10">
-        Code faster. Code together. From anywhere.
-      </p>
-
-      <!-- Download Buttons -->
-      <div class="flex flex-wrap items-center justify-center gap-6 mb-12">
-        <a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388" target="_blank" rel="noopener noreferrer" class="transition-transform hover:scale-105">
-          <img src="/images/badges/app-store.svg" alt="Download on the App Store" class="h-14" loading="lazy" decoding="async" />
-        </a>
-        <a href="https://play.google.com/store/apps/details?id=dev.happier.app" target="_blank" rel="noopener noreferrer" class="transition-transform hover:scale-105">
-          <img src="/images/badges/google-play.svg" alt="Get it on Google Play" class="h-14" loading="lazy" decoding="async" />
-        </a>
-      </div>
-
-      <!-- Install Command -->
-      <div class="inline-flex flex-col items-center gap-4 p-6 bg-gray-50 dark:bg-gray-900 rounded-2xl">
-        <p class="text-sm text-gray-500 dark:text-gray-400">Install the CLI on your computer:</p>
-        <div class="flex items-center gap-3 px-6 py-3 bg-gray-900 dark:bg-gray-800 rounded-xl text-sm font-mono">
-          <span class="text-gray-400">$</span>
-          <code class="text-accent">curl -fsSL https://happier.dev/install | bash</code>
-          <button id="copy-install-footer" class="p-1.5 rounded-md hover:bg-gray-700 transition-colors" aria-label="Copy command">
-            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-          </button>
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400">npm fallback: <code>npm install -g @happier-dev/cli</code></p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Footer -->
-  </main>
-  <footer class="py-12 bg-gray-50 dark:bg-[#0d0d14] border-t border-gray-200 dark:border-gray-800">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex flex-col md:flex-row items-center justify-between gap-8">
-        <!-- Logo & Copyright -->
-        <div class="flex flex-col items-center md:items-start gap-4">
-          <a href="/" class="flex items-center gap-2">
-            <img src="/images/logotype-light.png" alt="Happier" class="h-6 hidden dark:block" height="24" decoding="async" />
-            <img src="/images/logotype-dark.png" alt="Happier" class="h-6 dark:hidden" height="24" decoding="async" />
-          </a>
-          <p class="text-sm text-gray-500 dark:text-gray-500">
-            Code faster. Code together. Be Happier.
-          </p>
-          <p class="text-xs text-gray-400 dark:text-gray-600">
-            Not affiliated with or endorsed by Anthropic, OpenAI, or Google.
-          </p>
-        </div>
-
-        <!-- Links -->
-        <div class="flex items-center gap-6">
-          <a href="https://github.com/happier-dev/happier" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors" aria-label="GitHub">
-            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          </a>
-          <a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors" aria-label="App Store">
-            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          </a>
-          <a href="https://play.google.com/store/apps/details?id=dev.happier.app" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors" aria-label="Google Play">
-            <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.53,12.9 20.18,13.18L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"/></svg>
-          </a>
-        </div>
-      </div>
-
-      <!-- Bottom -->
-      <div class="mt-8 pt-8 border-t border-gray-200 dark:border-gray-800 text-center">
-        <p class="text-sm text-gray-500 dark:text-gray-500">
-          &copy; 2026 Happier. Open source under MIT License.
-        </p>
-      </div>
-    </div>
-  </footer>
-
-  <!-- Scripts -->
-  <script type="module" src="/src/main.js"></script>
-</body>
+<!doctype html>
+<html lang="en" class="dark">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+        <!--
+          PER-ROUTE HEAD. Everything between the head markers below is
+          REPLACED WHOLESALE by scripts/prerender.mjs, once per route, from the
+          tags src/routes.tsx generates. The homepage's own tags are what sits
+          here in source, so `vite dev` and `vite preview` still serve a page
+          with a title, a canonical and a card — and so a diff of this file shows
+          what a visitor to happier.dev/ actually gets.
+
+          Anything that is the same on every page — icons, manifest, viewport,
+          theme-color, the fonts, and the site-scoped JSON-LD graph below —
+          belongs OUTSIDE the markers. Nothing inside them is shared.
+
+          On the title: every token has verified US search demand (Semrush,
+          Aug 2026). "Remote" is deliberately absent even though `claude code
+          remote` (260) is the highest-CPC term in the set — it belongs to
+          /vs/claude-code-remote-control, and fighting for one term on two URLs
+          loses both. "11 more" replaced "OpenCode" (40,500/mo) because that
+          query is navigational and owned by sst: the slot yielded structurally
+          zero, and "11 more" spends the same characters on the one claim no
+          vendor can copy.
+        -->
+
+        <link rel="icon" type="image/png" sizes="96x96" href="/icons/favicon-96.png" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+
+        <!-- ONE theme-color, deliberately. The obvious thing to write here is a
+             prefers-color-scheme pair, and it would be wrong: ThemeContext.readInitial()
+             (src/components/ThemeContext.tsx:16-21) returns 'dark' unless the visitor has
+             previously toggled, and <html> ships with class="dark" — the page does NOT
+             follow the OS. Emitting #F5F5F7 under prefers-color-scheme:light would paint
+             the mobile browser chrome pale above a black page. Restore the pair here the
+             day readInitial() starts consulting matchMedia:
+               <meta name="theme-color" content="#050507" media="(prefers-color-scheme: dark)" />
+               <meta name="theme-color" content="#F5F5F7" media="(prefers-color-scheme: light)" />
+             (#F5F5F7 is html.light --bg, src/styles/globals.css:92 — not #FAFAF7.) -->
+        <meta name="theme-color" content="#050507" />
+        <meta name="color-scheme" content="dark light" />
+
+        <!-- Identity tags that are true of every page on the origin. Shared on
+             purpose, and therefore outside the per-route markers below. -->
+        <meta property="og:site_name" content="Happier" />
+        <meta property="og:type" content="website" />
+        <!-- og:locale is NOT here: it is per-page, emitted by headTagsFor() in
+             src/routes.tsx inside the per-route markers below, because a
+             localised page declares its own locale and its alternates. A shared
+             copy here shipped the tag twice on every page. -->
+        <meta name="author" content="Happier" />
+
+        <!-- Self-hosted fonts. src/styles/fonts.css is imported by
+             src/styles/globals.css, so the @font-face rules land in the hashed
+             stylesheet the page already blocks on: no fonts.googleapis.com
+             request, no fonts.gstatic.com request, no third-party origin in the
+             critical path, and nothing for a consent regime to argue about.
+             scripts/vendor-fonts.mjs copies the same latin-subset variable files
+             Google serves into public/fonts/.
+
+             Only the two families the first viewport actually uses are
+             preloaded. JetBrains Mono is deliberately not: it renders inside the
+             install command, which is below the headline, and preloading a font
+             the first paint does not need competes with the one it does. -->
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-tight-latin-var.woff2" crossorigin />
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-latin-var.woff2" crossorigin />
+
+        <!--head-->
+        <title>Happier — open-source app for Claude Code, Codex &amp; 11 more</title>
+        <meta
+            name="description"
+            content="Run Claude Code, Codex and 11 more agents from your phone, browser or desktop. Open-source, end-to-end encrypted, self-hostable. Your own subscriptions."
+        />
+        <link rel="canonical" href="https://happier.dev/" />
+        <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+
+        <meta property="og:url" content="https://happier.dev/" />
+        <!-- og:title is the social headline, not the SERP title: shared links are read
+             by humans, so it matches the words rendered in og.png rather than the
+             keyword-bearing <title>. -->
+        <meta property="og:title" content="Happier — One client for every AI coding agent." />
+        <meta
+            property="og:description"
+            content="Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable."
+        />
+        <meta property="og:image" content="https://happier.dev/images/og.png" />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <!-- alt describes the card that scripts/generate-social-assets.mjs actually
+             renders. Keep the two in sync if the card is redrawn. -->
+        <meta
+            property="og:image:alt"
+            content="The Happier wordmark over the words: One client for every AI coding agent. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot and 7 more."
+        />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Happier — One client for every AI coding agent." />
+        <meta
+            name="twitter:description"
+            content="Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable."
+        />
+        <meta name="twitter:image" content="https://happier.dev/images/og.png" />
+        <meta
+            name="twitter:image:alt"
+            content="The Happier wordmark over the words: One client for every AI coding agent."
+        />
+        <!--/head-->
+        <!-- twitter:site / twitter:creator are INTENTIONALLY ABSENT. No X account has
+             been verified for this project: x.com returns HTTP 200 for handles that do
+             not exist, so a 200 is not evidence. Pointing twitter:site at a handle
+             someone else owns hands them the attribution byline on every shared link.
+             Uncomment ONLY after loading the profile in a browser and confirming
+             ownership:
+               <meta name="twitter:site" content="@yourhandle" />
+               <meta name="twitter:creator" content="@yourhandle" /> -->
+
+        <!--
+          THE PROGRESSIVE-ENHANCEMENT FLAG, and it has to be inline and here.
+
+          Every headline on this site is a <RevealText>, which ships its words in
+          the prerendered HTML with class `reveal-word-idle`. That class used to
+          be `opacity: 0`, which meant the prerendered page — the whole point of
+          the prerender — rendered INVISIBLE to anything that reads pixels rather
+          than raw HTML, and stayed invisible for as long as the JS bundle took
+          to arrive. Anyone screenshotting happier.dev on a slow connection got a
+          blank page with a planet on it.
+
+          So `.reveal-word-idle` now defaults to `opacity: 1` and the animation
+          is opt-IN: this one line adds `js` to <html>, and only `html.js`
+          re-hides the words for the reveal. It runs synchronously in <head>,
+          before first paint, so a JS visitor still sees the animation from its
+          start and there is no flash of already-visible text.
+
+          Do not move this to a bundle. A deferred module runs after first paint,
+          which is exactly the flash it exists to prevent.
+        -->
+        <script>
+            document.documentElement.classList.add('js');
+        </script>
+
+        <!--
+          STRUCTURED DATA — every URL below was resolved with curl on 2026-08-08.
+
+          Deliberate omissions, each one a manual-action risk if added back:
+
+          * aggregateRating. The iOS listing has 10 ratings at 4.4. Google's
+            structured-data policy requires review markup to describe ratings that
+            are VISIBLE ON THE PAGE CARRYING THE MARKUP. happier.dev shows no
+            ratings, so this would be self-serving markup for content that isn't
+            there — the textbook trigger for a "Structured data issue" manual
+            action, and it would cost the star snippet everywhere, not just here.
+            10 ratings is also below the threshold at which Google shows stars at
+            all. Add it only once real, visible, user-submitted reviews live on
+            this page.
+          * Google Play. play.google.com/store/apps/details?id=dev.happier answers
+            HTTP 404 (verified) — there is no listing. A downloadUrl to a 404 is a
+            broken-link signal and misleads the 762 Android visitors PostHog saw in
+            90 days. The Android build is therefore declared against its real
+            artifact, the GitHub release APK.
+          * FAQPage. Google restricted FAQ rich results to authoritative
+            government/health sites in 2023 and deprecated the feature outright on
+            2026-05-07 — the markup is no longer used for search results at all,
+            for anyone. There is no SERP feature left to win, so the twenty-three
+            answers in src/data/faq.ts ship as plain prose in the DOM and nothing
+            else. Do not add it back when the FAQ grows: the answers earn their
+            traffic through passage ranking, and passage ranking reads the text,
+            not the JSON-LD.
+          * SearchAction on WebSite. There is no site search endpoint. Declaring a
+            sitelinks searchbox that 404s is a false claim about the site.
+
+          sameAs lists only profiles verified to resolve AND to be owned by this
+          project. No X/Twitter entry — see the twitter:site note above.
+        -->
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "Organization",
+                        "@id": "https://happier.dev/#org",
+                        "name": "Happier",
+                        "url": "https://happier.dev/",
+                        "logo": {
+                            "@type": "ImageObject",
+                            "url": "https://happier.dev/icons/icon-512.png",
+                            "width": 512,
+                            "height": 512
+                        },
+                        "description": "Happier is an open-source, end-to-end encrypted client for AI coding agents. It runs Claude Code, Codex, OpenCode, Cursor and 9 more agents from one app on phone, web, desktop and terminal, using the subscriptions the developer already pays for.",
+                        "foundingDate": "2026",
+                        "sameAs": [
+                            "https://github.com/happier-dev",
+                            "https://github.com/happier-dev/happier",
+                            "https://discord.gg/W6Pb8KuHfg",
+                            "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"
+                        ]
+                    },
+                    {
+                        "@type": "WebSite",
+                        "@id": "https://happier.dev/#site",
+                        "url": "https://happier.dev/",
+                        "name": "Happier",
+                        "inLanguage": "en",
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "SoftwareApplication",
+                        "@id": "https://happier.dev/#app",
+                        "name": "Happier",
+                        "alternateName": "Happier: Claude Codex OpenCode",
+                        "applicationCategory": "DeveloperApplication",
+                        "applicationSubCategory": "AI coding agent client",
+                        "operatingSystem": "iOS 15.1+, macOS, Windows, Linux, Web",
+                        "url": "https://happier.dev/",
+                        "downloadUrl": "https://happier.dev/#get-started",
+                        "installUrl": "https://happier.dev/#get-started",
+                        "softwareVersion": "0.2",
+                        "license": "https://github.com/happier-dev/happier/blob/main/LICENCE",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "featureList": [
+                            "Run Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot, Qwen, Kimi, Auggie, Kilo, Kiro, Pi and Grok from one client",
+                            "End-to-end encrypted sessions",
+                            "Bring your own agent subscriptions and API keys",
+                            "Self-hostable runtime",
+                            "Phone, web, desktop and terminal clients"
+                        ],
+                        "publisher": { "@id": "https://happier.dev/#org" },
+                        "isRelatedTo": { "@id": "https://happier.dev/#source" }
+                    },
+                    {
+                        "@type": "MobileApplication",
+                        "@id": "https://happier.dev/#app-ios",
+                        "name": "Happier: Claude Codex OpenCode",
+                        "applicationCategory": "DeveloperApplication",
+                        "operatingSystem": "iOS 15.1+",
+                        "url": "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297",
+                        "downloadUrl": "https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "MobileApplication",
+                        "@id": "https://happier.dev/#app-android",
+                        "name": "Happier for Android",
+                        "applicationCategory": "DeveloperApplication",
+                        "operatingSystem": "Android",
+                        "url": "https://github.com/happier-dev/happier/releases",
+                        "downloadUrl": "https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk",
+                        "isAccessibleForFree": true,
+                        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+                        "publisher": { "@id": "https://happier.dev/#org" }
+                    },
+                    {
+                        "@type": "SoftwareSourceCode",
+                        "@id": "https://happier.dev/#source",
+                        "name": "happier",
+                        "description": "Source for Happier — an open-source client for AI coding agents.",
+                        "codeRepository": "https://github.com/happier-dev/happier",
+                        "url": "https://github.com/happier-dev/happier",
+                        "programmingLanguage": ["TypeScript", "Rust"],
+                        "runtimePlatform": "Node.js",
+                        "license": "https://spdx.org/licenses/MIT.html",
+                        "author": { "@id": "https://happier.dev/#org" }
+                    }
+                ]
+            }
+        </script>
+
+        <noscript>
+            <!--
+              Belt and braces. The `js` class above already means a no-JS visitor
+              never gets the hidden entrance state — `.reveal-word-idle` and
+              `.fpanel` are visible by default now, and only `html.js` hides them.
+              These rules stay because they also cover the case the class cannot:
+              JS enabled, bundle failed to load, class applied, animation never
+              armed. `!important` is required to beat the inline styles React
+              emits.
+            -->
+            <style>
+                .reveal-word,
+                .reveal-word-idle {
+                    opacity: 1 !important;
+                    filter: none !important;
+                    transform: none !important;
+                    animation: none !important;
+                }
+                .fpanel {
+                    opacity: 1 !important;
+                    transform: none !important;
+                }
+                [data-reveal] {
+                    opacity: 1 !important;
+                    transform: none !important;
+                }
+            </style>
+        </noscript>
+    </head>
+    <body>
+        <div id="root"></div>
+        <!--
+          THE DEV ENTRY, AND THE ONLY MODULE SCRIPT IN THIS FILE.
+
+          It is not the script any shipped page loads. The client build emits one
+          entry per prerendered page (src/entries/, wired up in vite.config.ts),
+          and scripts/prerender.mjs replaces this tag in each emitted file with
+          that page's own chunk plus modulepreloads for the chunks it shares —
+          the shared react vendor chunk, the shared shell. That is what stops a
+          reader of /security downloading the copy for the other twenty pages.
+
+          src/main.tsx therefore does nothing in production but pull in the
+          stylesheet; in `vite dev`, where there is no prerenderer, it looks at
+          location.pathname and loads the entry the built page would have named.
+
+          Adding a SECOND module script here breaks the split: the prerenderer
+          requires exactly one so it knows which tag to swap, and fails the build
+          if it finds more. Inline scripts and application/ld+json are unaffected.
+        -->
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
 </html>

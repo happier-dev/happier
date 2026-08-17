@@ -1,0 +1,46 @@
+# Cloudflare Workers deployment for happier.dev.
+#
+# The site is fully prerendered — every route in src/routes.tsx is baked into
+# its own dist/<route>/index.html by scripts/prerender.mjs. Those requests are
+# served by the static-asset layer and are free and unlimited on every plan;
+# they never invoke the Worker script.
+#
+# The Worker script exists for exactly one path, /ingest/*, which proxies
+# first-party analytics to PostHog (see worker/index.ts). Only those requests
+# are billable invocations.
+#
+# Deployment is driven by .github/workflows/promote-website.yml, which builds
+# the candidate in a secret-free job and uploads dist/ across the trust
+# boundary. Do not point Cloudflare's Git integration at this repo: it would
+# rebuild the whole monorepo in Cloudflare's build container and bypass the
+# release-actor and trusted-ref guards.
+
+name = "happier-website"
+compatibility_date = "2026-08-17"
+main = "worker/index.ts"
+
+# No happier-website.<subdomain>.workers.dev route: the site answers on its own
+# custom domain and a second public origin serving the same pages is an SEO
+# duplicate nobody asked for.
+workers_dev = false
+# But preview URLs are NOT the workers.dev route, and they default to following
+# it — so turning workers_dev off silently disables the `--preview-alias preview`
+# deploy in promote-website.yml. Preview is where _headers, _redirects and the
+# 404 behaviour get verified before production, so it is turned back on here.
+preview_urls = true
+
+[assets]
+directory = "./dist/"
+binding = "ASSETS"
+
+# Serve dist/404.html with a real HTTP 404 for anything that matches no asset.
+# public/_redirects explains at length why this site must not have an SPA
+# catch-all: a soft 404 breaks robots.txt, sitemap.xml and /.well-known/*.
+not_found_handling = "404-page"
+
+# /agents and /agents/ both resolve to dist/agents/index.html.
+html_handling = "auto-trailing-slash"
+
+# Everything except this prefix is served straight from assets without a
+# billable invocation.
+run_worker_first = ["/ingest/*"]

@@ -11,12 +11,12 @@ on:
           - preview
           - production
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Vestigial; Cloudflare is republished on every promotion, so there is nothing to force"
         required: true
         default: false
         type: boolean
       run_build:
-        description: "Checks — Run apps/website build before promoting"
+        description: "Checks — Retained for compatibility; the build always runs because deploy_cloudflare publishes its output"
         required: true
         default: true
         type: boolean
@@ -47,12 +47,12 @@ on:
         required: true
         type: string
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Vestigial; Cloudflare is republished on every promotion, so there is nothing to force"
         required: false
         default: false
         type: boolean
       run_build:
-        description: "Checks — Run apps/website build before promoting"
+        description: "Checks — Retained for compatibility; the build always runs because deploy_cloudflare publishes its output"
         required: false
         default: true
         type: boolean
@@ -304,9 +304,30 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+      # The build is unconditional: deploy_cloudflare publishes exactly these
+      # bytes, so `run_build: false` must not be able to produce a promotion
+      # with nothing to upload. The build itself is the gate — it runs
+      # tsc --noEmit, prerender, assert:crawlable, assert:locale-links and
+      # assert:perf before anything leaves this secret-free job.
       - name: Build website
-        if: inputs.run_build
+        env:
+          # PostHog project keys are public by design — posthog-js ships this
+          # value to every browser — so it is a var, not a secret, and this job
+          # stays secret-free. vite.config.ts hard-fails when it is undefined
+          # rather than quietly shipping an unmeasured build; set it to the
+          # empty string to publish an intentionally blind one.
+          VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
         run: yarn workspace @happier-dev/website build
+      - name: Upload built site across the trust boundary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: website-dist-${{ needs.apply_bump.outputs.release_sha }}
+          path: apps/website/dist
+          retention-days: 7
+          if-no-files-found: error
+          # dist/.well-known/security.txt and dist/.vite/manifest.json are
+          # dotfiles the site depends on; the default upload would drop them.
+          include-hidden-files: true
 
   promote:
     needs: [release_actor_guard, apply_bump, validate_candidate]
@@ -356,22 +377,70 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
-      - name: Trigger deploy webhooks when forced without branch change
-        if: inputs.force_deploy && steps.before.outputs.sha == steps.after.outputs.sha
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
-          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.after.outputs.sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: node scripts/pipeline/deploy/trigger-webhooks.mjs --environment "$DEPLOY_ENVIRONMENT" --component website --repository "$REPOSITORY" --ref-name "deploy/$DEPLOY_ENVIRONMENT/website" --sha "$DEPLOY_SHA"
       - name: Deploy note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           DEPLOY_SHA: ${{ steps.after.outputs.sha }}
         run: |
-          echo "Deployment is triggered automatically by pushes to deploy/$DEPLOY_ENVIRONMENT/website." >> "$GITHUB_STEP_SUMMARY"
+          echo "deploy/$DEPLOY_ENVIRONMENT/website records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
           echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishes the exact bytes validate_candidate built. Kept out of `promote`
+  # because that job owns release-shared (GitHub App) secrets and a job may
+  # only bind one environment; Cloudflare credentials live in website-deploy.
+  #
+  # Cloudflare's Git integration is deliberately NOT connected to this repo.
+  # It would rebuild the whole monorepo in Cloudflare's build container and
+  # would bypass release_actor_guard and trusted_ref_guard entirely.
+  deploy_cloudflare:
+    needs: [release_actor_guard, apply_bump, validate_candidate, promote]
+    runs-on: ubuntu-latest
+    environment: website-deploy
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted deploy control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Download the exact built site
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: website-dist-${{ needs.apply_bump.outputs.release_sha }}
+          path: apps/website/dist
+      - name: Verify the artifact is a real prerendered site
+        run: |
+          set -euo pipefail
+          test -f apps/website/dist/index.html
+          test -f apps/website/dist/404.html
+          test -f apps/website/dist/_headers
+          test -f apps/website/dist/_redirects
+          test -f apps/website/dist/robots.txt
+          test -f apps/website/dist/sitemap.xml
+      - name: Publish to Cloudflare
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        working-directory: apps/website
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
+            npx --yes wrangler@4 deploy --message "promote $RELEASE_SHA"
+          else
+            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote $RELEASE_SHA"
+          fi
+      - name: Cloudflare note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: |
+          echo "Published apps/website/dist to Cloudflare ($DEPLOY_ENVIRONMENT) from $RELEASE_SHA." >> "$GITHUB_STEP_SUMMARY"

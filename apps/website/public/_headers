@@ -1,0 +1,84 @@
+# Cloudflare Pages `_headers`.
+#
+# Vite copies public/ verbatim into dist/, and Cloudflare Pages reads _headers
+# from the ROOT of the build output — so this file must stay in public/, not in
+# the repo root. It is consumed at deploy time and never served to visitors.
+#
+# Rules are applied in order; later matching rules add to earlier ones.
+
+# ---------------------------------------------------------------------------
+# Everything
+# ---------------------------------------------------------------------------
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  X-Frame-Options: SAMEORIGIN
+
+# ---------------------------------------------------------------------------
+# NOINDEX FOR NON-CONTENT ASSETS
+#
+# These are the paths public/robots.txt deliberately does NOT Disallow (see the
+# long note there): a crawler must be able to FETCH a file to obey a noindex.
+# X-Robots-Tag is the authoritative, removal-guaranteeing directive; robots.txt
+# Disallow is not.
+#
+# Covers: /install, /install.sh, /install.ps1, /install-dev*, /install-preview*,
+# /install-server*  — ~80 KB shell/PowerShell each, served as octet-stream, and
+# entirely useless as a search result.
+# ---------------------------------------------------------------------------
+/install*
+  X-Robots-Tag: noindex, nofollow
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300, must-revalidate
+
+/schemas/*
+  X-Robots-Tag: noindex
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=3600
+
+/happier-release.pub
+  X-Robots-Tag: noindex
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+# ---------------------------------------------------------------------------
+# CACHING
+#
+# Vite fingerprints everything under /assets/ with a content hash, so those are
+# safe to pin for a year. HTML must never be pinned or a deploy cannot roll out.
+# Repeat-visit LCP is a Core Web Vitals input, which is a (light) ranking signal
+# — this is the cheapest CWV win available to a static site.
+# ---------------------------------------------------------------------------
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/icons/*
+  Cache-Control: public, max-age=604800
+
+/images/*
+  Cache-Control: public, max-age=604800
+
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+# security.txt must be served as plain text or RFC 9116 parsers reject it.
+/.well-known/security.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=86400
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/robots.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600

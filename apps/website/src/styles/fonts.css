@@ -1,0 +1,79 @@
+/*
+ * Self-hosted web fonts. Imported first in globals.css, before @tailwind base,
+ * so the @font-face rules land in the same stylesheet the page already blocks
+ * on — no extra request, no third-party origin.
+ *
+ * These are the LATIN-SUBSET VARIABLE files Google Fonts serves, copied byte
+ * for byte by scripts/vendor-fonts.mjs. One file per family covers the whole
+ * weight axis, which is why `font-weight: 400 800` is a range and not five
+ * separate faces: the previous <link> declared five Inter Tight weights and
+ * four Inter weights, and every one of them resolved to the SAME variable file.
+ *
+ * font-display: swap on all three. The page is text-first and every headline is
+ * already animated in by RevealText, so a fallback-to-webfont swap is invisible
+ * next to the reveal — whereas `block` (the default 3s block period) would hold
+ * the hero headline blank on exactly the slow connections that need it most.
+ *
+ * size-adjust / ascent-override on the fallback face below is what keeps the
+ * swap from moving anything: the metric-matched local fallback occupies the
+ * same box as Inter, so the swap changes glyph shapes and nothing else. Without
+ * it, every headline reflows at swap time and the reflow lands as CLS.
+ */
+
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('/fonts/inter-latin-var.woff2') format('woff2-variations');
+    /* Basic Latin + Latin-1 punctuation + the typographic marks this page uses
+       (— – ‘ ’ “ ” … • → ✓). Declaring the range lets the browser skip the
+       download entirely for a page that renders none of it — and, more usefully,
+       documents what the subset actually covers. */
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+        U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Inter Tight';
+    font-style: normal;
+    font-weight: 400 800;
+    font-display: swap;
+    src: url('/fonts/inter-tight-latin-var.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+        U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 400 500;
+    font-display: swap;
+    src: url('/fonts/jetbrains-mono-latin-var.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+        U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*
+ * Metric-matched fallback, used for the swap period only.
+ *
+ * The numbers are Inter's own metrics expressed against the local system face
+ * that stands in for it, so a line of text occupies the same height and roughly
+ * the same width before and after the swap. This is the single highest-leverage
+ * CLS control on a page whose hero is one large headline: without it, the
+ * headline re-wraps when Inter Tight lands.
+ *
+ * Values from the Inter project's published fallback metrics (unitsPerEm 2816,
+ * hhea ascent 2728 / descent -680 / lineGap 0).
+ */
+@font-face {
+    font-family: 'Inter Fallback';
+    src: local('Helvetica Neue'), local('Arial'), local('Segoe UI'), local('Roboto');
+    ascent-override: 96.88%;
+    descent-override: 24.15%;
+    line-gap-override: 0%;
+    size-adjust: 100%;
+}

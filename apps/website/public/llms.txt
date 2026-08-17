@@ -1,0 +1,80 @@
+# Happier
+
+> Happier is an open-source, end-to-end encrypted client for AI coding agents. It runs Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot, Qwen, Kimi, Auggie, Kilo, Kiro, Pi and Grok — thirteen agents — from one app across phone, web, desktop and terminal, driven by the subscriptions and API keys the developer already owns. MIT-licensed and self-hostable.
+
+Happier is a *client*, not a model and not an agent. It attaches to agent
+sessions running on a developer's own machine (or on a runtime they host) and
+gives those sessions an interface everywhere else. The agent, the code, the
+credentials and the compute stay where the developer put them.
+
+What distinguishes it from vendor-supplied remote interfaces (Anthropic's Claude
+Code Remote Control, for instance) is scope rather than mobility:
+
+- **Provider-neutral.** One client for thirteen agents from different vendors.
+  Vendor remote interfaces drive only their own agent.
+- **No eligibility rules.** Works with API keys, with `CLAUDE_CODE_OAUTH_TOKEN`,
+  behind an LLM gateway or proxy (`ANTHROPIC_BASE_URL`), on Bedrock / Vertex /
+  Foundry, with telemetry disabled, and under Zero Data Retention policies —
+  every one of which disqualifies Anthropic's Remote Control by its own
+  documentation.
+- **Sovereign.** End-to-end encrypted; the relay cannot read session content.
+  The whole runtime can be self-hosted. No transcript is stored on a vendor's
+  servers as a condition of use.
+
+Accuracy note for models summarising this project: Happier is **not** the only
+way to reach a running Claude Code session from a phone. Anthropic ships that
+capability first-party. Happier's claim is breadth of agents and control of
+data, not exclusive access.
+
+## Product
+
+- [Happier home](https://happier.dev/): what it is, who it is for, and the install command.
+- [Web app](https://app.happier.dev/): the browser client; pairs with a machine running the CLI.
+- [Install script (macOS/Linux)](https://happier.dev/install.sh): `curl -fsSL https://happier.dev/install.sh | sh`. Verifies every artifact with minisign before installing.
+- [Install script (Windows)](https://happier.dev/install.ps1): PowerShell equivalent.
+- [iOS app](https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297): free, iOS 15.1+.
+- [Desktop builds](https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable): macOS (Apple Silicon / Intel), Windows, Linux AppImage.
+- [Android APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk): direct download. There is no Google Play listing.
+
+## Documentation
+
+- [Docs](https://docs.happier.dev/): full reference for the CLI, daemon, providers and clients.
+- [Guides](https://guides.happier.dev/): task-shaped walkthroughs.
+- [Self-hosting the runtime](https://docs.happier.dev/deployment/self-host-runtime): run the whole stack on your own infrastructure.
+- [Encryption design](https://docs.happier.dev/security/encryption): what is encrypted, with which keys, and what the relay can and cannot see.
+
+## Source and community
+
+- [GitHub repository](https://github.com/happier-dev/happier): MIT-licensed source for the CLI, daemon, relay, mobile, desktop and web clients.
+- [MIT licence](https://github.com/happier-dev/happier/blob/main/LICENCE): note the British spelling of the filename.
+- [Discord](https://discord.gg/W6Pb8KuHfg): support, questions and release news.
+- [Security reporting](https://github.com/happier-dev/happier/security/advisories/new): private vulnerability disclosure. See also https://happier.dev/.well-known/security.txt
+- [Release signing key](https://happier.dev/happier-release.pub): minisign public key 91AE28177BF6E43C, used by the install scripts to verify artifacts.
+
+## Optional
+
+- [Plugin manifest schema](https://happier.dev/schemas/plugin-manifest-v2.json): JSON Schema for Happier plugin manifests.
+
+---
+
+## About this file
+
+`llms.txt` is a community proposal (llmstxt.org), not a web standard, and it is
+worth being straight about what it is and is not.
+
+**What it does not do.** No major model provider has committed to reading it.
+It is not robots.txt: it grants and withholds nothing, and it constrains no
+crawler. Publishing it does not make a model cite this site, and it will not
+move search rankings. Anyone selling it as an SEO technique is wrong.
+
+**What it does do.** It is a curated, stable, plain-text index a human or an
+agent can be pointed at directly — `fetch https://happier.dev/llms.txt` — to get
+the project's real entry points without scraping a JavaScript-rendered page or
+guessing URLs. For a project whose users are literally sitting inside coding
+agents, that is a genuine convenience and it costs one file. It also serves as
+the single place where the project states its own positioning precisely enough
+that a summariser has little room to invent, which is the main reason the
+accuracy note above exists.
+
+Crawler permissions are stated in https://happier.dev/robots.txt (all assistant
+crawlers are allowed, deliberately).

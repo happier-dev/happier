@@ -1,17 +1,48 @@
 {
   "name": "@happier-dev/website",
-  "version": "0.2.10",
+  "description": "Marketing site for Happier — the control room for your AI coding agents, on every device.",
   "private": true,
+  "version": "0.2.10",
   "type": "module",
   "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "prebuild": "yarn -s i18n:extract && yarn -s optimize:images",
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit && yarn -s build:client && yarn -s prune:source-images && yarn -s build:server && yarn -s prerender && yarn -s assert:crawlable && yarn -s assert:locale-links && yarn -s assert:perf",
+    "build:client": "vite build",
+    "build:server": "vite build --ssr src/entry-server.tsx",
+    "prerender": "node scripts/prerender.mjs",
+    "prune:source-images": "node scripts/prune-source-images.mjs",
+    "assert:crawlable": "node scripts/assert-crawlable.mjs",
+    "assert:locale-links": "node scripts/assert-locale-links.mjs",
+    "assert:perf": "node scripts/assert-perf-budget.mjs",
+    "check:links": "node scripts/check-download-links.mjs",
+    "preview": "vite preview",
+    "test": "yarn -s test:local",
+    "test:local": "vitest run --exclude scripts/**/*.test.mjs && node --test scripts/*.test.mjs",
+    "typecheck": "yarn -s typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
+    "optimize:images": "node scripts/optimize-images.mjs",
+    "i18n:extract": "node scripts/i18n-extract.mjs",
+    "i18n:check": "node scripts/i18n-extract.mjs --check",
+    "verify:analytics": "node scripts/verify-analytics.mjs"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "posthog-js": "1.414.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.3",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.17",
-    "vite": "^6.4.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4",
+    "vite": "^6.4.1"
   }
 }

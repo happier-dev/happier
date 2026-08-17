@@ -1,0 +1,140 @@
+# https://happier.dev/robots.txt
+#
+# Happier is an open-source client for AI coding agents. Source: MIT, public.
+# There is nothing on this site worth withholding from a crawler.
+#
+# ------------------------------------------------------------------------
+# STANCE ON AI CRAWLERS: ALLOW, ALL OF THEM, DELIBERATELY.
+# ------------------------------------------------------------------------
+# The usual reason to block GPTBot/ClaudeBot/PerplexityBot is that a model
+# trained on your writing competes with you. That logic inverts here:
+#
+#   1. Our buyers ASK MODELS. The people who install this are already sitting
+#      in Claude Code or ChatGPT. "What's a good client for Claude Code?" is a
+#      question an assistant answers from its index. Blocking the assistant
+#      crawlers is opting out of the highest-intent channel this product has.
+#   2. There is no moat to protect. The product is MIT-licensed and the source
+#      is public on GitHub — a crawler learns nothing here it could not clone.
+#   3. Bytespider stays allowed on purpose. Device-locale data puts Chinese
+#      locales (zh-Hans-CN, zh-CN, zh-Hans, zh-Hans-US, zh-Hans-HK) at ~1,766
+#      users against ~1,134 for en-US. ByteDance's assistants are how a large
+#      part of the actual audience searches. Blocking it is blocking the
+#      biggest cohort.
+#   4. Google-Extended stays allowed: it governs Gemini/AI Overviews grounding
+#      ONLY and has zero effect on classic Search ranking. Disallowing it
+#      removes the site from AI Overviews for "claude code app" style queries
+#      while gaining nothing.
+#   5. CCBot stays allowed. Common Crawl backs a long tail of dev-tool search
+#      and research tools; the content is already public and MIT.
+#
+# Revisit only if this site ever hosts original long-form writing that is the
+# product itself. Marketing copy for an open-source tool is not that.
+#
+# ------------------------------------------------------------------------
+# WHY THERE IS NO Disallow LINE AT ALL — INCLUDING FOR THE INSTALL SCRIPTS
+# ------------------------------------------------------------------------
+# /install.sh and /install.ps1 are ~80 KB of shell each, /schemas/ is 1.3 MB of
+# JSON, and none of it should ever surface as a search result. The reflex is to
+# Disallow them here. That reflex is wrong, and it is the single most common
+# robots.txt mistake:
+#
+#   Disallow stops the FETCH, not the INDEXING. Google still indexes a
+#   disallowed URL when it finds a link to it — as a bare, title-less result
+#   reading "No information is available for this page". Worse, once a URL is
+#   disallowed the crawler can never fetch it, so it can never see a noindex
+#   directive. Disallow permanently prevents the very removal you wanted.
+#
+# The authoritative removal is the `X-Robots-Tag: noindex` response header,
+# and that header only works if the crawler is ALLOWED to fetch the file. So
+# every non-content asset is left crawlable here and noindexed in
+# public/_headers instead. One mechanism, no contradiction.
+#
+# Crawl budget is not a counter-argument: this is a one-page site.
+#
+# `curl | sh` is unaffected by any of this — robots.txt binds crawlers, not curl,
+# so the installers keep working exactly as they do today.
+
+User-agent: *
+Allow: /
+
+# Search engines
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+User-agent: Yandex
+Allow: /
+
+# Assistant / answer-engine crawlers — see the note above. Split by vendor so
+# the intent is explicit and a future reversal is a one-line edit.
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+# Content Signals (Cloudflare's proposal, mirrored from the policy served on
+# docs.happier.dev). Stated affirmatively so the permission is ours and
+# explicit, rather than inherited from a zone-level default we did not choose.
+# NOTE: Cloudflare's managed robots.txt can PREPEND its own signals block to an
+# origin robots.txt. Confirm after deploy that `curl https://happier.dev/robots.txt`
+# returns THIS file and that no injected `ai-train=no` contradicts the line below.
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+
+Sitemap: https://happier.dev/sitemap.xml
