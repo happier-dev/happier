@@ -2,6 +2,7 @@ import {
   createHappierAudioStreamNativePlatform,
   getOptionalHappierAudioStreamNativeModule,
   supportsVoiceAudioSessionCoordination,
+  supportsVoicePcmPlayback,
   type HappierAudioStreamNativeModule,
 } from './internal';
 import {
@@ -9,9 +10,11 @@ import {
   type VoiceAudioSessionCoordinator,
 } from './voiceAudioSessionCoordinator';
 import { createVoicePcmCapture, type VoicePcmCapture } from './voicePcmCapture';
+import { createVoicePcmPlayback, type VoicePcmPlayback } from './voicePcmPlayback';
 
 export type SharedVoicePcmCaptureRegistry = Readonly<{
   get: () => VoicePcmCapture | null;
+  getPlayback: () => VoicePcmPlayback | null;
   getAudioSessionCoordinator: () => VoiceAudioSessionCoordinator | null;
 }>;
 
@@ -20,6 +23,7 @@ export function createSharedVoicePcmCaptureRegistry(options: Readonly<{
 }>): SharedVoicePcmCaptureRegistry {
   let resolved = false;
   let capture: VoicePcmCapture | null = null;
+  let playback: VoicePcmPlayback | null = null;
   let coordinator: VoiceAudioSessionCoordinator | null = null;
   const resolve = (): void => {
     if (resolved) return;
@@ -36,15 +40,23 @@ export function createSharedVoicePcmCaptureRegistry(options: Readonly<{
         platform: createHappierAudioStreamNativePlatform(nativeModule),
       });
       capture = createVoicePcmCapture({ nativeModule, audioSessionCoordinator: coordinator });
+      if (supportsVoicePcmPlayback(nativeModule)) {
+        playback = createVoicePcmPlayback({ nativeModule, capture });
+      }
     } catch {
       coordinator = null;
       capture = null;
+      playback = null;
     }
   };
   return {
     get: () => {
       resolve();
       return capture;
+    },
+    getPlayback: () => {
+      resolve();
+      return playback;
     },
     getAudioSessionCoordinator: () => {
       resolve();
@@ -63,6 +75,11 @@ const sharedRegistry = createSharedVoicePcmCaptureRegistry({
  */
 export function getSharedVoicePcmCapture(): VoicePcmCapture | null {
   return sharedRegistry.get();
+}
+
+/** The sole package-owned native PCM output service for this JavaScript runtime. */
+export function getSharedVoicePcmPlayback(): VoicePcmPlayback | null {
+  return sharedRegistry.getPlayback();
 }
 
 /** The sole native audio-session lease owner for this JavaScript runtime. */

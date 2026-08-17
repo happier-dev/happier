@@ -30,7 +30,17 @@ export type {
   VoicePcmCaptureSubscriberRequest,
 } from './voicePcmCapture';
 
+export { VoicePcmPlaybackError } from './voicePcmPlayback';
+export type {
+  VoicePcmPlayback,
+  VoicePcmPlaybackFormat,
+  VoicePcmPlaybackIdentity,
+  VoicePcmPlaybackLease,
+  VoicePcmPlaybackRequest,
+} from './voicePcmPlayback';
+
 export {
   getSharedVoiceAudioSessionCoordinator,
   getSharedVoicePcmCapture,
+  getSharedVoicePcmPlayback,
 } from './sharedVoicePcmCapture';

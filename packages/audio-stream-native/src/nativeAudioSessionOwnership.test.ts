@@ -38,4 +38,49 @@ describe('native audio-session ownership', () => {
     expect(androidSource).toMatch(/addOnCommunicationDeviceChangedListener/);
     expect(androidSource).toMatch(/removeOnCommunicationDeviceChangedListener/);
   });
+
+  it('degrades preferred AEC activation failures but keeps required AEC fail-closed at the capture owner', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+    expect(iosSource).toMatch(/case \.preferred:[\s\S]*?aecActive = false/);
+    expect(iosSource).toMatch(/case \.required:[\s\S]*?aec_unavailable/);
+
+    const androidSource = readPackageFile(
+      'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
+    );
+    expect(androidSource).toMatch(/AudioCaptureAecRequest\.PREFERRED/);
+    expect(androidSource).toMatch(/AudioCaptureAecRequest\.REQUIRED/);
+  });
+
+  it('keeps PCM output inside the existing native engine/session owners', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+    expect(iosSource).toMatch(/private var player: AVAudioPlayerNode\?/);
+    expect(iosSource).toMatch(/engine\.attach\(player\)/);
+    expect(iosSource).toMatch(/AsyncFunction\("startPlayback"\)/);
+    expect(iosSource).toMatch(/Function\("enqueuePlayback"\)/);
+    expect(iosSource).toMatch(/private var playbackChannels = 0/);
+    expect(iosSource).toMatch(/let bytesPerFrame = playbackChannels \* 2/);
+
+    const androidSource = readPackageFile(
+      'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
+    );
+    expect(androidSource).toMatch(/AudioTrack/);
+    expect(androidSource).toMatch(/AsyncFunction\("startPlayback"\)/);
+    expect(androidSource).toMatch(/Function\("enqueuePlayback"\)/);
+    expect(androidSource).toMatch(/Events\(\s*"audioFrame",\s*"captureTerminal",\s*"playbackDrained"/);
+    expect(androidSource).toMatch(/AudioTrack\.WRITE_BLOCKING/);
+    expect(androidSource).not.toMatch(/drainedBeforeWrite/);
+  });
+
+  it('reports a current PCM playback cursor from the stream-scoped native player', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+    expect(iosSource).toMatch(/func playbackCursorMs\(streamId: String, generation: Int\)/);
+    expect(iosSource).toMatch(/playerTime\(forNodeTime:/);
+    expect(iosSource).toMatch(/Function\("getPlaybackCursorMs"\)/);
+
+    const androidSource = readPackageFile(
+      'android/src/main/java/dev/happier/audio/HappierAudioStreamNativeModule.kt',
+    );
+    expect(androidSource).toMatch(/private fun playbackCursorMs\([\s\S]*?playbackHeadPosition/);
+    expect(androidSource).toMatch(/Function\("getPlaybackCursorMs"\)/);
+  });
 });

@@ -1,6 +1,9 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
-import type { HappierAudioStreamNativeModule } from './HappierAudioStreamNative.types';
+import type {
+  HappierAudioStreamNativeModule,
+  HappierAudioStreamNativePlaybackModule,
+} from './HappierAudioStreamNative.types';
 import type {
   VoiceAudioSessionPlatform,
   VoiceAudioSessionPlatformEvent,
@@ -27,6 +30,22 @@ export function supportsVoiceAudioSessionCoordination(
     && typeof module.restoreAudioSession === 'function';
 }
 
+/**
+ * Playback is additive to the capture/session bridge so an older installed
+ * native module can still provide capture without advertising output support.
+ */
+export function supportsVoicePcmPlayback(
+  module: HappierAudioStreamNativeModule | null,
+): module is HappierAudioStreamNativePlaybackModule {
+  return supportsVoiceAudioSessionCoordination(module)
+    && typeof module.startPlayback === 'function'
+    && typeof module.enqueuePlayback === 'function'
+    && typeof module.clearPlayback === 'function'
+    && typeof module.stopPlayback === 'function'
+    && typeof module.setPlaybackGain === 'function'
+    && typeof module.getPlaybackCursorMs === 'function';
+}
+
 export function createHappierAudioStreamNativePlatform(
   module: HappierAudioStreamNativeModule,
 ): VoiceAudioSessionPlatform {
@@ -34,7 +53,13 @@ export function createHappierAudioStreamNativePlatform(
     throw new Error('voice_audio_session_coordination_unavailable');
   }
   return {
-    apply: (request) => module.configureAudioSession(request),
+    apply: async (request) => {
+      const applied = await module.configureAudioSession(request);
+      // Configuring an audio session can request voice processing, but it does
+      // not activate a capture. The start-time capabilities event is the sole
+      // confirmation that AEC is active.
+      return { ...applied, aecActive: false };
+    },
     restore: (request) => module.restoreAudioSession(request),
     subscribe: (listener) => module.addListener(
       'voiceAudioSessionEvent',

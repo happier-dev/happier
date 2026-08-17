@@ -1,4 +1,5 @@
 import type {
+  AudioStreamCaptureTerminalEvent,
   AudioStreamFrameEvent,
   HappierAudioStreamNativeModule,
 } from './HappierAudioStreamNative.types';
@@ -28,6 +29,7 @@ export type VoicePcmCaptureSubscriberRequest = Readonly<{
 export type VoicePcmCaptureLease = Readonly<{
   id: string;
   streamId: string;
+  generation: number;
   waitForDrain: () => Promise<void>;
   release: () => Promise<void>;
 }>;
@@ -99,6 +101,23 @@ function sameAudioSessionRequest(
     && left.aec === right.aec;
 }
 
+function isCaptureTerminalEvent(event: unknown): event is AudioStreamCaptureTerminalEvent {
+  if (typeof event !== 'object' || event === null) return false;
+  const candidate = event as Record<string, unknown>;
+  return typeof candidate.streamId === 'string'
+    && candidate.streamId.trim().length > 0
+    && typeof candidate.generation === 'number'
+    && Number.isSafeInteger(candidate.generation)
+    && candidate.generation > 0
+    && (candidate.reason === 'read_error' || candidate.reason === 'dead_object');
+}
+
+function createNativeCaptureTerminalError(reason: AudioStreamCaptureTerminalEvent['reason']): Error {
+  const error = new Error(`native_pcm_capture_${reason}`);
+  error.name = 'VoicePcmCaptureTerminalError';
+  return error;
+}
+
 export function createVoicePcmCapture(options: Readonly<{
   nativeModule: HappierAudioStreamNativeModule;
   audioSessionCoordinator: VoiceAudioSessionCoordinator;
@@ -112,7 +131,10 @@ export function createVoicePcmCapture(options: Readonly<{
   let audioSessionRequest: Omit<VoiceAudioSessionRequest, 'ownerId' | 'capture'> | null = null;
   let audioSessionLease: VoiceAudioSessionLease | null = null;
   let frameSubscription: Readonly<{ remove: () => void }> | null = null;
+  let terminalSubscription: Readonly<{ remove: () => void }> | null = null;
   let pendingStartupFrames: AudioStreamFrameEvent[] = [];
+  let pendingStartupTerminal: AudioStreamCaptureTerminalEvent | null = null;
+  let terminatingStreamId: string | null = null;
   let leaseSequence = 0;
   let mutationTail: Promise<void> = Promise.resolve();
   let disposalRequested = false;
@@ -181,6 +203,8 @@ export function createVoicePcmCapture(options: Readonly<{
     if (
       disposed
       || activeGeneration !== generation
+      || terminatingStreamId !== null
+      || pendingStartupTerminal?.generation === activeGeneration
       || !format
       || event.sampleRate !== format.sampleRate
       || event.channels !== format.channels
@@ -204,10 +228,18 @@ export function createVoicePcmCapture(options: Readonly<{
     format = null;
     audioSessionRequest = null;
     pendingStartupFrames = [];
+    pendingStartupTerminal = null;
+    terminatingStreamId = null;
     const subscription = frameSubscription;
+    const terminal = terminalSubscription;
     frameSubscription = null;
+    terminalSubscription = null;
     try {
-      subscription?.remove();
+      try {
+        subscription?.remove();
+      } finally {
+        terminal?.remove();
+      }
     } finally {
       let stopFailure: unknown = null;
       if (stoppedStreamId) {
@@ -231,6 +263,44 @@ export function createVoicePcmCapture(options: Readonly<{
       }
       if (stopFailure) throw stopFailure;
     }
+  };
+
+  const handleCaptureTerminal = (
+    event: AudioStreamCaptureTerminalEvent,
+    activeGeneration: number,
+  ): void => {
+    if (
+      !isCaptureTerminalEvent(event)
+      || disposed
+      || event.generation !== activeGeneration
+      || activeGeneration !== generation
+    ) return;
+
+    if (!streamId) {
+      if (pendingStartupTerminal) return;
+      pendingStartupTerminal = event;
+    } else {
+      if (event.streamId !== streamId) return;
+      terminatingStreamId = streamId;
+    }
+
+    void serialize(async () => {
+      if (
+        disposed
+        || event.generation !== activeGeneration
+        || activeGeneration !== generation
+        || event.streamId !== streamId
+      ) return;
+      terminatingStreamId = event.streamId;
+      const terminalError = createNativeCaptureTerminalError(event.reason);
+      const activeSubscribers = [...subscribers.values()];
+      subscribers.clear();
+      for (const subscriber of activeSubscribers) {
+        subscriber.active = false;
+        reportSubscriberError(subscriber, terminalError);
+      }
+      await stopNativeCapture();
+    }).catch(() => undefined);
   };
 
   const acquire = async (request: VoicePcmCaptureSubscriberRequest): Promise<VoicePcmCaptureLease> => {
@@ -292,6 +362,10 @@ export function createVoicePcmCapture(options: Readonly<{
           generation += 1;
           const activeGeneration = generation;
           format = { ...request.format };
+          terminalSubscription = options.nativeModule.addListener(
+            'captureTerminal',
+            (event) => handleCaptureTerminal(event, activeGeneration),
+          );
           frameSubscription = options.nativeModule.addListener(
             'audioFrame',
             (event) => handleFrame(event, activeGeneration),
@@ -300,22 +374,35 @@ export function createVoicePcmCapture(options: Readonly<{
             sampleRate: request.format.sampleRate,
             channels: request.format.channels,
             frameMs: request.format.frameMs,
+            generation: activeGeneration,
           });
           const normalizedStreamId = started.streamId.trim();
           if (normalizedStreamId.length === 0) throw new Error('voice_pcm_capture_stream_id_missing');
           streamId = normalizedStreamId;
           const startupFrames = pendingStartupFrames;
           pendingStartupFrames = [];
-          for (const frame of startupFrames) {
-            if (frame.streamId === normalizedStreamId) enqueue(subscriber, frame);
+          const startupTerminal = pendingStartupTerminal;
+          pendingStartupTerminal = null;
+          if (
+            startupTerminal
+            && startupTerminal.streamId === normalizedStreamId
+            && startupTerminal.generation === activeGeneration
+          ) {
+            terminatingStreamId = normalizedStreamId;
+          } else {
+            for (const frame of startupFrames) {
+              if (frame.streamId === normalizedStreamId) enqueue(subscriber, frame);
+            }
           }
         }
         const acquiredStreamId = streamId;
         if (!acquiredStreamId) throw new Error('voice_pcm_capture_stream_id_missing');
+        const acquiredGeneration = generation;
         let releaseAttempt: Promise<void> | null = null;
         return {
           id,
           streamId: acquiredStreamId,
+          generation: acquiredGeneration,
           waitForDrain: async () => {
             await subscriber.tail.catch(() => undefined);
           },
@@ -342,7 +429,7 @@ export function createVoicePcmCapture(options: Readonly<{
         };
       } catch (error) {
         if (subscriberAdded) subscribers.delete(id);
-        if (subscribers.size === 0 && (streamId || frameSubscription || audioSessionLease)) {
+        if (subscribers.size === 0 && (streamId || frameSubscription || terminalSubscription || audioSessionLease)) {
           await stopNativeCapture().catch(() => undefined);
         }
         if (subscribers.size === 0) {

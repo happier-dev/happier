@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AudioStreamFrameEvent, HappierAudioStreamNativeModule } from './HappierAudioStreamNative.types';
+import type {
+  AudioStreamCaptureTerminalEvent,
+  AudioStreamFrameEvent,
+  HappierAudioStreamNativeModule,
+} from './HappierAudioStreamNative.types';
 import { createVoicePcmCapture } from './voicePcmCapture';
 import type { VoiceAudioSessionCoordinator } from './voiceAudioSessionCoordinator';
 
@@ -8,6 +12,7 @@ const FORMAT = { sampleRate: 16_000, channels: 1 as const, frameMs: 20 };
 
 function createHarness() {
   let frameListener: ((event: AudioStreamFrameEvent) => void) | null = null;
+  let captureTerminalListener: ((event: AudioStreamCaptureTerminalEvent) => void) | null = null;
   let nextStream = 0;
   const nativeModule: HappierAudioStreamNativeModule = {
     start: vi.fn(async () => ({ streamId: `stream-${++nextStream}` })),
@@ -21,7 +26,15 @@ function createHarness() {
     restoreAudioSession: vi.fn(async () => undefined),
     addListener: vi.fn((eventName, listener) => {
       if (eventName === 'audioFrame') frameListener = listener as (event: AudioStreamFrameEvent) => void;
-      return { remove: () => { frameListener = null; } };
+      if ((eventName as string) === 'captureTerminal') {
+        captureTerminalListener = listener as unknown as (event: AudioStreamCaptureTerminalEvent) => void;
+      }
+      return {
+        remove: () => {
+          if (eventName === 'audioFrame') frameListener = null;
+          if ((eventName as string) === 'captureTerminal') captureTerminalListener = null;
+        },
+      };
     }),
   };
   const sessionLease = { id: 'audio-lease', capabilities: { aecAvailable: true, aecActive: false, route: 'speaker' }, release: vi.fn(async () => undefined) };
@@ -33,6 +46,7 @@ function createHarness() {
     audioSessionCoordinator,
     sessionLease,
     emit: (event: AudioStreamFrameEvent) => frameListener?.(event),
+    emitCaptureTerminal: (event: AudioStreamCaptureTerminalEvent) => captureTerminalListener?.(event),
   };
 }
 
@@ -77,6 +91,29 @@ describe('VoicePcmCapture', () => {
 
     expect(frames).toEqual(['AA==']);
     await lease.release();
+  });
+
+  it('retires a matching terminal emitted before native start resolves', async () => {
+    const harness = createHarness();
+    vi.mocked(harness.nativeModule.start).mockImplementationOnce(async ({ generation }) => {
+      harness.emitCaptureTerminal({ streamId: 'stream-1', generation, reason: 'read_error' });
+      return { streamId: 'stream-1' };
+    });
+    const capture = createVoicePcmCapture(harness);
+    const errors = vi.fn();
+
+    const lease = await capture.acquire({
+      ownerId: 'stt',
+      format: FORMAT,
+      onFrame: () => undefined,
+      onError: errors,
+    });
+    await lease.release();
+
+    expect(errors).toHaveBeenCalledWith(expect.any(Error));
+    expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: 'stream-1' });
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
   });
 
   it('rejects an incompatible format instead of restarting another consumer stream', async () => {
@@ -279,6 +316,61 @@ describe('VoicePcmCapture', () => {
     expect(frames).toHaveBeenCalledTimes(1);
     await Promise.all([second.release(), second.release()]);
     expect(harness.nativeModule.stop).toHaveBeenCalledTimes(2);
+  });
+
+  it('retires only the matching native terminal, releases the shared session, and drops late frames', async () => {
+    const harness = createHarness();
+    const capture = createVoicePcmCapture(harness);
+    const firstFrames = vi.fn();
+    const secondFrames = vi.fn();
+    const firstErrors = vi.fn();
+    const secondErrors = vi.fn();
+    const first = await capture.acquire({
+      ownerId: 'first',
+      format: FORMAT,
+      onFrame: firstFrames,
+      onError: firstErrors,
+    });
+    const second = await capture.acquire({
+      ownerId: 'second',
+      format: FORMAT,
+      onFrame: secondFrames,
+      onError: secondErrors,
+    });
+    const generation = capture.getSnapshot().generation;
+
+    harness.emitCaptureTerminal({ streamId: 'other-stream', generation, reason: 'read_error' });
+    harness.emitCaptureTerminal({ streamId: first.streamId, generation: generation + 1, reason: 'read_error' });
+    harness.emit({ streamId: first.streamId, pcm16leBase64: 'before-terminal', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+
+    expect(firstFrames).toHaveBeenCalledTimes(1);
+    expect(secondFrames).toHaveBeenCalledTimes(1);
+    expect(firstErrors).not.toHaveBeenCalled();
+    expect(secondErrors).not.toHaveBeenCalled();
+    expect(harness.sessionLease.release).not.toHaveBeenCalled();
+
+    harness.emitCaptureTerminal({ streamId: first.streamId, generation, reason: 'dead_object' });
+    harness.emit({ streamId: first.streamId, pcm16leBase64: 'late-frame', sampleRate: 16_000, channels: 1 });
+    await first.release();
+    await second.release();
+
+    expect(firstErrors).toHaveBeenCalledWith(expect.any(Error));
+    expect(secondErrors).toHaveBeenCalledWith(expect.any(Error));
+    expect(firstFrames).toHaveBeenCalledTimes(1);
+    expect(secondFrames).toHaveBeenCalledTimes(1);
+    expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
+    expect(harness.sessionLease.release).toHaveBeenCalledTimes(1);
+    expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+
+    harness.emitCaptureTerminal({ streamId: first.streamId, generation, reason: 'dead_object' });
+    harness.emit({ streamId: first.streamId, pcm16leBase64: 'stale-frame', sampleRate: 16_000, channels: 1 });
+    await capture.waitForDrain();
+
+    expect(firstErrors).toHaveBeenCalledTimes(1);
+    expect(secondErrors).toHaveBeenCalledTimes(1);
+    expect(firstFrames).toHaveBeenCalledTimes(1);
+    expect(secondFrames).toHaveBeenCalledTimes(1);
   });
 
   it('does not let a hung subscriber block lease release or native restoration', async () => {

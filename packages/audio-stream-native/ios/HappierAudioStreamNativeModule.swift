@@ -4,41 +4,91 @@ import AVFoundation
 import Foundation
 import UIKit
 
+private enum AudioCaptureAecRequest {
+  case off
+  case preferred
+  case required
+}
+
 private final class AudioStreamSession {
   private let queue: DispatchQueue
   private let emitFrame: (_ event: [String: Any]) -> Void
+  private let emitPlaybackEvent: (_ eventName: String, _ event: [String: Any]) -> Void
 
   let streamId: String
+  let generation: Int
   let sampleRate: Double
   let channels: Int
   let frameBytes: Int
 
   private var engine: AVAudioEngine?
+  private var player: AVAudioPlayerNode?
   private var accumulated = Data()
+  private var playbackFormat: AVAudioFormat?
+  private var playbackGeneration: Int?
+  private var playbackChannels = 0
+  private var maxPlaybackFrames = 0
+  private var queuedPlaybackFrames = 0
+  private var playbackActive = false
+  private var playbackEpoch = 0
+  private var playbackCursorBaseMs = 0.0
+  private var playbackTimelineCursorMs = 0.0
 
   init(
     queue: DispatchQueue,
     emitFrame: @escaping (_ event: [String: Any]) -> Void,
+    emitPlaybackEvent: @escaping (_ eventName: String, _ event: [String: Any]) -> Void,
     streamId: String,
+    generation: Int,
     sampleRate: Double,
     channels: Int,
     frameBytes: Int
   ) {
     self.queue = queue
     self.emitFrame = emitFrame
+    self.emitPlaybackEvent = emitPlaybackEvent
     self.streamId = streamId
+    self.generation = generation
     self.sampleRate = sampleRate
     self.channels = channels
     self.frameBytes = frameBytes
   }
 
-  func start(frameMs: Int, voiceProcessingEnabled: Bool) throws {
+  func start(frameMs: Int, aecRequest: AudioCaptureAecRequest) throws -> Bool {
     let engine = AVAudioEngine()
     let input = engine.inputNode
+    let player = AVAudioPlayerNode()
+    var aecActive = false
 
-    if voiceProcessingEnabled {
+    switch aecRequest {
+    case .off:
+      break
+    case .preferred:
       if #available(iOS 13.0, *) {
-        try input.setVoiceProcessingEnabled(true)
+        do {
+          try input.setVoiceProcessingEnabled(true)
+          aecActive = input.isVoiceProcessingEnabled
+        } catch {
+          // Preferred echo cancellation remains observable as inactive, while
+          // capture continues through the canonical session owner.
+          aecActive = false
+        }
+      }
+    case .required:
+      if #available(iOS 13.0, *) {
+        do {
+          try input.setVoiceProcessingEnabled(true)
+          aecActive = input.isVoiceProcessingEnabled
+        } catch {
+          aecActive = false
+        }
+        if !aecActive {
+          throw NSError(
+            domain: "HappierAudioStreamNative",
+            code: 101,
+            userInfo: [NSLocalizedDescriptionKey: "aec_unavailable"]
+          )
+        }
       } else {
         throw NSError(
           domain: "HappierAudioStreamNative",
@@ -85,23 +135,237 @@ private final class AudioStreamSession {
     }
 
     do {
+      // PCM output is attached before the one engine starts. It therefore uses
+      // the same AVAudioSession, route, and lifecycle as native capture.
+      engine.attach(player)
+      engine.connect(player, to: engine.mainMixerNode, format: nil)
       try engine.start()
       self.engine = engine
+      self.player = player
     } catch {
       input.removeTap(onBus: 0)
+      player.stop()
+      engine.detach(player)
       engine.stop()
       self.accumulated.removeAll(keepingCapacity: false)
       throw error
     }
+    return aecActive
   }
 
   func stop() {
     guard let engine else { return }
+    playbackEpoch += 1
+    playbackActive = false
+    playbackGeneration = nil
+    playbackChannels = 0
+    queuedPlaybackFrames = 0
+    maxPlaybackFrames = 0
+    playbackFormat = nil
+    playbackCursorBaseMs = 0
+    playbackTimelineCursorMs = 0
+    player?.stop()
+    if let player {
+      engine.detach(player)
+    }
+    player = nil
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
     self.engine = nil
     self.accumulated.removeAll(keepingCapacity: false)
+  }
 
+  private func matchesPlayback(streamId: String, generation: Int) -> Bool {
+    return self.streamId == streamId
+      && self.generation == generation
+      && playbackActive
+      && playbackGeneration == generation
+  }
+
+  private func refreshPlaybackTimelineCursor() {
+    guard
+      let player,
+      let renderTime = player.lastRenderTime,
+      let playerTime = player.playerTime(forNodeTime: renderTime),
+      playerTime.sampleRate > 0
+    else { return }
+    let milliseconds = Double(playerTime.sampleTime) * 1_000 / playerTime.sampleRate
+    guard milliseconds.isFinite else { return }
+    playbackTimelineCursorMs = max(playbackTimelineCursorMs, max(0, milliseconds))
+  }
+
+  private func freezePlaybackTimelineCursor() {
+    refreshPlaybackTimelineCursor()
+    playbackCursorBaseMs += playbackTimelineCursorMs
+    playbackTimelineCursorMs = 0
+  }
+
+  func playbackCursorMs(streamId: String, generation: Int) -> Double {
+    guard matchesPlayback(streamId: streamId, generation: generation) else { return 0 }
+    refreshPlaybackTimelineCursor()
+    return max(0, playbackCursorBaseMs + playbackTimelineCursorMs)
+  }
+
+  private func emitPlaybackDrained(generation: Int) {
+    emitPlaybackEvent("playbackDrained", [
+      "streamId": streamId,
+      "generation": generation,
+    ])
+  }
+
+  private func emitPlaybackLevel(_ level: Double, generation: Int) {
+    emitPlaybackEvent("playbackLevel", [
+      "streamId": streamId,
+      "generation": generation,
+      "level": max(0, min(1, level)),
+    ])
+  }
+
+  private func terminatePlayback(reason: String, generation: Int) {
+    guard matchesPlayback(streamId: streamId, generation: generation) else { return }
+    freezePlaybackTimelineCursor()
+    playbackEpoch += 1
+    playbackActive = false
+    playbackGeneration = nil
+    playbackChannels = 0
+    queuedPlaybackFrames = 0
+    player?.stop()
+    emitPlaybackEvent("playbackTerminal", [
+      "streamId": streamId,
+      "generation": generation,
+      "reason": reason,
+    ])
+  }
+
+  func startPlayback(
+    streamId: String,
+    generation: Int,
+    sampleRate: Double,
+    channels: Int,
+    maxBufferedMs: Int
+  ) throws {
+    guard self.streamId == streamId, self.generation == generation else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 301, userInfo: [NSLocalizedDescriptionKey: "playback_capture_mismatch"])
+    }
+    guard !playbackActive else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 302, userInfo: [NSLocalizedDescriptionKey: "playback_already_active"])
+    }
+    guard sampleRate > 0, (channels == 1 || channels == 2), maxBufferedMs > 0 else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 303, userInfo: [NSLocalizedDescriptionKey: "invalid_playback_format"])
+    }
+    guard let player, engine != nil else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 304, userInfo: [NSLocalizedDescriptionKey: "playback_engine_unavailable"])
+    }
+    guard let format = AVAudioFormat(
+      commonFormat: .pcmFormatInt16,
+      sampleRate: sampleRate,
+      channels: AVAudioChannelCount(channels),
+      interleaved: true
+    ) else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 305, userInfo: [NSLocalizedDescriptionKey: "invalid_playback_format"])
+    }
+    let requestedFrames = (sampleRate * Double(maxBufferedMs) / 1_000.0).rounded(.up)
+    guard requestedFrames > 0, requestedFrames <= Double(Int.max) else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 306, userInfo: [NSLocalizedDescriptionKey: "invalid_playback_buffer"])
+    }
+    playbackFormat = format
+    playbackGeneration = generation
+    playbackChannels = channels
+    maxPlaybackFrames = Int(requestedFrames)
+    queuedPlaybackFrames = 0
+    playbackActive = true
+    playbackEpoch += 1
+    player.volume = 1
+  }
+
+  func enqueuePlayback(streamId: String, generation: Int, pcm16leBase64: String) -> [String: Any] {
+    guard matchesPlayback(streamId: streamId, generation: generation), let format = playbackFormat else {
+      return ["accepted": false, "level": 0]
+    }
+    guard let data = Data(base64Encoded: pcm16leBase64), !data.isEmpty else {
+      terminatePlayback(reason: "write_error", generation: generation)
+      return ["accepted": false, "level": 0]
+    }
+    let bytesPerFrame = playbackChannels * 2
+    guard data.count % bytesPerFrame == 0 else {
+      terminatePlayback(reason: "write_error", generation: generation)
+      return ["accepted": false, "level": 0]
+    }
+    let frameCount = data.count / bytesPerFrame
+    guard frameCount > 0, frameCount <= maxPlaybackFrames - queuedPlaybackFrames else {
+      return ["accepted": false, "level": 0]
+    }
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
+      terminatePlayback(reason: "player_error", generation: generation)
+      return ["accepted": false, "level": 0]
+    }
+    buffer.frameLength = AVAudioFrameCount(frameCount)
+    guard let destination = buffer.audioBufferList.pointee.mBuffers.mData else {
+      terminatePlayback(reason: "player_error", generation: generation)
+      return ["accepted": false, "level": 0]
+    }
+    data.withUnsafeBytes { bytes in
+      guard let source = bytes.baseAddress else { return }
+      destination.copyMemory(from: source, byteCount: data.count)
+    }
+    var energy = 0.0
+    var sampleOffset = 0
+    while sampleOffset < data.count {
+      let low = UInt16(data[sampleOffset])
+      let high = UInt16(data[sampleOffset + 1]) << 8
+      let sample = Int16(bitPattern: low | high)
+      let normalized = Double(sample) / (sample < 0 ? 32_768.0 : 32_767.0)
+      energy += normalized * normalized
+      sampleOffset += 2
+    }
+    let level = min(1, sqrt(energy / Double(max(1, data.count / 2))))
+    let epoch = playbackEpoch
+    queuedPlaybackFrames += frameCount
+    player?.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+      guard let self else { return }
+      self.queue.async {
+        guard self.playbackEpoch == epoch, self.matchesPlayback(streamId: streamId, generation: generation) else { return }
+        self.refreshPlaybackTimelineCursor()
+        self.queuedPlaybackFrames = max(0, self.queuedPlaybackFrames - frameCount)
+        if self.queuedPlaybackFrames == 0 {
+          self.player?.pause()
+          self.emitPlaybackLevel(0, generation: generation)
+          self.emitPlaybackDrained(generation: generation)
+        }
+      }
+    }
+    if player?.isPlaying != true {
+      player?.play()
+    }
+    return ["accepted": true, "level": level]
+  }
+
+  func clearPlayback(streamId: String, generation: Int) {
+    guard matchesPlayback(streamId: streamId, generation: generation) else { return }
+    freezePlaybackTimelineCursor()
+    playbackEpoch += 1
+    queuedPlaybackFrames = 0
+    player?.stop()
+    emitPlaybackLevel(0, generation: generation)
+    emitPlaybackDrained(generation: generation)
+  }
+
+  func setPlaybackGain(streamId: String, generation: Int, gain: Double) {
+    guard matchesPlayback(streamId: streamId, generation: generation), gain.isFinite, gain >= 0, gain <= 1 else { return }
+    player?.volume = Float(gain)
+  }
+
+  func stopPlayback(streamId: String, generation: Int) {
+    guard matchesPlayback(streamId: streamId, generation: generation) else { return }
+    freezePlaybackTimelineCursor()
+    playbackEpoch += 1
+    playbackActive = false
+    playbackGeneration = nil
+    playbackChannels = 0
+    queuedPlaybackFrames = 0
+    maxPlaybackFrames = 0
+    playbackFormat = nil
+    player?.stop()
   }
 }
 
@@ -117,7 +381,7 @@ public final class HappierAudioStreamNativeModule: Module {
   private var active: AudioStreamSession? = nil
   private var audioSessionGeneration: Int = 0
   private var audioSessionConfigured = false
-  private var voiceProcessingEnabled = false
+  private var captureAecRequest: AudioCaptureAecRequest = .off
   private var previousAudioSessionState: PreviousAudioSessionState? = nil
   private var notificationObservers: [NSObjectProtocol] = []
 
@@ -223,12 +487,20 @@ public final class HappierAudioStreamNativeModule: Module {
     audioSessionConfigured = true
     let aecAvailable: Bool
     if #available(iOS 13.0, *) { aecAvailable = true } else { aecAvailable = false }
-    voiceProcessingEnabled = mode == "conversation" && aec != "off" && aecAvailable
+    if mode == "conversation" {
+      switch aec {
+      case "required": captureAecRequest = .required
+      case "preferred": captureAecRequest = .preferred
+      default: captureAecRequest = .off
+      }
+    } else {
+      captureAecRequest = .off
+    }
     installNotificationObservers(generation: generation)
     return [
       "generation": generation,
       "aecAvailable": aecAvailable,
-      "aecActive": voiceProcessingEnabled,
+      "aecActive": false,
       "route": currentRouteName() ?? "unknown",
     ]
   }
@@ -247,7 +519,7 @@ public final class HappierAudioStreamNativeModule: Module {
     previousAudioSessionState = nil
     audioSessionGeneration = generation
     audioSessionConfigured = false
-    voiceProcessingEnabled = false
+    captureAecRequest = .off
     removeNotificationObservers()
     if wasConfigured {
       emitAudioSessionEvent(["kind": "restoration_completed"])
@@ -257,7 +529,14 @@ public final class HappierAudioStreamNativeModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HappierAudioStreamNative")
 
-    Events("audioFrame", "voiceAudioSessionEvent")
+    Events(
+      "audioFrame",
+      "captureTerminal",
+      "playbackDrained",
+      "playbackLevel",
+      "playbackTerminal",
+      "voiceAudioSessionEvent"
+    )
 
     OnDestroy {
       self.queue.sync {
@@ -280,6 +559,7 @@ public final class HappierAudioStreamNativeModule: Module {
       let sampleRate = (params["sampleRate"] as? Double) ?? 16000
       let channels = (params["channels"] as? Int) ?? 1
       let frameMs = (params["frameMs"] as? Int) ?? 50
+      let captureGeneration = (params["generation"] as? Int) ?? 0
 
       if sampleRate <= 0 { throw NSError(domain: "HappierAudioStreamNative", code: 1, userInfo: [NSLocalizedDescriptionKey: "sampleRate must be > 0"]) }
       if channels != 1 && channels != 2 { throw NSError(domain: "HappierAudioStreamNative", code: 2, userInfo: [NSLocalizedDescriptionKey: "channels must be 1 or 2"]) }
@@ -295,6 +575,8 @@ public final class HappierAudioStreamNativeModule: Module {
         }
         self.active?.stop()
         self.active = nil
+        let aecAvailable: Bool
+        if #available(iOS 13.0, *) { aecAvailable = true } else { aecAvailable = false }
         do {
           try AVAudioSession.sharedInstance().setPreferredSampleRate(sampleRate)
 
@@ -307,16 +589,33 @@ public final class HappierAudioStreamNativeModule: Module {
             emitFrame: { event in
               self.sendEvent("audioFrame", event)
             },
+            emitPlaybackEvent: { eventName, event in
+              self.sendEvent(eventName, event)
+            },
             streamId: streamId,
+            generation: captureGeneration,
             sampleRate: sampleRate,
             channels: channels,
             frameBytes: max(1, frameBytes)
           )
 
-          try session.start(frameMs: frameMs, voiceProcessingEnabled: self.voiceProcessingEnabled)
+          let aecActive = try session.start(
+            frameMs: frameMs,
+            aecRequest: self.captureAecRequest
+          )
           self.active = session
+          self.emitAudioSessionEvent([
+            "kind": "capabilities_changed",
+            "aecAvailable": aecAvailable,
+            "aecActive": aecActive,
+          ])
           return ["streamId": streamId]
         } catch {
+          self.emitAudioSessionEvent([
+            "kind": "capabilities_changed",
+            "aecAvailable": aecAvailable,
+            "aecActive": false,
+          ])
           self.active?.stop()
           self.active = nil
           throw error
@@ -332,6 +631,77 @@ public final class HappierAudioStreamNativeModule: Module {
         guard let current = self.active, current.streamId == streamId else { return }
         current.stop()
         self.active = nil
+      }
+    }
+
+    AsyncFunction("startPlayback") { (params: [String: Any]) -> [String: Any] in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      let sampleRate = (params["sampleRate"] as? Double) ?? 0
+      let channels = (params["channels"] as? Int) ?? 0
+      let maxBufferedMs = (params["maxBufferedMs"] as? Int) ?? 0
+      if streamId.isEmpty || generation <= 0 {
+        throw NSError(domain: "HappierAudioStreamNative", code: 307, userInfo: [NSLocalizedDescriptionKey: "playback_capture_mismatch"])
+      }
+      return try self.queue.sync {
+        guard let current = self.active else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 308, userInfo: [NSLocalizedDescriptionKey: "playback_capture_unavailable"])
+        }
+        try current.startPlayback(
+          streamId: streamId,
+          generation: generation,
+          sampleRate: sampleRate,
+          channels: channels,
+          maxBufferedMs: maxBufferedMs
+        )
+        return ["streamId": streamId, "generation": generation]
+      }
+    }
+
+    Function("enqueuePlayback") { (params: [String: Any]) -> [String: Any] in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      let pcm16leBase64 = (params["pcm16leBase64"] as? String) ?? ""
+      return self.queue.sync {
+        guard let current = self.active else { return ["accepted": false, "level": 0] }
+        return current.enqueuePlayback(
+          streamId: streamId,
+          generation: generation,
+          pcm16leBase64: pcm16leBase64
+        )
+      }
+    }
+
+    Function("clearPlayback") { (params: [String: Any]) -> Void in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      self.queue.sync {
+        self.active?.clearPlayback(streamId: streamId, generation: generation)
+      }
+    }
+
+    Function("setPlaybackGain") { (params: [String: Any]) -> Void in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      let gain = (params["gain"] as? Double) ?? -1
+      self.queue.sync {
+        self.active?.setPlaybackGain(streamId: streamId, generation: generation, gain: gain)
+      }
+    }
+
+    Function("getPlaybackCursorMs") { (params: [String: Any]) -> Double in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      return self.queue.sync {
+        self.active?.playbackCursorMs(streamId: streamId, generation: generation) ?? 0
+      }
+    }
+
+    AsyncFunction("stopPlayback") { (params: [String: Any]) -> Void in
+      let streamId = (params["streamId"] as? String) ?? ""
+      let generation = (params["generation"] as? Int) ?? 0
+      self.queue.sync {
+        self.active?.stopPlayback(streamId: streamId, generation: generation)
       }
     }
   }

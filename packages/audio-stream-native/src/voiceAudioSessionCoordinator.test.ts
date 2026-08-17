@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('expo-modules-core', () => ({
+  requireOptionalNativeModule: () => null,
+}));
+
+import { createHappierAudioStreamNativePlatform } from './HappierAudioStreamNative';
+import type {
+  HappierAudioStreamNativeEventMap,
+  HappierAudioStreamNativeModule,
+} from './HappierAudioStreamNative.types';
 import {
   createVoiceAudioSessionCoordinator,
   type VoiceAudioSessionPlatform,
@@ -40,7 +49,63 @@ function createPlatform(options: Readonly<{ aecAvailable?: boolean }> = {}) {
   };
 }
 
+function createNativePlatformReportingRequestedAecAsActive() {
+  let sessionListener: ((event: VoiceAudioSessionPlatformEvent) => void) | null = null;
+  const nativeModule: HappierAudioStreamNativeModule = {
+    start: vi.fn(async ({ generation }) => {
+      sessionListener?.({
+        generation,
+        kind: 'capabilities_changed',
+        aecAvailable: true,
+        aecActive: true,
+      });
+      return { streamId: 'stream-1' };
+    }),
+    stop: vi.fn(async () => undefined),
+    configureAudioSession: vi.fn(async ({ generation }) => ({
+      generation,
+      aecAvailable: true,
+      // This is the old native response: configuration only requests voice
+      // processing, but reports it as though a capture had confirmed it.
+      aecActive: true,
+      route: 'speaker',
+    })),
+    restoreAudioSession: vi.fn(async () => undefined),
+    addListener: <EventName extends keyof HappierAudioStreamNativeEventMap>(
+      eventName: EventName,
+      listener: (event: HappierAudioStreamNativeEventMap[EventName]) => void,
+    ) => {
+      if (eventName === 'voiceAudioSessionEvent') {
+        sessionListener = listener as (event: VoiceAudioSessionPlatformEvent) => void;
+      }
+      return { remove: () => { sessionListener = null; } };
+    },
+  };
+  return {
+    nativeModule,
+    platform: createHappierAudioStreamNativePlatform(nativeModule),
+  };
+}
+
 describe('VoiceAudioSessionCoordinator', () => {
+  it('does not admit required AEC from a pre-capture configuration request, then accepts the start-time confirmation event', async () => {
+    const { nativeModule, platform } = createNativePlatformReportingRequestedAecAsActive();
+    const coordinator = createVoiceAudioSessionCoordinator({ platform });
+
+    await expect(coordinator.acquire(request({ mode: 'conversation', aec: 'required' })))
+      .rejects.toMatchObject({ code: 'aec_required_unavailable' });
+    expect(coordinator.getSnapshot()).toMatchObject({ leaseCount: 0, capabilities: null });
+
+    const preferred = await coordinator.acquire(request({ mode: 'conversation', aec: 'preferred' }));
+    expect(preferred.capabilities).toMatchObject({ aecAvailable: true, aecActive: false });
+
+    const generation = coordinator.getSnapshot().generation;
+    await nativeModule.start({ sampleRate: 16_000, channels: 1, frameMs: 20, generation });
+    expect(coordinator.getSnapshot().capabilities).toMatchObject({ aecAvailable: true, aecActive: true });
+
+    await preferred.release();
+  });
+
   it('merges overlapping leases and restores only after the final release in either order', async () => {
     for (const releaseFirst of ['dictation', 'conversation'] as const) {
       const { platform } = createPlatform();

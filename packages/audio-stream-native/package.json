@@ -14,8 +14,10 @@
   ],
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "expo-modules-core": "55.0.20",

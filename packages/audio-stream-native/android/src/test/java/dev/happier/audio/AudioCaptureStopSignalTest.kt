@@ -15,4 +15,21 @@ class AudioCaptureStopSignalTest {
     assertTrue(first.isStopRequested())
     assertFalse(second.isStopRequested())
   }
+
+  @Test
+  fun expectedStopCannotPublishATerminalFailure() {
+    val signal = AudioCaptureStopSignal()
+
+    signal.requestStop()
+
+    assertFalse(signal.claimTerminal())
+  }
+
+  @Test
+  fun terminalFailureCanBeClaimedOnlyOnce() {
+    val signal = AudioCaptureStopSignal()
+
+    assertTrue(signal.claimTerminal())
+    assertFalse(signal.claimTerminal())
+  }
 }
