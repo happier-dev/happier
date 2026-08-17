@@ -1,3 +1,729 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+
+
+/* ---------------------------------------------------------------------------
+   HAPPIER THEME
+
+   fumadocs is entirely token-driven, so matching happier.dev is a mapping job
+   rather than a restyle. Every value below is the marketing site's own token
+   (apps/website/src/styles/globals.css), so the two surfaces cannot drift apart
+   by accident — if the site's palette changes, this file is the one place the
+   docs follow it.
+
+   WHY THE NEUTRALS ARE THE WHOLE JOB. The stock `neutral` preset grounds the
+   dark theme on hsl(0 0% 7%) — a true grey. The site is #050507, which is
+   near-black with a trace of blue. Side by side the grey reads as "a docs site"
+   and the near-black reads as the product. Getting the ground and the text
+   right carries most of the resemblance; the accent is a detail on top.
+
+   WHY THE ACCENT IS NOT USED THE SAME WAY IN BOTH THEMES. On the site, --accent
+   (#F5B547) is only ever a background fill — it is never text. fumadocs spends
+   --color-fd-primary on links and active labels, which IS text, and #F5B547 on
+   the light paper (#F5F5F7) is about 1.7:1. So dark keeps the amber, where it
+   sits at roughly 11:1 on #050507, and light uses a darkened amber of the same
+   hue at about 6:1. Same colour identity, both readable.
+
+   DELIBERATELY NOT PORTED: the site's @property 700ms token transition. It
+   exists so the marketing page's theme switch animates as one motion; fumadocs
+   re-renders on toggle and the two fight. A hard swap is correct here.
+   --------------------------------------------------------------------------- */
+
+:root {
+    /* Ground and text — the paper the site uses in light mode. */
+    --color-fd-background: #f5f5f7;
+    --color-fd-foreground: #0a0a0b;
+    --color-fd-muted-foreground: #5c5c66;
+
+    /* Surfaces. The site builds these from ink at low alpha rather than from a
+       second grey, which is what keeps panels feeling like the page instead of
+       like boxes dropped on it. */
+    --color-fd-muted: rgba(10, 10, 11, 0.04);
+    --color-fd-secondary: rgba(10, 10, 11, 0.04);
+    --color-fd-secondary-foreground: #0a0a0b;
+    --color-fd-card: rgba(10, 10, 11, 0.04);
+    --color-fd-card-foreground: #0a0a0b;
+    --color-fd-border: rgba(10, 10, 11, 0.08);
+
+    /* Popovers must be opaque: they float over prose. */
+    --color-fd-popover: #ffffff;
+    --color-fd-popover-foreground: #0a0a0b;
+
+    /* Hover/active surface. */
+    --color-fd-accent: rgba(10, 10, 11, 0.05);
+    --color-fd-accent-foreground: #0a0a0b;
+
+    /* Brand. Darkened from #F5B547 to clear AA on this ground. */
+    --color-fd-primary: #8a5a00;
+    --color-fd-primary-foreground: #ffffff;
+    --color-fd-ring: #8a5a00;
+
+    --color-fd-overlay: rgba(10, 10, 11, 0.2);
+}
+
+.dark {
+    --color-fd-background: #050507;
+    --color-fd-foreground: #fafafc;
+    --color-fd-muted-foreground: #9a9aa5;
+
+    --color-fd-muted: rgba(255, 255, 255, 0.04);
+    --color-fd-secondary: rgba(255, 255, 255, 0.06);
+    --color-fd-secondary-foreground: #fafafc;
+    --color-fd-card: rgba(255, 255, 255, 0.04);
+    --color-fd-card-foreground: #fafafc;
+    --color-fd-border: rgba(255, 255, 255, 0.08);
+
+    --color-fd-popover: #0c0c10;
+    --color-fd-popover-foreground: #fafafc;
+
+    --color-fd-accent: rgba(255, 255, 255, 0.06);
+    --color-fd-accent-foreground: #fafafc;
+
+    /* The site's own accent, unchanged — ~11:1 on this ground. */
+    --color-fd-primary: #f5b547;
+    --color-fd-primary-foreground: #050507;
+    --color-fd-ring: #f5b547;
+
+    --color-fd-overlay: rgba(0, 0, 0, 0.4);
+}
+
+/* The neutral preset re-tints the sidebar a lighter grey than the page. The
+   site has no such split — one ground, panels differentiated by hairline
+   borders — so the override is reverted to the page's own tokens. */
+.dark #nd-sidebar {
+    --color-fd-muted: rgba(255, 255, 255, 0.04);
+    --color-fd-secondary: rgba(255, 255, 255, 0.06);
+    --color-fd-muted-foreground: #9a9aa5;
+}
+
+/* ---------------------------------------------------------------------------
+   TYPE
+
+   Inter for prose, Inter Tight for headings, JetBrains Mono for code — the
+   site's three families, loaded from the site's own variable woff2 files by
+   next/font in layout.tsx. Previously this app loaded three separate Inter TTFs
+   (~1.2 MB) and had no display or mono face of its own.
+   --------------------------------------------------------------------------- */
+
+:root {
+    --font-sans: var(--font-inter), system-ui, sans-serif;
+    --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+body {
+    font-family: var(--font-sans);
+}
+
+/* Inter Tight is a tighter-set companion, drawn for display sizes. It is what
+   makes a heading on the site read as a heading rather than as bold body text. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
+    letter-spacing: -0.015em;
+}
+
+code,
+kbd,
+pre,
+samp {
+    font-family: var(--font-mono);
+}
+
+
+/* ===========================================================================
+   CRAFT
+
+   The palette made the docs the right colour. This layer is the part that
+   decides whether it feels made.
+
+   Three rules govern everything below, and they are the only three:
+
+   1. DEPTH COMES FROM LIGHT, NOT FROM LINES. A 1px grey border is the cheapest
+      way to say "edge" and the most obvious. Every surface here is described by
+      a layered, transparent shadow plus a 1px inset highlight along its top —
+      the way a real object catches the light above it. Borders are hairlines at
+      6–10% and never carry the weight alone.
+
+   2. RADII ARE CONCENTRIC. Outer radius = inner radius + padding. A 16px card
+      with 20px of padding holds a 10px icon well, not another 16px one. Getting
+      this wrong is the single most common reason a careful layout still feels
+      slightly wrong, and it is invisible until it is right.
+
+   3. NOTHING MOVES LINEARLY. Every transition uses one of two curves —
+      --ease-out for things arriving under their own weight, --ease-spring for
+      things responding to a pointer. `linear` and `ease-in-out` do not appear
+      in this file.
+
+   WHAT THIS DELIBERATELY IS NOT. The house design skills call for banned
+   fonts (Inter among them), 40-unit section padding, rotated cards and
+   screen-filling nav overlays. Those rules exist to stop generic template
+   output; here they would fight two things that matter more. Inter and Inter
+   Tight ARE the brand — happier.dev is built on them, and a docs site in a
+   different typeface is a worse outcome than a docs site in a common one. And
+   marketing whitespace on a reference document costs the reader scrolling for
+   nothing. The craft is applied; the theatrics are not.
+   =========================================================================== */
+
+:root {
+    /* Arriving under its own weight — long, decelerating, no overshoot. */
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    /* Answering a pointer — quicker off the mark, settles hard. */
+    --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+    --dur-fast: 180ms;
+    --dur-base: 320ms;
+    --dur-slow: 620ms;
+}
+
+/* --- Ambient light ------------------------------------------------------- */
+
+/*
+ * The site's hero sits under a warm light coming from the upper right, and
+ * that single gradient is most of why its black reads as a room rather than as
+ * #000. Two fixed, non-interactive layers reproduce it at a fraction of the
+ * strength a marketing page can afford — enough that the eye reads depth,
+ * far too little to compete with text.
+ *
+ * Fixed and pointer-events:none on purpose: a gradient attached to a scrolling
+ * container repaints every frame of every scroll.
+ */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(60rem 40rem at 88% -8%, rgba(245, 181, 71, 0.055), transparent 62%),
+        radial-gradient(48rem 34rem at 8% 4%, rgba(255, 255, 255, 0.028), transparent 60%);
+}
+
+:root:not(.dark) body::before {
+    background:
+        radial-gradient(60rem 40rem at 88% -8%, rgba(245, 181, 71, 0.075), transparent 62%),
+        radial-gradient(48rem 34rem at 8% 4%, rgba(10, 10, 11, 0.022), transparent 60%);
+}
+
+/* --- Typography ---------------------------------------------------------- */
+
+html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* A two-line title that breaks 6 words / 1 word is a worse title than one that
+   breaks 4 / 3, and `balance` is the whole fix. `pretty` on prose kills the
+   one-word last line without touching the rest of the paragraph. */
+#nd-page h1,
+#nd-page h2,
+#nd-page h3,
+#nd-page h4 {
+    text-wrap: balance;
+}
+
+#nd-page p,
+#nd-page li {
+    text-wrap: pretty;
+}
+
+/* Any number that updates in place needs fixed-width digits or the text beside
+   it shifts as it counts. */
+#nd-page time,
+#nd-page [data-count],
+kbd {
+    font-variant-numeric: tabular-nums;
+}
+
+#nd-page h1:first-of-type {
+    font-family: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
+    font-size: clamp(2.15rem, 1.55rem + 1.9vw, 3rem);
+    line-height: 1.06;
+    letter-spacing: -0.032em;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+#nd-page h1:first-of-type + p {
+    font-size: 1.0625rem;
+    line-height: 1.55;
+    max-width: 48ch;
+    color: var(--color-fd-muted-foreground);
+}
+
+#nd-page h2,
+#nd-page h3,
+#nd-page h4 {
+    font-family: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
+    letter-spacing: -0.02em;
+}
+
+#nd-page h2 {
+    margin-top: 3.25rem;
+    padding-top: 0.25rem;
+}
+
+/* --- Surfaces ------------------------------------------------------------ */
+
+/*
+ * The double-bezel. An outer shell holding an inner core, each with its own
+ * ground and its own radius, is what makes a card read as a machined object
+ * rather than a div with a border. Here the shell is the shadow stack and the
+ * core is the gradient — one element, two apparent layers, no extra DOM.
+ *
+ * The shadow is four values, not one: a hairline ring that adapts to whatever
+ * is behind it, two diffuse ambient layers at different radii for a soft
+ * falloff, and an inset highlight along the top edge that reads as the light
+ * from body::before catching the surface.
+ */
+#nd-page [data-card='true'] {
+    --card-radius: 16px;
+    --card-pad: 20px;
+
+    position: relative;
+    isolation: isolate;
+    border: 0;
+    border-radius: var(--card-radius);
+    padding: var(--card-pad);
+    background-image: linear-gradient(
+        168deg,
+        rgba(255, 255, 255, 0.052) 0%,
+        rgba(255, 255, 255, 0.014) 42%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.062),
+        0 1px 2px rgba(0, 0, 0, 0.28),
+        0 8px 24px -12px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    transition-property: transform, box-shadow, background-color;
+    transition-duration: var(--dur-base);
+    transition-timing-function: var(--ease-spring);
+}
+
+:root:not(.dark) #nd-page [data-card='true'] {
+    background-image: linear-gradient(
+        168deg,
+        rgba(255, 255, 255, 0.9) 0%,
+        rgba(255, 255, 255, 0.4) 46%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    box-shadow:
+        0 0 0 1px rgba(10, 10, 11, 0.07),
+        0 1px 2px rgba(10, 10, 11, 0.04),
+        0 8px 24px -14px rgba(10, 10, 11, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Lift, warm the ring, deepen the ambient. 2px is the whole movement — enough
+   to register as a response, small enough that a grid of six does not ripple. */
+#nd-page [data-card='true']:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 0 0 1px rgba(245, 181, 71, 0.34),
+        0 2px 4px rgba(0, 0, 0, 0.3),
+        0 18px 40px -18px rgba(0, 0, 0, 0.62),
+        inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+:root:not(.dark) #nd-page [data-card='true']:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 0 0 1px rgba(180, 120, 20, 0.28),
+        0 2px 4px rgba(10, 10, 11, 0.05),
+        0 18px 40px -20px rgba(10, 10, 11, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+/* A card is a link. It should answer a press the way a button does. */
+#nd-page [data-card='true']:active {
+    transform: translateY(-1px) scale(0.99);
+    transition-duration: var(--dur-fast);
+}
+
+/* Concentric: the icon well sits inside 20px of padding, so its radius is the
+   card's 16 minus that inset, not another 16. */
+#nd-page [data-card='true'] > svg,
+#nd-page [data-card='true'] [class*='rounded'] > svg {
+    color: var(--color-fd-primary);
+}
+
+#nd-page [data-card='true'] > *:first-child:not(h3) {
+    border-radius: 10px;
+    background: rgba(245, 181, 71, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(245, 181, 71, 0.16);
+    transition: background-color var(--dur-base) var(--ease-spring);
+}
+
+#nd-page [data-card='true']:hover > *:first-child:not(h3) {
+    background: rgba(245, 181, 71, 0.16);
+}
+
+#nd-page [data-card='true'] h3 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.011em;
+    margin-bottom: 0.25rem;
+}
+
+#nd-page [data-card='true'] .prose-no-margin {
+    line-height: 1.5;
+    font-size: 0.8125rem;
+}
+
+/* Entry. Six cards arriving together is a flash; six arriving 55ms apart reads
+   as one movement with direction. nth-child does the stagger with no JS and no
+   per-item markup — and it runs once, on mount, which is what a keyframe is
+   for. */
+@keyframes fd-rise {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#nd-page [data-card='true'] {
+    animation: fd-rise var(--dur-slow) var(--ease-out) backwards;
+}
+
+#nd-page [data-card='true']:nth-child(1) { animation-delay: 0ms; }
+#nd-page [data-card='true']:nth-child(2) { animation-delay: 55ms; }
+#nd-page [data-card='true']:nth-child(3) { animation-delay: 110ms; }
+#nd-page [data-card='true']:nth-child(4) { animation-delay: 165ms; }
+#nd-page [data-card='true']:nth-child(5) { animation-delay: 220ms; }
+#nd-page [data-card='true']:nth-child(6) { animation-delay: 275ms; }
+#nd-page [data-card='true']:nth-child(n + 7) { animation-delay: 330ms; }
+
+/* --- Sidebar ------------------------------------------------------------- */
+
+/*
+ * The active row was `bg-fd-primary/10` across the full width of the rail: a
+ * filled amber slab, the loudest object on screen, marking the page you are
+ * already on. The site never fills to show state — it uses a rule and a colour.
+ *
+ * The tint now falls off to the right so the row reads as lit from its own
+ * marker rather than as a block, and the marker itself is a 2px rule that
+ * animates in from nothing.
+ */
+#nd-sidebar a {
+    transition-property: color, background-color, box-shadow;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-spring);
+}
+
+#nd-sidebar a[data-active='true'] {
+    background-color: transparent;
+    background-image: linear-gradient(
+        90deg,
+        rgba(245, 181, 71, 0.13) 0%,
+        rgba(245, 181, 71, 0.045) 45%,
+        rgba(245, 181, 71, 0) 100%
+    );
+    color: var(--color-fd-primary);
+    box-shadow: inset 2px 0 0 var(--color-fd-primary);
+}
+
+#nd-sidebar a:not([data-active='true']):hover {
+    background-color: rgba(255, 255, 255, 0.035);
+    color: var(--color-fd-foreground);
+}
+
+:root:not(.dark) #nd-sidebar a:not([data-active='true']):hover {
+    background-color: rgba(10, 10, 11, 0.035);
+}
+
+/* The chevrons on collapsible groups are the only moving parts in the rail;
+   they should move on the same curve as everything else. */
+#nd-sidebar svg {
+    transition: transform var(--dur-base) var(--ease-spring);
+}
+
+/* --- Controls ------------------------------------------------------------ */
+
+/*
+ * Search, the page actions, the theme toggle. All of them shipped as flat
+ * rectangles. Each gets the same treatment as a card, one step quieter, plus
+ * the press response — scale(0.96) is the value that reads as a press without
+ * reading as a bounce.
+ */
+#nd-sidebar button,
+#nd-page button,
+#nd-page a[data-card='true'] ~ button {
+    transition-property: transform, background-color, box-shadow, color, border-color;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-spring);
+}
+
+#nd-sidebar button:active,
+#nd-page button:active {
+    transform: scale(0.96);
+}
+
+/* The search field is the first control in reading order and was the flattest
+   thing in the rail. An inset shadow makes it a well rather than a plate. */
+#nd-sidebar button[data-search-full],
+#nd-sidebar > div button:has(svg + *) {
+    box-shadow:
+        inset 0 1px 2px rgba(0, 0, 0, 0.22),
+        0 0 0 1px rgba(255, 255, 255, 0.055);
+}
+
+/* Focus. The default ring is the browser's; this one belongs to the product.
+   :focus-visible only, so a mouse press never draws it. */
+#nd-page a:focus-visible,
+#nd-page button:focus-visible,
+#nd-sidebar a:focus-visible,
+#nd-sidebar button:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 2px var(--color-fd-background),
+        0 0 0 4px rgba(245, 181, 71, 0.55);
+    border-radius: 8px;
+}
+
+/* Every interactive target reaches 40px, including the ones whose visible box
+   is smaller. */
+#nd-sidebar button,
+#nd-page button {
+    min-height: 2.25rem;
+}
+
+/* --- Code ---------------------------------------------------------------- */
+
+/* Code is why most of these pages exist. It was the least considered surface
+   on them: no edge, no light, sharing its ground with the prose. */
+#nd-page pre {
+    border: 0;
+    border-radius: 12px;
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.06),
+        0 1px 2px rgba(0, 0, 0, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+:root:not(.dark) #nd-page pre {
+    box-shadow:
+        0 0 0 1px rgba(10, 10, 11, 0.07),
+        0 1px 2px rgba(10, 10, 11, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+#nd-page :not(pre) > code {
+    border-radius: 6px;
+    padding: 0.12em 0.36em;
+    font-size: 0.875em;
+    background: rgba(255, 255, 255, 0.055);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+}
+
+:root:not(.dark) #nd-page :not(pre) > code {
+    background: rgba(10, 10, 11, 0.04);
+    box-shadow: inset 0 0 0 1px rgba(10, 10, 11, 0.06);
+}
+
+/* Physical keys, not styled spans. */
+#nd-page kbd,
+#nd-sidebar kbd {
+    border-radius: 5px;
+    padding: 0.1em 0.4em;
+    font-size: 0.78em;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+        0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* --- Links --------------------------------------------------------------- */
+
+/* An underline that grows from the left on hover, on the same curve as
+   everything else. Cheap, and it makes prose links feel handled. */
+/*
+ * Underlined at rest, not on hover. Removing the underline from an inline link
+ * and restoring it on hover is a common flourish and a genuine accessibility
+ * regression: it makes links unfindable by anyone scanning without a pointer.
+ * So the underline stays, and what animates is its WEIGHT — a hairline at 45%
+ * that goes solid on hover. Same signal, no information withheld.
+ *
+ * text-underline-offset keeps it clear of the descenders; `from-font` would
+ * inherit Inter's own thin rule and disappear against the amber.
+ */
+#nd-page article a:not([data-card='true']) {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.22em;
+    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+    transition-property: text-decoration-color, color;
+    transition-duration: var(--dur-base);
+    transition-timing-function: var(--ease-spring);
+}
+
+#nd-page article a:not([data-card='true']):hover {
+    text-decoration-color: currentColor;
+}
+
+/* --- Table of contents --------------------------------------------------- */
+
+#nd-toc a,
+[data-toc] a {
+    transition-property: color, box-shadow;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-spring);
+}
+
+/* --- Reduced motion ------------------------------------------------------ */
+
+/*
+ * Not a courtesy. Someone who has asked their system to stop moving things has
+ * usually asked because motion makes them ill.
+ */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0ms !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    #nd-page [data-card='true']:hover,
+    #nd-page [data-card='true']:active {
+        transform: none;
+    }
+}
+
+/* --- Page actions -------------------------------------------------------- */
+
+/*
+ * "Copy Markdown" and "Open" sat as flat rectangles under the lede, above a
+ * hard 1px rule. Both get the card's language one step quieter, and the rule
+ * becomes a hairline that fades out at both ends — a divider that stops where
+ * the text does instead of running the full measure like a table border.
+ */
+#nd-page article > div:has(> button):first-of-type,
+#nd-page .border-b:has(button) {
+    border-bottom: 0 !important;
+    position: relative;
+    padding-bottom: 1.5rem;
+}
+
+#nd-page article > div:has(> button):first-of-type::after,
+#nd-page .border-b:has(button)::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.11) 0%,
+        rgba(255, 255, 255, 0.055) 45%,
+        rgba(255, 255, 255, 0) 100%
+    );
+}
+
+:root:not(.dark) #nd-page article > div:has(> button):first-of-type::after,
+:root:not(.dark) #nd-page .border-b:has(button)::after {
+    background: linear-gradient(
+        90deg,
+        rgba(10, 10, 11, 0.13) 0%,
+        rgba(10, 10, 11, 0.06) 45%,
+        rgba(10, 10, 11, 0) 100%
+    );
+}
+
+#nd-page article button {
+    border: 0;
+    border-radius: 9px;
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.07),
+        0 1px 2px rgba(0, 0, 0, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    background-image: linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0.045),
+        rgba(255, 255, 255, 0.008)
+    );
+}
+
+:root:not(.dark) #nd-page article button {
+    box-shadow:
+        0 0 0 1px rgba(10, 10, 11, 0.08),
+        0 1px 2px rgba(10, 10, 11, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    background-image: linear-gradient(to bottom, #fff, rgba(255, 255, 255, 0.5));
+}
+
+#nd-page article button:hover {
+    box-shadow:
+        0 0 0 1px rgba(245, 181, 71, 0.3),
+        0 2px 5px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* --- Card grid ----------------------------------------------------------- */
+
+/* The stock gap is 12px, which reads as one wrapped object rather than six
+   destinations. 16px is the smallest gap at which they separate cleanly. */
+#nd-page .grid:has([data-card='true']) {
+    gap: 1rem;
+}
+
+/* --- Sidebar chevrons ---------------------------------------------------- */
+
+/* The disclosure arrows were as loud as the labels they belong to. */
+#nd-sidebar button svg,
+#nd-sidebar a svg {
+    opacity: 0.45;
+    transition-property: opacity, transform;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-spring);
+}
+
+#nd-sidebar button:hover svg,
+#nd-sidebar a:hover svg {
+    opacity: 0.8;
+}
+
+/* --- Table of contents --------------------------------------------------- */
+
+/* The active marker in the right rail matches the sidebar's, so the two rails
+   speak the same language rather than each inventing one. */
+#nd-toc a[data-active='true'],
+[data-toc] a[data-active='true'] {
+    color: var(--color-fd-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Analytics disclosure (src/analytics/Analytics.tsx)
+
+   A footer line rather than a banner: we set no cookie and store no identifier,
+   so a consent modal would interrupt every reader to ask about something that
+   does not happen. Sized and coloured to read as legal text — present, findable,
+   never competing with the documentation.
+   --------------------------------------------------------------------------- */
+.fd-analytics-notice {
+    padding: 1rem 1.5rem 1.5rem;
+    text-align: center;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--color-fd-muted-foreground);
+}
+
+.fd-analytics-toggle {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+
+.fd-analytics-toggle:hover {
+    color: var(--color-fd-foreground);
+}

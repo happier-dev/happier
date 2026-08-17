@@ -3,7 +3,7 @@ title: Privacy Policy
 description: Your privacy is our priority
 ---
 
-**Last Updated: January 2026**
+**Last Updated: August 2026**
 
 ## Overview
 
@@ -23,10 +23,22 @@ Happier is committed to protecting your privacy. This policy explains how we han
 - **Push Notification Tokens**: Device tokens for sending push notifications via Expo's push notification service
 
 ### Analytics (PostHog)
-- **Anonymous Events**: We collect basic app usage events through PostHog to improve the app experience
+
+We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfurt)**. One PostHog project covers both the app and our websites; every event carries a property naming which of the two it came from, so they can be told apart without ever sharing an identity between them.
+
+**In the app**
+- **Anonymous Events**: We collect basic app usage events to improve the app experience
 - **Privacy by Design**: All analytics events use an anonymized ID derived from a secret key - we cannot match this back to any user or account
 - **No Content Tracking**: We only track basic app usage events, never any message content, code, or personal information
 - **Opt-Out Available**: You can disable analytics collection at any time in the app settings
+
+**On happier.dev, docs.happier.dev and guides.happier.dev**
+- **No cookies and no visitor ID**: The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
+- **Do Not Track and Global Privacy Control are honoured**: If your browser sends either signal, analytics never start at all.
+- **First-party only**: Analytics requests go to a path on the site you are already reading and are forwarded to PostHog from our own server. The pages make no third-party requests.
+- **No IP addresses**: Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept; the address itself is never stored.
+- **What is recorded**: which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.
+- **Opt-Out Available**: There is a switch in the footer of every page. The record of that choice is the only thing these sites ever write to your device.
 
 ### Subscription Management (Revenue Cat)
 - **Account ID**: Revenue Cat uses your account ID to manage subscriptions and enable premium features
@@ -61,7 +73,7 @@ Push notifications are sent directly from your devices to each other, not from o
 
 ## Data Security
 
-- **End-to-End Encryption**: Using TweetNaCl (same as Signal) for all sensitive data
+- **End-to-End Encryption**: Messages are encrypted on your device under a per-session key (32 random bytes, AES-256-GCM, a fresh nonce per message). That session key is sealed to your account's own key with an ephemeral X25519 exchange, and account-scoped data is sealed with XSalsa20-Poly1305. We claim no certification and no external audit; the implementation is in the open for you to read.
 - **Zero-Knowledge**: We cannot decrypt your data even if compelled
 - **Secure Key Exchange**: Encryption keys are transmitted between your devices only in encrypted form that we cannot access
 - **Open Source**: Our encryption implementation is publicly auditable

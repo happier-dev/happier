@@ -12,10 +12,14 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
   if (!page) notFound();
 
   const MDX = page.data.body;
+  // Was `username/repo` from the scaffold, which made every "View on GitHub"
+  // link on every docs page a 404. The content path is apps/docs/content/docs,
+  // not docs/content/docs.
   const gitConfig = {
-    user: 'username',
-    repo: 'repo',
+    user: 'happier-dev',
+    repo: 'happier',
     branch: 'main',
+    contentRoot: 'apps/docs/content/docs',
   };
 
   return (
@@ -26,8 +30,7 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
         <LLMCopyButton markdownUrl={`${page.url}.mdx`} />
         <ViewOptions
           markdownUrl={`${page.url}.mdx`}
-          // update it to match your repo
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`}
+          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/${gitConfig.contentRoot}/${page.path}`}
         />
       </div>
       <DocsBody>
