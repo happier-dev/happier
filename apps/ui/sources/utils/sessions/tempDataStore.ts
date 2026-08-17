@@ -1,7 +1,12 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type {
+    AcpConfigOptionOverridesV1,
+    BackendTargetRefV1,
+    SessionMcpSelectionV1,
+    SessionSpawnSourceContextV1,
+} from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -33,6 +38,17 @@ export interface NewSessionData {
     replacePersistedDraftSelections?: boolean;
     taskId?: string;
     taskTitle?: string;
+    /**
+     * One-shot "create this Session as a continuation of that one" intent. It
+     * rides this existing rich-handoff channel rather than a second navigation
+     * state, and it is deliberately not a persisted authoring-draft field: it
+     * belongs to one authoring attempt, not to the user's saved configuration.
+     */
+    sourceContext?: SessionSpawnSourceContextV1;
+    /** Display-only quotation of the message at the cutoff. */
+    sourceContextPreview?: string;
+    /** The source Session's server; V1 requires the target to match it. */
+    sourceContextServerId?: string | null;
 }
 
 // In-memory store for temporary data

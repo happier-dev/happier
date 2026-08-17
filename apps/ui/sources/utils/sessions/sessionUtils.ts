@@ -16,7 +16,6 @@ import {
     deriveSessionRuntimePresentationState,
     isFreshTimestamp,
     readSessionRuntimePresentationFreshnessTimestamps,
-    SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import {
@@ -249,9 +248,10 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         && nowMs - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
     const isThinking = runtimeStatus.working;
     // Single source of truth for the "resuming" indicator: an explicit, client-owned lifecycle
-    // marker set at resume initiation and cleared on first post-attach activity (bounded decay).
+    // marker set at resume initiation and cleared on first post-attach activity (or the store's
+    // bounded post-acceptance fallback).
     // Header, composer, and list all read this same derived state, so they never disagree.
-    const isResuming = isFreshTimestamp(session.resumingAt ?? null, nowMs, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS);
+    const isResuming = (session.resumingAt ?? null) !== null;
 
     if (isArchived) {
         return {

@@ -210,4 +210,54 @@ describe('buildSpawnHappySessionRpcParams', () => {
             daemonCliVersion: '0.2.10-dev.41',
         })).toHaveProperty('pendingFirstInput', options.pendingFirstInput);
     });
+
+    // A creation ingress that drops `sourceContext` produces an ordinary blank
+    // Session and reports success — a silent, invisible wrong outcome. This
+    // payload owner is the UI half of the "no ingress drops the recipe" invariant.
+    it('forwards the typed source recipe to the daemon spawn payload', () => {
+        const sourceContext = {
+            v: 1,
+            kind: 'session_replay',
+            sourceSessionId: 'sess_source',
+            forkPoint: { type: 'seq', upToSeqInclusive: 42 },
+        } as const;
+
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            sourceContext,
+        } as any);
+
+        expect(params.sourceContext).toEqual(sourceContext);
+    });
+
+    it('omits the source recipe only when the caller authored none', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        } as any);
+
+        expect(params).not.toHaveProperty('sourceContext');
+    });
+
+    it('keeps the recipe on the current payload shape for a compatible daemon', () => {
+        const sourceContext = {
+            v: 1,
+            kind: 'session_replay',
+            sourceSessionId: 'sess_source',
+            forkPoint: { type: 'latest' },
+        } as const;
+
+        expect(buildCompatibleSpawnHappySessionRpcParams({
+            options: {
+                machineId: 'machine-1',
+                directory: '/tmp/workspace',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' as const },
+                sourceContext,
+            } as any,
+            daemonCliVersion: '0.2.10',
+        })).toHaveProperty('sourceContext', sourceContext);
+    });
 });

@@ -11,6 +11,7 @@ import type {
     AgentRuntimeDescriptorV1,
     BackendTargetRefV1,
     SessionMcpSelectionV1,
+    SessionSpawnSourceContextV1,
     PendingFirstInputV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
@@ -83,6 +84,23 @@ export interface SpawnSessionOptions {
     connectedServicesUpdatedAt?: number;
     mcpSelection?: SessionMcpSelectionV1;
     /**
+     * "Create this Session as a continuation of that one", with bounded Replay
+     * through the recorded cutoff.
+     *
+     * Carried on both predecessor creation ingresses: the strict
+     * `session.spawn_new` Action input and this machine-RPC payload, whose
+     * daemon side (`SpawnDaemonSessionRequestCompatSchema`) declares the field
+     * and routes it through the canonical Replay-seeded creator.
+     *
+     * That compat schema is a plain `z.object`, so a daemon predating the field
+     * would strip it silently rather than reject. It is therefore never sent
+     * blind: `machineSpawnNewSession` refuses outright when the machine needs
+     * legacy spawn params, and the pre-send `session.continuation.inspect` call
+     * covers the remaining older builds — a daemon predating `sourceContext`
+     * also predates that operation and answers METHOD_NOT_AVAILABLE.
+     */
+    sourceContext?: SessionSpawnSourceContextV1;
+    /**
      * Internal daemon freshness barrier. Callers should normally omit this and let
      * `machineSpawnNewSession` capture a freshly flushed account-settings version.
      */
@@ -115,6 +133,12 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     connectedServices?: unknown
     connectedServicesUpdatedAt?: number
     mcpSelection?: SessionMcpSelectionV1
+    /**
+     * Typed source recipe for a Replay-seeded child. Required semantics on the
+     * daemon: it resolves the seed before creating the child and creates no
+     * child on failure. Deliberately absent from the legacy params shape.
+     */
+    sourceContext?: SessionSpawnSourceContextV1
     /**
      * Internal daemon freshness barrier captured immediately before the RPC.
      */
@@ -231,6 +255,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         connectedServices,
         connectedServicesUpdatedAt,
         mcpSelection,
+        sourceContext,
         accountSettingsVersionHint,
     } = options;
 
@@ -290,6 +315,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
             ? { connectedServicesUpdatedAt }
             : {}),
         ...(mcpSelection ? { mcpSelection } : {}),
+        ...(sourceContext ? { sourceContext } : {}),
         ...(typeof accountSettingsVersionHint === 'number' && Number.isInteger(accountSettingsVersionHint) && accountSettingsVersionHint >= 0
             ? { accountSettingsVersionHint }
             : {}),

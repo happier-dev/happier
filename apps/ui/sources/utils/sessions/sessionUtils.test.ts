@@ -622,7 +622,7 @@ describe('getSessionStatus', () => {
         expect(status.isPulsing).toBe(true);
     });
 
-    it('keeps ordinary offline precedence once an explicit resuming marker is stale', async () => {
+    it('trusts the store-owned resuming marker instead of independently aging it out', async () => {
         const { getSessionStatus, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS } = await import('./sessionUtils');
         const now = 1_000_000;
         const session = createBaseSession({
@@ -633,25 +633,8 @@ describe('getSessionStatus', () => {
 
         const status = getSessionStatus(session, now, 0);
 
-        expect(status.state).toBe('disconnected');
-        expect(status.isConnected).toBe(false);
-    });
-
-    it('stops showing resuming once the explicit marker has decayed past its bounded lifetime', async () => {
-        const { getSessionStatus, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS } = await import('./sessionUtils');
-        const now = 1_000_000;
-        const session = createBaseSession({
-            active: true,
-            activeAt: now - 10_000,
-            presence: 'online',
-            latestTurnStatus: 'completed',
-            latestTurnStatusObservedAt: now - 60_000,
-            resumingAt: now - SESSION_RESUMING_PRESENTATION_TIMEOUT_MS - 1,
-        });
-
-        const status = getSessionStatus(session, now, 0);
-
-        expect(status.state).toBe('waiting');
+        expect(status.state).toBe('resuming');
+        expect(status.isConnected).toBe(true);
     });
 
     it('does not treat inactive post-terminal activity as active work', async () => {

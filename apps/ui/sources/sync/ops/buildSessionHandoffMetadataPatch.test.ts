@@ -10,7 +10,15 @@ describe('buildSessionHandoffMetadataPatch', () => {
     const sourceText = readFileSync(fileURLToPath(new URL('./buildSessionHandoffMetadataPatch.ts', import.meta.url)), 'utf8');
 
     it('keeps provider-specific handoff behavior behind provider catalog hooks', () => {
-        expect(sourceText).not.toContain('@happier-dev/agents');
+        // The shared current-Agent view projector is provider-AGNOSTIC: it reads
+        // every Agent's resume field from the catalog and owns the one-flat-key
+        // invariant, so handoff must route its identity rewrite through it
+        // rather than writing a resume key itself. Pin the exact allowed symbol
+        // instead of banning the package, so a per-provider helper still cannot
+        // arrive behind the same import.
+        const agentsImports = [...sourceText.matchAll(/import\s*\{([^}]*)\}\s*from\s*'@happier-dev\/agents'/g)]
+            .flatMap((match) => (match[1] ?? '').split(',').map((name) => name.trim()).filter(Boolean));
+        expect(agentsImports).toEqual(['projectCurrentAgentSessionView']);
         expect(sourceText).not.toMatch(/providerId\s*={2,3}\s*['"](?:claude|codex|opencode)['"]/);
     });
 

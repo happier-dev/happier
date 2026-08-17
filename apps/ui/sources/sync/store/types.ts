@@ -133,6 +133,7 @@ export interface SessionsDomainSlice {
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
+    armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;

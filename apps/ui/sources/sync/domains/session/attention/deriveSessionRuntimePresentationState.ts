@@ -6,10 +6,10 @@ import type {
 export const SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS = 120_000;
 
 /**
- * Bounded lifetime of the explicit client-owned "resuming" lifecycle marker.
- * A resume is initiated locally (the app calls the resume op); the marker is set at
- * initiation and cleared on the first post-attach activity. This bound guarantees a
- * crashed/never-settling resume cannot latch the indicator forever.
+ * Bounded fallback lifetime after the daemon accepts a resume request.
+ * The marker itself is set at initiation and intentionally remains active throughout the
+ * potentially slow resume RPC. Post-attach activity normally clears it first; this bound keeps
+ * an accepted request with no subsequent publisher activity from latching the indicator forever.
  */
 export const SESSION_RESUMING_PRESENTATION_TIMEOUT_MS = 30_000;
 

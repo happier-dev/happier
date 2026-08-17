@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 
-import { canForkConversation, canForkFromMessage } from './forkUiSupport';
+import {
+  canForkConversation,
+  canForkFromMessage,
+  resolveSessionForkStrategyAvailability,
+} from './forkUiSupport';
 
 function makeSession(metadata: any): Session {
   return {
@@ -72,5 +76,56 @@ describe('forkUiSupport', () => {
     const session = makeSession({ machineId: 'm1', flavor: 'claude' });
     expect(canForkConversation({ session, replayEnabled: false })).toBe(false);
     expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: false })).toBe(false);
+  });
+});
+
+describe('resolveSessionForkStrategyAvailability', () => {
+  it('names the two routes separately instead of collapsing them into one boolean', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'claude' });
+    expect(resolveSessionForkStrategyAvailability({
+      session,
+      forkPoint: { type: 'latest' },
+      replayEnabled: true,
+    })).toEqual({ native: false, replay: true });
+  });
+
+  it('offers Native only for the exact cutoff the Agent capability supports', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'codex', codexBackendMode: 'appServer' });
+    expect(resolveSessionForkStrategyAvailability({
+      session,
+      forkPoint: { type: 'latest' },
+      replayEnabled: false,
+    })).toEqual({ native: true, replay: false });
+    // Codex app-server can fork the conversation but not from a message, so the
+    // Native card must disappear at a message cutoff rather than be offered and
+    // then rejected by the daemon.
+    expect(resolveSessionForkStrategyAvailability({
+      session,
+      forkPoint: { type: 'seq', upToSeqInclusive: 5 },
+      replayEnabled: false,
+    })).toEqual({ native: false, replay: false });
+  });
+
+  it('offers both routes when the Agent forks natively and Replay is enabled', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server' });
+    expect(resolveSessionForkStrategyAvailability({
+      session,
+      forkPoint: { type: 'seq', upToSeqInclusive: 5 },
+      replayEnabled: true,
+    })).toEqual({ native: true, replay: true });
+  });
+
+  it('offers nothing for a missing Session or an uncommitted cutoff', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server' });
+    expect(resolveSessionForkStrategyAvailability({
+      session: null,
+      forkPoint: { type: 'latest' },
+      replayEnabled: true,
+    })).toEqual({ native: false, replay: false });
+    expect(resolveSessionForkStrategyAvailability({
+      session,
+      forkPoint: { type: 'seq', upToSeqInclusive: 0 },
+      replayEnabled: true,
+    })).toEqual({ native: false, replay: false });
   });
 });

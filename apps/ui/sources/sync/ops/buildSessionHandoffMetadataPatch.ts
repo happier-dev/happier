@@ -1,6 +1,8 @@
 import type { AgentRuntimeDescriptorV1, DirectSessionsSource } from '@happier-dev/protocol';
 
-import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
+import { projectCurrentAgentSessionView } from '@happier-dev/agents';
+
+import { getAgentBehavior, type AgentId } from '@/agents/catalog/catalog';
 
 import type { Metadata } from '../domains/state/storageTypes';
 
@@ -38,12 +40,22 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     );
     const targetWorkspaceRootPath = normalizeWorkspaceRootPath(input.targetPath);
 
-    const next: MetadataRecord = writeAgentVendorResumeIdToMetadata({
-        ...input.metadata,
-        machineId: input.targetMachineId,
-        path: input.targetPath,
-        flavor: input.providerId,
-    }, input.providerId, input.targetRemoteSessionId);
+    // Handoff moves the SAME Agent to another machine, so its current
+    // projections stay true and are carried. The projector remains the single
+    // owner of the identity rewrite: it drops every other Agent's stale flat
+    // resume key before writing the target's. A handoff-local writer cannot do
+    // that without becoming a second identity mutator, and a Session left
+    // holding two flat keys cannot be resumed from its own committed metadata.
+    const next: MetadataRecord = projectCurrentAgentSessionView({
+        metadata: {
+            ...input.metadata,
+            machineId: input.targetMachineId,
+            path: input.targetPath,
+        },
+        target: { agentId: input.providerId, updatedAtMs: input.completedAtMs },
+        nativeResumeId: input.targetRemoteSessionId,
+        agentScopedCurrentState: 'carry',
+    }) as MetadataRecord;
 
     const providerPatch = getAgentBehavior(input.providerId).sessionHandoff?.buildProviderPatch?.({
         agentId: input.providerId,

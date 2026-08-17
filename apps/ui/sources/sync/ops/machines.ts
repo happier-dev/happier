@@ -227,6 +227,25 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         });
 
         if (
+            preparedOptions.sourceContext
+            && shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
+        ) {
+            // The legacy params shape has no `sourceContext`, and the daemon
+            // behind it would strip an unknown field silently — creating an
+            // ordinary blank Session and reporting success. Continuing from a
+            // Session is required semantics, so refuse rather than downgrade.
+            const versionLabel = daemonCliVersion ?? 'unknown';
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage:
+                    'Update or reconnect the CLI to continue from this Session. Continuing from an existing '
+                    + 'Session requires a compatible 0.1.0-dev build or Happier CLI v0.2.0 or newer on this '
+                    + `machine (detected ${versionLabel}).`,
+            };
+        }
+
+        if (
             shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
             && preparedOptions.backendTarget.kind !== 'builtInAgent'
         ) {

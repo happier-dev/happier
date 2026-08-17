@@ -147,6 +147,11 @@ export const UI_FEATURE_REGISTRY = {
     sessions: {
         settingsToggle: undefined,
     },
+    // Server-gated like `sessions.handoff` and `sessions.usageLimitRecovery`:
+    // availability is decided by the server enabled bit, not a user toggle.
+    'sessions.agentSwitching': {
+        settingsToggle: undefined,
+    },
     'sessions.folders': {
         settingsToggle: {
             showInSettings: true,

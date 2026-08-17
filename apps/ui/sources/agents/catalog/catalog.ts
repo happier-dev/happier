@@ -50,19 +50,6 @@ export function getAgentCore(id: AgentId): AgentCoreConfig {
     return getExpoAgentCore(id);
 }
 
-export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<string, unknown>>(
-    metadata: Metadata,
-    agentId: AgentId,
-    vendorResumeId: string,
-): Metadata {
-    const vendorResumeIdField = getAgentCore(agentId).resume.vendorResumeIdField;
-    if (!vendorResumeIdField) return metadata;
-    return {
-        ...metadata,
-        [vendorResumeIdField]: vendorResumeId,
-    };
-}
-
 export function getAgentUi(id: AgentId): AgentUiConfig {
     return registryUi().AGENTS_UI[id];
 }

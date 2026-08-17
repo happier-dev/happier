@@ -140,22 +140,28 @@ describe('sessions ops server-scoped routing', () => {
     });
 
     it('routes resume session spawn through server-scoped rpc with requested server id', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
-        const { resumeSession } = await sessionsModulePromise;
-        const result = await resumeSession({
-            sessionId: 'session-1',
-            machineId: 'machine-1',
-            directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            serverId: 'server-b',
-        } as any);
+        const armSessionResumingFallbackSpy = vi.spyOn(storage.getState(), 'armSessionResumingFallback');
+        try {
+            machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
+            const { resumeSession } = await sessionsModulePromise;
+            const result = await resumeSession({
+                sessionId: 'session-1',
+                machineId: 'machine-1',
+                directory: '/tmp',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                serverId: 'server-b',
+            } as any);
 
-        expect(result).toEqual({ type: 'success', sessionId: 'sess-1' });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            method: 'spawn-happy-session',
-            serverId: 'server-b',
-        }));
+            expect(result).toEqual({ type: 'success', sessionId: 'sess-1' });
+            expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: 'machine-1',
+                method: 'spawn-happy-session',
+                serverId: 'server-b',
+            }));
+            expect(armSessionResumingFallbackSpy).toHaveBeenCalledWith('session-1');
+        } finally {
+            armSessionResumingFallbackSpy.mockRestore();
+        }
     });
 
     it('passes transcriptStorage through resumeSession when requested', async () => {

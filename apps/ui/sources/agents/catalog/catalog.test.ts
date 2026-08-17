@@ -33,23 +33,13 @@ describe('agents/catalog', () => {
         }
     });
 
-    it('writes vendor resume ids through the catalog metadata helper', async () => {
-        const catalogModule = await import('./catalog') as typeof import('./catalog') & {
-            writeAgentVendorResumeIdToMetadata?: (
-                metadata: Record<string, unknown>,
-                agentId: 'claude' | 'codex' | 'opencode',
-                vendorResumeId: string,
-            ) => Record<string, unknown>;
-        };
+    it('has no catalog-local vendor resume id writer competing with the shared projector', async () => {
+        // `projectCurrentAgentSessionView` in `@happier-dev/agents` is the single
+        // owner of the current-Agent view, including the one-flat-key invariant.
+        // A catalog-local writer here would silently reintroduce the multi-key
+        // state that makes a Session unresumable from its own metadata.
+        const catalogModule = await import('./catalog') as Record<string, unknown>;
 
-        expect(catalogModule.writeAgentVendorResumeIdToMetadata).toBeTypeOf('function');
-        expect(catalogModule.writeAgentVendorResumeIdToMetadata?.({ path: '/repo' }, 'codex', 'thread_123')).toEqual({
-            path: '/repo',
-            codexSessionId: 'thread_123',
-        });
-        expect(catalogModule.writeAgentVendorResumeIdToMetadata?.({ path: '/repo' }, 'opencode', 'op_ses_123')).toEqual({
-            path: '/repo',
-            opencodeSessionId: 'op_ses_123',
-        });
+        expect(catalogModule.writeAgentVendorResumeIdToMetadata).toBeUndefined();
     });
 });

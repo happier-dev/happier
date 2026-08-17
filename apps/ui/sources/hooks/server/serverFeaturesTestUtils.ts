@@ -114,6 +114,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             sessions: {
                 enabled: false,
+                agentSwitching: {
+                    enabled: false,
+                },
                 folders: {
                     enabled: false,
                 },

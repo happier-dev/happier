@@ -216,8 +216,9 @@ export interface ResumeSessionOptions {
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
     // Single owner of the "resuming" lifecycle marker: every resume initiation funnels through this
     // op (direct resume + pending-queue wake resume), so marking here keeps header/composer/list in
-    // sync without per-surface transient flags. The marker is settled by the store on first
-    // post-attach activity (or a bounded decay); we only clear it eagerly when the resume fails.
+    // sync without per-surface transient flags. It stays set for the full RPC duration, then the
+    // store settles it on first post-attach activity (or a bounded post-acceptance fallback). We
+    // only clear it eagerly when the resume fails.
     storage.getState().markSessionResuming(options.sessionId);
     try {
         const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
@@ -324,6 +325,8 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         const normalizedResult = normalizeSpawnSessionResult(result);
         if (normalizedResult.type === 'error') {
             storage.getState().clearSessionResuming(sessionId);
+        } else {
+            storage.getState().armSessionResumingFallback(sessionId);
         }
         return normalizedResult;
     } catch (error) {
@@ -436,6 +439,14 @@ export type ForkSessionOptions = Readonly<{
     strategy?: SessionForkStrategy;
     replaySummaryRunner?: LlmTaskRunnerConfigV1;
     replayMaxSeedChars?: number;
+    /**
+     * Idempotency key for one user-visible fork attempt. Callers that can retry
+     * the same attempt (the strategy modal) own it, so a retry coalesces onto
+     * the in-flight fork instead of committing a second provider-side one. Left
+     * unset, one is minted per call — correct only for a caller that cannot
+     * retry.
+     */
+    requestId?: string;
 }>;
 
 export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
@@ -454,7 +465,10 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
         // Stable per-user-action idempotency key: transport-level retries inside
         // machineRpcWithServerScope reuse it, so the daemon coalesces them onto
         // the in-flight fork instead of committing a second provider-side fork.
-        const requestId = randomUUID();
+        // A caller that can reissue the same user attempt supplies its own key;
+        // minting one here per call would give that retry a fresh key and defeat
+        // the coalescing entirely.
+        const requestId = options.requestId ?? randomUUID();
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId,
             method: RPC_METHODS.SESSION_FORK,

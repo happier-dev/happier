@@ -184,6 +184,7 @@ export type SessionsDomain = {
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
+    armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;
@@ -601,6 +602,49 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         const machineId = typeof session.metadata.machineId === 'string' ? session.metadata.machineId : '';
         const machineMetadata = machineId ? state.machines[machineId]?.metadata ?? null : undefined;
         projectManager.addSession(session, machineMetadata);
+    };
+
+    const clearSessionResumingMarker = (sessionId: string, expectedResumingAt?: number): void => {
+        set((state) => {
+            const session = state.sessions[sessionId];
+            if (!session) return state;
+            const resumingAt = session.resumingAt ?? null;
+            if (resumingAt === null) return state;
+            if (expectedResumingAt !== undefined && resumingAt !== expectedResumingAt) return state;
+
+            resumingTimeouts.cancel(sessionId);
+
+            const renderable = state.sessionListRenderables[sessionId];
+            const nextRenderables = renderable && (renderable.resumingAt ?? null) !== null
+                ? {
+                    ...state.sessionListRenderables,
+                    [sessionId]: {
+                        ...renderable,
+                        resumingAt: null,
+                    },
+                }
+                : state.sessionListRenderables;
+            const nextStateBase = {
+                ...state,
+                sessions: {
+                    ...state.sessions,
+                    [sessionId]: {
+                        ...session,
+                        resumingAt: null,
+                    },
+                },
+                sessionListRenderables: nextRenderables,
+            };
+            const shouldRebuildSessionListViewData = nextRenderables !== state.sessionListRenderables
+                && shouldRebuildOnSessionPlacementFieldsChange(state.settings);
+
+            return {
+                ...nextStateBase,
+                sessionListViewData: shouldRebuildSessionListViewData
+                    ? buildSessionListViewDataForState(nextStateBase)
+                    : state.sessionListViewData,
+            };
+        });
     };
 
     return {
@@ -1732,6 +1776,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             if (!session) return state;
             const resumingAt = Date.now();
 
+            // A previous accepted resume may still have its bounded fallback armed. A new
+            // attempt owns this lifecycle now and remains marked for the full RPC duration.
+            resumingTimeouts.cancel(sessionId);
+
             const nextSessions = {
                 ...state.sessions,
                 [sessionId]: {
@@ -1739,43 +1787,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     resumingAt,
                 },
             };
-
-            resumingTimeouts.schedule(sessionId, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS, () => {
-                set((s) => {
-                    const current = s.sessions[sessionId];
-                    if (!current) return s;
-                    if (current.resumingAt !== resumingAt) return s;
-                    const currentRenderable = s.sessionListRenderables[sessionId];
-                    const nextRenderables = currentRenderable?.resumingAt === resumingAt
-                        ? {
-                            ...s.sessionListRenderables,
-                            [sessionId]: {
-                                ...currentRenderable,
-                                resumingAt: null,
-                            },
-                        }
-                        : s.sessionListRenderables;
-                    const nextStateBase = {
-                        ...s,
-                        sessions: {
-                            ...s.sessions,
-                            [sessionId]: {
-                                ...current,
-                                resumingAt: null,
-                            },
-                        },
-                        sessionListRenderables: nextRenderables,
-                    };
-                    const shouldRebuildSessionListViewData = nextRenderables !== s.sessionListRenderables
-                        && shouldRebuildOnSessionPlacementFieldsChange(s.settings);
-                    return {
-                        ...nextStateBase,
-                        sessionListViewData: shouldRebuildSessionListViewData
-                            ? buildSessionListViewDataForState(nextStateBase)
-                            : s.sessionListViewData,
-                    };
-                });
-            });
 
             const renderable = state.sessionListRenderables[sessionId];
             const nextRenderables = renderable && (renderable.resumingAt ?? null) !== resumingAt
@@ -1802,44 +1813,17 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     : state.sessionListViewData,
             };
         }),
-        clearSessionResuming: (sessionId: string) => set((state) => {
-            const session = state.sessions[sessionId];
-            if (!session) return state;
-            if (!session.resumingAt) return state;
+        armSessionResumingFallback: (sessionId: string) => {
+            const resumingAt = get().sessions[sessionId]?.resumingAt ?? null;
+            if (resumingAt === null) return;
 
-            resumingTimeouts.cancel(sessionId);
-
-            const renderable = state.sessionListRenderables[sessionId];
-            const nextRenderables = renderable && (renderable.resumingAt ?? null) !== null
-                ? {
-                    ...state.sessionListRenderables,
-                    [sessionId]: {
-                        ...renderable,
-                        resumingAt: null,
-                    },
-                }
-                : state.sessionListRenderables;
-            const nextStateBase = {
-                ...state,
-                sessions: {
-                    ...state.sessions,
-                    [sessionId]: {
-                        ...session,
-                        resumingAt: null,
-                    },
-                },
-                sessionListRenderables: nextRenderables,
-            };
-            const shouldRebuildSessionListViewData = nextRenderables !== state.sessionListRenderables
-                && shouldRebuildOnSessionPlacementFieldsChange(state.settings);
-
-            return {
-                ...nextStateBase,
-                sessionListViewData: shouldRebuildSessionListViewData
-                    ? buildSessionListViewDataForState(nextStateBase)
-                    : state.sessionListViewData,
-            };
-        }),
+            resumingTimeouts.schedule(sessionId, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS, () => {
+                // Activity or a newer resume may have settled/replaced this lifecycle before the
+                // safety net fires. Only the exact accepted attempt may clear its own marker.
+                clearSessionResumingMarker(sessionId, resumingAt);
+            });
+        },
+        clearSessionResuming: (sessionId: string) => clearSessionResumingMarker(sessionId),
         clearSessionThinkingGrace: (sessionId: string) => set((state) => {
             const session = state.sessions[sessionId];
             if (!session) return state;

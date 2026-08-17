@@ -466,7 +466,7 @@ export interface Session {
     thinkingAt: number,
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
-    resumingAt?: number | null; // Local-only timestamp: single owner of the "resuming" lifecycle, set at resume initiation and cleared on first post-attach activity (bounded decay)
+    resumingAt?: number | null; // Local-only timestamp: set at resume initiation; cleared by post-attach activity, definitive failure, or a bounded post-acceptance fallback
     thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     todos?: Array<{
         content: string;

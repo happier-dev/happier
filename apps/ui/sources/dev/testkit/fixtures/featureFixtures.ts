@@ -100,6 +100,9 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         sessions: {
             enabled: false,
+            agentSwitching: {
+                enabled: false,
+            },
             folders: {
                 enabled: false,
             },

@@ -1348,4 +1348,72 @@ describe('machineSpawnNewSession error mapping', () => {
     if (result.type !== 'error') throw new Error('expected an error result');
     expect(result.errorMessage).toContain('re-authorize');
   });
+
+  // A legacy daemon strips an unknown `sourceContext` silently and reports
+  // success, so a downgraded source-context spawn would create an ordinary blank
+  // Session with no visible failure. The client detects this case locally.
+  it('refuses a source-context spawn instead of downgrading it to legacy params', async () => {
+    storage.getState().applyMachines([
+      {
+        id: 'machine-legacy',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: {
+          host: 'legacy-machine', platform: 'darwin', happyCliVersion: '0.0.99',
+          happyHomeDir: '/Users/alice/.happier', homeDir: '/Users/alice',
+        },
+        metadataVersion: 0,
+        daemonState: { startedWithCliVersion: '0.0.99' },
+        daemonStateVersion: 1,
+      },
+    ]);
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-legacy',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'sess_source',
+        forkPoint: { type: 'latest' },
+      },
+    } as any);
+
+    expect(result.type).toBe('error');
+    if (result.type !== 'error') throw new Error('expected an error result');
+    expect(result.errorCode).toBe(SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST);
+    expect(result.errorMessage).toContain('Update or reconnect the CLI');
+    // No blank Session is created behind the user's back.
+    expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a source-context spawn to a machine whose daemon carries the field', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_child' });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const sourceContext = {
+      v: 1,
+      kind: 'session_replay',
+      sourceSessionId: 'sess_source',
+      forkPoint: { type: 'latest' },
+    } as const;
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      sourceContext,
+    } as any);
+
+    expect(result).toMatchObject({ type: 'success' });
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalled();
+    const rpcCall = machineRpcWithServerScopeMock.mock.calls[0]![0] as { payload: Record<string, unknown> };
+    expect(rpcCall.payload.sourceContext).toEqual(sourceContext);
+  });
 });

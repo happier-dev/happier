@@ -139,7 +139,7 @@ function baseSession(overrides: Record<string, unknown>) {
 }
 
 describe('sessions domain: resuming lifecycle', () => {
-    it('markSessionResuming sets a bounded resumingAt and schedules a decay timer', async () => {
+    it('keeps resuming marked while the resume RPC is in flight, then arms bounded decay after acceptance', async () => {
         mockSessionsDomainBoundaries();
 
         const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
@@ -166,11 +166,19 @@ describe('sessions domain: resuming lifecycle', () => {
 
         expect(get().sessions.s1?.resumingAt).toBe(nowMs);
         expect(get().sessionListRenderables.s1?.resumingAt).toBe(nowMs);
+        expect([...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 30_000)).toHaveLength(0);
+
+        // The daemon may still be processing a valid slow resume, so elapsed presentation time
+        // alone must not expose the underlying inactive publisher state.
+        nowMs += 30_001;
+        expect(get().sessions.s1?.resumingAt).toBe(nowMs - 30_001);
+
+        domain.armSessionResumingFallback('s1');
         const decayTimers = [...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 30_000);
         expect(decayTimers).toHaveLength(1);
 
-        // Bounded decay clears the marker even if no activity ever settles the resume.
-        nowMs += 30_001;
+        // Once the daemon accepted the resume, bounded decay remains the safety net if no
+        // authoritative post-attach activity ever arrives.
         decayTimers[0]?.callback();
         expect(get().sessions.s1?.resumingAt ?? null).toBeNull();
         expect(get().sessionListRenderables.s1?.resumingAt ?? null).toBeNull();
