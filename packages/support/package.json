@@ -43,8 +43,10 @@
     "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "clean": "node ./scripts/rmDist.mjs",
-    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "engines": {
     "node": ">=22"

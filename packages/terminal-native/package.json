@@ -34,10 +34,12 @@
     "probe:android": "node scripts/probeAndroid.mjs",
     "probe:ios": "node scripts/probeIos.mjs",
     "size:budget": "node scripts/sizeBudget.mjs",
-    "test": "yarn -s test:src && yarn -s test:probes",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s test:src && yarn -s test:probes",
     "test:probes": "node --test scripts/probes.test.mjs",
     "test:src": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "expo-modules-core": "55.0.20",

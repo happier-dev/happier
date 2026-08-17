@@ -8,11 +8,13 @@
   "type": "module",
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "test": "vitest run",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run",
     "test:runtime:bun": "bun run scripts/tokenRuntimeCompatibility.ts",
     "test:watch": "vitest",
     "build": "node scripts/build.mjs",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit"
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",

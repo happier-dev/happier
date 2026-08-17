@@ -15,7 +15,8 @@
     "README.md"
   ],
   "scripts": {
-    "test": "yarn -s test:scripts",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s test:scripts",
     "test:native": "node scripts/run-native-tts-job-registry-test.mjs",
     "test:scripts": "node --test scripts/resolve-sherpa-checksum.test.mjs scripts/sherpa-checksum-integration.test.mjs scripts/sherpa-native-build-configuration.test.mjs scripts/android-tts-job-registry-integration.test.mjs"
   },

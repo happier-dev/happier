@@ -29,6 +29,7 @@
   },
   "scripts": {
     "prepack": "node ./scripts/bundleWorkspaceDeps.mjs",
-    "test": "HAPPIER_FEATURE_POLICY_ENV= node --test"
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "HAPPIER_FEATURE_POLICY_ENV= node --test"
   }
 }
