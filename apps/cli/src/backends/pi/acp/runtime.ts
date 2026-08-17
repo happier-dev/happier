@@ -16,7 +16,6 @@ import { logger } from '@/ui/logger';
 
 import type { PiBackendOptions } from '@/backends/pi/acp/backend';
 import { resolveHappyToolsBridgeBackendOptions } from '@/backends/pi/bridgeExtension';
-import { maybeImportPiThinkingHistory } from '@/backends/pi/history/importPiThinkingHistory';
 import { publishPiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
 import { resolvePiSessionIdFromResumeReference } from '@/backends/pi/utils/piSessionFiles';
 
@@ -45,10 +44,7 @@ export function createPiAcpRuntime(params: {
   const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
   let lastPiIdentityGeneration: number | null = null;
 
-  // Prototype (option B): one thinking-history backfill attempt per pi session per process.
-  const importedPiThinkingHistorySessionIds = new Set<string>();
-
-  const runtime = createCatalogProviderAcpRuntime<PiBackendOptions>({
+  return createCatalogProviderAcpRuntime<PiBackendOptions>({
     provider: 'pi',
     loggerLabel: 'PiACP',
     directory: params.directory,
@@ -167,32 +163,10 @@ export function createPiAcpRuntime(params: {
       });
       const appendSystemPromptText = typeof text === 'string' ? text.trim() || undefined : undefined;
 
-      return {
-        ...(appendSystemPromptText ? { appendSystemPromptText } : {}),
-        ...(happyToolsBridge ? { happyToolsBridge } : {}),
-      };
-    },
-  });
-
-  // Prototype (option B): after a successful resume, backfill historical pi thinking blocks
-  // from the JSONL into the Happier transcript as history-provenance rows. Fire-and-forget:
-  // a backfill failure must never block the resumed session.
-  return {
-    ...runtime,
-    startOrLoad: async (opts?: { resumeId?: string | null; importHistory?: boolean; deferPendingDrain?: boolean }) => {
-      const vendorSessionId = await runtime.startOrLoad(opts ?? {});
-      if (typeof opts?.resumeId === 'string' && opts.resumeId.trim().length > 0) {
-        const piSessionReference = resolvePiSessionIdFromResumeReference(opts.resumeId) ?? vendorSessionId;
-        void maybeImportPiThinkingHistory({
-          session: params.session,
-          directory: params.directory,
-          piSessionReference,
-          importedPiSessionIds: importedPiThinkingHistorySessionIds,
-        }).catch((error) => {
-          logger.debug('[pi] Thinking history backfill failed (non-fatal)', error);
-        });
-      }
-      return vendorSessionId;
-    },
-  };
-}
+       return {
+         ...(appendSystemPromptText ? { appendSystemPromptText } : {}),
+         ...(happyToolsBridge ? { happyToolsBridge } : {}),
+       };
+     },
+   });
+ }
