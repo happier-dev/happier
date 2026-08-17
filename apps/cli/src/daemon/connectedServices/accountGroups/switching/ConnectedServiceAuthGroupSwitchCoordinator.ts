@@ -825,6 +825,25 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     trigger: ConnectedServiceAuthGroupSwitchPipelineTrigger,
   ): Promise<ConnectedServiceAuthGroupSwitchResult> {
     const startedAtMs = this.deps.nowMs();
+    let preloadedPreTurnState: ConnectedServiceAuthGroupSwitchState | null = null;
+    let didProbePreTurnQuota = false;
+    if (trigger === 'pre_turn') {
+      preloadedPreTurnState = await this.deps.loadState({ ...input, trigger });
+      const policyResult = this.resolvePolicyResult({
+        trigger,
+        request: input,
+        loaded: preloadedPreTurnState,
+      });
+      if (!policyResult) {
+        preloadedPreTurnState = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+          trigger,
+          request: input,
+          loaded: preloadedPreTurnState,
+          allowCurrentProfileRetry: canRetryObservedProfileDuringPreTurnSelection(input.reason),
+        });
+        didProbePreTurnQuota = true;
+      }
+    }
     const lease = this.deps.leases.acquire(input);
     if (lease.kind === 'loser') {
       let observed: LeaseCompletion;
@@ -907,7 +926,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
 
     try {
-      let loaded = await this.deps.loadState({ ...input, trigger });
+      let loaded = preloadedPreTurnState ?? await this.deps.loadState({ ...input, trigger });
       const observedProfileId = normalizeProfileId(input.observedProfileId);
       let selectionActiveProfileId = loaded.activeProfileId;
 
@@ -1039,12 +1058,14 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
       if (trigger === 'pre_turn') {
         const allowCurrentProfileRetry = canRetryObservedProfileDuringPreTurnSelection(input.reason);
-        loaded = await this.probeQuotaSnapshotsBeforePreTurnSelection({
-          trigger,
-          request: input,
-          loaded,
-          allowCurrentProfileRetry,
-        });
+        if (!didProbePreTurnQuota) {
+          loaded = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+            trigger,
+            request: input,
+            loaded,
+            allowCurrentProfileRetry,
+          });
+        }
 
         const loadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
         if (observedProfileId && loadedActiveProfileId && observedProfileId !== loadedActiveProfileId) {

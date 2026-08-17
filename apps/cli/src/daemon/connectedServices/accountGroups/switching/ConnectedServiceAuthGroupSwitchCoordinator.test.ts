@@ -125,6 +125,62 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     }
   });
 
+  it('does not hold the group decision lease while a pre-turn quota probe is pending', async () => {
+    let releaseProbe!: () => void;
+    let notifyProbeStarted!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      notifyProbeStarted = resolve;
+    });
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    let loadCount = 0;
+    const autoState = state('primary', 1);
+    const disabledState: ConnectedServiceAuthGroupSwitchState = {
+      ...autoState,
+      policy: { ...autoState.policy, autoSwitch: false },
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 20 }),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      loadState: async () => {
+        loadCount += 1;
+        return loadCount === 1 ? autoState : disabledState;
+      },
+      commitSwitch: async ({ toProfileId }) => state(toProfileId, 2),
+      applyGeneration: async () => {},
+      probeQuotaSnapshotsForGroup: async (input) => {
+        notifyProbeStarted();
+        await probeGate;
+        return {
+          status: 'complete' as const,
+          requestedProfileCount: input.profileIds.length,
+          completedProfileCount: input.profileIds.length,
+          completedProfileIds: [...input.profileIds],
+        };
+      },
+    });
+
+    const probing = coordinator.switchBeforeTurn({
+      sessionId: 'probing-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    });
+    await probeStarted;
+
+    await expect(coordinator.switchBeforeTurn({
+      sessionId: 'manual-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+
+    releaseProbe();
+    await expect(probing).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+  });
+
   it('adopts authoritative switched truth when a reactive lease waiter expires after the peer commit', async () => {
     vi.useFakeTimers();
     try {
