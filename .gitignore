@@ -152,6 +152,7 @@ _.env.pipeline.production.local
 /packages/plugin-sdk/.facade-inference-current/
 /packages/plugin-sdk/src/**/*.d.ts.map
 /packages/protocol/src/**/*.d.ts.map
+/packages/protocol/.released-account-scoped-reader-*/
 /apps/ui/scripts/icons/codemod*.mjs
 /apps/ui/scripts/icons/fix*.mjs
 /apps/ui/scripts/icons/inventory.mjs
