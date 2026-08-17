@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -62,13 +63,34 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(enrichedRuns[0]!.props.markdown).toBe(markdown);
         expect(enrichedRuns[0]!.props.selectable).toBe(true);
         expect(enrichedRuns[0]!.props.flavor).toBe('commonmark');
-        expect(enrichedRuns[0]!.props.md4cFlags).toEqual({ latexMath: true });
+        expect(enrichedRuns[0]!.props.md4cFlags).toEqual({
+            latexMath: true,
+            texMathBackslashDelimiters: false,
+        });
         expect(enrichedRuns[0]!.props.testID).toBeUndefined();
         expect(enrichedRuns[0]!.props['data-testid']).toBe('markdown-enriched-run');
         expect(enrichedRuns[0]!.props.renderRawFallback).toBeUndefined();
         expect(enrichedRuns[0]!.props.enableLinkPreview).toBeUndefined();
         expect(enrichedRuns[0]!.props.allowFontScaling).toBeUndefined();
         expect(enrichedRuns[0]!.props.streamingAnimation).toBeUndefined();
+    });
+
+    it('enables backslash TeX delimiters only when the caller marks agent output', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const genericScreen = await renderScreen(
+            <MarkdownView markdown={'Use \\(foo\\) literally.'} profile="transcript" />,
+        );
+        expect(genericScreen.findByType('EnrichedMarkdownText').props.md4cFlags).toMatchObject({
+            texMathBackslashDelimiters: false,
+        });
+
+        const agentScreen = await renderScreen(
+            <MarkdownView markdown={'Value: \\(x\\).'} profile="transcript" agentTexMath />,
+        );
+        expect(agentScreen.findByType('EnrichedMarkdownText').props.md4cFlags).toMatchObject({
+            texMathBackslashDelimiters: true,
+        });
     });
 
     it('keeps code fences as special blocks while grouping surrounding prose into enriched runs', async () => {
@@ -196,6 +218,53 @@ describe('MarkdownView (enriched renderer)', () => {
             textAlign: 'left',
         });
         expect(screen.findAllByType('EnrichedMarkdownText')).toHaveLength(1);
+    });
+
+    /**
+     * `FileContentPanel` keeps `renderAfterSourceRange` mounted for the whole file whenever review
+     * comments are enabled, and flips `onPressSourceRange` on and off as the user enters and leaves
+     * review-comment mode. If the segment answered that flip by changing its wrapper element type —
+     * or by dropping the wrapper entirely — React would unmount and remount every rendered segment
+     * of the open file on each toggle, taking its measurements, text selection and reveal state with
+     * it. The wrapper's identity must therefore follow the source-range capability, which is fixed
+     * for a call site, and only its callback and role may change.
+     */
+    it('keeps one wrapper element for every segment when the source-range press handler toggles', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const onPressSourceRange = vi.fn();
+        let enterCommentMode: (() => void) | null = null;
+
+        function ReviewModeHarness(): React.ReactElement {
+            const [commentMode, setCommentMode] = React.useState(false);
+            enterCommentMode = () => setCommentMode(true);
+            return React.createElement(MarkdownView as any, {
+                markdown: '# Title',
+                selectable: true,
+                profile: 'default',
+                renderAfterSourceRange: () => null,
+                highlightSourceRange: null,
+                onPressSourceRange: commentMode ? onPressSourceRange : undefined,
+            });
+        }
+
+        const screen = await renderScreen(<ReviewModeHarness />);
+
+        const inactive = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        expect(inactive.props.accessibilityRole).toBeUndefined();
+
+        await act(async () => {
+            enterCommentMode?.();
+        });
+
+        const active = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        expect(active.type).toBe(inactive.type);
+        expect(active.props.accessibilityRole).toBe('button');
+
+        active.props.onPress();
+        expect(onPressSourceRange).toHaveBeenCalledWith({
+            sourceRange: { startLine: 1, endLine: 1 },
+            markdown: '# Title',
+        });
     });
 
     it('uses separate source-range targets for separate prose blocks in comment mode', async () => {

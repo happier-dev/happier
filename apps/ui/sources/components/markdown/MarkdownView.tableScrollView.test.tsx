@@ -117,4 +117,22 @@ describe('MarkdownView (tables)', () => {
         const rightCell = findNearestHostParent(findTextNode('Charlie'), 'View');
         expect(flattenTestStyle(rightCell?.props?.style).alignItems).toBe('flex-end');
     }, 60_000);
+
+    it('routes agent TeX table cells through the enriched parser without changing generic cells', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+        const markdown = [
+            '| Symbol | Meaning |',
+            '|---|---|',
+            '| \\(x\\) | ordinary |',
+        ].join('\n');
+
+        const genericScreen = await renderScreen(<MarkdownView markdown={markdown} />);
+        expect(genericScreen.findAllByProps({ 'data-testid': 'markdown-table-cell-enriched' })).toHaveLength(0);
+
+        const agentScreen = await renderScreen(<MarkdownView markdown={markdown} agentTexMath />);
+        const enrichedCells = agentScreen.findAllByType('EnrichedMarkdownText');
+        expect(enrichedCells).toHaveLength(1);
+        expect(enrichedCells[0]!.props.md4cFlags).toMatchObject({ texMathBackslashDelimiters: true });
+    }, 60_000);
 });

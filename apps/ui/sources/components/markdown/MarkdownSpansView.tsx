@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { Text } from '../ui/text/Text';
 import { StreamingTextReveal } from './streaming/StreamingTextReveal';
+import { isStreamingIncompleteLinkHref } from './streaming/streamingMarkdownRepairConfig';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 
 export type MarkdownSpansViewProps = {
@@ -26,6 +27,22 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
             {props.spans.map((span, index) => {
                 if (span.url) {
                     const linkStyle = [props.linkStyle, span.styles.map(resolveSpanStyle)];
+                    // Special blocks render from the same repaired source as prose, so a link
+                    // whose URL is still streaming reaches here as the repair placeholder.
+                    // Unlike the enriched path there is no link-target normalization between
+                    // the span and the caller, so the placeholder is kept out of both the
+                    // press callback and Expo Router until the real destination arrives.
+                    if (isStreamingIncompleteLinkHref(span.url)) {
+                        return (
+                            <Text
+                                key={index}
+                                selectable={inlineTextSelectable}
+                                style={linkStyle}
+                            >
+                                {span.text}
+                            </Text>
+                        );
+                    }
                     if (props.onLinkPress) {
                         return (
                             <Text

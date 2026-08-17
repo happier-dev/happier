@@ -13,6 +13,8 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { EnrichedMarkdownTextAdapter } from './enriched/EnrichedMarkdownTextAdapter';
+import type { MarkdownRenderingProfile } from './rendering/MarkdownRenderingProfile';
 
 // Option type for callback
 export type Option = {
@@ -31,8 +33,10 @@ type MarkdownBlockViewProps = {
     onLinkPress?: (url: string) => boolean | void;
     textStyle?: StyleProp<TextStyle>;
     variant: 'default' | 'thinking';
+    profile: MarkdownRenderingProfile;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    agentTexMath: boolean;
 };
 
 type MarkdownSpanStyleId = MarkdownSpan['styles'][number];
@@ -48,8 +52,10 @@ function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: Mark
         && prev.onLinkPress === next.onLinkPress
         && prev.textStyle === next.textStyle
         && prev.variant === next.variant
+        && prev.profile === next.profile
         && prev.streamingReveal === next.streamingReveal
-        && prev.streamingRevealPreset === next.streamingRevealPreset;
+        && prev.streamingRevealPreset === next.streamingRevealPreset
+        && prev.agentTexMath === next.agentTexMath;
 }
 
 export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
@@ -74,7 +80,7 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
     } else if (block.type === 'options') {
         return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} />;
     } else if (block.type === 'table') {
-        return <RenderTableBlock headers={block.headers} rows={block.rows} alignments={block.alignments} first={props.first} last={props.last} selectable={props.selectable} textStyle={props.textStyle} />;
+        return <RenderTableBlock headers={block.headers} rows={block.rows} alignments={block.alignments} first={props.first} last={props.last} selectable={props.selectable} textStyle={props.textStyle} profile={props.profile} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} agentTexMath={props.agentTexMath} />;
     }
     return null;
 }, areMarkdownBlockViewPropsEqual);
@@ -292,6 +298,10 @@ function RenderTableBlock(props: {
     last: boolean,
     selectable: boolean,
     textStyle?: StyleProp<TextStyle>,
+    profile: MarkdownRenderingProfile,
+    streamingReveal: boolean,
+    streamingRevealPreset?: StreamingTextRevealPreset,
+    agentTexMath: boolean,
 }) {
   const columnCount = props.headers.length;
   const rowCount = props.rows.length;
@@ -317,7 +327,15 @@ function RenderTableBlock(props: {
               >
                   {/* Header cell for this column */}
                   <View style={[style.tableCell, cellAlignmentStyle, style.tableHeaderCell, style.tableCellFirst]}>
-                      <Text selectable={props.selectable} style={[style.tableHeaderText, textAlignmentStyle, props.textStyle]}>{header}</Text>
+                      <RenderTableCellContent
+                          markdown={header}
+                          selectable={props.selectable}
+                          textStyle={[style.tableHeaderText, textAlignmentStyle, props.textStyle]}
+                          profile={props.profile}
+                          streamingReveal={props.streamingReveal}
+                          streamingRevealPreset={props.streamingRevealPreset}
+                          agentTexMath={props.agentTexMath}
+                      />
                   </View>
                   {/* Data cells for this column */}
                   {props.rows.map((row, rowIndex) => (
@@ -329,7 +347,15 @@ function RenderTableBlock(props: {
                               isLastRow(rowIndex) && style.tableCellLast
                           ]}
                       >
-                          <Text selectable={props.selectable} style={[style.tableCellText, textAlignmentStyle, props.textStyle]}>{row[colIndex] ?? ''}</Text>
+                          <RenderTableCellContent
+                              markdown={row[colIndex] ?? ''}
+                              selectable={props.selectable}
+                              textStyle={[style.tableCellText, textAlignmentStyle, props.textStyle]}
+                              profile={props.profile}
+                              streamingReveal={props.streamingReveal}
+                              streamingRevealPreset={props.streamingRevealPreset}
+                              agentTexMath={props.agentTexMath}
+                          />
                       </View>
                   ))}
               </View>
@@ -349,6 +375,40 @@ function RenderTableBlock(props: {
           </HorizontalOverflowScrollView>
       </View>
   );
+}
+
+function RenderTableCellContent(props: Readonly<{
+    markdown: string;
+    selectable: boolean;
+    textStyle?: StyleProp<TextStyle>;
+    profile: MarkdownRenderingProfile;
+    streamingReveal: boolean;
+    streamingRevealPreset?: StreamingTextRevealPreset;
+    agentTexMath: boolean;
+}>) {
+    if (!containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
+        return <Text selectable={props.selectable} style={props.textStyle}>{props.markdown}</Text>;
+    }
+
+    return (
+        <EnrichedMarkdownTextAdapter
+            markdown={props.markdown}
+            profile={props.profile}
+            selectable={props.selectable}
+            textStyle={props.textStyle}
+            streamingAnimated={props.streamingReveal}
+            streamingRevealPreset={props.streamingRevealPreset}
+            testID="markdown-table-cell-enriched"
+            suppressLeadingTopMargin
+            fillContainer={false}
+            agentTexMath={props.agentTexMath}
+        />
+    );
+}
+
+function containsPotentialEnrichedMath(markdown: string, agentTexMath: boolean): boolean {
+    return markdown.includes('$')
+        || (agentTexMath && (markdown.includes('\\(') || markdown.includes('\\[')));
 }
 
 function getTableCellAlignmentStyle(alignment: MarkdownTableAlignment) {

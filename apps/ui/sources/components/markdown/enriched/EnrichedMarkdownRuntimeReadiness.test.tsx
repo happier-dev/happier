@@ -195,6 +195,7 @@ describe('enriched Markdown runtime readiness join', () => {
 
             return (
                 <EnrichedMarkdownTextAdapter
+                    agentTexMath={false}
                     markdown={'## Cold heading\n\nCold body'}
                     profile="transcript"
                     selectable

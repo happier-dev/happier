@@ -69,3 +69,87 @@ describe('enriched streaming reveal — source-append bounding (live flicker 202
         }
     });
 });
+
+describe('enriched streaming reveal — retained ranges are rebased onto the text they were created for', () => {
+    // A reveal range is a pair of offsets into the RENDERED comparison text of the
+    // render that created it. Ranges outlive that render (they are carried forward
+    // for `ttlMs` so the CSS keyframe can finish), but rendered text is not
+    // append-only while markdown streams: completing inline syntax, and the
+    // repaired/raw markdown flip on long messages, rewrite the rendered prefix.
+    // A carried-forward range must therefore never keep offsets that now denote
+    // different characters — otherwise already-painted words are re-wrapped in a
+    // reveal span and replay their opacity keyframe.
+
+    it('drops a retained range whose text was rewritten by a prefix collapse', () => {
+        // Repair flip: the incomplete link is replaced by its text, so the SOURCE
+        // shrinks — no reveal window opens and the retained ranges are the whole
+        // output. The retained range was created over '[the docs](https://exa'.
+        const previousRendered = 'settled words already on screen [the docs](https://exa';
+        const currentRendered = 'settled words already on screen the docs';
+        const retained = { start: 32, end: 54, expiresAtMs: 10_500 };
+        expect(previousRendered.slice(retained.start, retained.end)).toBe('[the docs](https://exa');
+
+        const ranges = updateStreamingRevealRanges({
+            activeRanges: [retained],
+            previousComparisonText: previousRendered,
+            currentComparisonText: currentRendered,
+            nowMs: 10_000,
+            ttlMs: 260,
+            previousSourceLength: previousRendered.length,
+            currentSourceLength: currentRendered.length,
+        });
+
+        // Invariant: a carried-forward range still describes the same characters.
+        for (const range of ranges) {
+            expect(currentRendered.slice(range.start, range.end)).toBe(
+                previousRendered.slice(range.start, range.end),
+            );
+        }
+        // Nothing of that range survives the rewrite: the collapse starts at its start.
+        expect(ranges).toEqual([]);
+    });
+
+    it('clips a retained range that straddles the collapse to the unchanged prefix', () => {
+        const previousRendered = 'alpha bravo **charlie';
+        const currentRendered = 'alpha bravo charlie';
+        const retained = { start: 6, end: 21, expiresAtMs: 10_500 };
+        expect(previousRendered.slice(retained.start, retained.end)).toBe('bravo **charlie');
+
+        const ranges = updateStreamingRevealRanges({
+            activeRanges: [retained],
+            previousComparisonText: previousRendered,
+            currentComparisonText: currentRendered,
+            nowMs: 10_000,
+            ttlMs: 260,
+            previousSourceLength: previousRendered.length,
+            currentSourceLength: previousRendered.length,
+        });
+
+        for (const range of ranges) {
+            expect(currentRendered.slice(range.start, range.end)).toBe(
+                previousRendered.slice(range.start, range.end),
+            );
+        }
+        // 'bravo ' is byte-identical in both renders and keeps animating; the
+        // '**charlie' half described text that no longer exists.
+        expect(ranges).toEqual([{ start: 6, end: 12, expiresAtMs: 10_500 }]);
+    });
+
+    it('carries a retained range unchanged across a pure append', () => {
+        const previousRendered = 'hello world';
+        const currentRendered = 'hello world and more';
+        const ranges = updateStreamingRevealRanges({
+            activeRanges: [{ start: 6, end: 11, expiresAtMs: 10_500 }],
+            previousComparisonText: previousRendered,
+            currentComparisonText: currentRendered,
+            nowMs: 10_000,
+            ttlMs: 260,
+            previousSourceLength: 11,
+            currentSourceLength: 20,
+        });
+
+        // Retention must survive the case it exists for: nothing upstream changed.
+        expect(ranges).toContainEqual({ start: 6, end: 11, expiresAtMs: 10_500 });
+        expect(ranges.some((range) => range.start >= 11)).toBe(true);
+    });
+});

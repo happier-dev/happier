@@ -39,6 +39,7 @@ export const MarkdownView = React.memo((props: {
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    agentTexMath?: boolean;
 }) => {
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
@@ -64,6 +65,7 @@ export const MarkdownView = React.memo((props: {
             onPressSourceRange={props.onPressSourceRange}
             renderAfterSourceRange={props.renderAfterSourceRange}
             highlightSourceRange={props.highlightSourceRange}
+            agentTexMath={props.agentTexMath === true}
         />
     );
 });

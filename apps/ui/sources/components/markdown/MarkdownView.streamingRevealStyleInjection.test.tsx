@@ -92,7 +92,14 @@ describe('MarkdownView (streaming reveal style injection)', () => {
             />,
         );
 
-        expect(styleInjectionState.childLayoutSawStyle).toEqual([true]);
+        // ORDERING is the contract, not the mount count. `EnrichedMarkdownTextAdapter` keys the
+        // enriched child on the web runtime preload status and deliberately remounts it when the
+        // preload resolves ("remount the native renderer when the web runtime becomes ready"), so
+        // on a cold runtime the child's layout effect runs once per mount. The keyframes must
+        // already be in the document at EVERY one of those layout effects — a `false` anywhere in
+        // this list is the regression, and an empty list means the child never mounted at all.
+        expect(styleInjectionState.childLayoutSawStyle).not.toHaveLength(0);
+        expect(styleInjectionState.childLayoutSawStyle.filter((sawStyle) => !sawStyle)).toEqual([]);
         const revealStyle = (globalThis as { document?: Document }).document
             ?.getElementById('happier-streaming-enriched-markdown-reveal-style') as { textContent?: string } | null;
         expect(revealStyle?.textContent).toContain('@media (prefers-reduced-motion: reduce)');

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
 
-import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
+import { resolveEnrichedMarkdownMd4cFlags } from './enrichedMarkdownConstants';
 import {
     normalizeMarkdownLinkUrl,
     openMarkdownLinkUrl,
@@ -86,6 +86,8 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     streamingRevealPreset?: StreamingTextRevealPreset;
     testID?: string;
     suppressLeadingTopMargin?: boolean;
+    fillContainer?: boolean;
+    agentTexMath: boolean;
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
@@ -113,6 +115,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         () => resolveEnrichedMarkdownFlavor(sanitizedMarkdown),
         [sanitizedMarkdown],
     );
+    const md4cFlags = resolveEnrichedMarkdownMd4cFlags(props.agentTexMath);
 
     useWebRevealStyleInsertion({
         enabled: revealConfig != null,
@@ -130,7 +133,14 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
                 'data-testid': props.testID,
             };
             if (props.streamingAnimated) {
-                webProps['data-happier-enriched-markdown-reveal'] = 'text';
+                // Per-word, not per-block: the package stamps
+                // `data-happier-enriched-markdown-reveal="text"` on the words its reveal
+                // ranges classify as newly appended, and the injected keyframe above styles
+                // exactly those spans. Stamping the attribute on the container instead made
+                // the same keyframe fade the whole block in on every mount — including
+                // windowing remounts of content that was already on screen — which no
+                // range-level guard can undo, because CSS never sees that history.
+                webProps.streamingAnimation = true;
             }
             if (props.suppressLeadingTopMargin === true) {
                 webProps['data-happier-enriched-markdown-trim-leading-margin'] = 'true';
@@ -147,17 +157,20 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     }, [flavor, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID]);
 
     const containerStyle = React.useMemo(() => {
+        const baseContainerStyle = props.fillContainer === false
+            ? { ...styleBundle.containerStyle, width: undefined }
+            : styleBundle.containerStyle;
         if (Platform.OS !== 'web' || revealConfig == null) {
-            return styleBundle.containerStyle;
+            return baseContainerStyle;
         }
 
         return ({
-            ...styleBundle.containerStyle,
+            ...baseContainerStyle,
             [ENRICHED_REVEAL_DURATION_VAR]: `${revealConfig.durationMs}ms`,
             [ENRICHED_REVEAL_EASING_VAR]: revealConfig.easing,
             [ENRICHED_REVEAL_TRANSLATE_Y_VAR]: `${revealConfig.translateYPx}px`,
         } as unknown) as EnrichedMarkdownTextProps['containerStyle'];
-    }, [revealConfig, styleBundle.containerStyle]);
+    }, [props.fillContainer, revealConfig, styleBundle.containerStyle]);
 
     return (
         <EnrichedMarkdownText
@@ -166,7 +179,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             markdown={sanitizedMarkdown}
             markdownStyle={styleBundle.markdownStyle}
             containerStyle={containerStyle}
-            md4cFlags={ENRICHED_MARKDOWN_MD4C_FLAGS}
+            md4cFlags={md4cFlags}
             onLinkPress={handleLinkPress}
             selectable={props.selectable}
             allowTrailingMargin={false}

@@ -1,4 +1,8 @@
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import {
+    isStreamingIncompleteLinkHref,
+    STREAMING_INCOMPLETE_LINK_HREF,
+} from '../streaming/streamingMarkdownRepairConfig';
 
 function stripTerminalLineAnchor(value: string): string {
     return value.replace(/:\d+(?::\d+)?$/, '');
@@ -140,7 +144,14 @@ function normalizeExplicitMarkdownLinks(markdown: string): string {
             index = destinationEnd;
             continue;
         }
-        const normalizedDestination = normalizeMarkdownLinkUrl(extracted.destination);
+        // A link whose URL is still streaming carries the repair placeholder. It is not an
+        // openable destination — `normalizeMarkdownLinkUrl` rejects it, and that rejection
+        // is what keeps a press inert — but it must survive as a destination so the label
+        // renders inside its Link node from first paint instead of re-parenting when the
+        // real URL arrives.
+        const normalizedDestination = isStreamingIncompleteLinkHref(extracted.destination)
+            ? STREAMING_INCOMPLETE_LINK_HREF
+            : normalizeMarkdownLinkUrl(extracted.destination);
         out += normalizedDestination
             ? `[${label}](${normalizedDestination}${extracted.suffix})`
             : label;

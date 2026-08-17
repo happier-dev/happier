@@ -1,13 +1,10 @@
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 import { Platform } from 'react-native';
-import {
-    readCommonPrefixLength,
-    splitStreamingRevealTextParts,
-    type StreamingRevealRange,
-} from 'react-native-enriched-markdown/lib/module/web/streamingReveal.js';
+import { splitStreamingRevealTextParts } from 'react-native-enriched-markdown/lib/module/web/streamingReveal.js';
 
 import { Text } from '@/components/ui/text/Text';
+import { resolveAppendedSuffixRevealRanges } from './reveal/resolveAppendedSuffixRevealRanges';
 import { resolveStreamingTextRevealConfig, type StreamingTextRevealPreset } from './streamingTextRevealConfig';
 import { useWebRevealStyleInsertion } from './useWebRevealStyleInsertion';
 
@@ -46,21 +43,21 @@ export function StreamingTextReveal(props: {
         preset: props.preset,
     });
     const previousTextRef = React.useRef('');
-    const commonPrefixLength = readCommonPrefixLength(previousTextRef.current, props.text);
+    const previousText = previousTextRef.current;
     const parts = React.useMemo(() => {
-        // Plain text is a single appended-suffix reveal: everything after the common
-        // prefix animates. The shared package splitter owns word semantics for both
-        // streaming surfaces (plain and enriched).
-        const appendedSuffixRanges: StreamingRevealRange[] =
-            props.text.length > commonPrefixLength
-                ? [{ start: commonPrefixLength, end: props.text.length, expiresAtMs: Number.MAX_SAFE_INTEGER }]
-                : [];
+        // Plain text is a single appended-suffix reveal. `resolveAppendedSuffixRevealRanges`
+        // owns which characters are new (including the empty-baseline mount rule); the
+        // shared package splitter owns word semantics for both streaming surfaces
+        // (plain and enriched).
         return splitStreamingRevealTextParts({
             text: props.text,
             startOffset: 0,
-            activeRanges: appendedSuffixRanges,
+            activeRanges: resolveAppendedSuffixRevealRanges({
+                previousText,
+                currentText: props.text,
+            }),
         });
-    }, [commonPrefixLength, props.text]);
+    }, [previousText, props.text]);
 
     React.useEffect(() => {
         previousTextRef.current = props.text;

@@ -8,7 +8,7 @@ import {
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
-import { preprocessStreamingMarkdown } from './preprocessStreamingMarkdown';
+import { completeStreamingMarkdownRepair, preprocessStreamingMarkdown } from './preprocessStreamingMarkdown';
 import { STREAMING_MARKDOWN_REMEND_OPTIONS } from './streamingMarkdownRepairConfig';
 
 const STREAMING_MARKDOWN_REPAIR_WORKLET_EVENT = 'ui.markdown.streaming.repair.worklet';
@@ -60,7 +60,9 @@ function runRepairOnWorklet(runtime: WorkletRuntime, markdown: string, timeoutMs
             settled = true;
             clearRepairTimeout();
             if (succeeded === 1) {
-                resolve(repairedMarkdown);
+                // The Worklet runs one remend pass; finishing a pass that stopped early on
+                // an incomplete link stays with the single repair owner on the JS thread.
+                resolve(completeStreamingMarkdownRepair(repairedMarkdown));
             } else if (failureKind === 'worklet') {
                 reject(new StreamingMarkdownWorkletRepairUnavailableError());
             } else {

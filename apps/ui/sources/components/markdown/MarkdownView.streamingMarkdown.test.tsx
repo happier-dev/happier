@@ -63,11 +63,14 @@ describe('MarkdownView (streaming markdown)', () => {
         markdownCodeBlockState.nextMountId = 0;
     });
 
-    it('repairs incomplete links as text while streaming', async () => {
+    it('repairs an incomplete link into a link with a placeholder destination while streaming', async () => {
+        // The half-streamed URL must never reach the renderer, and the label must already
+        // be a link: streaming it as prose and re-parenting it when `)` arrives remounts
+        // the reveal span and replays its opacity keyframe on every link.
         const screen = await renderStreamingMarkdown('Look at [docs](https://exa');
 
-        expect(visibleText(screen)).toContain('Look at docs');
-        expect(visibleText(screen)).not.toContain('(https://exa');
+        expect(visibleText(screen)).toBe('Look at [docs](streamdown:incomplete-link)');
+        expect(visibleText(screen)).not.toContain('https://exa');
     }, 60_000);
 
     it('repairs incomplete bold spans before passing prose to the enriched renderer', async () => {
@@ -160,8 +163,13 @@ describe('MarkdownView (streaming markdown)', () => {
         expect(markdownRevealNodes).toHaveLength(0);
         const enrichedRun = screen.findByType('EnrichedMarkdownText');
         expect(enrichedRun.props.markdown).toBe('Hello `code` world');
-        expect(enrichedRun.props.streamingAnimation).toBeUndefined();
-        expect(enrichedRun.props['data-happier-enriched-markdown-reveal']).toBe('text');
+        // Web streaming reveal is per word, driven by the package's reveal ranges. Marking
+        // the enriched CONTAINER instead makes the injected keyframe fade the whole block in
+        // on every mount — including list-windowing remounts of content already on screen —
+        // and CSS cannot tell that the block was already visible, so the mount guard that
+        // fixed the per-word path cannot help at block granularity.
+        expect(enrichedRun.props.streamingAnimation).toBe(true);
+        expect(enrichedRun.props['data-happier-enriched-markdown-reveal']).toBeUndefined();
     }, 60_000);
 
     it('updates streamed complete code block content without remounting the code block component', async () => {

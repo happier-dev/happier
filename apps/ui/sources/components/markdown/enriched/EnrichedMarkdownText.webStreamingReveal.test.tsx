@@ -17,6 +17,8 @@ type StreamingRevealModule = Readonly<{
         currentComparisonText: string;
         nowMs: number;
         ttlMs: number;
+        previousSourceLength?: number;
+        currentSourceLength?: number;
     }>) => readonly StreamingRevealRange[];
     readRenderedComparisonText: (node: MarkdownAstNode | null) => string;
     renderStreamingRevealText: (params: Readonly<{
@@ -175,6 +177,26 @@ function revealTextsFromNode(node: React.ReactNode): string[] {
     return revealTextsFromNode(node.props.children);
 }
 
+function revealSpanTextsFromJson(
+    node: TestRenderer.ReactTestRendererJSON | TestRenderer.ReactTestRendererJSON[] | null,
+): string[] {
+    if (node === null) return [];
+    if (Array.isArray(node)) {
+        return node.flatMap((child) => revealSpanTextsFromJson(child));
+    }
+
+    const children = node.children ?? [];
+    const nestedTexts = children.flatMap((child) =>
+        typeof child === 'string' ? [] : revealSpanTextsFromJson(child));
+    const revealAttribute = (node.props as Record<string, unknown> | undefined)?.[
+        'data-happier-enriched-markdown-reveal'
+    ];
+    if (revealAttribute !== 'text') return nestedTexts;
+
+    const ownText = children.filter((child): child is string => typeof child === 'string').join('');
+    return [ownText, ...nestedTexts];
+}
+
 function countJsonNodesByType(node: TestRenderer.ReactTestRendererJSON | TestRenderer.ReactTestRendererJSON[] | null, type: string): number {
     if (node === null) return 0;
     if (Array.isArray(node)) {
@@ -251,6 +273,27 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         });
 
         expect(spanChildren(rendered)).toEqual(['world']);
+    });
+
+    it('treats the content present when the reveal baseline is empty as already revealed', async () => {
+        // A mount/remount starts with an empty baseline while the instance already
+        // renders the whole message. Classifying that content as "appended" replays the
+        // opacity keyframe over the entire message (measured on remote-dev web: 1 570 of
+        // 2 098 chars at opacity < 0.5 for ~155 ms after the enriched run was replaced).
+        const reveal = await loadPatchedStreamingReveal();
+        const alreadyStreamed = 'A paragraph that was already fully visible before this instance mounted.';
+
+        const ranges = reveal.updateStreamingRevealRanges({
+            activeRanges: [],
+            previousComparisonText: '',
+            currentComparisonText: alreadyStreamed,
+            nowMs: 1_000,
+            ttlMs: 200,
+            previousSourceLength: 0,
+            currentSourceLength: alreadyStreamed.length,
+        });
+
+        expect(ranges).toEqual([]);
     });
 
     it('keeps earlier reveal ranges active while later streaming chunks arrive quickly', async () => {
@@ -515,6 +558,47 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         });
     });
 
+    it('reveals only appended words after mounting onto an already-streamed message', async () => {
+        const parser = await loadPatchedWebSourceParseMarkdown();
+        await parser.preloadMarkdownRuntime();
+        const { EnrichedMarkdownText } = await loadPatchedWebEnrichedMarkdownText();
+        const globalWithReact = globalThis as typeof globalThis & { React?: typeof React };
+        globalWithReact.React = React;
+        const alreadyStreamed = 'Streaming prose that was already visible before the remount.';
+        const appendedChunk = ' Newly appended words.';
+        const rendererHolder: { current: TestRenderer.ReactTestRenderer | null } = { current: null };
+
+        await TestRenderer.act(async () => {
+            rendererHolder.current = TestRenderer.create(
+                <EnrichedMarkdownText markdown={alreadyStreamed} streamingAnimation />,
+            );
+        });
+
+        const renderer = rendererHolder.current;
+        if (renderer === null) {
+            throw new Error('Expected EnrichedMarkdownText test renderer to be created');
+        }
+
+        // Mounting onto a message that already streamed must not re-animate it.
+        expect(revealSpanTextsFromJson(renderer.toJSON())).toEqual([]);
+
+        await TestRenderer.act(async () => {
+            renderer.update(
+                <EnrichedMarkdownText
+                    markdown={`${alreadyStreamed}${appendedChunk}`}
+                    streamingAnimation
+                />,
+            );
+        });
+
+        // The intended per-word effect still runs for genuinely appended source.
+        expect(revealSpanTextsFromJson(renderer.toJSON())).toEqual(['Newly', 'appended', 'words.']);
+
+        await TestRenderer.act(async () => {
+            renderer.unmount();
+        });
+    });
+
     it('preserves paragraph block boundaries inside loose ordered list items', async () => {
         const { RenderNode } = await loadPatchedWebRenderers();
         const globalWithReact = globalThis as typeof globalThis & { React?: typeof React };
@@ -593,4 +677,5 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         expect(sourceParser).not.toContain("import('./wasm/md4c");
         expect(builtParser).not.toContain("import('./wasm/md4c");
     });
+
 });

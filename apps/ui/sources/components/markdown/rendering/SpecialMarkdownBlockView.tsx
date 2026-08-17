@@ -18,6 +18,7 @@ type SpecialMarkdownBlockViewProps = Readonly<{
     profile: MarkdownRenderingProfile;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    agentTexMath: boolean;
 }>;
 
 export const SpecialMarkdownBlockView = React.memo((props: SpecialMarkdownBlockViewProps) => {
@@ -37,8 +38,10 @@ export const SpecialMarkdownBlockView = React.memo((props: SpecialMarkdownBlockV
                     onLinkPress={props.onLinkPress}
                     textStyle={props.textStyle}
                     variant={variant}
+                    profile={props.profile}
                     streamingReveal={props.streamingReveal}
                     streamingRevealPreset={props.streamingRevealPreset}
+                    agentTexMath={props.agentTexMath}
                 />
             ))}
         </>
