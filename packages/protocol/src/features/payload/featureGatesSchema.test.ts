@@ -20,7 +20,7 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(parsed, 'pets.sync' as never)).toBe(true);
   });
 
-  it('preserves channel bridge gates', () => {
+  it('accepts and discards retired channel bridge gates from predecessor payloads', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {
         channelBridges: {
@@ -31,8 +31,7 @@ describe('FeatureGatesSchema', () => {
       capabilities: {},
     });
 
-    expect(readServerEnabledBit(parsed, 'channelBridges')).toBe(true);
-    expect(readServerEnabledBit(parsed, 'channelBridges.telegram')).toBe(true);
+    expect(parsed.features).not.toHaveProperty('channelBridges');
   });
 
   it('keeps current gate reads stable when the payload carries newer unknown feature fields and malformed bug report capabilities', () => {
@@ -210,11 +209,12 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(defaulted, 'providers.localModelManagement')).toBe(false);
   });
 
-  it('preserves plugin UI tier gates and defaults executable tiers fail-closed', () => {
+  it('preserves supported plugin UI tier gates while dropping deferred structured-message input', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {
         plugins: {
           enabled: true,
+          webhooks: { enabled: true },
           ui: {
             enabled: true,
             hostedWeb: { enabled: true },
@@ -230,9 +230,11 @@ describe('FeatureGatesSchema', () => {
     });
 
     expect(readServerEnabledBit(parsed, 'plugins' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'plugins.webhooks' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.hostedWeb' as never)).toBe(true);
-    expect(readServerEnabledBit(parsed, 'plugins.ui.structuredMessages' as never)).toBe(true);
+    expect(parsed.features.plugins?.ui).not.toHaveProperty('structuredMessages');
+    expect(readServerEnabledBit(parsed, 'plugins.ui.structuredMessages' as never)).toBeNull();
     expect(readServerEnabledBit(parsed, 'plugins.ui.reactNativeBundles' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.reactNativeBundles.devHotReload' as never)).toBe(true);
 
@@ -247,7 +249,8 @@ describe('FeatureGatesSchema', () => {
     });
     // Fail-closed: a payload that omits the tier bits reads as disabled.
     expect(readServerEnabledBit(defaulted, 'plugins.ui.hostedWeb' as never)).toBe(false);
-    expect(readServerEnabledBit(defaulted, 'plugins.ui.structuredMessages' as never)).toBe(false);
+    expect(readServerEnabledBit(defaulted, 'plugins.webhooks' as never)).toBe(false);
+    expect(readServerEnabledBit(defaulted, 'plugins.ui.structuredMessages' as never)).toBeNull();
     expect(readServerEnabledBit(defaulted, 'plugins.ui.reactNativeBundles' as never)).toBe(false);
     expect(readServerEnabledBit(defaulted, 'plugins.ui.reactNativeBundles.devHotReload' as never)).toBe(false);
   });

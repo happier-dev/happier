@@ -1,7 +1,4 @@
-import {
-  StoredJsonContentEnvelopeSchema,
-  type StoredJsonContentEnvelope,
-} from '../../storage/storedJsonContentEnvelope.js';
+import { z } from 'zod';
 
 import { SESSION_ORGANIZATION_MAX_DISPLAY_ENVELOPE_BYTES } from './constants.js';
 
@@ -16,7 +13,25 @@ function measureJsonUtf8Bytes(value: unknown): number | null {
   }
 }
 
-export const SessionOrganizationContentEnvelopeSchema = StoredJsonContentEnvelopeSchema.superRefine((value, ctx) => {
+const CycleSafeJsonValueSchema = z.preprocess((value) => {
+  try {
+    JSON.stringify(value);
+    return value;
+  } catch {
+    return undefined;
+  }
+}, z.json());
+
+export const SessionOrganizationContentEnvelopeSchema = z.discriminatedUnion('t', [
+  z.object({
+    t: z.literal('plain'),
+    v: CycleSafeJsonValueSchema,
+  }).strict(),
+  z.object({
+    t: z.literal('encrypted'),
+    c: z.string().min(1),
+  }).strict(),
+]).superRefine((value, ctx) => {
   const byteLength = measureJsonUtf8Bytes(value);
   if (byteLength === null) {
     ctx.addIssue({
@@ -33,4 +48,12 @@ export const SessionOrganizationContentEnvelopeSchema = StoredJsonContentEnvelop
     });
   }
 });
-export type SessionOrganizationContentEnvelope = StoredJsonContentEnvelope;
+export type SessionOrganizationContentEnvelope = z.infer<typeof SessionOrganizationContentEnvelopeSchema>;
+
+export const SessionOrganizationDisplayStateSchema = z
+  .object({
+    status: z.literal('unavailable'),
+    reason: z.enum(['invalid_stored_display', 'storage_mode_mismatch']),
+  })
+  .strict();
+export type SessionOrganizationDisplayState = z.infer<typeof SessionOrganizationDisplayStateSchema>;

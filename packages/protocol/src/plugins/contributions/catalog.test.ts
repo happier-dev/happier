@@ -12,20 +12,26 @@ import { PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from './v2.js';
 describe('plugin contribution catalog', () => {
   it('accounts for every schema family with executable semantic metadata', () => {
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
-      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'structuredMessages',
+      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'transcriptActivities',
       'sessionHeaderActions', 'browserTargets', 'browserActions', 'settings', 'events',
       'executionRunProfiles', 'notifications', 'notificationChannels', 'scmHostingProviders',
       'scmBackends', 'connectedAccountDescriptors', 'managedDependencies', 'systemTools',
       'promptAssets', 'hooks', 'requestInterceptors', 'voiceModelPacks', 'voiceProviders',
+      'backgroundServices', 'daemonDatabases', 'composerReferences', 'composerAttachments', 'composerControls',
+      'composerRegions', 'openableContentViewers',
+      'accountCollections', 'webhooks', 'pluginContributionPoints', 'targetedPluginContributions',
     ]);
+    expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).not.toContain('structuredMessages');
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.map((entry) => entry.manifestKey)).toEqual([
       ...PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family),
       'settings.fields',
       'ui.views',
       'ui.renderers',
+      'ui.settingsGroups',
+      'ui.settingsPages',
       'ui.translations',
       'mcp.servers',
-      'mcp.discoveryProviders',
+      'mcp.discoverySources',
     ]);
     for (const entry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
       expect(entry).toEqual(expect.objectContaining({
@@ -64,6 +70,10 @@ describe('plugin contribution catalog', () => {
       'managedDependencies',
       'voiceModelPacks',
       'voiceProviders',
+      'composerAttachments',
+      'composerControls',
+      'composerRegions',
+      'accountCollections',
       'mcp',
     ]);
     expect(() => assertPluginProjectionFamilyIdsV2(
@@ -81,6 +91,20 @@ describe('plugin contribution catalog', () => {
         },
       ],
     )).toThrow(/missing: fixtureProjection/);
+  });
+
+  it('keeps daemon database declarations static manifest facts rather than runtime registrations', () => {
+    const daemonDatabases = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
+      (entry) => entry.manifestKey === 'daemonDatabases',
+    );
+
+    expect(daemonDatabases).toMatchObject({
+      activationDemand: 'none',
+      allowedRuntimeRegistration: null,
+      registrationHost: null,
+      consumer: 'daemon-database-service',
+      platforms: ['cli', 'desktop'],
+    });
   });
 
   it('projects an input JSON Schema for every authoritative contribution family', () => {
@@ -113,7 +137,6 @@ describe('plugin contribution catalog', () => {
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: true, bargeIn: true },
       },
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
@@ -126,11 +149,13 @@ describe('plugin contribution catalog', () => {
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'tools')?.references)
       .toContainEqual(expect.objectContaining({ field: 'action', targetFamily: 'actions' }));
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers')).toEqual(
-      expect.objectContaining({ stability: 'delegated', activationDemand: 'none', allowedRuntimeRegistration: null }),
+      expect.objectContaining({ stability: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' }),
     );
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'agents')).toEqual(
       expect.objectContaining({ stability: 'stable', allowedRuntimeRegistration: 'agents' }),
     );
+    expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'webhooks')?.references)
+      .toContainEqual(expect.objectContaining({ field: 'handlerAction', targetFamily: 'actions' }));
   });
 
   it('derives conditional registration demand from each discriminated contribution', () => {
@@ -166,39 +191,66 @@ describe('plugin contribution catalog', () => {
     }));
     expect(entry('mcp.servers').requiresRegistration({ kind: 'static' })).toBe(false);
     expect(entry('mcp.servers').requiresRegistration({ kind: 'dynamic' })).toBe(true);
-    expect(entry('mcp.discoveryProviders').requiresRegistration({})).toBe(true);
+    expect(entry('mcp.discoverySources').requiresRegistration({})).toBe(true);
+    expect(entry('composerAttachments').requiresRegistration({
+      id: 'static-note',
+      title: 'Static note',
+      icon: 'note',
+      cardinality: 'many',
+      valueSchema: { type: 'object' },
+    })).toBe(false);
+    expect(entry('composerAttachments').requiresRegistration({
+      id: 'prepared-note',
+      title: 'Prepared note',
+      icon: 'note',
+      cardinality: 'many',
+      valueSchema: { type: 'object' },
+      runtime: { prepareForSend: true },
+    })).toBe(true);
   });
 
   it('classifies client and daemon registration realms at the canonical family catalog', () => {
     const entry = (key: string) => PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === key)!;
     expect(entry('voiceProviders').registrationHost).toBe('discriminated');
-    expect(entry('voiceProviders').runtimeRegistrationHost({ kind: 'conversation' })).toBe('client');
+    expect(entry('voiceProviders').runtimeRegistrationHost({
+      kind: 'conversation',
+      client: { artifactId: 'voice-web', modulePath: './voice', exportName: 'activate' },
+      platforms: ['web'],
+    })).toBe('client');
     expect(entry('voiceProviders').runtimeRegistrationHost({ kind: 'speech' })).toBe('daemon');
     expect(entry('actions').runtimeRegistrationHost({ id: 'run' })).toBe('daemon');
     expect(entry('voiceProviders').runtimeRegistrationFamily({ kind: 'conversation' })).toBe('voiceProviders');
-    expect(entry('voiceProviders').runtimeRegistrationFamily({ kind: 'speech' })).toBe('voiceProviders.speech');
+    expect(entry('voiceProviders').runtimeRegistrationFamily({ kind: 'speech' })).toBe('voiceProviders');
     expect(entry('actions').runtimeRegistrationFamily({ id: 'run' })).toBe('actions');
     expect(entry('actions').registrationHost).toBe('daemon');
     expect(entry('agents').registrationHost).toBe('daemon');
     expect(entry('mcp.servers').registrationHost).toBe('daemon');
-    expect(entry('providers').registrationHost).toBeNull();
+    expect(entry('providers').registrationHost).toBe('daemon');
+    expect(entry('composerAttachments').registrationHost).toBe('daemon');
 
     const contributes = {
       actions: [{ id: 'run' }],
       agents: [{ id: 'agent', runtime: { kind: 'custom' } }],
-      voiceProviders: [{ id: 'conversation' }],
       mcp: { servers: [{ id: 'dynamic-server', kind: 'dynamic' }] },
     };
     expect(derivePluginContributionRegistrationRights(contributes)).toEqual([
-      { family: 'agents', localId: 'agent', requiredFields: ['factory'] },
-      { family: 'actions', localId: 'run' },
-      { family: 'voiceProviders', localId: 'conversation' },
-      { family: 'mcp.servers', localId: 'dynamic-server' },
+      { family: 'agents', localId: 'agent', target: { realm: 'daemon' }, requiredFields: ['factory'] },
+      { family: 'actions', localId: 'run', target: { realm: 'daemon' } },
+      { family: 'mcp.servers', localId: 'dynamic-server', target: { realm: 'daemon' } },
     ]);
     expect(derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([
-      { family: 'agents', localId: 'agent', requiredFields: ['factory'] },
-      { family: 'actions', localId: 'run' },
-      { family: 'mcp.servers', localId: 'dynamic-server' },
+      { family: 'agents', localId: 'agent', target: { realm: 'daemon' }, requiredFields: ['factory'] },
+      { family: 'actions', localId: 'run', target: { realm: 'daemon' } },
+      { family: 'mcp.servers', localId: 'dynamic-server', target: { realm: 'daemon' } },
+    ]);
+
+    expect(derivePluginDaemonContributionRegistrationRights({
+      providers: [
+        { id: 'ordinary' },
+        { id: 'managed', managedRuntime: { kind: 'managed' } },
+      ],
+    })).toEqual([
+      { family: 'providers', localId: 'managed', target: { realm: 'daemon' } },
     ]);
 
     expect(derivePluginDaemonContributionRegistrationRights({
@@ -216,8 +268,8 @@ describe('plugin contribution catalog', () => {
         },
       ],
     })).toEqual([
-      { family: 'agents', localId: 'acp-external', requiredFields: ['externalSessions'] },
-      { family: 'agents', localId: 'external-only', requiredFields: ['externalSessions'] },
+      { family: 'agents', localId: 'acp-external', target: { realm: 'daemon' }, requiredFields: ['externalSessions'] },
+      { family: 'agents', localId: 'external-only', target: { realm: 'daemon' }, requiredFields: ['externalSessions'] },
     ]);
 
     expect(derivePluginDaemonContributionRegistrationRights({
@@ -230,6 +282,7 @@ describe('plugin contribution catalog', () => {
     })).toEqual([{
       family: 'agents',
       localId: 'custom-external',
+      target: { realm: 'daemon' },
       requiredFields: ['factory', 'externalSessions'],
     }]);
 
@@ -240,6 +293,36 @@ describe('plugin contribution catalog', () => {
         { id: 'descriptor-only', surfaces: { externalSession: { sources: [{}] } } },
       ],
     })).toEqual([]);
+  });
+
+  it('derives one exact attachment registration right only for declared runtime roles', () => {
+    const pure = derivePluginDaemonContributionRegistrationRights({
+      composerAttachments: [{
+        id: 'static-note',
+        title: 'Static note',
+        icon: 'note',
+        cardinality: 'many',
+        valueSchema: { type: 'object' },
+      }],
+    });
+    const runtime = derivePluginDaemonContributionRegistrationRights({
+      composerAttachments: [{
+        id: 'prepared-note',
+        title: 'Prepared note',
+        icon: 'note',
+        cardinality: 'many',
+        valueSchema: { type: 'object' },
+        runtime: { prepareForSend: true, afterMessageAccepted: true },
+      }],
+    });
+
+    expect(pure).toEqual([]);
+    expect(runtime).toEqual([{
+      family: 'composerAttachments',
+      localId: 'prepared-note',
+      target: { realm: 'daemon' },
+      requiredFields: ['prepareForSend', 'afterMessageAccepted'],
+    }]);
   });
 
   it('applies each identified family conflict rule without misreporting delegated ids as local ids', () => {
@@ -272,13 +355,71 @@ describe('plugin contribution catalog', () => {
       kind: 'declarative',
       root: { kind: 'stack', children: [{ kind: 'action', action: 'summarize' }] },
     })).toEqual([
-      { targetFamily: 'actions', reference: 'summarize', path: ['root', 'children', 0, 'action'] },
+      {
+        targetFamily: 'actions',
+        allowQualifiedCrossPlugin: false,
+        reference: 'summarize',
+        path: ['root', 'children', 0, 'action'],
+      },
     ]);
     expect(entry('ui.renderers').extractReferences({
       kind: 'declarative',
       root: { kind: 'field', label: 'Name', control: { kind: 'text', settingId: 'display-name' } },
     })).toEqual([
       { targetFamily: 'settings.fields', reference: 'display-name', path: ['root', 'control', 'settingId'] },
+    ]);
+    expect(entry('ui.renderers').extractReferences({
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Static first paint' },
+      documentSource: { kind: 'resource', resourceId: 'live-document' },
+    })).toEqual([
+      { targetFamily: 'resources', reference: 'live-document', path: ['documentSource', 'resourceId'] },
+    ]);
+    expect(entry('ui.renderers').extractReferences({
+      kind: 'declarative',
+      root: {
+        kind: 'stack',
+        children: [{
+          kind: 'item',
+          title: 'Open task',
+          action: 'open-item',
+        }, {
+          kind: 'collectionList',
+          source: { collectionId: 'tasks', uiQueryId: 'open-tasks' },
+          projection: { titleField: { field: 'title', kind: 'string' } },
+          primaryCommand: { kind: 'action', action: 'open-primary' },
+          secondaryCommands: [
+            { kind: 'action', action: 'open-secondary' },
+            { kind: 'openSurface', destination: { pluginId: 'com.acme.provider', localId: 'task-details' } },
+          ],
+        }],
+      },
+    })).toEqual([
+      {
+        targetFamily: 'actions',
+        allowQualifiedCrossPlugin: false,
+        reference: 'open-primary',
+        path: ['root', 'children', 1, 'primaryCommand', 'action'],
+      },
+      {
+        targetFamily: 'actions',
+        allowQualifiedCrossPlugin: false,
+        reference: 'open-secondary',
+        path: ['root', 'children', 1, 'secondaryCommands', 0, 'action'],
+      },
+      {
+        targetFamily: 'ui.views',
+        targetFamilies: ['ui.views', 'ui.settingsPages'],
+        allowQualifiedCrossPlugin: true,
+        reference: { pluginId: 'com.acme.provider', localId: 'task-details' },
+        path: ['root', 'children', 1, 'secondaryCommands', 1, 'destination'],
+      },
+      {
+        targetFamily: 'actions',
+        allowQualifiedCrossPlugin: false,
+        reference: 'open-item',
+        path: ['root', 'children', 0, 'action'],
+      },
     ]);
     expect(entry('agents').extractReferences({
       runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'acme-cli' } } },
@@ -291,6 +432,71 @@ describe('plugin contribution catalog', () => {
       accountMediation: { operations: [{ id: 'auth', purpose: 'client_auth' }] },
     })).toEqual([
       { targetFamily: 'generated.uiArtifacts', reference: 'voice-runtime-web', path: ['client', 'artifactId'] },
+    ]);
+  });
+
+  it('does not create attachment reference edges from held composer-control state', () => {
+    const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === 'composerControls')!;
+
+    expect(entry.extractReferences({
+      state: {
+        attachmentSelection: {
+          attachments: ['issue'],
+          one: 'selectedLabel',
+          many: 'count',
+          icon: 'selectedIcon',
+        },
+      },
+      interaction: { kind: 'action', action: 'refresh-issue' },
+    })).toEqual([
+      { targetFamily: 'actions', allowQualifiedCrossPlugin: false, reference: 'refresh-issue', path: ['interaction', 'action'] },
+    ]);
+  });
+
+  it('extracts every active Composer renderer, state, action, and attachment edge through the one catalog owner', () => {
+    const entry = (key: string) => PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === key)!;
+
+    expect(entry('composerAttachments').extractReferences({
+      picker: { renderer: 'issue-picker', fallbackRenderers: ['issue-picker-fallback'] },
+      display: { kind: 'surface', renderer: { renderer: 'issue-display' } },
+      preview: { kind: 'surface', renderer: { renderer: 'issue-preview' } },
+    })).toEqual([
+      { targetFamily: 'ui.renderers', reference: 'issue-picker', path: ['picker', 'renderer'] },
+      { targetFamily: 'ui.renderers', reference: 'issue-picker-fallback', path: ['picker', 'fallbackRenderers', 0] },
+      { targetFamily: 'ui.renderers', reference: 'issue-display', path: ['display', 'renderer', 'renderer'] },
+      { targetFamily: 'ui.renderers', reference: 'issue-preview', path: ['preview', 'renderer', 'renderer'] },
+    ]);
+
+    expect(entry('composerControls').extractReferences({
+      state: { resource: 'issue-control-state' },
+      compactRenderer: { renderer: 'issue-compact' },
+      interaction: {
+        kind: 'choices',
+        options: [
+          { effect: { kind: 'action', action: 'refresh-issue' } },
+          {
+            effect: {
+              kind: 'composerApply',
+              operations: [
+                { kind: 'attachment.add', attachmentLocalId: 'issue' },
+                { kind: 'attachment.remove', instanceId: 'instance-1' },
+              ],
+            },
+          },
+        ],
+      },
+    })).toEqual([
+      { targetFamily: 'resources', allowQualifiedCrossPlugin: false, reference: 'issue-control-state', path: ['state', 'resource'] },
+      { targetFamily: 'ui.renderers', reference: 'issue-compact', path: ['compactRenderer', 'renderer'] },
+      { targetFamily: 'actions', allowQualifiedCrossPlugin: false, reference: 'refresh-issue', path: ['interaction', 'options', 0, 'effect', 'action'] },
+      { targetFamily: 'composerAttachments', allowQualifiedCrossPlugin: false, reference: 'issue', path: ['interaction', 'options', 1, 'effect', 'operations', 0, 'attachmentLocalId'] },
+    ]);
+
+    expect(entry('composerRegions').extractReferences({
+      renderer: { renderer: 'warning-region', fallbackRenderers: ['warning-region-fallback'] },
+    })).toEqual([
+      { targetFamily: 'ui.renderers', reference: 'warning-region', path: ['renderer', 'renderer'] },
+      { targetFamily: 'ui.renderers', reference: 'warning-region-fallback', path: ['renderer', 'fallbackRenderers', 0] },
     ]);
   });
 });

@@ -15,8 +15,15 @@ export const PluginSourceSpecV1Schema = z.object({
   trustPolicy: PluginSourceTrustPolicyV1Schema,
   installPolicy: PluginSourceInstallPolicyV1Schema,
   resolvedVersion: z.string().trim().min(1).optional(),
-  resolvedDigest: z.string().trim().min(1).optional(),
   installedAt: z.number().int().nonnegative().optional(),
   devWatch: z.boolean().optional(),
-}).passthrough();
+}).passthrough().superRefine((source, context) => {
+  if ('resolvedDigest' in source) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['resolvedDigest'],
+      message: 'Plugin source provenance must not carry a raw resolved digest',
+    });
+  }
+});
 export type PluginSourceSpecV1 = z.infer<typeof PluginSourceSpecV1Schema>;

@@ -15,7 +15,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionOpen: vi.fn(async () => ({})),
     sessionFork: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
@@ -55,10 +54,11 @@ describe('createActionExecutor (session.rollback)', () => {
     } as any);
     const executor = createActionExecutor(deps);
 
+    const signal = new AbortController().signal;
     const result = await executor.execute(
       'session.rollback' as any,
       { target: { type: 'latest_turn' } },
-      { defaultSessionId: 'sess_1' },
+      { defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
@@ -66,6 +66,7 @@ describe('createActionExecutor (session.rollback)', () => {
       sessionId: 'sess_1',
       serverId: 'server_a',
       target: { type: 'latest_turn' },
+      signal,
     });
   });
 
@@ -116,16 +117,18 @@ describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
     });
     const executor = createActionExecutor(deps);
 
+    const signal = new AbortController().signal;
     const result = await executor.execute(
       'session.checkpoint_code_rollback',
       checkpointRollbackRequest,
-      { defaultSessionId: 'sess_1' },
+      { defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
     expect(checkpointCodeRollback).toHaveBeenCalledWith({
       request: checkpointRollbackRequest,
       serverId: 'server_a',
+      signal,
     });
   });
 
@@ -164,12 +167,14 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
       timing: 'idle',
     } as const;
 
-    const result = await executor.execute('session.checkpoint' as any, request, { defaultSessionId: 'ignored' });
+    const signal = new AbortController().signal;
+    const result = await executor.execute('session.checkpoint' as any, request, { defaultSessionId: 'ignored', signal });
 
     expect(result.ok).toBe(true);
     expect(sessionCheckpoint).toHaveBeenCalledWith({
       request,
       serverId: 'server_a',
+      signal,
     });
   });
 
@@ -191,12 +196,14 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
       confirmation: { sourceChoiceConfirmed: true },
     } as const;
 
-    const result = await executor.execute('session.restore' as any, request, {});
+    const signal = new AbortController().signal;
+    const result = await executor.execute('session.restore' as any, request, { signal });
 
     expect(result.ok).toBe(true);
     expect(sessionRestore).toHaveBeenCalledWith({
       request,
       serverId: 'server_a',
+      signal,
     });
   });
 

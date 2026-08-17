@@ -120,3 +120,27 @@ export {
   type SessionWorkStateGetRequestV1,
   type SessionWorkStateGetResponseV1,
 } from './sessionWorkStateRpc.js';
+
+export {
+  ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,
+  SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
+  buildBackgroundTaskSystemRecordLocalId,
+  buildWorkflowRunSystemRecordLocalId,
+  type ActivitySessionSystemRecordKind,
+} from '../../system/records/activity/activitySystemRecordKinds.js';
+export * from '../workflow/index.js';
+export * from '../agentActivity/index.js';
+export {
+  boundRecentActivityHeadlineEntries,
+  partitionActivityHeadlineEntries,
+  sortActiveActivityHeadlineEntries,
+  type ActivityHeadlineEntryAccessors,
+  type BoundedActivityHeadlineHistory,
+  type PartitionActivityHeadlineEntriesInput,
+  type PartitionedActivityHeadlineEntries,
+} from '../activityHeadlineOrdering.js';
+export {
+  SessionActivityHeadlineBundleV1Schema,
+  type SessionActivityHeadlineBundleV1,
+} from '../sessionActivityHeadlineBundleV1.js';
+export * from '../backgroundTask/index.js';

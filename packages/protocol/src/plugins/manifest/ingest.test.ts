@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { ingestPluginManifestV2, resolvePluginManifestSetReferencesV2 } from './ingest.js';
-import { PLUGIN_MANIFEST_INPUT_LIMITS } from './limits.js';
 import {
   PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
   PluginManifestHostAccessV2Schema,
 } from './v2.js';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '../contributions/catalog.js';
+import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from '../contributions/ui/declarativeDocument.js';
+import {
+  PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+  PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+} from '../../automations/automationEventV1.js';
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -21,6 +25,14 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
     contributes: {},
     ...overrides,
   };
+}
+
+function serializedManifestWithMetadataDepth(depth: number): string {
+  const nested = `${'{"next":'.repeat(depth)}null${'}'.repeat(depth)}`;
+  return JSON.stringify(manifest({ metadata: { chain: null } })).replace(
+    '"chain":null',
+    `"chain":${nested}`,
+  );
 }
 
 function managedDependency(id: string): Record<string, unknown> {
@@ -54,7 +66,395 @@ function connectedAccountDescriptor(id: string): Record<string, unknown> {
   };
 }
 
+const AUTOMATION_SOURCE_CONFIG_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    repository: { type: 'string', minLength: 1, maxLength: 512 },
+  },
+  required: ['repository'],
+} as const;
+
+function automationSetupResultSchema(
+  sourceConfigSchema: Record<string, unknown> = AUTOMATION_SOURCE_CONFIG_SCHEMA,
+): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      v: { type: 'integer', const: 1 },
+      sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
+      sourceContractVersion: { type: 'integer', const: 1 },
+      sourceConfig: sourceConfigSchema,
+      displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
+    },
+    required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
+  };
+}
+
+function automationSetupAction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'arbitrary-source-setup',
+    title: 'Set up source',
+    scopes: ['global'],
+    surfaces: ['plugin'],
+    resultSchema: automationSetupResultSchema(),
+    dangerLevel: 'safe',
+    ...overrides,
+  };
+}
+
+function historyGapResetAction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'baseline-history-gap',
+    title: 'Resume event source',
+    scopes: ['global'],
+    surfaces: ['plugin'],
+    inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+    resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+    dangerLevel: 'writesLocal',
+    confirmation: {
+      title: {
+        key: 'automation.historyGapReset.title',
+        fallback: 'Start a new baseline',
+      },
+      body: {
+        key: 'automation.historyGapReset.body',
+        fallback: 'Events in the history gap are not replayed.',
+      },
+    },
+    ...overrides,
+  };
+}
+
+function automationEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'repository-updated',
+    kind: 'event',
+    title: 'Repository updated',
+    automation: {
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['checkpointedPull'],
+        sourceConfigSchema: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+        setupActionRef: {
+          pluginId: 'com.acme.fixture',
+          localId: 'arbitrary-source-setup',
+        },
+      },
+    },
+    ...overrides,
+  };
+}
+
 describe('canonical plugin manifest ingestion', () => {
+  it('admits an Event Automation setup Action only through its exact qualified same-plugin declaration', () => {
+    const parsed = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [automationSetupAction()],
+        events: [automationEvent()],
+      },
+    }));
+
+    expect(parsed).toMatchObject({ ok: true });
+    if (!parsed.ok) return;
+    expect(resolvePluginManifestSetReferencesV2([parsed.manifest])).toEqual({ ok: true });
+  });
+
+  it('rejects dangling, cross-plugin, wrong-family, non-plugin, and noncanonical Event Automation setup bindings', () => {
+    const cases: readonly Readonly<{
+      name: string;
+      contributes: Record<string, unknown>;
+      code: 'plugin_manifest_dangling_reference' | 'plugin_manifest_wrong_family_reference' | 'plugin_manifest_invalid';
+    }>[] = [
+      {
+        name: 'dangling Action',
+        contributes: { events: [automationEvent()] },
+        code: 'plugin_manifest_dangling_reference',
+      },
+      {
+        name: 'cross-plugin Action',
+        contributes: {
+          actions: [automationSetupAction()],
+          events: [automationEvent({
+            automation: {
+              v: 1,
+              eligible: true,
+              source: {
+                sourceContractVersion: 1,
+                supportedObservationTransports: ['checkpointedPull'],
+                sourceConfigSchema: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+                setupActionRef: { pluginId: 'com.acme.other', localId: 'arbitrary-source-setup' },
+              },
+            },
+          })],
+        },
+        code: 'plugin_manifest_dangling_reference',
+      },
+      {
+        name: 'wrong-family Action',
+        contributes: {
+          resources: [{
+            id: 'arbitrary-source-setup',
+            kind: 'asset',
+            path: 'source-setup.txt',
+            contentType: 'text/plain',
+          }],
+          events: [automationEvent()],
+        },
+        code: 'plugin_manifest_wrong_family_reference',
+      },
+      {
+        name: 'non-plugin Action',
+        contributes: {
+          actions: [automationSetupAction({
+            surfaces: ['ui'],
+            placementBindings: ['toolbar'],
+          })],
+          events: [automationEvent()],
+        },
+        code: 'plugin_manifest_invalid',
+      },
+      {
+        name: 'noncanonical result schema',
+        contributes: {
+          actions: [automationSetupAction({ resultSchema: { type: 'object' } })],
+          events: [automationEvent()],
+        },
+        code: 'plugin_manifest_invalid',
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(ingestPluginManifestV2(manifest({ contributes: testCase.contributes }))).toEqual({
+        ok: false,
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: testCase.code,
+            path: ['contributes', 'events', 0, 'automation', 'source', 'setupActionRef'],
+          }),
+        ]),
+      });
+    }
+  });
+
+  it('admits a history-gap recovery Action only through its exact same-plugin Action contract', () => {
+    const recoveryEvent = automationEvent({
+      automation: {
+        v: 1,
+        eligible: true,
+        source: {
+          sourceContractVersion: 1,
+          supportedObservationTransports: ['checkpointedPull'],
+          sourceConfigSchema: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+          setupActionRef: {
+            pluginId: 'com.acme.fixture',
+            localId: 'arbitrary-source-setup',
+          },
+          historyGapResetActionRef: {
+            pluginId: 'com.acme.fixture',
+            localId: 'baseline-history-gap',
+          },
+        },
+      },
+    });
+    const accepted = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [automationSetupAction(), historyGapResetAction()],
+        events: [recoveryEvent],
+      },
+    }));
+    expect(accepted).toMatchObject({ ok: true });
+    if (accepted.ok) expect(resolvePluginManifestSetReferencesV2([accepted.manifest])).toEqual({ ok: true });
+
+    const cases: readonly Readonly<{
+      name: string;
+      contributes: Record<string, unknown>;
+      code: 'plugin_manifest_dangling_reference' | 'plugin_manifest_wrong_family_reference' | 'plugin_manifest_invalid';
+    }>[] = [
+      {
+        name: 'dangling Action',
+        contributes: { actions: [automationSetupAction()], events: [recoveryEvent] },
+        code: 'plugin_manifest_dangling_reference',
+      },
+      {
+        name: 'wrong-family Action',
+        contributes: {
+          actions: [automationSetupAction()],
+          resources: [{
+            id: 'baseline-history-gap',
+            kind: 'asset',
+            path: 'baseline.txt',
+            contentType: 'text/plain',
+          }],
+          events: [recoveryEvent],
+        },
+        code: 'plugin_manifest_wrong_family_reference',
+      },
+      {
+        name: 'non-plugin Action',
+        contributes: {
+          actions: [
+            automationSetupAction(),
+            historyGapResetAction({ surfaces: ['ui'], placementBindings: ['toolbar'] }),
+          ],
+          events: [recoveryEvent],
+        },
+        code: 'plugin_manifest_invalid',
+      },
+      {
+        name: 'noncanonical input schema',
+        contributes: {
+          actions: [automationSetupAction(), historyGapResetAction({ inputSchema: { type: 'object' } })],
+          events: [recoveryEvent],
+        },
+        code: 'plugin_manifest_invalid',
+      },
+      {
+        name: 'noncanonical result schema',
+        contributes: {
+          actions: [automationSetupAction(), historyGapResetAction({ resultSchema: { type: 'object' } })],
+          events: [recoveryEvent],
+        },
+        code: 'plugin_manifest_invalid',
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(ingestPluginManifestV2(manifest({ contributes: testCase.contributes }))).toEqual({
+        ok: false,
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: testCase.code,
+            path: ['contributes', 'events', 0, 'automation', 'source', 'historyGapResetActionRef'],
+          }),
+        ]),
+      });
+    }
+  });
+
+  it('admits only a same-plugin declared webhook for a durable Event Automation source', () => {
+    const webhook = {
+      id: 'repository-webhook',
+      title: 'Repository webhook',
+      verifier: { kind: 'github_hmac_sha256_v1', routing: 'providerInstallation' },
+      handlerAction: { localId: 'arbitrary-source-setup' },
+    };
+    const durableEvent = automationEvent({
+      automation: {
+        v: 1,
+        eligible: true,
+        source: {
+          sourceContractVersion: 1,
+          supportedObservationTransports: ['durablePush'],
+          sourceConfigSchema: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+          setupActionRef: {
+            pluginId: 'com.acme.fixture',
+            localId: 'arbitrary-source-setup',
+          },
+          webhookContributionRef: {
+            pluginId: 'com.acme.fixture',
+            localId: 'repository-webhook',
+          },
+        },
+      },
+    });
+    const accepted = ingestPluginManifestV2(manifest({
+      contributes: { actions: [automationSetupAction()], webhooks: [webhook], events: [durableEvent] },
+    }));
+    expect(accepted).toMatchObject({ ok: true });
+    if (accepted.ok) expect(resolvePluginManifestSetReferencesV2([accepted.manifest])).toEqual({ ok: true });
+
+    const wrongFamily = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [
+          automationSetupAction(),
+          automationSetupAction({ id: 'repository-webhook' }),
+        ],
+        events: [durableEvent],
+      },
+    }));
+    expect(wrongFamily).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_wrong_family_reference',
+          path: ['contributes', 'events', 0, 'automation', 'source', 'webhookContributionRef'],
+        }),
+      ]),
+    });
+  });
+
+  it('admits a transcript activity only through its same-plugin bounded dynamic Resource profile', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{
+          id: 'cancel-import',
+          title: 'Cancel import',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placementBindings: ['rowAction'],
+          dangerLevel: 'safe',
+        }],
+        resources: [{
+          id: 'import-progress',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: 'application/vnd.happier.transcript-activity+json;v=1',
+          maxBytes: 65_536,
+          scope: 'session',
+        }],
+        transcriptActivities: [{
+          id: 'import-progress-card',
+          resourceId: 'import-progress',
+          actions: ['cancel-import'],
+        }],
+      },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      manifest: {
+        contributes: {
+          transcriptActivities: [{
+            id: 'import-progress-card',
+            resourceId: 'import-progress',
+            actions: ['cancel-import'],
+          }],
+        },
+      },
+    });
+  });
+
+  it('rejects a transcript activity backed by a global dynamic Resource', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        resources: [{
+          id: 'import-progress',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: 'application/vnd.happier.transcript-activity+json;v=1',
+          maxBytes: 65_536,
+          scope: 'global',
+        }],
+        transcriptActivities: [{
+          id: 'import-progress-card',
+          resourceId: 'import-progress',
+        }],
+      },
+    }));
+
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'transcriptActivities', 0, 'resourceId'],
+      })],
+    });
+  });
+
   it('accepts target entrypoints/hostAccess and rejects retired manifest owners', () => {
     const target = manifest({
       entrypoints: { daemon: './dist/plugin.js', development: './src/plugin.ts' },
@@ -82,19 +482,17 @@ describe('canonical plugin manifest ingestion', () => {
   it('enforces exact semver ranges and every strict host-access branch', () => {
     const required = [
       { id: 'network', capability: 'network', reason: 'Network', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['GET'] } },
-      { id: 'intercept', capability: 'network.intercept', reason: 'Intercept', scope: { origins: ['https://example.test'] } },
       { id: 'network-client', capability: 'network.client', reason: 'Client realtime', scope: { targets: [{ kind: 'connectedAccountOrigin', service: 'account' }], transports: ['websocket'] } },
       { id: 'filesystem', capability: 'filesystem', reason: 'Files', scope: { locations: [{ root: 'workspace', pathPrefix: 'src' }], access: ['read'] } },
       { id: 'process', capability: 'process', reason: 'Process', scope: { executables: [{ kind: 'systemTool', id: 'tool' }], envKeys: ['PATH'] } },
       { id: 'environment', capability: 'environment', reason: 'Environment', scope: { keys: ['HAPPIER_PROFILE'] } },
-      { id: 'secrets', capability: 'secrets', reason: 'Secrets', scope: { secretIds: ['token'], access: ['read'] } },
       { id: 'accounts', capability: 'connectedAccounts', reason: 'Accounts', scope: { serviceRefs: ['account'], operations: ['use'] } },
       { id: 'sessions', capability: 'sessions', reason: 'Sessions', scope: { access: ['read'] } },
       { id: 'terminal', capability: 'terminal', reason: 'Terminal', scope: { operations: ['open'] } },
       { id: 'browser', capability: 'browser', reason: 'Browser', scope: { operations: ['read'], origins: ['http://localhost:3000'] } },
       { id: 'clipboard', capability: 'clipboard', reason: 'Clipboard', scope: { access: ['write'] } },
       { id: 'links', capability: 'externalLinks', reason: 'Links', scope: { origins: ['https://example.test'] } },
-      { id: 'storage', capability: 'storage.synced', reason: 'Storage', scope: { enabled: true } },
+      { id: 'storage', capability: 'storage.account', reason: 'Storage', scope: { enabled: true } },
       { id: 'mcp', capability: 'mcp', reason: 'MCP', scope: { serverRefs: ['server'], operations: ['callTools'] } },
     ];
     expect(ingestPluginManifestV2(manifest({
@@ -108,31 +506,30 @@ describe('canonical plugin manifest ingestion', () => {
     expect(ingestPluginManifestV2(manifest({ engines: { happier: 'banana1.2.3' } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ engines: { happier: '*' } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ version: '1.0.0-01' })).ok).toBe(false);
-    expect(required).toHaveLength(15);
+    expect(required).toHaveLength(13);
     expect(PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2.map((entry) => entry.capability)).toEqual(required.map((entry) => entry.capability));
     expect(PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2.map((entry) => [
       entry.capability,
       entry.authorizationClass,
     ])).toEqual([
       ['network', 'cooperativeDisclosure'],
-      ['network.intercept', 'cooperativeDisclosure'],
       ['network.client', 'cooperativeDisclosure'],
       ['filesystem', 'cooperativeDisclosure'],
       ['process', 'cooperativeDisclosure'],
       ['environment', 'cooperativeDisclosure'],
-      ['secrets', 'hostResourceSelection'],
       ['connectedAccounts', 'hostResourceSelection'],
       ['sessions', 'hostResourceSelection'],
       ['terminal', 'presentIntentOrOs'],
       ['browser', 'presentIntentOrOs'],
       ['clipboard', 'presentIntentOrOs'],
       ['externalLinks', 'presentIntentOrOs'],
-      ['storage.synced', 'hostResourceSelection'],
+      ['storage.account', 'hostResourceSelection'],
       ['mcp', 'hostResourceSelection'],
     ]);
     expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ ...required[0], scope: { targets: [{ kind: 'fixedOrigin', origin: 'ftp://example.test' }] } }] } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ ...required[0], scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://user:pass@example.test' }] } }] } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ ...required[0], scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }, { kind: 'fixedOrigin', origin: 'https://example.test' }] } }] } })).ok).toBe(false);
+    expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ id: 'intercept', capability: 'network.intercept', reason: 'Intercept', scope: { origins: ['https://example.test/path'] } }] } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ id: 'bad-env', capability: 'environment', reason: 'Bad', scope: { keys: ['*'] } }] } })).ok).toBe(false);
     expect(ingestPluginManifestV2(manifest({ hostAccess: { required: [{ id: 'bare-process', capability: 'process', reason: 'Bad', scope: { executables: ['tool'] } }] } })).ok).toBe(false);
   });
@@ -140,22 +537,20 @@ describe('canonical plugin manifest ingestion', () => {
   it('allows only independently selectable host-owned resources in optional host access', () => {
     const requests = [
       { id: 'network', capability: 'network', reason: 'Network', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] } },
-      { id: 'intercept', capability: 'network.intercept', reason: 'Intercept', scope: { origins: ['https://example.test'] } },
       { id: 'network-client', capability: 'network.client', reason: 'Client realtime', scope: { targets: [{ kind: 'connectedAccountOrigin', service: 'account' }], transports: ['websocket'] } },
       { id: 'filesystem', capability: 'filesystem', reason: 'Files', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
       { id: 'process', capability: 'process', reason: 'Process', scope: { executables: [{ kind: 'systemTool', id: 'tool' }] } },
       { id: 'environment', capability: 'environment', reason: 'Environment', scope: { keys: ['HAPPIER_PROFILE'] } },
-      { id: 'secrets', capability: 'secrets', reason: 'Secrets', scope: { secretIds: ['token'], access: ['read'] } },
       { id: 'accounts', capability: 'connectedAccounts', reason: 'Accounts', scope: { serviceRefs: ['account'], operations: ['use'] } },
       { id: 'sessions', capability: 'sessions', reason: 'Sessions', scope: { access: ['read'] } },
       { id: 'terminal', capability: 'terminal', reason: 'Terminal', scope: { operations: ['open'] } },
       { id: 'browser', capability: 'browser', reason: 'Browser', scope: { operations: ['read'] } },
       { id: 'clipboard', capability: 'clipboard', reason: 'Clipboard', scope: { access: ['write'] } },
       { id: 'links', capability: 'externalLinks', reason: 'Links', scope: { origins: ['https://example.test'] } },
-      { id: 'storage', capability: 'storage.synced', reason: 'Storage', scope: { enabled: true } },
+      { id: 'storage', capability: 'storage.account', reason: 'Storage', scope: { enabled: true } },
       { id: 'mcp', capability: 'mcp', reason: 'MCP', scope: { serverRefs: ['server'], operations: ['callTools'] } },
     ];
-    const selectableCapabilities = new Set(['secrets', 'connectedAccounts', 'sessions', 'storage.synced', 'mcp']);
+    const selectableCapabilities = new Set(['connectedAccounts', 'sessions', 'storage.account', 'mcp']);
     const selectable = requests.filter((request) => selectableCapabilities.has(request.capability));
     const disclosureOnly = requests.filter((request) => !selectableCapabilities.has(request.capability));
 
@@ -188,6 +583,19 @@ describe('canonical plugin manifest ingestion', () => {
     expect(fromBytes.ok).toBe(true);
   });
 
+  it('rejects malformed UTF-8 at the canonical byte-ingress owner', () => {
+    const bytes = Buffer.concat([
+      Buffer.from('{"schemaVersion":2,"id":"com.acme.plugin","version":"1.0.0","displayName":"'),
+      Buffer.from([0xff]),
+      Buffer.from('","engines":{"happier":"^0.2.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
+    ]);
+
+    expect(ingestPluginManifestV2(bytes)).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+    });
+  });
+
   it('materializes every catalog family default when contributes is omitted', () => {
     const input = manifest();
     delete input.contributes;
@@ -200,23 +608,7 @@ describe('canonical plugin manifest ingestion', () => {
     }
   });
 
-  it('rejects raw input at the byte limit before JSON parsing', () => {
-    const oversized = Buffer.alloc(PLUGIN_MANIFEST_INPUT_LIMITS.rawBytes + 1, 0x20);
-    const result = ingestPluginManifestV2(oversized);
-
-    expect(result).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_raw_budget_exceeded' })],
-    });
-  });
-
-  it('applies the same raw-byte budget to bundled objects and rejects non-JSON objects', () => {
-    const oversizedObject = manifest({ description: 'x'.repeat(PLUGIN_MANIFEST_INPUT_LIMITS.rawBytes) });
-    expect(ingestPluginManifestV2(oversizedObject)).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_raw_budget_exceeded' })],
-    });
-
+  it('rejects non-JSON objects without traversing accessors or dropping symbol fields', () => {
     const cyclic = manifest();
     cyclic.self = cyclic;
     expect(ingestPluginManifestV2(cyclic)).toEqual({
@@ -233,6 +625,111 @@ describe('canonical plugin manifest ingestion', () => {
         diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
       });
     }
+
+    const accessorMetadata = {};
+    Object.defineProperty(accessorMetadata, 'derived', {
+      enumerable: true,
+      get: () => 'not plain JSON',
+    });
+    const symbolMetadata = { ordinary: 'preserved' };
+    Object.defineProperty(symbolMetadata, Symbol('hidden'), {
+      enumerable: true,
+      value: 'not JSON',
+    });
+    for (const metadata of [accessorMetadata, symbolMetadata]) {
+      expect(ingestPluginManifestV2(manifest({ metadata }))).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+      });
+    }
+  });
+
+  it('accepts non-enumerable symbol-keyed host brands that JSON output cannot carry', () => {
+    const brand = Symbol.for('happier.test.manifestBrand.v1');
+    const nested = { ordinary: 'preserved' };
+    Object.defineProperty(nested, brand, { value: { refs: [] }, enumerable: false });
+    const brandedList: unknown[] = ['first'];
+    Object.defineProperty(brandedList, brand, { value: 'sidecar', enumerable: false });
+    const input = manifest({ metadata: { nested, brandedList } });
+    Object.defineProperty(input, brand, { value: 'sidecar', enumerable: false });
+
+    const result = ingestPluginManifestV2(input);
+
+    expect(result).toEqual({
+      ok: true,
+      manifest: expect.objectContaining({
+        metadata: { nested: { ordinary: 'preserved' }, brandedList: ['first'] },
+      }),
+    });
+  });
+
+  it('still rejects an enumerable symbol key on a nested manifest array', () => {
+    const brandedList: unknown[] = ['first'];
+    Object.defineProperty(brandedList, Symbol('visible'), { value: 'lost', enumerable: true });
+
+    expect(ingestPluginManifestV2(manifest({ metadata: { brandedList } }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+    });
+  });
+
+  it('rejects an object with a non-enumerable own toJSON without invoking it', () => {
+    const input = manifest();
+    let calls = 0;
+    Object.defineProperty(input, 'toJSON', {
+      enumerable: false,
+      value: () => {
+        calls += 1;
+        return manifest();
+      },
+    });
+
+    const result = ingestPluginManifestV2(input);
+
+    expect(calls).toBe(0);
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+    });
+  });
+
+  it('rejects an array with a non-enumerable own toJSON without invoking it', () => {
+    const input: unknown[] = [];
+    let calls = 0;
+    Object.defineProperty(input, 'toJSON', {
+      enumerable: false,
+      value: () => {
+        calls += 1;
+        return manifest();
+      },
+    });
+
+    const result = ingestPluginManifestV2(input);
+
+    expect(calls).toBe(0);
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+    });
+  });
+
+  it('rejects an array with an inherited toJSON without invoking it', () => {
+    const input: unknown[] = [];
+    let calls = 0;
+    Object.setPrototypeOf(input, {
+      toJSON: () => {
+        calls += 1;
+        return manifest();
+      },
+    });
+
+    const result = ingestPluginManifestV2(input);
+
+    expect(calls).toBe(0);
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid_json' })],
+    });
   });
 
   it('does not confuse an author-controlled ok key with an internal decode result', () => {
@@ -249,75 +746,14 @@ describe('canonical plugin manifest ingestion', () => {
     expect(ingestPluginManifestV2(input).ok).toBe(true);
   });
 
-  it('counts record-key UTF-8 bytes immediately against the aggregate string budget', () => {
-    const atLimitKey = 'x'.repeat(PLUGIN_MANIFEST_INPUT_LIMITS.stringBytes);
-    expect(ingestPluginManifestV2({ [atLimitKey]: null })).not.toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-
-    const hugeKey = `${atLimitKey}x`;
-    expect(ingestPluginManifestV2({ [hugeKey]: null })).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-  });
-
-  it('treats the manifest root as depth zero and rejects depth limit plus one', () => {
-    let atLimit: unknown = null;
-    for (let depth = 0; depth < PLUGIN_MANIFEST_INPUT_LIMITS.depth; depth += 1) atLimit = [atLimit];
-    let overLimit: unknown = atLimit;
-    overLimit = [overLimit];
-
-    expect(ingestPluginManifestV2(atLimit)).not.toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-    expect(ingestPluginManifestV2(overLimit)).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-  });
-
-  it('rejects aggregate JSON at the exact shared node boundary', () => {
-    const recordEntries = PLUGIN_MANIFEST_INPUT_LIMITS.recordEntries - 1;
-    const atLimit = Object.fromEntries(Array.from({ length: recordEntries }, (_, index) => [`k${index}`, null]));
-    atLimit.items = Array.from({ length: PLUGIN_MANIFEST_INPUT_LIMITS.arrayEntries - 1 }, () => null);
-    expect(ingestPluginManifestV2(atLimit)).not.toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-
-    atLimit.items.push(null);
-    const result = ingestPluginManifestV2(atLimit);
-
+  it('returns a typed invalid diagnostic instead of throwing on deeply nested metadata', () => {
+    let result: ReturnType<typeof ingestPluginManifestV2> | undefined;
+    expect(() => {
+      result = ingestPluginManifestV2(serializedManifestWithMetadataDepth(5_000));
+    }).not.toThrow();
     expect(result).toEqual({
       ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-  });
-
-  it('rejects array and record entry limits at exactly limit plus one', () => {
-    const arrayAtLimit = Array.from({ length: PLUGIN_MANIFEST_INPUT_LIMITS.arrayEntries }, () => null);
-    expect(ingestPluginManifestV2(arrayAtLimit)).not.toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-    expect(ingestPluginManifestV2([...arrayAtLimit, null])).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-
-    const recordAtLimit = Object.fromEntries(
-      Array.from({ length: PLUGIN_MANIFEST_INPUT_LIMITS.recordEntries }, (_, index) => [`k${index}`, null]),
-    );
-    expect(ingestPluginManifestV2(recordAtLimit)).not.toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
-    });
-    expect(ingestPluginManifestV2({ ...recordAtLimit, overflow: null })).toEqual({
-      ok: false,
-      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_aggregate_budget_exceeded' })],
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })],
     });
   });
 
@@ -333,7 +769,7 @@ describe('canonical plugin manifest ingestion', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
         resources: [{ id: 'shared', kind: 'asset', path: 'shared.txt', contentType: 'text/plain' }],
-        actions: [{ id: 'shared', title: 'Shared', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+        actions: [{ id: 'shared', title: 'Shared', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
       },
     }));
 
@@ -362,6 +798,60 @@ describe('canonical plugin manifest ingestion', () => {
     });
   });
 
+  it('admits only a same-plugin packaged PNG asset as an optional brand icon', () => {
+    const valid = manifest({
+      brand: { iconResourceId: 'brand-icon' },
+      contributes: {
+        resources: [{
+          id: 'brand-icon',
+          kind: 'asset',
+          path: 'assets/brand.png',
+          contentType: 'image/png',
+        }],
+      },
+    });
+
+    expect(ingestPluginManifestV2(valid)).toEqual({
+      ok: true,
+      manifest: expect.objectContaining({ brand: { iconResourceId: 'brand-icon' } }),
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      brand: { iconResourceId: 'brand-icon' },
+      contributes: { resources: [] },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['brand', 'iconResourceId'],
+      })],
+    });
+
+    for (const resource of [
+      { id: 'brand-icon', source: 'dynamic', kind: 'asset', contentType: 'image/png' },
+      { id: 'brand-icon', kind: 'prompt', path: 'assets/brand.png', contentType: 'image/png' },
+      { id: 'brand-icon', kind: 'asset', path: 'assets/brand.svg', contentType: 'image/svg+xml' },
+    ]) {
+      expect(ingestPluginManifestV2(manifest({
+        brand: { iconResourceId: 'brand-icon' },
+        contributes: { resources: [resource] },
+      }))).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['brand', 'iconResourceId'],
+        })],
+      });
+    }
+
+    expect(ingestPluginManifestV2(manifest({
+      brand: { iconResourceId: { pluginId: 'other.plugin', localId: 'brand-icon' } },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ path: ['brand', 'iconResourceId'] })],
+    });
+  });
+
   it('rejects dangling and wrong-family references', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
@@ -373,12 +863,537 @@ describe('canonical plugin manifest ingestion', () => {
       ok: false,
       diagnostics: [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })],
     });
+
+    const uiRenderer = {
+      id: 'declared-renderer',
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Declared' },
+    };
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: {
+          renderers: [uiRenderer],
+          views: [{
+            id: 'view',
+            container: 'appPage',
+            target: { kind: 'app' },
+            renderer: 'missing-renderer',
+          }],
+        },
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'ui', 'views', 0, 'renderer'],
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: {
+          renderers: [uiRenderer],
+          settingsPages: [{
+            id: 'settings-page',
+            group: { kind: 'plugin', localId: 'declared-renderer' },
+            title: 'Settings',
+            renderer: 'declared-renderer',
+          }],
+        },
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_wrong_family_reference',
+        path: ['contributes', 'ui', 'settingsPages', 0, 'group', 'localId'],
+      })],
+    });
+  });
+
+  it('resolves Composer control attachment references through the canonical manifest catalog', () => {
+    const dangling = ingestPluginManifestV2(manifest({
+      contributes: {
+        composerControls: [{
+          id: 'issue-control',
+          label: 'Issue',
+          icon: 'error',
+          interaction: {
+            kind: 'attachmentPicker',
+            attachment: 'missing-issue',
+            presentation: 'popover',
+            layout: 'content',
+          },
+        }],
+      },
+    }));
+    expect(dangling).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'composerControls', 0, 'interaction', 'attachment'],
+      })],
+    });
+
+    const wrongFamily = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{
+          id: 'issue',
+          title: 'Issue',
+          scopes: ['session'],
+          surfaces: ['plugin'],
+          dangerLevel: 'safe',
+        }],
+        composerControls: [{
+          id: 'issue-control',
+          label: 'Issue',
+          icon: 'error',
+          interaction: {
+            kind: 'attachmentPicker',
+            attachment: 'issue',
+            presentation: 'popover',
+            layout: 'content',
+          },
+        }],
+      },
+    }));
+    expect(wrongFamily).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_wrong_family_reference',
+        path: ['contributes', 'composerControls', 0, 'interaction', 'attachment'],
+      })],
+    });
+  });
+
+  it('rejects declarative item and collection command references at their exact authored paths', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{
+          id: 'not-a-destination',
+          title: 'Action only',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placementBindings: ['rowAction'],
+          dangerLevel: 'safe',
+        }],
+        ui: {
+          renderers: [{
+            id: 'task-list',
+            kind: 'declarative',
+            root: {
+              kind: 'stack',
+              children: [{
+                kind: 'item',
+                title: 'Item',
+                action: 'missing-item-action',
+              }, {
+                kind: 'collectionList',
+                source: { collectionId: 'tasks', uiQueryId: 'open-tasks' },
+                projection: { titleField: { field: 'title', kind: 'string' } },
+                primaryCommand: { kind: 'action', action: 'missing-primary-action' },
+                secondaryCommands: [
+                  { kind: 'action', action: 'missing-secondary-action' },
+                  { kind: 'openSurface', destination: 'not-a-destination' },
+                ],
+              }],
+            },
+          }],
+        },
+      },
+    }));
+
+    expect(result).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 0, 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 1, 'primaryCommand', 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 1, 'secondaryCommands', 0, 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_wrong_family_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 1, 'secondaryCommands', 1, 'destination'],
+        }),
+      ]),
+    });
+  });
+
+  it('resolves exact qualified openSurface destinations for Session/page chrome and collection commands', () => {
+    const provider = ingestPluginManifestV2(manifest({
+      id: 'com.acme.provider',
+      contributes: {
+        ui: {
+          renderers: [{
+            id: 'provider-renderer',
+            kind: 'declarative',
+            root: { kind: 'text', text: 'Provider repair' },
+          }],
+          views: [{
+            id: 'repair-view',
+            container: 'appPage',
+            target: { kind: 'app' },
+            renderer: 'provider-renderer',
+          }],
+          settingsPages: [{
+            id: 'repair-settings',
+            group: { kind: 'host', id: 'general' },
+            title: 'Repair settings',
+            renderer: 'provider-renderer',
+          }],
+        },
+      },
+    }));
+    const caller = ingestPluginManifestV2(manifest({
+      id: 'com.acme.caller',
+      contributes: {
+        sessionHeaderActions: [{
+          id: 'open-provider',
+          title: 'Open provider',
+          command: {
+            kind: 'openSurface',
+            destination: { pluginId: 'com.acme.provider', localId: 'repair-view' },
+          },
+        }],
+        ui: {
+          renderers: [{
+            id: 'caller-renderer',
+            kind: 'declarative',
+            root: {
+              kind: 'collectionList',
+              source: { collectionId: 'tasks', uiQueryId: 'open-tasks' },
+              projection: { titleField: { field: 'title', kind: 'string' } },
+              primaryCommand: {
+                kind: 'openSurface',
+                destination: { pluginId: 'com.acme.provider', localId: 'repair-view' },
+              },
+            },
+          }],
+          views: [{
+            id: 'caller-page',
+            container: 'appPage',
+            target: { kind: 'app' },
+            renderer: 'caller-renderer',
+            headerActions: [{
+              id: 'open-settings',
+              title: 'Open settings',
+              command: {
+                kind: 'openSurface',
+                destination: { pluginId: 'com.acme.provider', localId: 'repair-settings' },
+              },
+            }],
+          }],
+        },
+      },
+    }));
+
+    expect(provider.ok).toBe(true);
+    expect(caller.ok).toBe(true);
+    if (!provider.ok || !caller.ok) return;
+
+    expect(resolvePluginManifestSetReferencesV2([provider.manifest, caller.manifest])).toEqual({ ok: true });
+    expect(resolvePluginManifestSetReferencesV2([caller.manifest])).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'sessionHeaderActions', 0, 'command', 'destination'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'views', 0, 'headerActions', 0, 'command', 'destination'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'primaryCommand', 'destination'],
+        }),
+      ]),
+    });
+  });
+
+  it('rejects qualified cross-plugin declarative Actions while preserving exact openSurface destinations', () => {
+    const provider = ingestPluginManifestV2(manifest({
+      id: 'com.acme.provider',
+      contributes: {
+        actions: [{
+          id: 'repair',
+          title: 'Repair',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placementBindings: ['rowAction'],
+          dangerLevel: 'safe',
+        }],
+        ui: {
+          renderers: [{
+            id: 'provider-renderer',
+            kind: 'declarative',
+            root: { kind: 'text', text: 'Provider repair' },
+          }],
+          views: [{
+            id: 'repair-view',
+            container: 'appPage',
+            target: { kind: 'app' },
+            renderer: 'provider-renderer',
+          }],
+        },
+      },
+    }));
+    const openSurfaceCaller = ingestPluginManifestV2(manifest({
+      id: 'com.acme.open-caller',
+      contributes: {
+        ui: {
+          renderers: [{
+            id: 'caller-renderer',
+            kind: 'declarative',
+            root: {
+              kind: 'collectionList',
+              source: { collectionId: 'tasks', uiQueryId: 'open-tasks' },
+              projection: { titleField: { field: 'title', kind: 'string' } },
+              primaryCommand: {
+                kind: 'openSurface',
+                destination: { pluginId: 'com.acme.provider', localId: 'repair-view' },
+              },
+            },
+          }],
+        },
+      },
+    }));
+    const actionCaller = ingestPluginManifestV2(manifest({
+      id: 'com.acme.action-caller',
+      contributes: {
+        ui: {
+          renderers: [{
+            id: 'caller-renderer',
+            kind: 'declarative',
+            root: {
+              kind: 'stack',
+              children: [{
+                kind: 'action',
+                action: { pluginId: 'com.acme.provider', localId: 'repair' },
+                label: 'Repair',
+              }, {
+                kind: 'item',
+                title: 'Repair item',
+                action: { pluginId: 'com.acme.provider', localId: 'repair' },
+              }, {
+                kind: 'collectionList',
+                source: { collectionId: 'tasks', uiQueryId: 'open-tasks' },
+                projection: { titleField: { field: 'title', kind: 'string' } },
+                primaryCommand: {
+                  kind: 'action',
+                  action: { pluginId: 'com.acme.provider', localId: 'repair' },
+                },
+                secondaryCommands: [{
+                  kind: 'action',
+                  action: { pluginId: 'com.acme.provider', localId: 'repair' },
+                }],
+              }],
+            },
+          }],
+        },
+      },
+    }));
+
+    expect(provider.ok).toBe(true);
+    expect(openSurfaceCaller.ok).toBe(true);
+    if (provider.ok && openSurfaceCaller.ok) {
+      expect(resolvePluginManifestSetReferencesV2([provider.manifest, openSurfaceCaller.manifest])).toEqual({ ok: true });
+    }
+    expect(actionCaller).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 0, 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 1, 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 2, 'primaryCommand', 'action'],
+        }),
+        expect.objectContaining({
+          code: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'ui', 'renderers', 0, 'root', 'children', 2, 'secondaryCommands', 0, 'action'],
+        }),
+      ]),
+    });
+  });
+
+  it('binds an openable-content viewer to one same-plugin direct UI view', () => {
+    const renderer = {
+      id: 'viewer-renderer',
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Viewer' },
+    };
+    const view = {
+      id: 'viewer-view',
+      container: 'detailsTab',
+      target: { kind: 'session' },
+      renderer: 'viewer-renderer',
+      title: 'Viewer',
+    };
+    const viewer = {
+      id: 'viewer',
+      destination: 'viewer-view',
+      contentClasses: ['text'],
+      mimeTypes: ['text/plain'],
+    };
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: { renderers: [renderer], views: [view] },
+        openableContentViewers: [viewer],
+      },
+    }))).toEqual({ ok: true, manifest: expect.any(Object) });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: { renderers: [renderer], views: [{ ...view, instancePolicy: 'multiple' }] },
+        openableContentViewers: [viewer],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'openableContentViewers', 0, 'destination'],
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: { renderers: [renderer], views: [view] },
+        openableContentViewers: [{ ...viewer, destination: 'missing-view' }],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'openableContentViewers', 0, 'destination'],
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: { renderers: [renderer], views: [view] },
+        openableContentViewers: [{ ...viewer, destination: 'viewer-renderer' }],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_wrong_family_reference',
+        path: ['contributes', 'openableContentViewers', 0, 'destination'],
+      })],
+    });
+  });
+
+  it('binds a declarative document source to the canonical local Resource family', () => {
+    const renderer = {
+      id: 'live-panel',
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Static first paint' },
+      documentSource: { kind: 'resource', resourceId: 'live-document' },
+    };
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        resources: [{
+          id: 'live-document',
+          source: 'dynamic',
+          kind: 'config',
+          contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
+        }],
+        ui: { renderers: [renderer] },
+      },
+    }))).toEqual({ ok: true, manifest: expect.any(Object) });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [{
+          id: 'live-document', title: 'Not a Resource', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe',
+        }],
+        ui: { renderers: [renderer] },
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_wrong_family_reference',
+        path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
+      })],
+    });
+  });
+
+  it('rejects a packaged Resource as a live declarative document source', () => {
+    const renderer = {
+      id: 'live-panel',
+      kind: 'declarative',
+      root: { kind: 'text', text: 'Static first paint' },
+      documentSource: { kind: 'resource', resourceId: 'packaged-document' },
+    };
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        resources: [{
+          id: 'packaged-document',
+          kind: 'config',
+          path: './document.json',
+          contentType: 'application/json',
+        }],
+        ui: { renderers: [renderer] },
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
+      })],
+    });
+  });
+
+  it('rejects a dynamic document Resource whose declared content type is not the exact V1 document type', () => {
+    for (const contentType of [
+      'application/json',
+      `${PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1};charset=utf-8`,
+      'Application/vnd.happier.declarative-document+json;version=1',
+    ]) {
+      expect(ingestPluginManifestV2(manifest({
+        contributes: {
+          resources: [{
+            id: 'live-document',
+            source: 'dynamic',
+            kind: 'config',
+            contentType,
+          }],
+          ui: {
+            renderers: [{
+              id: 'live-panel',
+              kind: 'declarative',
+              root: { kind: 'text', text: 'Static first paint' },
+              documentSource: { kind: 'resource', resourceId: 'live-document' },
+            }],
+          },
+        },
+      }))).toEqual({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: ['contributes', 'ui', 'renderers', 0, 'documentSource', 'resourceId'],
+        })],
+      });
+    }
   });
 
   it('normalizes tools and commands as references to one declared action', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
-        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }],
+        actions: [{ id: 'summarize', title: 'Summarize', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
         tools: [{ id: 'summarize-tool', title: 'Summarize', name: 'summarize', action: 'summarize' }],
         commands: [{ id: 'summarize-command', title: 'Summarize', path: ['summarize'], action: 'summarize' }],
       },
@@ -390,16 +1405,16 @@ describe('canonical plugin manifest ingestion', () => {
   it('resolves action hostAccess request ids against the manifest disclosure owner', () => {
     const allowed = ingestPluginManifestV2(manifest({
       hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] } }] },
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe', hostAccess: ['api'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['api'] }] },
     }));
     expect(allowed.ok).toBe(true);
     expect(ingestPluginManifestV2(manifest({
       hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] } }] },
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe', hostAccess: ['api', 'api'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['api', 'api'] }] },
     })).ok).toBe(false);
 
     const dangling = ingestPluginManifestV2(manifest({
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe', hostAccess: ['missing'] }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe', hostAccess: ['missing'] }] },
     }));
     expect(dangling).toEqual({
       ok: false,
@@ -440,6 +1455,55 @@ describe('canonical plugin manifest ingestion', () => {
     });
   });
 
+  it('allows dynamic Resources to reference only Account storage HostAccess requests', () => {
+    const resource = {
+      id: 'account-status',
+      source: 'dynamic',
+      kind: 'config',
+      contentType: 'application/json',
+    };
+    const accountStorage = {
+      id: 'account-storage',
+      capability: 'storage.account',
+      reason: 'Persist Account-scoped Resource state',
+      scope: { enabled: true },
+    };
+
+    expect(ingestPluginManifestV2(manifest({
+      hostAccess: { required: [accountStorage], optional: [] },
+      contributes: { resources: [{ ...resource, hostAccess: ['account-storage'] }] },
+    })).ok).toBe(true);
+    expect(ingestPluginManifestV2(manifest({
+      contributes: { resources: [{ ...resource, hostAccess: ['missing'] }] },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'resources', 0, 'hostAccess', 0],
+      })],
+    });
+
+    const wrongCapability = ingestPluginManifestV2(manifest({
+      hostAccess: {
+        required: [{
+          id: 'api',
+          capability: 'network',
+          reason: 'Call an API',
+          scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] },
+        }],
+        optional: [],
+      },
+      contributes: { resources: [{ ...resource, hostAccess: ['api'] }] },
+    }));
+    expect(wrongCapability).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'resources', 0, 'hostAccess', 0],
+      })],
+    });
+  });
+
   it('rejects a tool action reference that resolves to the wrong family or is dangling', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: {
@@ -457,7 +1521,7 @@ describe('canonical plugin manifest ingestion', () => {
   it('resolves structured cross-plugin references against the complete manifest set', () => {
     const owner = ingestPluginManifestV2(manifest({
       id: 'com.acme.actions',
-      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placement: 'primary', dangerLevel: 'safe' }] },
+      contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }] },
     }));
     const consumer = ingestPluginManifestV2(manifest({
       id: 'com.acme.tools',
@@ -489,7 +1553,10 @@ describe('canonical plugin manifest ingestion', () => {
       scmHostingProviders: [{ id: 'scm', title: 'SCM', kind: 'github', capabilities: ['detect'] }],
       systemTools: [{ id: 'tool', title: 'Tool', executableNames: ['tool'] }],
       managedDependencies: [managedDependency('managed')],
-      mcp: { servers: [{ id: 'server', title: 'Server', kind: 'dynamic' }] },
+      mcp: {
+        servers: [{ id: 'server', title: 'Server', kind: 'dynamic' }],
+        discoverySources: [{ id: 'discovery', title: 'Discovery' }],
+      },
     };
     const required = [
       { id: 'account-origin', capability: 'network', reason: 'Account', scope: { targets: [{ kind: 'connectedAccountOrigin', service: 'account' }] } },
@@ -497,16 +1564,37 @@ describe('canonical plugin manifest ingestion', () => {
       { id: 'tool', capability: 'process', reason: 'Tool', scope: { executables: [{ kind: 'systemTool', id: 'tool' }] } },
       { id: 'managed', capability: 'process', reason: 'Managed', scope: { executables: [{ kind: 'managedDependency', id: 'managed' }] } },
       { id: 'accounts', capability: 'connectedAccounts', reason: 'Accounts', scope: { serviceRefs: ['account'], operations: ['use'] } },
-      { id: 'mcp', capability: 'mcp', reason: 'MCP', scope: { serverRefs: ['server'], operations: ['callTools'] } },
+      {
+        id: 'mcp',
+        capability: 'mcp',
+        reason: 'MCP',
+        scope: {
+          serverRefs: ['server'],
+          discoverySourceRefs: ['discovery'],
+          operations: ['callTools', 'discover'],
+        },
+      },
     ];
     expect(ingestPluginManifestV2(manifest({ contributes, hostAccess: { required } })).ok).toBe(true);
 
     for (const request of required) {
       const dangling = JSON.parse(JSON.stringify(request)) as Record<string, unknown>;
-      const serialized = JSON.stringify(dangling).replace(/"(account|scm|tool|managed|server)"/g, '"missing"');
+      const serialized = JSON.stringify(dangling).replace(/"(account|scm|tool|managed|server|discovery)"/g, '"missing"');
+      const expectedDiagnostics = request.capability === 'mcp'
+        ? [
+            expect.objectContaining({
+              code: 'plugin_manifest_dangling_reference',
+              path: ['hostAccess', 'required', 0, 'scope', 'serverRefs', 0],
+            }),
+            expect.objectContaining({
+              code: 'plugin_manifest_dangling_reference',
+              path: ['hostAccess', 'required', 0, 'scope', 'discoverySourceRefs', 0],
+            }),
+          ]
+        : [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })];
       expect(ingestPluginManifestV2(manifest({ contributes, hostAccess: { required: [JSON.parse(serialized)] } }))).toEqual({
         ok: false,
-        diagnostics: [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })],
+        diagnostics: expectedDiagnostics,
       });
     }
 
@@ -517,6 +1605,110 @@ describe('canonical plugin manifest ingestion', () => {
     expect(wrongFamily).toEqual({
       ok: false,
       diagnostics: [expect.objectContaining({ code: 'plugin_manifest_wrong_family_reference' })],
+    });
+
+    const wrongMcpFamilyCases = [{
+      id: 'wrong-server-family',
+      scope: { serverRefs: ['discovery'], operations: ['listTools'] },
+      paths: [['serverRefs', 0]],
+    }, {
+      id: 'wrong-discovery-family',
+      scope: { discoverySourceRefs: ['server'], operations: ['discover'] },
+      paths: [['discoverySourceRefs', 0]],
+    }, {
+      id: 'unrelated-mcp-family',
+      scope: {
+        serverRefs: ['asset'],
+        discoverySourceRefs: ['asset'],
+        operations: ['listTools', 'discover'],
+      },
+      paths: [['serverRefs', 0], ['discoverySourceRefs', 0]],
+    }] as const;
+    for (const testCase of wrongMcpFamilyCases) {
+      const result = ingestPluginManifestV2(manifest({
+        contributes: {
+          ...contributes,
+          resources: [{ id: 'asset', kind: 'asset', path: 'asset.txt', contentType: 'text/plain' }],
+        },
+        hostAccess: { required: [{
+          id: testCase.id,
+          capability: 'mcp',
+          reason: 'Wrong MCP family',
+          scope: testCase.scope,
+        }] },
+      }));
+      expect(result).toEqual({
+        ok: false,
+        diagnostics: testCase.paths.map(([field, index]) => expect.objectContaining({
+          code: 'plugin_manifest_wrong_family_reference',
+          path: ['hostAccess', 'required', 0, 'scope', field, index],
+        })),
+      });
+    }
+  });
+
+  it('validates managed Provider dependency and Connected Account references at manifest ingestion', () => {
+    const provider = {
+      v: 1,
+      id: 'gateway',
+      name: 'Gateway',
+      kind: 'local',
+      endpointTemplates: [{
+        id: 'responses',
+        protocol: 'openai-responses',
+        baseUrl: 'http://127.0.0.1:3000',
+        capabilities: {
+          streaming: 'unknown', toolRoundTrips: 'unknown',
+          statefulResponses: 'unknown', reasoningControls: 'unknown',
+        },
+      }],
+      catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+      managedRuntime: {
+        kind: 'managed',
+        dependencies: ['runtime'],
+        connectedAccounts: [{
+          purpose: 'upstream',
+          service: 'account',
+          materializationKinds: ['httpHeaders'],
+        }],
+        endpointTemplateIds: ['responses'],
+      },
+    };
+    const contributes = {
+      providers: [provider],
+      managedDependencies: [managedDependency('runtime')],
+      connectedAccountDescriptors: [connectedAccountDescriptor('account')],
+    };
+    expect(ingestPluginManifestV2(manifest({ contributes })).ok).toBe(true);
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ...contributes,
+        providers: [{
+          ...provider,
+          managedRuntime: { ...provider.managedRuntime, dependencies: ['account'] },
+        }],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_wrong_family_reference' })],
+    });
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ...contributes,
+        providers: [{
+          ...provider,
+          managedRuntime: {
+            ...provider.managedRuntime,
+            connectedAccounts: [{
+              ...provider.managedRuntime.connectedAccounts[0],
+              service: 'missing',
+            }],
+          },
+        }],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })],
     });
   });
 
@@ -542,7 +1734,10 @@ describe('canonical plugin manifest ingestion', () => {
         scmHostingProviders: [{ id: 'scm', title: 'SCM', kind: 'github', capabilities: ['detect'] }],
         systemTools: [{ id: 'tool', title: 'Tool', executableNames: ['tool'] }],
         managedDependencies: [managedDependency('managed')],
-        mcp: { servers: [{ id: 'server', title: 'Server', kind: 'dynamic' }] },
+        mcp: {
+          servers: [{ id: 'server', title: 'Server', kind: 'dynamic' }],
+          discoverySources: [{ id: 'discovery', title: 'Discovery' }],
+        },
       },
     }));
     const ref = (localId: string) => ({ pluginId: 'com.acme.host-owner', localId });
@@ -554,7 +1749,16 @@ describe('canonical plugin manifest ingestion', () => {
         { id: 'tool', capability: 'process', reason: 'Tool', scope: { executables: [{ kind: 'systemTool', id: ref('tool') }] } },
         { id: 'managed', capability: 'process', reason: 'Managed', scope: { executables: [{ kind: 'managedDependency', id: ref('managed') }] } },
         { id: 'accounts', capability: 'connectedAccounts', reason: 'Accounts', scope: { serviceRefs: [ref('account')], operations: ['use'] } },
-        { id: 'mcp', capability: 'mcp', reason: 'MCP', scope: { serverRefs: [ref('server')], operations: ['callTools'] } },
+        {
+          id: 'mcp',
+          capability: 'mcp',
+          reason: 'MCP',
+          scope: {
+            serverRefs: [ref('server')],
+            discoverySourceRefs: [ref('discovery')],
+            operations: ['callTools', 'discover'],
+          },
+        },
       ] },
     }));
     expect(owner.ok).toBe(true);

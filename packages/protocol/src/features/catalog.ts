@@ -75,18 +75,6 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['connectedServices.accountGroups', 'sessions.usageLimitRecovery'],
     representation: 'server',
   },
-  channelBridges: {
-    description: 'Channel bridge integrations (Telegram/Discord/etc).',
-    defaultFailMode: 'fail_closed',
-    dependencies: [],
-    representation: 'server',
-  },
-  'channelBridges.telegram': {
-    description: 'Telegram channel bridge provider.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['channelBridges'],
-    representation: 'server',
-  },
   'updates.ota': {
     description: 'Expo over-the-air update checks and apply flows.',
     defaultFailMode: 'fail_closed',
@@ -137,6 +125,12 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'sessions.handoff': {
     description: 'Session handoff between machines.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
+  'sessions.agentSwitching': {
+    description: 'Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe.',
     defaultFailMode: 'fail_closed',
     dependencies: ['sessions'],
     representation: 'server',
@@ -377,6 +371,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'plugins.webhooks': {
+    description: 'Durable public webhook ingress for plugin-contributed Actions.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins'],
+    representation: 'server',
+  },
   'plugins.ui': {
     description: 'Plugin UI descriptor and executable UI tier projection.',
     defaultFailMode: 'fail_closed',
@@ -385,13 +385,6 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'plugins.ui.hostedWeb': {
     description: 'Hosted web plugin UI surfaces embedded through host-owned preview frames and bridges.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['plugins.ui'],
-    representation: 'server',
-  },
-  // Renderer allowlist (no code execution): server-represented + default-ALLOW kill-switch (§4.1).
-  'plugins.ui.structuredMessages': {
-    description: 'Plugin structured-message descriptors projected to the host transcript renderer allowlist.',
     defaultFailMode: 'fail_closed',
     dependencies: ['plugins.ui'],
     representation: 'server',

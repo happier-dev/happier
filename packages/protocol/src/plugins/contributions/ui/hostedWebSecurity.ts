@@ -7,6 +7,11 @@ function isExactHttpOrigin(value: string): boolean {
   try {
     const url = new URL(trimmed);
     return HTTP_ORIGIN_PROTOCOLS.has(url.protocol)
+      // `new URL('https://*.example').origin` round-trips unchanged, so the
+      // round-trip alone admits a CSP wildcard host. Every directive built from
+      // these values would then be widened by an author-supplied pattern, which
+      // is the opposite of "exact".
+      && !url.hostname.includes('*')
       && url.origin === trimmed
       && url.pathname === '/'
       && url.search.length === 0
@@ -74,8 +79,32 @@ function withOptionalSchemes(
   ];
 }
 
+/**
+ * Who may embed a served hosted-web asset (§3.12, EU-8).
+ *
+ * The directive is **host-derived and author-proof**: it is not part of
+ * `PluginHostedWebSecurityPolicyV1`, so no manifest can widen it, and it is
+ * supplied by the embedding host through this options bag instead. An ancestor
+ * that is not an exact `http(s)` origin — a wildcard, a scheme-only value, an
+ * origin with a path — is dropped rather than normalized, and an empty result
+ * fails closed to `'none'`.
+ *
+ * `'none'` used to be unconditional, which meant Happier's own iframe could
+ * never load a plugin's own served asset; `*` would let any page that can reach
+ * the loopback port embed it. Neither is a policy, so the exact set is required.
+ */
+export type PluginHostedWebStaticAssetCspOptionsV1 = Readonly<{
+  frameAncestors?: readonly string[];
+}>;
+
+function resolveFrameAncestors(options: PluginHostedWebStaticAssetCspOptionsV1 | undefined): string {
+  const ancestors = (options?.frameAncestors ?? []).filter(isExactHttpOrigin);
+  return ancestors.length > 0 ? directiveValues([...new Set(ancestors)]) : "'none'";
+}
+
 export function buildPluginHostedWebStaticAssetContentSecurityPolicyV1(
   security: PluginHostedWebSecurityPolicyV1,
+  options?: PluginHostedWebStaticAssetCspOptionsV1,
 ): string {
   const csp = security.csp;
   const callbackOrigins = [...security.allowedCallbackOrigins];
@@ -84,9 +113,6 @@ export function buildPluginHostedWebStaticAssetContentSecurityPolicyV1(
     : [];
   const formAction = callbackOrigins.length > 0
     ? directiveValues(["'self'", ...callbackOrigins])
-    : "'none'";
-  const navigation = callbackOrigins.length > 0 || security.allowedNavigationOrigins.length > 0
-    ? directiveValues(["'self'", ...callbackOrigins, ...security.allowedNavigationOrigins])
     : "'none'";
   const styleSrc = csp.allowInlineStyles
     ? directiveValues(["'self'", "'unsafe-inline'"])
@@ -103,14 +129,14 @@ export function buildPluginHostedWebStaticAssetContentSecurityPolicyV1(
     "default-src 'none'",
     "base-uri 'none'",
     `form-action ${formAction}`,
-    "frame-ancestors 'none'",
+    `frame-ancestors ${resolveFrameAncestors(options)}`,
     "object-src 'none'",
     "script-src 'self'",
+    "worker-src 'none'",
     `style-src ${styleSrc}`,
     `img-src ${imgSrc}`,
     `font-src ${fontSrc}`,
     `connect-src ${directiveValues(["'self'", ...connectOrigins])}`,
-    `navigate-to ${navigation}`,
     'block-all-mixed-content',
   ];
   return directives.join('; ');

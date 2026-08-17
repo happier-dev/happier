@@ -141,4 +141,23 @@ describe('evaluatePluginFinalPolicy', () => {
       requiresCurrentIntent: false,
     });
   });
+
+  it('keeps a stable retained target available when durable H is desired but G remains applied', () => {
+    const input: PluginFinalPolicyInput = Object.freeze({
+      ...allowed,
+      generation: Object.freeze({
+        ...allowed.generation,
+        desiredGeneration: 'generation-8',
+        appliedGeneration: 'generation-7',
+        targetGenerationMode: 'retained',
+      }),
+      currentIntent: 'notRequired',
+    });
+
+    expect(evaluatePluginFinalPolicy(input)).toEqual({
+      outcome: 'visible',
+      code: 'plugin_final_available',
+      requiresCurrentIntent: false,
+    });
+  });
 });

@@ -21,7 +21,7 @@ describe('@happier-dev/protocol/workspaces exports', () => {
         ]);
 
         expect(typeof (sessions as any).SessionIdSchema?.safeParse).toBe('function');
-        expect(typeof (runtime as any).RuntimeEventV1Schema?.safeParse).toBe('function');
+        expect(typeof (runtime as any).AgentSessionRuntimeEventV1Schema?.safeParse).toBe('function');
         expect((pets as any).PET_ATLAS_V1?.width).toBe(1536);
         expect(typeof (spawnSession as any).SpawnSessionErrorCodeSchema?.safeParse).toBe('function');
         expect(typeof (transferRelayV2 as any).TransferRelayV2EnvelopeSchema?.safeParse).toBe('function');

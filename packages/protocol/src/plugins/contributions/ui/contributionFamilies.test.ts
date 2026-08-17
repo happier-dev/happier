@@ -3,14 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { PluginContributesV2Schema } from '../v2.js';
 
 describe('plugin UI contribution families', () => {
-  it('accepts the canonical nested UI graph with structured-message and header-action consumers', () => {
+  it('accepts the canonical nested UI graph with header-action consumers', () => {
     const parsed = PluginContributesV2Schema.parse({
       actions: [{
         id: 'roundtrip',
         title: 'Roundtrip',
         scopes: ['session'],
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placement: 'commandPalette',
+        placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
       }],
       tools: [{
@@ -29,30 +29,17 @@ describe('plugin UI contribution families', () => {
         promptGuidelines: ['Invoke the declared action through this presentation.'],
         action: 'roundtrip',
       }],
-      structuredMessages: [{
-        id: 'roundtrip-result',
-        title: 'Roundtrip result',
-        kind: 'acme.preview/roundtrip-result.v1',
-        payloadSchema: {
-          type: 'object',
-          properties: { message: { type: 'string' } },
-          required: ['message'],
-          additionalProperties: false,
-        },
-        renderer: 'roundtrip-card',
-        actions: ['roundtrip'],
-        fallback: { kind: 'summary', template: 'Preview: {message}' },
-      }],
       sessionHeaderActions: [{
         id: 'roundtrip-header',
         title: 'Run roundtrip',
-        action: 'roundtrip',
+        command: { kind: 'executeAction', action: 'roundtrip' },
         order: 10,
       }],
       ui: {
         views: [{
           id: 'preview',
-          placement: 'session.preview',
+          container: 'rightPane',
+          target: { kind: 'session' },
           renderer: 'preview-web',
           fallbackRenderers: ['roundtrip-card'],
           title: 'Preview',
@@ -70,7 +57,6 @@ describe('plugin UI contribution families', () => {
             action: 'roundtrip',
             label: 'Run roundtrip',
           },
-          requiredHostMethods: ['executeAction'],
         }],
         translations: [{
           locale: 'en',
@@ -79,11 +65,6 @@ describe('plugin UI contribution families', () => {
       },
     });
 
-    expect(parsed.structuredMessages[0]).toMatchObject({
-      id: 'roundtrip-result',
-      renderer: 'roundtrip-card',
-      actions: ['roundtrip'],
-    });
     expect(parsed.tools[0]).toMatchObject({
       id: 'roundtrip-tool',
       action: 'roundtrip',
@@ -91,7 +72,7 @@ describe('plugin UI contribution families', () => {
     });
     expect(parsed.sessionHeaderActions[0]).toMatchObject({
       id: 'roundtrip-header',
-      action: 'roundtrip',
+      command: { kind: 'executeAction', action: 'roundtrip' },
     });
     expect(parsed.ui.renderers).toEqual([
       expect.objectContaining({
@@ -146,23 +127,26 @@ describe('plugin UI contribution families', () => {
     }
   });
 
-  it('rejects structured messages without a stable fallback and declared renderer reference', () => {
+  it('rejects deferred structuredMessages even when the descriptor is otherwise valid', () => {
     const result = PluginContributesV2Schema.safeParse({
       structuredMessages: [{
-        id: 'incomplete',
-        title: 'Incomplete',
-        kind: 'acme.preview/incomplete.v1',
-        payloadSchema: { type: 'object' },
+        id: 'roundtrip-result',
+        title: 'Roundtrip result',
+        kind: 'acme.preview/roundtrip-result.v1',
+        payloadSchema: {
+          type: 'object',
+          properties: { message: { type: 'string' } },
+          required: ['message'],
+          additionalProperties: false,
+        },
+        renderer: 'roundtrip-card',
+        fallback: { kind: 'summary', template: 'Preview: {message}' },
       }],
     });
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      const paths = result.error.issues.map((issue) => issue.path.join('.'));
-      expect(paths).toEqual(expect.arrayContaining([
-        'structuredMessages.0.renderer',
-        'structuredMessages.0.fallback',
-      ]));
+      expect(result.error.issues.some((issue) => issue.message.includes('structuredMessages'))).toBe(true);
     }
   });
 });

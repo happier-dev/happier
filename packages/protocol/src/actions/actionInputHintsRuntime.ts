@@ -1,5 +1,20 @@
 import type { ActionInputFieldHint, ActionSpec } from './actionSpecs.js';
 import { evaluateActionInputPredicate } from './actionInputPredicates.js';
+export {
+  actionInputOptionValueKey,
+  actionInputOptionValueSearchText,
+  isSameActionInputOptionValue,
+  readActionInputOptionValue,
+} from './actionInputHints.js';
+export type { ActionInputOptionValue } from './actionInputHints.js';
+
+/** Browser-safe Action-form vocabulary for SDK/UI consumers of this owner. */
+export type {
+  ActionInputFieldHint,
+  ActionInputHints,
+  ActionInputOption,
+} from './actionSpecs.js';
+export type { ActionInputPredicate } from './actionInputPredicates.js';
 
 export type EffectiveActionInputField = ActionInputFieldHint & Readonly<{
   visible: boolean;
@@ -7,23 +22,23 @@ export type EffectiveActionInputField = ActionInputFieldHint & Readonly<{
   disabled: boolean;
 }>;
 
-export function resolveEffectiveActionInputFields(spec: ActionSpec, input: unknown): readonly EffectiveActionInputField[] {
-  const hints: any = (spec as any).inputHints;
-  const fields: ActionInputFieldHint[] = Array.isArray(hints?.fields) ? hints.fields : [];
+export function resolveEffectiveActionInputFields(
+  spec: Pick<ActionSpec, 'inputHints'>,
+  input: unknown,
+): readonly EffectiveActionInputField[] {
+  const fields = spec.inputHints?.fields ?? [];
 
   const out: EffectiveActionInputField[] = [];
   for (const field of fields) {
-    const visibleWhen = (field as any).visibleWhen;
-    const requiredWhen = (field as any).requiredWhen;
-    const disabledWhen = (field as any).disabledWhen;
+    const { visibleWhen, requiredWhen, disabledWhen } = field;
 
     const visible = visibleWhen ? evaluateActionInputPredicate(visibleWhen, input) : true;
     if (!visible) continue;
 
-    const required = Boolean((field as any).required === true) || (requiredWhen ? evaluateActionInputPredicate(requiredWhen, input) : false);
+    const required = field.required === true || (requiredWhen ? evaluateActionInputPredicate(requiredWhen, input) : false);
     const disabled = disabledWhen ? evaluateActionInputPredicate(disabledWhen, input) : false;
 
-    out.push({ ...(field as any), visible, required, disabled });
+    out.push({ ...field, visible, required, disabled });
   }
   return out;
 }
@@ -66,20 +81,19 @@ function normalizeFieldMaxSelections(
   field: ActionInputFieldHint,
 ): Record<string, unknown> {
   if (field.widget !== 'multiselect') return input;
-  const maxSelections = (field as Readonly<{ maxSelections?: unknown }>).maxSelections;
-  if (!Number.isSafeInteger(maxSelections) || (maxSelections as number) <= 0) return input;
+  const { maxSelections } = field;
+  if (maxSelections === undefined) return input;
 
   const current = readInputPath(input, field.path);
-  if (!Array.isArray(current) || current.length <= (maxSelections as number)) return input;
-  return writeInputPath(input, field.path, current.slice(-(maxSelections as number)));
+  if (!Array.isArray(current) || current.length <= maxSelections) return input;
+  return writeInputPath(input, field.path, current.slice(-maxSelections));
 }
 
 export function normalizeActionInputByFieldHints(
-  spec: ActionSpec,
+  spec: Pick<ActionSpec, 'inputHints'>,
   input: Record<string, unknown>,
 ): Record<string, unknown> {
-  const hints: any = (spec as any).inputHints;
-  const fields: ActionInputFieldHint[] = Array.isArray(hints?.fields) ? hints.fields : [];
+  const fields = spec.inputHints?.fields ?? [];
 
   let normalized = input;
   for (const field of fields) {

@@ -59,6 +59,38 @@ describe('Agent session VB4 open inputs', () => {
     }).success).toBe(false);
   });
 
+  it('accepts only a strict provider-session resume reference in a configuration snapshot', () => {
+    const configurationWithResume = {
+      ...configuration,
+      providerSessionResume: {
+        kind: 'provider_session.v1',
+        providerSessionId: 'provider-session-1',
+      },
+    } as const;
+
+    expect(AgentSessionConfigurationSnapshotV1Schema.parse(configurationWithResume)).toEqual(
+      configurationWithResume,
+    );
+    expect(AgentSessionConfigurationSnapshotV1Schema.safeParse({
+      ...configuration,
+      providerSessionResume: 'provider-session-1',
+    }).success).toBe(false);
+    expect(AgentSessionConfigurationSnapshotV1Schema.safeParse({
+      ...configurationWithResume,
+      providerSessionResume: {
+        ...configurationWithResume.providerSessionResume,
+        backendTarget: { kind: 'backend', backendId: 'claude' },
+      },
+    }).success).toBe(false);
+    expect(AgentSessionConfigurationSnapshotV1Schema.safeParse({
+      ...configurationWithResume,
+      providerSessionResume: {
+        ...configurationWithResume.providerSessionResume,
+        secret: 'must-not-cross-the-v2-boundary',
+      },
+    }).success).toBe(false);
+  });
+
   it.each(['default', 'read-only', 'safe-yolo', 'yolo', 'plan', null])(
     'accepts the closed canonical permission intent %s',
     (permissionIntent) => {
@@ -163,25 +195,23 @@ describe('AgentRuntimeJsonValueV1Schema', () => {
     expect(accessorInvoked).toBe(false);
   });
 
-  it('enforces exact UTF-8 string/key and aggregate byte bounds', () => {
-    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(256 * 1_024)).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(256 * 1_024 + 1)).success).toBe(false);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse({ ['k'.repeat(256)]: true }).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse({ ['k'.repeat(257)]: true }).success).toBe(false);
+  it('enforces the owner aggregate byte bound without inventing field-local quotas', () => {
+    const maximumEncodedBytes = 1_024 * 1_024;
+    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(maximumEncodedBytes - 2)).success).toBe(true);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse('x'.repeat(maximumEncodedBytes - 1)).success).toBe(false);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse({ ['k'.repeat(257)]: true }).success).toBe(true);
     expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 6 }, () => 'x'.repeat(200_000))).success).toBe(false);
   });
 
-  it('enforces exact depth and node bounds', () => {
+  it('does not invent depth or node quotas below the aggregate byte boundary', () => {
     const nested = (depth: number): unknown => {
       let value: unknown = true;
       for (let index = 0; index < depth; index += 1) value = { value };
       return value;
     };
 
-    expect(AgentRuntimeJsonValueV1Schema.safeParse(nested(24)).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse(nested(25)).success).toBe(false);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 8_191 }, () => true)).success).toBe(true);
-    expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 8_192 }, () => true)).success).toBe(false);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse(nested(25)).success).toBe(true);
+    expect(AgentRuntimeJsonValueV1Schema.safeParse(Array.from({ length: 8_192 }, () => true)).success).toBe(true);
   });
 });
 
@@ -560,6 +590,29 @@ describe('AgentSessionSendRequestV1Schema', () => {
     }).success).toBe(true);
   });
 
+  it('carries only a strict admitted-input causal permission authority', () => {
+    const request = {
+      inputIds: ['input-causal'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn' as const, turnId: 'turn-causal' },
+      causalPermissionAuthority: {
+        kind: 'admittedSessionInputV1' as const,
+        admittedPermissionCeiling: 'read-only' as const,
+      },
+    };
+    expect(AgentSessionSendRequestV1Schema.safeParse(request)).toMatchObject({
+      success: true,
+      data: { causalPermissionAuthority: request.causalPermissionAuthority },
+    });
+    expect(AgentSessionSendRequestV1Schema.safeParse({
+      ...request,
+      causalPermissionAuthority: {
+        ...request.causalPermissionAuthority,
+        admittedPermissionCeiling: 'not-a-permission-mode',
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects empty, duplicate, oversized, and unknown request data', () => {
     const request = {
       inputIds: ['input-1'],
@@ -592,7 +645,7 @@ describe('AgentSessionSendRequestV1Schema', () => {
     }).success).toBe(false);
     expect(AgentSessionSendRequestV1Schema.safeParse({
       ...request,
-      input: { text: 'hello', structuredInput: 'x'.repeat(256 * 1_024 + 1) },
+      input: { text: 'hello', structuredInput: 'x'.repeat(1_024 * 1_024) },
     }).success).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -30,6 +31,7 @@ import {
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountConfigurationTargetV4Schema,
   QualifiedConnectedAccountGroupMemberV4Schema,
+  QualifiedConnectedAccountGroupIncarnationV4Schema,
   QualifiedConnectedAccountGroupRefSchema,
   QualifiedConnectedAccountGroupV4Schema,
   QualifiedConnectedAccountListResponseV4Schema,
@@ -49,6 +51,7 @@ export {
   QualifiedConnectedAccountCredentialMetadataV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountGroupMemberV4Schema,
+  QualifiedConnectedAccountGroupIncarnationV4Schema,
   QualifiedConnectedAccountGroupRefSchema,
   QualifiedConnectedAccountGroupV4Schema,
   QualifiedConnectedAccountListResponseV4Schema,
@@ -66,6 +69,8 @@ export {
 const RevisionSchema =
   QualifiedConnectedAccountConfigurationRevisionV4Schema;
 const ModeIdSchema = QualifiedConnectedAccountModeIdV4Schema;
+const ModeIdZodSchema = asProtocolZod(ModeIdSchema);
+const ServiceRefZodSchema = asProtocolZod(QualifiedConnectedAccountServiceRefSchema);
 
 export const CONNECTED_ACCOUNT_V4_PROTOCOL_VERSION = 4 as const;
 
@@ -108,12 +113,12 @@ export const QualifiedConnectedAccountConfigurationPatchV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountListQueryV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
 }).strict();
 
 const QualifiedConnectedAccountCredentialMutationCommonV4Shape = {
-  ref: QualifiedConnectedAccountRefSchema,
-  authenticationModeId: ModeIdSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  authenticationModeId: ModeIdZodSchema,
   content: StoredJsonContentEnvelopeSchema,
   metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
   reconnect: z.object({
@@ -143,11 +148,11 @@ export const QualifiedConnectedAccountCredentialMutationV4Schema = z.union([
 ]);
 
 export const QualifiedConnectedAccountCredentialReadV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
 }).strict();
 
 export const QualifiedConnectedAccountCredentialDeleteV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
   cleanupGroupReferences: z.boolean(),
 }).strict();
@@ -192,7 +197,7 @@ export const QualifiedConnectedAccountCredentialErrorV4Schema = z.union([
 ]);
 
 export const QualifiedConnectedAccountCredentialHealthPatchV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   expectedCredentialRevision:
     ConnectedServiceCredentialRevisionV1Schema,
   expectedConfigurationRevision: RevisionSchema.nullable(),
@@ -200,7 +205,7 @@ export const QualifiedConnectedAccountCredentialHealthPatchV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountRefreshLeaseV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   expectedCredentialRevision:
     ConnectedServiceCredentialRevisionV1Schema,
   ownerId: z.string().trim().min(1).max(256),
@@ -208,15 +213,15 @@ export const QualifiedConnectedAccountRefreshLeaseV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountQuotaQueryV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
 }).strict();
 
 export const QualifiedConnectedAccountGroupListQueryV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
 }).strict();
 
 export const QualifiedConnectedAccountGroupCreateV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
   group: z.object({
     groupId: ConnectedServiceAuthGroupIdSchema,
     displayName: z.string().trim().min(1).max(512).nullable().optional(),
@@ -226,14 +231,16 @@ export const QualifiedConnectedAccountGroupCreateV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountGroupQueryV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema.optional(),
 }).strict();
 
 export const QualifiedConnectedAccountGroupPatchV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
+  expectedIncarnation:
+    QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   displayName: z.string().trim().min(1).max(512).nullable().optional(),
   state: ConnectedServiceAuthGroupStateV1Schema.removeDefault().optional(),
   policy: ConnectedServiceAuthGroupPolicyV1Schema.optional(),
@@ -242,13 +249,15 @@ export const QualifiedConnectedAccountGroupPatchV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: ServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
+  expectedIncarnation:
+    QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
   runtimeState: z.object({
     state: ConnectedServiceAuthGroupStateV1Schema.removeDefault().optional(),
     memberStates: z.array(z.object({
-      connectedAccountId: QualifiedConnectedAccountIdSchema,
+      connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
       state: ConnectedServiceAuthGroupMemberStateV1Schema,
     }).strict()).default([]),
   }).strict(),
@@ -256,7 +265,9 @@ export const QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema = z.object(
 
 export const QualifiedConnectedAccountGroupMemberMutationV4Schema = z.object({
   group: QualifiedConnectedAccountGroupRefSchema,
-  connectedAccountId: QualifiedConnectedAccountIdSchema,
+  expectedIncarnation:
+    QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
+  connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
   priority: z.number().int().optional(),
   enabled: z.boolean().optional(),
   state:
@@ -266,17 +277,21 @@ export const QualifiedConnectedAccountGroupMemberMutationV4Schema = z.object({
 
 export const QualifiedConnectedAccountGroupMemberDeleteV4Schema = z.object({
   group: QualifiedConnectedAccountGroupRefSchema,
-  connectedAccountId: QualifiedConnectedAccountIdSchema,
+  expectedIncarnation:
+    QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
+  connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema.optional(),
 }).strict();
 
 export const QualifiedConnectedAccountGroupActiveAccountV4Schema = z.object({
   group: QualifiedConnectedAccountGroupRefSchema,
-  connectedAccountId: QualifiedConnectedAccountIdSchema,
+  expectedIncarnation:
+    QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
+  connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
   expectedGeneration: z.number().int().nonnegative().optional(),
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema.optional(),
   expectedSource: z.object({
-    connectedAccountId: QualifiedConnectedAccountIdSchema,
+    connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
     credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
     configurationRevision: RevisionSchema.nullable(),
   }).strict().optional(),
@@ -293,11 +308,11 @@ export const QualifiedConnectedAccountGroupResponseV4Schema = z.object({
 
 export const QualifiedConnectedServiceUsageSourceV4Schema = z.discriminatedUnion('bindingKind', [
   z.object({
-    ref: QualifiedConnectedAccountRefSchema,
+    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
     bindingKind: z.literal('account'),
   }).strict(),
   z.object({
-    ref: QualifiedConnectedAccountRefSchema,
+    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
     bindingKind: z.literal('group_member'),
     groupId: ConnectedServiceAuthGroupIdSchema,
     groupGeneration: z.number().int().nonnegative().optional(),
@@ -348,7 +363,7 @@ export const QualifiedConnectedAccountRefreshLeaseResponseV4Schema = z.object({
 export const QualifiedConnectedAccountQuotaSnapshotV4Schema =
   ConnectedServiceQuotaSnapshotV1Schema
     .omit({ serviceId: true, profileId: true })
-    .extend({ ref: QualifiedConnectedAccountRefSchema })
+    .extend({ ref: asProtocolZod(QualifiedConnectedAccountRefSchema) })
     .strict();
 
 export const QualifiedConnectedServiceUsageSourceResolutionV4Schema = z.object({
@@ -360,7 +375,7 @@ export const QualifiedConnectedServiceUsageSourceResolutionV4Schema = z.object({
 }).strict();
 
 export const QualifiedConnectedAccountQuotaResponseV4Schema = z.object({
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   sourceResolution:
     QualifiedConnectedServiceUsageSourceResolutionV4Schema,
   content: z.discriminatedUnion('t', [
@@ -551,9 +566,16 @@ export type QualifiedConnectedAccountCredentialSnapshotV4 = z.infer<
 export type QualifiedConnectedAccountProfileV4 = z.infer<
   typeof QualifiedConnectedAccountProfileV4Schema
 >;
+/**
+ * The group row id is the immutable lifetime token for a logical group ref.
+ * Keep it explicit in the exported V4 projection type so V4 mutation callers
+ * cannot accidentally treat a recreated group as the prior incarnation.
+ */
 export type QualifiedConnectedAccountGroupV4 = z.infer<
   typeof QualifiedConnectedAccountGroupV4Schema
->;
+> & Readonly<{
+  incarnation: z.infer<typeof QualifiedConnectedAccountGroupIncarnationV4Schema>;
+}>;
 export type QualifiedConnectedServiceUsageSourceV4 = z.infer<
   typeof QualifiedConnectedServiceUsageSourceV4Schema
 >;

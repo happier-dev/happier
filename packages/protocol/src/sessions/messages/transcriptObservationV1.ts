@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
 import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
+import { SessionTranscriptSourceTimestampMsSchema } from './transcriptSourceTimestampV1.js';
 
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1 = 'session-transcript-observation-v1' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1 = 'transcript-observation-capability-v1' as const;
@@ -11,7 +12,6 @@ export const SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 = 'transcript-observation-v
 const NonBlankStringSchema = z.string().refine((value) => value.trim().length > 0, {
   message: 'Expected a non-blank string',
 });
-const SourceTimestampSchema = z.number().int().min(0).max(8_640_000_000_000_000);
 
 export const SessionTranscriptObservationProvenanceV1Schema = z.object({
   kind: z.literal('non_dependent'),
@@ -20,6 +20,13 @@ export const SessionTranscriptObservationProvenanceV1Schema = z.object({
 
 export type SessionTranscriptObservationProvenanceV1 = z.infer<typeof SessionTranscriptObservationProvenanceV1Schema>;
 
+export function isRecoveredHistoryTranscriptObservationProvenance(
+  value: unknown,
+): value is SessionTranscriptObservationProvenanceV1 & { source: 'history' } {
+  const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(value);
+  return provenance.success && provenance.data.source === 'history';
+}
+
 export const SessionTranscriptObservationV1Schema = z.object({
   v: z.literal(1),
   sessionId: NonBlankStringSchema,
@@ -27,8 +34,8 @@ export const SessionTranscriptObservationV1Schema = z.object({
   sidechainId: NonBlankStringSchema.nullable().optional(),
   messageRole: SessionMessageRoleSchema.optional(),
   content: z.union([z.string().min(1), SessionStoredMessageContentSchema]),
-  createdAt: SourceTimestampSchema,
-  updatedAt: SourceTimestampSchema,
+  createdAt: SessionTranscriptSourceTimestampMsSchema,
+  updatedAt: SessionTranscriptSourceTimestampMsSchema,
   provenance: SessionTranscriptObservationProvenanceV1Schema,
   sessionEventType: z.literal('ready').optional(),
 }).strict().superRefine((value, context) => {
@@ -63,7 +70,7 @@ export const SessionTranscriptObservationAckV1Schema = z.union([
     localId: PendingLocalIdSchema,
     didWrite: z.boolean(),
     didUpdate: z.boolean().optional(),
-    ingestedAt: SourceTimestampSchema,
+    ingestedAt: SessionTranscriptSourceTimestampMsSchema,
   }).strict(),
   z.object({
     ok: z.literal(false),

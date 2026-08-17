@@ -35,7 +35,13 @@ export const SessionAuthoringCheckoutCreationDraftV1Schema = z.object({
   displayName: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable(),
   branchMode: z.enum(['new', 'existing']).optional(),
-}).passthrough();
+}).strict();
+
+const SessionAuthoringWindowsTerminalV1Schema = z.object({
+  launchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
+  console: z.enum(['hidden', 'visible']).optional(),
+  windowName: WindowsTerminalWindowNameSchema.optional(),
+}).strict();
 
 export const SessionAuthoringTerminalV1Schema = z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
@@ -43,8 +49,9 @@ export const SessionAuthoringTerminalV1Schema = z.object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
     tmpDir: z.union([z.string(), z.null()]).optional(),
-  }).passthrough().optional(),
-}).passthrough();
+  }).strict().optional(),
+  windows: SessionAuthoringWindowsTerminalV1Schema.optional(),
+}).strict();
 
 export const SessionAuthoringAutomationV1Schema = z.object({
   enabled: z.boolean(),

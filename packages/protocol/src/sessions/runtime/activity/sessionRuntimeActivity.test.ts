@@ -11,7 +11,10 @@ import {
   SessionRuntimeActivityStateSchema,
 } from './sessionRuntimeActivity.js';
 import {
+  SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
   SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
+  SessionPublisherAuthorityCheckAckSchema,
+  SessionPublisherAuthorityCheckRequestSchema,
   SessionRuntimeActivityCloseAckSchema,
   SessionRuntimeActivityCloseRequestSchema,
 } from './transport.js';
@@ -31,6 +34,47 @@ describe('Session Runtime Activity', () => {
       sessionId: 's1',
     });
     expect(SessionRuntimeActivityCloseAckSchema.safeParse({ status: 'closed', sessionId: 's2', extra: true }).success).toBe(false);
+  });
+
+  it('defines a strict check-only current-publisher transport', () => {
+    expect(SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT).toBe(
+      'session-publisher-authority-check',
+    );
+    expect(SessionPublisherAuthorityCheckRequestSchema.parse({
+      sessionId: 's1',
+    })).toEqual({ sessionId: 's1' });
+    expect(SessionPublisherAuthorityCheckRequestSchema.safeParse({
+      sessionId: 's1',
+      committedFenceMs: 1,
+    }).success).toBe(false);
+    expect(SessionPublisherAuthorityCheckAckSchema.parse({
+      status: 'current',
+      sessionId: 's1',
+      publisherPrecondition: {
+        machineId: 'machine-1',
+        committedFenceMs: 1_000,
+      },
+    })).toEqual({
+      status: 'current',
+      sessionId: 's1',
+      publisherPrecondition: {
+        machineId: 'machine-1',
+        committedFenceMs: 1_000,
+      },
+    });
+    expect(SessionPublisherAuthorityCheckAckSchema.parse({
+      status: 'superseded',
+      sessionId: 's1',
+    })).toEqual({ status: 'superseded', sessionId: 's1' });
+    expect(SessionPublisherAuthorityCheckAckSchema.safeParse({
+      status: 'current',
+      sessionId: 's1',
+      publisherPrecondition: {
+        machineId: 'machine-1',
+        committedFenceMs: 1_000,
+      },
+      permit: 'reusable',
+    }).success).toBe(false);
   });
 
   it.each([

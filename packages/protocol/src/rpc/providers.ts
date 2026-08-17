@@ -29,7 +29,6 @@ import { ProviderWireProtocolSchema } from '../providers/capabilities/v1.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from '../providers/catalog/limits.js';
 import { ProviderCatalogProbeModelsV1Schema } from '../providers/catalog/merge.js';
 import { PROVIDER_SETTINGS_LIMITS_V1 } from '../providers/settings/v1.js';
-import { PROVIDER_CONNECTION_SUMMARY_LIMITS_V1 } from '../providers/connections/limitsV1.js';
 import {
   ProviderDiscoveryCandidateIdV1Schema,
   ProviderDiscoveryCandidateV1Schema,
@@ -46,6 +45,7 @@ import {
 } from '../connect/connectedAccountPurposes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const ProviderRpcIdentityV1Schema = z.object({
   connectionId: ProviderConnectionIdSchema,
@@ -285,7 +285,8 @@ export type DaemonProviderAgentCompatibilitySummaryV1 = z.infer<typeof DaemonPro
 const DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema =
   z.object({
   purpose: ConnectedAccountPurposeIdSchema,
-  service: PluginContributionIdentityV1Schema,
+  service: asProtocolZod(PluginContributionIdentityV1Schema),
+  title: z.string().trim().min(1).optional(),
   required: z.boolean(),
   materializationKinds: PluginConnectedAccountMaterializationKindsSchema.optional(),
 }).strict();
@@ -317,26 +318,11 @@ const DaemonProviderConnectionDeploymentV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('managedLocal'),
     targetMachineId: ProviderMachineIdSchema,
     effects: z.object({
-      implementationIdentity: PluginContributionIdentityV1Schema,
-      process: z.object({
-        localServiceId: z.string().trim().min(1).max(256),
-        manager: z.literal('happier'),
-        lifetime: z.literal('session'),
-        network: z.literal('loopback'),
-        restart: z.literal('never'),
-      }).strict(),
-      dependency: z.object({
-        kind: z.literal('packaged-runtime-binary'),
-        directorySegments: z.array(
-          z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u),
-        ).min(1).max(8),
-        executableBaseName: z.string()
-          .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u),
-      }).strict(),
+      implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
       protocols: z.array(ProviderWireProtocolSchema).min(1).max(16),
       connectedAccountPurposes: z.array(
         DaemonProviderManagedConnectedAccountPurposeV1Schema,
-      ).min(1).max(32),
+      ).max(32),
     }).strict().nullable(),
   }).strict(),
 ]);
@@ -357,7 +343,7 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
   compatibility: z.array(DaemonProviderAgentCompatibilitySummaryV1Schema).max(128),
   grants: z.object({
     accountEnabled: z.boolean(),
-    enabledMachineIds: z.array(ProviderMachineIdSchema).max(PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection),
+    enabledMachineIds: z.array(ProviderMachineIdSchema),
     accountState: z.enum(['absent', 'valid', 'stale']).default('absent'),
     machineState: z.enum(['absent', 'valid', 'stale']).default('absent'),
     effectiveState: z.enum(['absent', 'valid', 'stale']).default('absent'),
@@ -365,7 +351,7 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
   credential: z.object({
     required: z.boolean(),
     accountBound: z.boolean(),
-    boundMachineIds: z.array(ProviderMachineIdSchema).max(PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection),
+    boundMachineIds: z.array(ProviderMachineIdSchema),
     keyUrl: ProviderHttpsUrlSchema.optional(),
   }).strict().nullable(),
   deployment: DaemonProviderConnectionDeploymentV1Schema.default({ kind: 'external' }),
@@ -373,7 +359,7 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
     targetMachineId: ProviderMachineIdSchema,
     connectedAccountPurposes: z.array(
       DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema,
-    ).min(1).max(32),
+    ).max(32),
   }).strict().nullable().default(null),
   endpoints: z.array(DaemonProviderConnectionEndpointViewV1Schema).max(4),
   scope: z.enum(['account', 'machine']).nullable(),
@@ -383,22 +369,12 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
   probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.nullable().default(null),
   runtime: ProviderConnectionRpcRuntimeSummaryV1Schema,
 }).strict().superRefine((value, context) => {
-  if (value.deployment.kind === 'managedLocal' && value.provenance !== 'first_party') {
-    context.addIssue({
-      code: 'custom',
-      path: ['deployment'],
-      message: 'Managed Provider connection effects require first-party provenance',
-    });
-  }
-  if (
-    value.managedLocalOption !== null
-    && (value.provenance !== 'first_party' || value.contributionKey === null)
-  ) {
+  if (value.managedLocalOption !== null && value.contributionKey === null) {
     context.addIssue({
       code: 'custom',
       path: ['managedLocalOption'],
       message:
-        'Managed Provider authoring requires a first-party contribution',
+        'Managed Provider authoring requires a contribution identity',
     });
   }
   if (value.deployment.kind === 'managedLocal' && value.endpoints.length > 0) {
@@ -424,16 +400,7 @@ const DaemonProviderConnectionDeploymentUpdateV1Schema = z.discriminatedUnion(
       kind: z.literal('managedLocal'),
       purposeBindingDefaults:
         ProviderConnectionPurposeBindingDefaultsV1Schema,
-    }).strict().superRefine((value, context) => {
-      if (Object.keys(value.purposeBindingDefaults).length === 0) {
-        context.addIssue({
-          code: 'custom',
-          path: ['purposeBindingDefaults'],
-          message:
-            'Managed deployment requires a connected-account purpose binding',
-        });
-      }
-    }),
+    }).strict(),
   ],
 );
 
@@ -478,8 +445,13 @@ export const DaemonProviderConnectionMutationRequestV1Schema = z.discriminatedUn
     displayName: z.string().trim().min(1).max(128).nullable(),
     savedSecretId: z.string().trim().min(1).max(256).nullable(),
   }).strict(),
-  ProviderConnectionMutationBaseV1Schema.extend({
+  z.object({
     action: z.literal('startLocal'),
+    machineId: ProviderMachineIdSchema,
+    // Compatibility reader for existing UI daemon-RPC callers; remove only
+    // after those producers stop sending it. The semantic SDK request is
+    // connection-free and its host projection never forwards an author value.
+    connectionId: ProviderConnectionIdSchema.optional(),
     contributionKey: ProviderContributionKeySchema,
   }).strict(),
   ProviderConnectionMutationBaseV1Schema.extend({
@@ -529,7 +501,7 @@ export type DaemonProviderConnectionMutationRequestV1 = z.infer<typeof DaemonPro
 export const DaemonProviderConnectionsDescribeResponseV1Schema = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
-    connections: z.array(DaemonProviderConnectionViewV1Schema).max(256),
+    connections: z.array(DaemonProviderConnectionViewV1Schema),
     available: z.array(z.object({
       contributionKey: ProviderContributionKeySchema,
       name: z.string().trim().min(1).max(128),
@@ -545,15 +517,15 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = z.discriminated
         id: ProviderEndpointOverrideV1Schema.shape.endpointTemplateId,
         protocol: ProviderWireProtocolSchema,
       }).strict()).max(4).default([]),
-    }).strict()).max(PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics),
-    discoveryCandidates: z.array(ProviderDiscoveryCandidateV1Schema).max(256),
+    }).strict()),
+    discoveryCandidates: z.array(ProviderDiscoveryCandidateV1Schema),
     discoveryCandidatesTruncated: z.boolean().default(false),
     localInstallations: z.array(ProviderLocalInstallationSummaryV1Schema).max(4_096).default([]),
     diagnosticsTruncated: z.boolean(),
     diagnostics: z.array(z.object({
       path: z.string().trim().min(1).max(512),
       reason: z.string().trim().min(1).max(128),
-    }).strict()).max(PROVIDER_CONNECTION_SUMMARY_LIMITS_V1.availableContributions),
+    }).strict()).max(PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics),
     availableTruncated: z.boolean(),
     authoringPreview: DaemonProviderContributionAuthoringPreviewV1Schema.optional(),
     deletedConnection: z.object({
@@ -691,7 +663,7 @@ export const DaemonProviderModelProjectionResponseV1Schema = z.discriminatedUnio
   z.object({
     status: z.literal('success'),
     agentTargetKey: BackendTargetKeyV2Schema,
-    groups: z.array(DaemonProviderModelProjectionGroupV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.connections),
+    groups: z.array(DaemonProviderModelProjectionGroupV1Schema),
     currentSelectionRecovery: DaemonProviderCurrentSelectionRecoveryV1Schema.nullable().optional(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),

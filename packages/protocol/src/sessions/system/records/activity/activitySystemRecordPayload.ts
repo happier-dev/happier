@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { SessionBackgroundTaskRecordV1Schema } from '../../../work/backgroundTask/backgroundTaskRecordV1.js';
 import { SessionWorkflowRunSnapshotV1Schema } from '../../../work/workflow/sessionWorkflowRunSnapshotV1.js';
 import { ActivitySessionSystemRecordKindSchema } from './activitySystemRecordKinds.js';
 
@@ -11,13 +12,23 @@ export const ActivityWorkflowRunSystemRecordPayloadSchema = z
   .passthrough();
 export type ActivityWorkflowRunSystemRecordPayload = z.infer<typeof ActivityWorkflowRunSystemRecordPayloadSchema>;
 
+export const ActivityBackgroundTaskSystemRecordPayloadSchema = z
+  .object({
+    kind: z.literal('background_task.v1'),
+    payload: SessionBackgroundTaskRecordV1Schema,
+  })
+  .passthrough();
+export type ActivityBackgroundTaskSystemRecordPayload = z.infer<typeof ActivityBackgroundTaskSystemRecordPayloadSchema>;
+
 export const ActivitySessionSystemRecordPayloadSchema = z.discriminatedUnion('kind', [
   ActivityWorkflowRunSystemRecordPayloadSchema,
+  ActivityBackgroundTaskSystemRecordPayloadSchema,
 ]);
 export type ActivitySessionSystemRecordPayload = z.infer<typeof ActivitySessionSystemRecordPayloadSchema>;
 
 export const ActivitySessionSystemRecordRawPayloadSchema = z.union([
   SessionWorkflowRunSnapshotV1Schema,
+  SessionBackgroundTaskRecordV1Schema,
 ]);
 export type ActivitySessionSystemRecordRawPayload = z.infer<typeof ActivitySessionSystemRecordRawPayloadSchema>;
 

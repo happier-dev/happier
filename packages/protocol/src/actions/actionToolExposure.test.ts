@@ -107,14 +107,6 @@ describe('actionToolExposure', () => {
       effectiveToolExposureMode: 'discoverable_only',
     }));
     expect(resolveActionSurfaceAvailability({
-      actionId: 'session.spawn_picker',
-      surface: 'agent',
-    })).toEqual(expect.objectContaining({
-      available: false,
-      reason: 'unsupported_surface',
-      availableSurfaces: expect.arrayContaining(['mcp', 'cli']),
-    }));
-    expect(resolveActionSurfaceAvailability({
       actionId: 'session.title.set',
       surface: 'agent',
       settings,
@@ -153,12 +145,17 @@ describe('actionToolExposure', () => {
       'cli',
       'rpc',
       'sdk',
+      'plugin',
     ]);
     expect(getActionSurfacePolicy('rpc')).toEqual(expect.objectContaining({
       settingsConfigurable: false,
       classification: 'internal',
     }));
     expect(getActionSurfacePolicy('sdk')).toEqual(expect.objectContaining({
+      settingsConfigurable: false,
+      classification: 'internal',
+    }));
+    expect(getActionSurfacePolicy('plugin')).toEqual(expect.objectContaining({
       settingsConfigurable: false,
       classification: 'internal',
     }));

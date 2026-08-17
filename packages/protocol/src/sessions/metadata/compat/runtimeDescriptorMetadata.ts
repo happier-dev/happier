@@ -9,6 +9,26 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function descriptorValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) =>
+        descriptorValuesEqual(value, right[index]));
+  }
+  const leftRecord = asRecord(left);
+  const rightRecord = asRecord(right);
+  if (!leftRecord || !rightRecord) return false;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) =>
+      Object.hasOwn(rightRecord, key)
+      && descriptorValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
 export type RuntimeDescriptorMetadataCarrier = Readonly<{
   runtimeDescriptorV1?: unknown;
   // Compat-only ingress for older persisted/session transport carriers.
@@ -48,6 +68,58 @@ export function readRawRuntimeDescriptorV1FromMetadata(metadata: unknown): unkno
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
   return metadataRecord.runtimeDescriptorV1 ?? metadataRecord.agentRuntimeDescriptorV1 ?? null;
+}
+
+/**
+ * Projects the canonical Runtime descriptor into the provider-vocabulary
+ * descriptor consumed by the supported predecessor. This is a wire-only
+ * adapter: current readers normalize the result back to `agentId`/`agent`.
+ */
+export function projectRuntimeDescriptorV1ForPredecessor(
+  value: unknown,
+): Readonly<Record<string, unknown>> {
+  const descriptor = RuntimeDescriptorV1Schema.parse(value);
+  const agent = asRecord(descriptor.agent);
+  if (!agent) {
+    throw new Error('Invalid canonical runtime descriptor agent payload');
+  }
+  const {
+    agentExtra,
+    providerExtra: existingProviderExtra,
+    providerSessionId,
+    ...agentPayload
+  } = agent;
+  if (
+    agentExtra !== undefined
+    && existingProviderExtra !== undefined
+    && !descriptorValuesEqual(agentExtra, existingProviderExtra)
+  ) {
+    throw new Error(
+      'Conflicting canonical and predecessor runtime descriptor payloads',
+    );
+  }
+  const {
+    agentId,
+    agent: _agent,
+    agentIdentity: _agentIdentity,
+    providerId: _providerId,
+    provider: _provider,
+    ...descriptorPayload
+  } = descriptor;
+  return {
+    ...descriptorPayload,
+    v: 1,
+    providerId: agentId,
+    provider: {
+      ...agentPayload,
+      ...(providerSessionId !== undefined
+        ? { vendorSessionId: providerSessionId }
+        : {}),
+      ...(agentExtra !== undefined || existingProviderExtra !== undefined
+        ? { providerExtra: agentExtra ?? existingProviderExtra }
+        : {}),
+    },
+  };
 }
 
 export function writeRuntimeDescriptorV1ToMetadata<TMetadata extends Record<string, unknown>>(

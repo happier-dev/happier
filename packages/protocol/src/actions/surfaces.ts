@@ -13,6 +13,7 @@ const RUNTIME_ACTION_DISABLED_SURFACES = Object.freeze({
   cli: false,
   rpc: false,
   sdk: false,
+  plugin: false,
 } satisfies ActionSurfaces);
 
 const RUNTIME_ACTION_ENABLED_SURFACES = Object.freeze({

@@ -8,12 +8,46 @@ import {
 } from '../contributions/ui/artifacts.js';
 import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 
+/**
+ * The strict grammar version emitted by public plugin UI build tooling.
+ * Keep this alongside the schema so generators consume the canonical owner
+ * instead of duplicating the literal in package-local compatibility code.
+ */
+export const PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1 = 1 as const;
+
 export const PluginUiArtifactsManifestTierV1Schema = z.enum([
   'hostedWeb',
   'reactNative',
 ]);
 export type PluginUiArtifactsManifestTierV1 =
   z.infer<typeof PluginUiArtifactsManifestTierV1Schema>;
+
+/**
+ * One executable export within a signed React Native Artifact graph. This is
+ * an Artifact declaration, not a contribution or activation registration.
+ */
+const PluginUiArtifactRepackModuleReferenceV1Schema = z.object({
+  containerName: z.string().trim().min(1),
+  modulePath: z.string().trim().min(1),
+  exportName: z.string().trim().min(1),
+}).strict();
+
+/**
+ * Native Re.Pack can address an export by federation container/module/export.
+ * The RN-web loader imports the signed entry module itself, so its truthful
+ * identity is only the named export; requiring fake container/path values
+ * would create a second, non-executable artifact fact.
+ */
+const PluginUiArtifactCollectionMigrationModuleReferenceV1Schema = z.union([
+  PluginUiArtifactRepackModuleReferenceV1Schema,
+  z.object({
+    exportName: z.string().trim().min(1),
+  }).strict(),
+]);
+
+function isRepackModuleReference(value: z.infer<typeof PluginUiArtifactCollectionMigrationModuleReferenceV1Schema>): value is z.infer<typeof PluginUiArtifactRepackModuleReferenceV1Schema> {
+  return 'containerName' in value && 'modulePath' in value;
+}
 
 export const PluginUiArtifactsManifestEntryV1Schema = z.object({
   contributionId: z.string().trim().min(1),
@@ -26,14 +60,15 @@ export const PluginUiArtifactsManifestEntryV1Schema = z.object({
     bundler: z.enum(['vite', 'repack']),
     version: z.string().trim().min(1),
   }).strict(),
-  repack: z.object({
-    containerName: z.string().trim().min(1),
-    modulePath: z.string().trim().min(1),
-    exportName: z.string().trim().min(1),
-  }).strict().optional(),
+  repack: PluginUiArtifactRepackModuleReferenceV1Schema.optional(),
+  /**
+   * Host-private candidate migration entrypoint. A renderer graph without this
+   * exact signed declaration must never be treated as migration code.
+   */
+  collectionMigrations: PluginUiArtifactCollectionMigrationModuleReferenceV1Schema.optional(),
   hostUiApiVersion: z.string().trim().min(1),
   compat: z.object({
-    react: z.string().trim().min(1),
+    react: z.string().trim().min(1).optional(),
     reactNative: z.string().trim().min(1).optional(),
     expoRuntime: z.string().trim().min(1).optional(),
     hermes: z.string().trim().min(1).optional(),
@@ -52,6 +87,13 @@ export const PluginUiArtifactsManifestEntryV1Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['builtWith', 'bundler'],
       message: `${value.tier} artifacts must be built with Vite`,
+    });
+  }
+  if (value.tier === 'hostedWeb' && Object.keys(value.compat).length !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['compat'],
+      message: 'Hosted web artifacts must not declare React Native compatibility',
     });
   }
   if (value.tier === 'reactNative') {
@@ -86,6 +128,13 @@ export const PluginUiArtifactsManifestEntryV1Schema = z.object({
         message: 'React Native artifacts must declare React Native compatibility',
       });
     }
+    if (!value.compat.react) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['compat', 'react'],
+        message: 'React Native artifacts must declare React compatibility',
+      });
+    }
     if (!isWebPlatform && !value.repack) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -100,11 +149,35 @@ export const PluginUiArtifactsManifestEntryV1Schema = z.object({
         message: 'React Native web artifacts must not declare Re.Pack module identity',
       });
     }
-  } else if (value.repack) {
+    if (
+      value.collectionMigrations
+      && !isWebPlatform
+      && (
+        !isRepackModuleReference(value.collectionMigrations)
+        ||
+        !value.repack
+        || value.collectionMigrations.containerName !== value.repack.containerName
+        || value.collectionMigrations.modulePath !== value.repack.modulePath
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['collectionMigrations'],
+        message: 'Native Collection migration exports must use the declared Re.Pack container and module identity',
+      });
+    }
+    if (isWebPlatform && value.collectionMigrations && isRepackModuleReference(value.collectionMigrations)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['collectionMigrations'],
+        message: 'React Native web Collection migration exports must declare only their exact named export',
+      });
+    }
+  } else if (value.repack || value.collectionMigrations) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['repack'],
-      message: 'Only native React Native artifacts may declare Re.Pack module identity',
+      path: value.repack ? ['repack'] : ['collectionMigrations'],
+      message: 'Only React Native artifacts may declare executable module identity',
     });
   }
 });
@@ -112,7 +185,7 @@ export type PluginUiArtifactsManifestEntryV1 =
   z.infer<typeof PluginUiArtifactsManifestEntryV1Schema>;
 
 export const PluginUiArtifactsManifestV1Schema = z.object({
-  version: z.literal(1),
+  version: z.literal(PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1),
   entries: z.array(PluginUiArtifactsManifestEntryV1Schema).default([]),
 }).strict().superRefine((value, ctx) => {
   const pathRegistry = createPortablePathCollisionRegistry();

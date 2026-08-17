@@ -13,7 +13,6 @@ import {
 } from '../selection/v1.js';
 import {
   PROVIDER_SETTINGS_LIMITS_V1,
-  ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
   assertProviderSettingsV1WithinLimits,
   type ProviderSettingsV1,
@@ -169,9 +168,6 @@ export function ensureDefaultProviderConnectionV1(
     && connection.source.kind === 'contribution'
     && areProviderContributionKeysEqualV1(connection.source.contributionKey, contributionKey));
   if (existing) return { settings: parsedSettings, connection: existing, changed: false };
-  if (parsedSettings.connections.length >= PROVIDER_SETTINGS_LIMITS_V1.connections) {
-    throw new ProviderSettingsLimitError('Provider connection limit reached');
-  }
   const id = ProviderConnectionIdSchema.parse(input.allocatedConnectionId);
   if (!Number.isFinite(input.now) || input.now < 0) throw new TypeError('Connection creation time must be non-negative');
   if (parsedSettings.connections.some((connection) => connection.id === id)

@@ -5,6 +5,10 @@ import type { ActionSpecWithoutApproval } from '../actionSpecs.js';
 import { RUNTIME_DANGER_ACTION_IDS } from '../danger.js';
 import { runtimeActionSideEffectClass } from '../safety.js';
 import { isRuntimeActionExecutorReal, resolveRuntimeActionSurfaces } from '../surfaces.js';
+import {
+  BrowserCommandDispatchResultV1Schema,
+  BrowserNavigateCommandV1Schema,
+} from '../../browser/control/v1.js';
 import { BROWSER_RUNTIME_ACTION_SPEC_FAMILY } from './browser.js';
 import { PassthroughEmptyObjectSchema, type RuntimeActionSpecFamily, type RuntimeActionSpecTextMap } from './common.js';
 import { LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY } from './localServices.js';
@@ -50,10 +54,36 @@ const RUNTIME_ACTION_PROJECTION_CONTRACT_DESCRIPTION =
 const RUNTIME_ACTION_PROJECTION_CONTRACT_HINT_DESCRIPTION =
   'No UI, tool, RPC, or SDK surface is enabled until the runtime owner wires a real executor and feature gate.';
 
-function createRuntimeActionSpec(actionId: RuntimeActionIdV1): ActionSpecWithoutApproval {
+type RuntimeActionSpecFor<
+  TActionId extends RuntimeActionIdV1,
+  TInputSchema extends z.ZodTypeAny,
+  TOutputSchema extends z.ZodTypeAny,
+  TPlugin extends boolean,
+> = Omit<ActionSpecWithoutApproval, 'id' | 'inputSchema' | 'outputSchema' | 'surfaces'> & Readonly<{
+  id: TActionId;
+  inputSchema: TInputSchema;
+  outputSchema: TOutputSchema;
+  surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ plugin: TPlugin }>;
+}>;
+
+function createRuntimeActionSpecFor<
+  const TActionId extends RuntimeActionIdV1,
+  const TInputSchema extends z.ZodTypeAny,
+  const TOutputSchema extends z.ZodTypeAny,
+  const TPlugin extends boolean,
+>(params: Readonly<{
+  actionId: TActionId;
+  inputSchema: TInputSchema;
+  outputSchema: TOutputSchema;
+  plugin: TPlugin;
+}>): RuntimeActionSpecFor<TActionId, TInputSchema, TOutputSchema, TPlugin> {
+  const { actionId } = params;
   const sideEffectClass = runtimeActionSideEffectClass(actionId);
   const title = RUNTIME_ACTION_TITLES[actionId] ?? actionId;
   const executorReal = isRuntimeActionExecutorReal(actionId);
+  if (params.plugin && !executorReal) {
+    throw new Error(`Runtime action ${actionId} cannot enable the plugin surface without a real executor.`);
+  }
   const humanDescription = RUNTIME_ACTION_DESCRIPTIONS[actionId] ?? title;
   return {
     id: actionId,
@@ -61,10 +91,13 @@ function createRuntimeActionSpec(actionId: RuntimeActionIdV1): ActionSpecWithout
     description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_DESCRIPTION,
     safety: RUNTIME_DANGER_ACTION_IDS.has(actionId) ? 'danger' : 'safe',
     placements: [],
-    surfaces: resolveRuntimeActionSurfaces(actionId),
+    surfaces: {
+      ...resolveRuntimeActionSurfaces(actionId),
+      plugin: params.plugin,
+    },
     sideEffectClass,
-    outputSchema: runtimeActionOutputSchema(actionId),
-    inputSchema: runtimeActionInputSchema(actionId),
+    outputSchema: params.outputSchema,
+    inputSchema: params.inputSchema,
     inputHints: {
       title,
       description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_HINT_DESCRIPTION,
@@ -73,6 +106,24 @@ function createRuntimeActionSpec(actionId: RuntimeActionIdV1): ActionSpecWithout
   };
 }
 
-export const RUNTIME_ACTION_SPECS: readonly ActionSpecWithoutApproval[] = Object.freeze(
+function createRuntimeActionSpec(actionId: RuntimeActionIdV1) {
+  if (actionId === 'browser.navigate') {
+    return createRuntimeActionSpecFor({
+      actionId,
+      inputSchema: BrowserNavigateCommandV1Schema,
+      outputSchema: BrowserCommandDispatchResultV1Schema,
+      plugin: true,
+    });
+  }
+
+  return createRuntimeActionSpecFor({
+    actionId,
+    inputSchema: runtimeActionInputSchema(actionId),
+    outputSchema: runtimeActionOutputSchema(actionId),
+    plugin: false,
+  });
+}
+
+export const RUNTIME_ACTION_SPECS = Object.freeze(
   RuntimeActionIdV1Schema.options.map(createRuntimeActionSpec),
-);
+) satisfies readonly ActionSpecWithoutApproval[];

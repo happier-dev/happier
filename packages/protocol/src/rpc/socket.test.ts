@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SOCKET_RPC_EVENTS,
+  SocketRpcCancellationPayloadSchema,
   SocketRpcTransportResponseEnvelopeV1Schema,
 } from './socket.js';
 
@@ -15,8 +16,19 @@ describe('SOCKET_RPC_EVENTS wire ABI', () => {
       ERROR: 'rpc-error',
       CALL: 'rpc-call',
       REQUEST: 'rpc-request',
+      CANCEL: 'rpc-cancel',
       MACHINE_TRANSFER_ENVELOPE: 'machine-transfer-envelope',
     });
+  });
+});
+
+describe('SocketRpcCancellationPayloadSchema', () => {
+  it('accepts only one bounded request correlation field', () => {
+    expect(SocketRpcCancellationPayloadSchema.parse({ requestId: 'rpc_request-1' }))
+      .toEqual({ requestId: 'rpc_request-1' });
+    expect(SocketRpcCancellationPayloadSchema.safeParse({ requestId: '' }).success).toBe(false);
+    expect(SocketRpcCancellationPayloadSchema.safeParse({ requestId: 'rpc_request-1', target: 'other' }).success)
+      .toBe(false);
   });
 });
 
@@ -53,6 +65,16 @@ describe('SocketRpcTransportResponseEnvelopeV1Schema', () => {
         kind: 'session.stop',
         status: 'stopped',
         sessionId: 'must-not-leak',
+      },
+    }).success).toBe(false);
+  });
+
+  it('requires an own result property when stopped proof is present', () => {
+    expect(SocketRpcTransportResponseEnvelopeV1Schema.safeParse({
+      v: 1,
+      acknowledgement: {
+        kind: 'session.stop',
+        status: 'stopped',
       },
     }).success).toBe(false);
   });

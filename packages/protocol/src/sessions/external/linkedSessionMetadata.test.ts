@@ -8,12 +8,13 @@ import {
   normalizeLinkedExternalSessionMetadataV1,
   readExternalHistoryImportV1FromMetadata,
   readLinkedExternalSessionV1FromMetadata,
+  resolveExternalHistoryImportV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
 } from '../index.js';
 
 describe('direct session linked metadata helpers', () => {
-  it('reads only the bounded canonical conversion tombstone shape', () => {
-    expect(readExternalHistoryImportV1FromMetadata({
+  it('reads canonical and released conversion tombstones into the canonical shape', () => {
+    const canonical = {
       externalHistoryImportV1: {
         v: 1,
         agentId: 'codex',
@@ -22,7 +23,8 @@ describe('direct session linked metadata helpers', () => {
         source: { kind: 'codexHome', home: 'user' },
         linkData: { projectId: 'project-1' },
       },
-    })).toEqual({
+    };
+    expect(readExternalHistoryImportV1FromMetadata(canonical)).toEqual({
       v: 1,
       agentId: 'codex',
       remoteSessionId: 'remote-1',
@@ -30,15 +32,95 @@ describe('direct session linked metadata helpers', () => {
       source: { kind: 'codexHome', home: 'user' },
       linkData: { projectId: 'project-1' },
     });
+    expect(readExternalHistoryImportV1FromMetadata(canonical))
+      .toEqual(canonical.externalHistoryImportV1);
+
     expect(readExternalHistoryImportV1FromMetadata({
       externalHistoryImportV1: {
         v: 1,
-        agentId: 'codex',
-        remoteSessionId: 'x'.repeat(2_001),
-        importedAtMs: 100,
+        providerId: 'codex',
+        remoteSessionId: 'remote-released',
+        importedAtMs: 101,
         source: { kind: 'codexHome', home: 'user' },
       },
+    })).toEqual({
+      v: 1,
+      agentId: 'codex',
+      remoteSessionId: 'remote-released',
+      importedAtMs: 101,
+      source: { kind: 'codexHome', home: 'user' },
+    });
+  });
+
+  it.each([
+    ['blank released identity', {
+      v: 1,
+      providerId: '   ',
+      remoteSessionId: 'remote-1',
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+    }],
+    ['noncanonical released identity', {
+      v: 1,
+      providerId: ' codex ',
+      remoteSessionId: 'remote-1',
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+    }],
+    ['released shape with an extra field', {
+      v: 1,
+      providerId: 'codex',
+      remoteSessionId: 'remote-1',
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+      extra: true,
+    }],
+    ['conflicting released and canonical identities', {
+      v: 1,
+      providerId: 'claude',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+    }],
+    ['released identity with canonical-only link data', {
+      v: 1,
+      providerId: 'codex',
+      remoteSessionId: 'remote-1',
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+      linkData: { projectId: 'project-1' },
+    }],
+    ['oversized remote session id', {
+      v: 1,
+      agentId: 'codex',
+      remoteSessionId: 'x'.repeat(2_001),
+      importedAtMs: 100,
+      source: { kind: 'codexHome', home: 'user' },
+    }],
+  ])('fails closed for a %s conversion tombstone', (_label, externalHistoryImportV1) => {
+    expect(readExternalHistoryImportV1FromMetadata({
+      externalHistoryImportV1,
     })).toBeNull();
+  });
+
+  it('distinguishes an absent conversion tombstone from a malformed present tombstone', () => {
+    expect(resolveExternalHistoryImportV1FromMetadata({})).toEqual({
+      state: 'absent',
+    });
+    expect(resolveExternalHistoryImportV1FromMetadata({
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'codex',
+        remoteSessionId: 'remote-1',
+        importedAtMs: 100,
+        source: { kind: 'codexHome', home: 'user' },
+        linkData: { projectId: 'canonical-only' },
+      },
+    })).toEqual({
+      state: 'invalid',
+      error: 'external_history_import_invalid',
+    });
   });
 
   it('normalizes legacy directSessionV1 metadata to canonical externalSessionV1', () => {
@@ -65,7 +147,6 @@ describe('direct session linked metadata helpers', () => {
       linkedAtMs: 42,
     });
     expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
-      directSessionV1: metadata.directSessionV1,
       externalSessionV1: {
         v: 1,
         agentId: 'claude',
@@ -75,6 +156,21 @@ describe('direct session linked metadata helpers', () => {
         linkedAtMs: 42,
       },
     });
+  });
+
+  it('does not trim a released directSessionV1 provider identity', () => {
+    const metadata = {
+      directSessionV1: {
+        v: 1,
+        providerId: ' codex ',
+        machineId: 'machine-legacy',
+        remoteSessionId: 'remote-legacy',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    };
+
+    expect(readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+    expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual(metadata);
   });
 
   it('reads released Claude source project identity forward into canonical linkData without adapting new writes', () => {
@@ -105,15 +201,19 @@ describe('direct session linked metadata helpers', () => {
       linkData: { projectId: 'project-released' },
       linkedAtMs: 42,
     });
-    expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toMatchObject({
-      directSessionV1: releasedLink,
+    expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
       externalSessionV1: {
+        v: 1,
         agentId: 'claude',
+        machineId: 'machine-released',
+        remoteSessionId: 'remote-released',
         source: {
           kind: 'claudeConfig',
+          configDir: '/tmp/claude',
           projectId: 'project-released',
         },
         linkData: { projectId: 'project-released' },
+        linkedAtMs: 42,
       },
     });
 
@@ -229,18 +329,10 @@ describe('direct session linked metadata helpers', () => {
         updatedAtMs: 30,
       },
     });
-    expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toMatchObject({
+    expect(normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
       externalSessionV1: {
-        followPolicyV1: {
-          policy: 'background_follow',
-          updatedAtMs: 30,
-        },
-      },
-      directSessionV1: {
-        followPolicyV1: {
-          policy: 'background_follow',
-          updatedAtMs: 30,
-        },
+        ...metadata.externalSessionV1,
+        followPolicyV1: metadata.directSessionV1.followPolicyV1,
       },
     });
   });
@@ -320,10 +412,73 @@ describe('direct session linked metadata helpers', () => {
     })).toBeNull();
   });
 
-  it('writes one canonical link plus the released rollback representation', () => {
+  it('rejects malformed known follow lifecycle fields at persisted-link admission', () => {
+    const base = {
+      v: 1 as const,
+      agentId: 'codex',
+      machineId: 'machine-1',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome' as const, home: 'user' as const },
+    };
+    const { agentId: _canonicalAgentId, ...releasedBase } = base;
+
+    expect(resolveLinkedExternalSessionMetadataV1({
+      externalSessionV1: {
+        ...base,
+        followStatusV1: {
+          v: 1,
+          status: 'not-a-status',
+          updatedAtMs: 10,
+        },
+      },
+    })).toEqual({
+      ok: false,
+      error: 'linked_session_invalid',
+      reason: 'canonical_invalid',
+    });
+    expect(resolveLinkedExternalSessionMetadataV1({
+      directSessionV1: {
+        ...releasedBase,
+        providerId: 'codex',
+        lastFollowIssueV1: {
+          v: 1,
+          code: '',
+          observedAtMs: 10,
+        },
+      },
+    })).toEqual({
+      ok: false,
+      error: 'linked_session_invalid',
+      reason: 'legacy_invalid',
+    });
+  });
+
+  it('rejects undeclared current link fields', () => {
+    const metadata = {
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-1',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'user' },
+        futureMutableState: { revision: 1 },
+      },
+    };
+
+    expect(resolveLinkedExternalSessionMetadataV1(metadata)).toEqual({
+      ok: false,
+      error: 'linked_session_invalid',
+      reason: 'canonical_invalid',
+    });
+  });
+
+  it('writes one canonical link and removes a legacy rollback representation', () => {
     expect(typeof (protocol as any).buildLinkedExternalSessionMetadataV1).toBe('function');
 
-    expect((protocol as any).buildLinkedExternalSessionMetadataV1({ path: '/tmp/project' }, {
+    expect((protocol as any).buildLinkedExternalSessionMetadataV1({
+      path: '/tmp/project',
+      directSessionV1: { v: 1, providerId: 'claude' },
+    }, {
       v: 1,
       agentId: 'codex',
       machineId: 'machine-canonical',
@@ -351,21 +506,6 @@ describe('direct session linked metadata helpers', () => {
           agent: {
             backendMode: 'appServer',
             agentExtra: { owner: 'codex', schemaId: 'codex.runtime', v: 1 },
-          },
-        },
-      },
-      directSessionV1: {
-        v: 1,
-        providerId: 'codex',
-        machineId: 'machine-canonical',
-        remoteSessionId: 'remote-canonical',
-        source: { kind: 'codexHome', home: 'user' },
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          providerId: 'codex',
-          provider: {
-            backendMode: 'appServer',
-            providerExtra: { owner: 'codex', schemaId: 'codex.runtime', v: 1 },
           },
         },
       },
@@ -405,13 +545,6 @@ describe('direct session linked metadata helpers', () => {
         qualifiedIdentity,
         linkData: { projectId: 'project-qualified' },
       },
-      directSessionV1: {
-        v: 1,
-        providerId: 'claude',
-        machineId: 'machine-qualified',
-        remoteSessionId: 'remote-qualified',
-        source: { kind: 'claudeConfig', configDir: '/tmp/project' },
-      },
     });
   });
 
@@ -450,15 +583,8 @@ describe('direct session linked metadata helpers', () => {
     const metadata = { externalSessionV1 };
 
     expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toEqual(externalSessionV1);
-    expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toMatchObject({
+    expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
       externalSessionV1,
-      directSessionV1: {
-        v: 1,
-        providerId: 'codex',
-        machineId: 'machine-canonical',
-        remoteSessionId: 'remote-canonical',
-        codexBackendMode: 'future-codex-mode',
-      },
     });
   });
 
@@ -562,17 +688,22 @@ describe('direct session linked metadata helpers', () => {
     });
   });
 
-  it('normalizes and rebuilds follow policy metadata', () => {
+  it('rejects undeclared follow policy fields before rebuilding metadata', () => {
     expect(typeof (protocol as any).readExternalSessionFollowPolicyV1).toBe('function');
     expect(typeof (protocol as any).buildExternalSessionFollowPolicyV1).toBe('function');
+
+    expect((protocol as any).readExternalSessionFollowPolicyV1({
+      v: 1,
+      policy: 'background_follow',
+      updatedAtMs: 42,
+      extra: 'ignored',
+    })).toBeNull();
 
     const parsed = (protocol as any).readExternalSessionFollowPolicyV1({
       v: 1,
       policy: 'background_follow',
       updatedAtMs: 42,
-      extra: 'ignored',
     });
-
     expect(parsed).toEqual({
       v: 1,
       policy: 'background_follow',

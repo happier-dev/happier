@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AgentDefinitionV1Schema } from '../agentDefinitionV1.js';
+import { ingestPluginManifestV2 } from '../manifest/ingest.js';
 import { PluginAgentContributionV2Schema } from './v2.js';
 
 function nativeAgent(cli: unknown) {
@@ -100,6 +101,98 @@ describe('native Agent CLI/auth metadata', () => {
         machineLoginKey: 'acme-code',
       },
     });
+  });
+
+  it('accepts bounded GitHub release extraction limits and rejects unsafe declarations', () => {
+    const cli = validCliMetadata();
+    const managed = {
+      kind: 'github_release_binary' as const,
+      githubRepo: 'openai/codex',
+      binaryName: 'codex',
+      assetNameByPlatform: {
+        darwin: { arm64: 'codex-package-aarch64-apple-darwin.tar.gz', x64: 'codex-package-x86_64-apple-darwin.tar.gz' },
+        linux: { arm64: 'codex-package-aarch64-unknown-linux-musl.tar.gz', x64: 'codex-package-x86_64-unknown-linux-musl.tar.gz' },
+        win32: { arm64: 'codex-package-aarch64-pc-windows-msvc.tar.gz', x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz' },
+      },
+      archiveEntriesByPlatform: {
+        darwin: [{ archivePath: 'bin/codex', destinationPath: 'bin/codex' }],
+        linux: [{ archivePath: 'bin/codex', destinationPath: 'bin/codex' }],
+        win32: [{ archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' }],
+      },
+      archiveExtractionLimits: {
+        maxFileBytes: 384 * 1024 * 1024,
+        maxExpandedBytes: 384 * 1024 * 1024,
+      },
+    };
+    const candidate = nativeAgent({
+      ...cli,
+      install: { ...cli.install, managed },
+    });
+
+    expect(PluginAgentContributionV2Schema.parse(candidate).cli?.install.managed).toEqual(managed);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...cli,
+      install: {
+        ...cli.install,
+        managed: {
+          ...managed,
+          archiveExtractionLimits: {
+            maxFileBytes: 384 * 1024 * 1024,
+            maxExpandedBytes: (384 * 1024 * 1024) - 1,
+          },
+        },
+      },
+    })).success).toBe(false);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...cli,
+      install: {
+        ...cli.install,
+        managed: {
+          ...managed,
+          archiveExtractionLimits: {
+            maxFileBytes: (512 * 1024 * 1024) + 1,
+            maxExpandedBytes: (512 * 1024 * 1024) + 1,
+          },
+        },
+      },
+    })).success).toBe(false);
+  });
+
+  it('preserves managed GitHub archive declarations through full manifest ingestion', () => {
+    const cli = validCliMetadata();
+    const managed = {
+      kind: 'github_release_binary' as const,
+      githubRepo: 'openai/codex',
+      binaryName: 'codex',
+      assetNameByPlatform: {
+        darwin: { arm64: 'codex-package-aarch64-apple-darwin.tar.gz', x64: 'codex-package-x86_64-apple-darwin.tar.gz' },
+        linux: { arm64: 'codex-package-aarch64-unknown-linux-musl.tar.gz', x64: 'codex-package-x86_64-unknown-linux-musl.tar.gz' },
+        win32: { arm64: 'codex-package-aarch64-pc-windows-msvc.tar.gz', x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz' },
+      },
+      archiveEntriesByPlatform: {
+        darwin: [{ archivePath: 'bin/codex', destinationPath: 'bin/codex' }],
+        linux: [{ archivePath: 'bin/codex', destinationPath: 'bin/codex' }],
+        win32: [{ archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' }],
+      },
+      archiveExtractionLimits: { maxFileBytes: 1024, maxExpandedBytes: 2048 },
+    };
+    const result = ingestPluginManifestV2({
+      schemaVersion: 2,
+      id: 'com.acme.fixture',
+      version: '1.0.0',
+      displayName: 'Fixture',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/plugin.js' },
+      hostAccess: { required: [], optional: [] },
+      contributes: {
+        agents: [nativeAgent({ ...cli, install: { ...cli.install, managed } })],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.contributes.agents?.[0]?.cli?.install.managed).toEqual(managed);
   });
 
   it('rejects unknown fields and plugin-authored login commands', () => {

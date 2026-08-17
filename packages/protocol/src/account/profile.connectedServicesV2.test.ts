@@ -22,6 +22,7 @@ describe('AccountProfileSchema connectedServicesV2', () => {
         ref: { service, accountId: 'account/with/path' },
         status: 'connected',
         authenticationModeId: 'manual',
+        revisionSemantics: 'revisioned',
         credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
         configurationReady: false,
         configurationRevision: null,
@@ -31,6 +32,7 @@ describe('AccountProfileSchema connectedServicesV2', () => {
       connectedAccountGroupsV4: [{
         v: 1,
         ref: { service, groupId: 'fallback' },
+        incarnation: 'qualified-group-row-fallback',
         displayName: null,
         policy: {},
         activeConnectedAccountId: 'account/with/path',

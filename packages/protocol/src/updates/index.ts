@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.js';
+import { AutomationRunStateChangedHostEventV1Schema } from '../plugins/events/hostReferencesV1.js';
 import { ExternalSessionTranscriptInvalidationV1Schema } from '../sessions/external/secureRefreshV1.js';
 import { ExecutionRunPublicStateSchema } from '../execution/runs/index.js';
 import { SessionMessageAttentionImpactSchema } from '../sessions/messages/transcriptRawRecordV1.js';
@@ -12,11 +14,10 @@ import {
   parseSessionRuntimeActivityProjectionFields,
   SessionRuntimeActivityStateSchema,
 } from '../sessions/runtime/activity/index.js';
-import { isSessionOwnerMetadataCiphertextV1 } from '../sessions/metadata/sessionMetadataEnvelopesV1.js';
+import { SessionOwnerMetadataEnvelopeV1Schema } from '../sessions/metadata/sessionMetadataEnvelopesV1.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
-const SessionOwnerMetadataCiphertextSchema = z.string().refine(isSessionOwnerMetadataCiphertextV1);
 const SessionMessageRoleMetadataSchema = SessionMessageRoleSchema.nullable().optional();
 const SessionEncryptionModeSchema = z.enum(['e2ee', 'plain']);
 
@@ -80,7 +81,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     metadata: Base64Schema,
     metadataVersion: z.number().int(),
     metadataLayoutVersion: z.number().int().nonnegative().optional(),
-    ownerMetadata: SessionOwnerMetadataCiphertextSchema.nullable().optional(),
+    ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema.nullable().optional(),
     agentState: Base64Schema.nullable(),
     agentStateVersion: z.number().int(),
     dataEncryptionKey: Base64Schema.nullable(),
@@ -97,7 +98,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     metadata: VersionedNullableStringSchema.optional(),
     metadataLayoutVersion: z.number().int().nonnegative().optional(),
     ownerMetadata: z.object({
-      value: SessionOwnerMetadataCiphertextSchema,
+      value: SessionOwnerMetadataEnvelopeV1Schema,
     }).strict().optional(),
     agentState: VersionedNullableStringSchema.optional(),
     active: z.boolean().optional(),
@@ -146,13 +147,27 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     t: z.literal('automation-run-updated'),
     runId: z.string(),
     automationId: z.string(),
-    state: z.enum(['queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled', 'expired']),
+    state: AutomationRunStateV3Schema,
     scheduledAt: TimestampMsSchema,
     startedAt: TimestampMsSchema.nullable().optional(),
     finishedAt: TimestampMsSchema.nullable().optional(),
     updatedAt: TimestampMsSchema,
     machineId: z.string().nullable().optional(),
+    // Current producers publish the Run lease generation so a worker can
+    // reject a same-machine reclaim. Older supported producers omit it.
+    attempt: z.number().int().min(0).optional(),
   }).passthrough(),
+  z.object({
+    t: z.literal('automation-run-state-changed'),
+    ...AutomationRunStateChangedHostEventV1Schema.shape,
+  }).strict().superRefine((value, context) => {
+    const { t: _type, ...payload } = value;
+    const parsed = AutomationRunStateChangedHostEventV1Schema.safeParse(payload);
+    if (parsed.success) return;
+    for (const issue of parsed.error.issues) {
+      context.addIssue({ ...issue, path: issue.path });
+    }
+  }),
   z.object({
     t: z.literal('automation-assignment-updated'),
     machineId: z.string(),
@@ -160,6 +175,12 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     enabled: z.boolean(),
     updatedAt: TimestampMsSchema,
   }).passthrough(),
+  z.object({
+    t: z.literal('automation-source-status-updated'),
+  }).strict(),
+  z.object({
+    t: z.literal('account-change'),
+  }).strict(),
   z.object({
     t: z.literal('delete-session'),
     sid: z.string(),

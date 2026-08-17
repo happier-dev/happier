@@ -46,17 +46,81 @@ export type PluginUiHostRuntimeExternalSpecifierV1 =
 
 /**
  * The shape installed on `globalThis[PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY]` by
- * the host before `import()`-ing a web-target plugin UI bundle. Keys mirror
- * `PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS` (specifier -> host-provided
- * module namespace), so every externalized specifier has a value to read.
+ * the host before `import()`-ing a web-target plugin UI bundle. Keys are
+ * DERIVED from `PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS` (specifier ->
+ * host-provided module namespace), so adding a specifier to the list alone
+ * makes the host installer's `satisfies` fail to compile rather than shipping
+ * an externalized specifier nothing provides.
  */
-export type PluginUiHostRuntimeExternalGlobalV1 = Readonly<{
-    react: unknown;
-    'react/jsx-runtime': unknown;
-    'react/jsx-dev-runtime': unknown;
-    'react-native-web': unknown;
-    '@happier-dev/plugin-sdk/ui/client': unknown;
-}>;
+export type PluginUiHostRuntimeExternalGlobalV1 = Readonly<
+    Record<PluginUiHostRuntimeExternalSpecifierV1, unknown>
+>;
+
+/**
+ * EU-6: the NATIVE (React Native / Re.Pack Module Federation) counterpart of
+ * `PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS`, and the single owner of the
+ * host-provided singleton closure for native-target plugin UI artifacts.
+ *
+ * Both ends derive from THIS list — `packages/plugin-sdk`'s Re.Pack build
+ * preset (`external` + the `shared` Module Federation map, every entry
+ * `singleton:true, import:false`) and `apps/ui`'s Module Federation host share
+ * scope (`moduleFederationHostSharedScope.ts`, which hands the host's own
+ * module instances to a remote container's `container.init(shareScope)`).
+ *
+ * It exists because those two lists were hand-maintained and diverged
+ * (UI-D14): the build externalized Reanimated and both React Navigation
+ * packages with `import:false` — a promise that the plugin bundle contains NO
+ * fallback copy — while the host share scope provided only the React runtimes
+ * and `react-native`. A plugin importing navigation therefore built cleanly
+ * and failed only on device.
+ *
+ * Membership rule (plan §3.8/§EU-6): a specifier belongs here only when
+ * duplicate copies would break singleton identity AND the host genuinely
+ * provides the module. Share-scope VERSIONS are deliberately NOT owned here —
+ * they stay declared next to the host providers, in lockstep with the host
+ * app's own `package.json` (see `moduleFederationHostSharedScope.ts`).
+ *
+ * Inventoried and deliberately NOT in the closure, so the next reader does not
+ * re-litigate them:
+ * - `react-native-screens`, `react-native-safe-area-context`,
+ *   `react-native-gesture-handler`: `@react-navigation/native-stack` reaches
+ *   screens/safe-area from the HOST copy it is itself loaded from, so a plugin
+ *   never composes its own instance with the host navigator, and no public
+ *   `@happier-dev/plugin-ui` component consumes them. Externalizing them today
+ *   would add `import:false` promises with no consumer. They become closure
+ *   members the moment a public component or the plugin-local stack needs a
+ *   provider instance shared with the host (safe-area is the likeliest first).
+ * - portal/overlay coordination, focus management and toast/dialog
+ *   presentation: `apps/ui` carries **no** third-party package for these (no
+ *   floating-ui, no portal, no toast dependency) — they are app-internal
+ *   modules whose shared home is `@happier-dev/plugin-ui`, so their closure
+ *   question is the `plugin-ui` one below, not a separate specifier.
+ * - `@happier-dev/plugin-ui` itself: blocked on EU-0 item 12 (W-04); §3.10.1
+ *   forbids externalizing it while its compatibility authority is unsettled.
+ * - `react-native-web`: web-closure only, and never valid natively.
+ */
+export const PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
+    ...PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
+    'react-native',
+    'react-native-reanimated',
+    '@react-navigation/native',
+    '@react-navigation/native-stack',
+] as const);
+
+export type PluginUiHostNativeRuntimeExternalSpecifierV1 =
+    typeof PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS[number];
+
+/**
+ * The native provided-namespace shape, mirroring the web
+ * `PluginUiHostRuntimeExternalGlobalV1` invariant: specifier -> the host's own
+ * module namespace. The native host does not install these on a global (the
+ * Module Federation share scope is the transport), but the closure obligation
+ * is identical, so the host's provider table is typed against this record and
+ * a specifier added to the list alone breaks that host provider.
+ */
+export type PluginUiHostNativeRuntimeExternalModulesV1 = Readonly<
+    Record<PluginUiHostNativeRuntimeExternalSpecifierV1, unknown>
+>;
 
 export function isPluginUiHostRuntimeExternalGlobalInstalled(
     globalScope: Readonly<Record<string, unknown>> = globalThis as unknown as Readonly<Record<string, unknown>>,

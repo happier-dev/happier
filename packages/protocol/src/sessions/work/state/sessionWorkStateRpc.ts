@@ -359,25 +359,45 @@ export const SessionUsageLimitWaitResumeCancelRequestV1Schema = z
   .passthrough();
 export type SessionUsageLimitWaitResumeCancelRequestV1 = z.infer<typeof SessionUsageLimitWaitResumeCancelRequestV1Schema>;
 
-export const SessionUsageLimitCheckNowRequestV1Schema = z.preprocess(
+const SessionUsageLimitCheckNowCanonicalRequestV1Schema = z.object({
+  sessionId: SessionIdRequestFieldSchema,
+  agentId: z.string().trim().min(1).optional(),
+  operation: z.enum(['check_now', 'switch_account_now']).optional(),
+  resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
+}).passthrough();
+
+export type SessionUsageLimitCheckNowRequestV1Input = z.input<
+  typeof SessionUsageLimitCheckNowCanonicalRequestV1Schema
+> & Readonly<{ provider?: string }>;
+
+export const SessionUsageLimitCheckNowRequestV1Schema = z.preprocess<
+  unknown,
+  typeof SessionUsageLimitCheckNowCanonicalRequestV1Schema,
+  SessionUsageLimitCheckNowRequestV1Input
+>(
   normalizeLegacyUsageLimitAgentIdentity,
-  z.object({
-    sessionId: SessionIdRequestFieldSchema,
-    agentId: z.string().trim().min(1).optional(),
-    operation: z.enum(['check_now', 'switch_account_now']).optional(),
-    resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
-  }).passthrough(),
+  SessionUsageLimitCheckNowCanonicalRequestV1Schema,
 );
 export type SessionUsageLimitCheckNowRequestV1 = z.infer<typeof SessionUsageLimitCheckNowRequestV1Schema>;
 
-export const SessionUsageLimitConsumeResetCreditRequestV1Schema = z.preprocess(
+const SessionUsageLimitConsumeResetCreditCanonicalRequestV1Schema = z.object({
+  sessionId: SessionIdRequestFieldSchema,
+  agentId: z.string().trim().min(1).optional(),
+  issueFingerprint: IssueFingerprintFieldSchema.optional(),
+  resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
+}).passthrough();
+
+export type SessionUsageLimitConsumeResetCreditRequestV1Input = z.input<
+  typeof SessionUsageLimitConsumeResetCreditCanonicalRequestV1Schema
+> & Readonly<{ provider?: string }>;
+
+export const SessionUsageLimitConsumeResetCreditRequestV1Schema = z.preprocess<
+  unknown,
+  typeof SessionUsageLimitConsumeResetCreditCanonicalRequestV1Schema,
+  SessionUsageLimitConsumeResetCreditRequestV1Input
+>(
   normalizeLegacyUsageLimitAgentIdentity,
-  z.object({
-    sessionId: SessionIdRequestFieldSchema,
-    agentId: z.string().trim().min(1).optional(),
-    issueFingerprint: IssueFingerprintFieldSchema.optional(),
-    resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
-  }).passthrough(),
+  SessionUsageLimitConsumeResetCreditCanonicalRequestV1Schema,
 );
 export type SessionUsageLimitConsumeResetCreditRequestV1 =
   z.infer<typeof SessionUsageLimitConsumeResetCreditRequestV1Schema>;

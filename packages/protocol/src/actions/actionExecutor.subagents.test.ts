@@ -16,7 +16,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
@@ -50,9 +49,9 @@ describe('ActionExecutor subagent registry actions', () => {
       subagentsUpsert: async (args) => {
         calls.push({ kind: 'upsert', args });
         return {
-          ...args,
-          status: args.status ?? 'pending',
-          createdAt: args.createdAt ?? 123,
+          ...args.input,
+          status: args.input.status ?? 'pending',
+          createdAt: args.input.createdAt ?? 123,
         };
       },
     });
@@ -88,10 +87,13 @@ describe('ActionExecutor subagent registry actions', () => {
       {
         kind: 'upsert',
         args: {
-          id: 'subagent-1',
-          parentSessionId: 'session-1',
-          origin: 'plugin',
-          kind: 'custom',
+          input: {
+            id: 'subagent-1',
+            parentSessionId: 'session-1',
+            origin: 'plugin',
+            kind: 'custom',
+          },
+          caller: { kind: 'host' },
         },
       },
     ]);
@@ -117,6 +119,97 @@ describe('ActionExecutor subagent registry actions', () => {
       errorCode: 'subagent_write_forbidden',
       error: 'subagent_write_forbidden',
     });
+  });
+
+  it('keeps raw subagent reads undiscoverable and unusable on the Plugin Action surface', async () => {
+    const subagentsList = vi.fn(async () => []);
+    const subagentsGet = vi.fn(async () => null);
+    const subagentsWatch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
+    const executor = createActionExecutor(createDeps({
+      subagentsList,
+      subagentsGet,
+      subagentsWatch,
+    }));
+    const context = {
+      surface: 'plugin' as const,
+      actionCaller: {
+        kind: 'plugin' as const,
+        pluginId: 'happier.agent.acme',
+        contributionLocalId: 'acme.sample',
+      },
+    };
+
+    for (const [actionId, input] of [
+      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
+      ['sessions.subagents.get', { id: 'other-subagent', parentSessionId: 'other-session' }],
+      ['sessions.subagents.watch', { id: 'other-subagent', parentSessionId: 'other-session' }],
+    ] as const) {
+      await expect(executor.execute('action.spec.get', { id: actionId }, context)).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'action_disabled',
+        details: { reason: 'unsupported_surface', surface: 'plugin' },
+      });
+      await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'action_disabled',
+        details: { reason: 'unsupported_surface', surface: 'plugin' },
+      });
+    }
+
+    expect(subagentsList).not.toHaveBeenCalled();
+    expect(subagentsGet).not.toHaveBeenCalled();
+    expect(subagentsWatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects raw subagent mutations on the Plugin Action surface before their deps', async () => {
+    const upsert = vi.fn(async (_args: unknown) => ({}));
+    const updateStatus = vi.fn(async (_args: unknown) => ({}));
+    const complete = vi.fn(async (_args: unknown) => ({}));
+    const executor = createActionExecutor(createDeps({
+      subagentsUpsert: upsert,
+      subagentsUpdateStatus: updateStatus,
+      subagentsComplete: complete,
+    }));
+    const caller = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.agent.acme',
+      contributionLocalId: 'acme.sample',
+    };
+    const context = { surface: 'plugin' as const, actionCaller: caller };
+    const upsertInput = {
+      id: 'subagent-1',
+      parentSessionId: 'other-session',
+      origin: 'agent' as const,
+      kind: 'native' as const,
+      agentRef: { agentId: 'acme.sample' },
+    };
+    const updateInput = {
+      id: 'subagent-1',
+      parentSessionId: 'other-session',
+      status: 'running' as const,
+    };
+    const completeInput = {
+      id: 'subagent-1',
+      parentSessionId: 'other-session',
+      status: 'completed' as const,
+    };
+
+    for (const [actionId, input] of [
+      ['sessions.subagents.upsert', upsertInput],
+      ['sessions.subagents.updateStatus', updateInput],
+      ['sessions.subagents.complete', completeInput],
+    ] as const) {
+      await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
+        .resolves.toMatchObject({
+          ok: false,
+          errorCode: 'action_disabled',
+          details: { reason: 'unsupported_surface', surface: 'plugin' },
+        });
+    }
+
+    expect(upsert).not.toHaveBeenCalled();
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it('uses the default session id and forwards limit for subagent read actions', async () => {

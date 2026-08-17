@@ -7,7 +7,6 @@ import {
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema } from '../ids.js';
 import { CustomProviderTemplateV1Schema } from './customTemplateV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
-import { PROVIDER_SETTINGS_LIMITS_V1 } from '../settings/limits.js';
 
 export const ProviderConnectionSourceV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('contribution'), contributionKey: ProviderContributionKeySchema }).strict(),
@@ -88,9 +87,6 @@ export const ProviderConnectionV1Schema = z.object({
   uniqueOverrides(value.endpointOverrides ?? [], ctx, ['endpointOverrides']);
   for (const [machineId, overrides] of Object.entries(value.endpointOverridesByMachineId ?? {})) {
     uniqueOverrides(overrides, ctx, ['endpointOverridesByMachineId', machineId]);
-  }
-  if (Object.keys(value.endpointOverridesByMachineId ?? {}).length > PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection) {
-    ctx.addIssue({ code: 'custom', path: ['endpointOverridesByMachineId'], message: 'Too many machine endpoint-override branches' });
   }
   if (value.source.kind === 'custom') {
     const declaredEndpointIds = new Set(value.source.template.endpointTemplates.map((endpoint) => endpoint.id));

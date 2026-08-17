@@ -3,6 +3,7 @@ import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity
 import { PluginConnectedAccountAuthenticationV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { ConnectedServiceIdSchema } from './connectedServiceSchemas.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const ProjectedLocalizedTextSchema = z.union([
   z.string().trim().min(1),
@@ -11,8 +12,8 @@ const ProjectedLocalizedTextSchema = z.union([
 
 export const ConnectedAccountUiProjectionEntryV1Schema = z.object({
   id: z.string().trim().min(1),
-  serviceId: PluginContributionLocalIdSchema,
-  pluginId: PluginIdSchema.optional(),
+  serviceId: asProtocolZod(PluginContributionLocalIdSchema),
+  pluginId: asProtocolZod(PluginIdSchema).optional(),
   provenance: z.enum(['first_party', 'external']),
   sourceKind: z.string().trim().min(1),
   title: ProjectedLocalizedTextSchema,

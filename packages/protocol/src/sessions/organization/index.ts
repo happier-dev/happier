@@ -1,4 +1,9 @@
 export {
+  SessionOrganizationAccountEncryptionMigrationInventorySchema,
+  type SessionOrganizationAccountEncryptionMigrationInventory,
+} from './accountEncryptionMigrationInventory.js';
+
+export {
   SESSION_ORGANIZATION_FOLDER_DELETE_ASSIGNMENT_BEHAVIORS,
   SESSION_ORGANIZATION_FOLDER_DELETE_ASSIGNMENTS_DEFAULT,
   SESSION_ORGANIZATION_LABEL_KINDS,
@@ -22,7 +27,9 @@ export {
 
 export {
   SessionOrganizationContentEnvelopeSchema,
+  SessionOrganizationDisplayStateSchema,
   type SessionOrganizationContentEnvelope,
+  type SessionOrganizationDisplayState,
 } from './content.js';
 
 export {

@@ -84,3 +84,32 @@ describe('session turn provider checkpoint persistence contract', () => {
     }).success).toBe(false);
   });
 });
+
+describe('session turn final assistant anchor contract', () => {
+  const completeMutation = {
+    v: 1 as const,
+    sessionId: 'session-1',
+    mutationId: 'complete:turn-1',
+    action: 'complete' as const,
+    turnId: 'turn-1',
+    observedAt: 100,
+  };
+
+  it('accepts an exact final assistant sequence or explicit no-final result only on completion', () => {
+    for (const finalAssistantMessageSeq of [42, null] as const) {
+      expect(SessionTurnMutationV1Schema.safeParse({
+        ...completeMutation,
+        transcriptAnchors: { finalAssistantMessageSeq },
+      }).success).toBe(true);
+    }
+    expect(SessionTurnMutationV1Schema.safeParse({
+      ...completeMutation,
+      transcriptAnchors: { finalAssistantMessageSeq: -1 },
+    }).success).toBe(false);
+    expect(SessionTurnMutationV1Schema.safeParse({
+      ...completeMutation,
+      action: 'touch_active',
+      transcriptAnchors: { finalAssistantMessageSeq: 42 },
+    }).success).toBe(false);
+  });
+});

@@ -1,6 +1,20 @@
+import { z } from 'zod';
+
 import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from './actionIds.js';
-import type { RuntimeActionHostEffectClass } from './actionSpecs.js';
 import { RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS } from './danger.js';
+
+export const ActionSafetySchema = z.enum(['safe', 'danger']);
+export type ActionSafety = z.infer<typeof ActionSafetySchema>;
+
+export const RuntimeActionHostEffectClassSchema = z.enum([
+  'readOnly',
+  'mutating',
+  'destructive',
+  'recording',
+  'externalNavigation',
+  'diagnostic',
+]);
+export type RuntimeActionHostEffectClass = z.infer<typeof RuntimeActionHostEffectClassSchema>;
 
 export type RuntimeActionSideEffectClass = 'none' | 'read' | 'write' | 'external' | 'danger';
 

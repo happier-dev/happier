@@ -79,6 +79,19 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
   CONNECTED_SERVICE_UX_DIAGNOSTIC: 'connected_service_ux_diagnostic',
   /** A strict provider-domain refusal preserved for UI/CLI recovery without parsing message prose. */
   PROVIDER_ERROR: 'provider_error',
+  /**
+   * The exact `POST /v1/sessions` organization-placement rejection. This is
+   * deliberately narrower than the public Action error taxonomy: transport
+   * failures and unavailable organization state must not be reclassified as
+   * this server-originated refusal.
+   */
+  SESSION_CREATION_ORGANIZATION_INVALID: 'session_creation_organization_invalid',
+  /**
+   * The existing Session has the same create-or-rejoin tag but a different
+   * immutable creation recipe. This is distinct from mutable organization
+   * placement and must terminate the losing creation attempt.
+   */
+  SESSION_CREATION_CORRESPONDENCE_CONFLICT: 'session_creation_correspondence_conflict',
 } as const;
 
 export type SpawnSessionErrorDetailKind =
@@ -115,10 +128,44 @@ export type ProviderSpawnErrorDetail = Readonly<{
   providerError: ProviderErrorV1;
 }>;
 
+/**
+ * Safe terminal result emitted only when the server rejected the requested
+ * creation-time organization placement with its explicit stable error code.
+ */
+export const SessionCreationOrganizationInvalidSpawnErrorDetailSchema = z.object({
+  kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ORGANIZATION_INVALID),
+  code: z.literal('organization_invalid'),
+}).strict();
+export type SessionCreationOrganizationInvalidSpawnErrorDetail = z.infer<
+  typeof SessionCreationOrganizationInvalidSpawnErrorDetailSchema
+>;
+
+/**
+ * Safe terminal result emitted when an existing Session's immutable
+ * create-or-rejoin correspondence differs from the admitted request.
+ */
+export const SessionCreationCorrespondenceConflictSpawnErrorDetailSchema = z.object({
+  kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_CORRESPONDENCE_CONFLICT),
+  code: z.literal('creation_conflict'),
+}).strict();
+export type SessionCreationCorrespondenceConflictSpawnErrorDetail = z.infer<
+  typeof SessionCreationCorrespondenceConflictSpawnErrorDetailSchema
+>;
+
+/** The only two exact server/API terminal creation refusals carried to a daemon spawn waiter. */
+export const SessionCreationTerminalSpawnErrorDetailSchema = z.union([
+  SessionCreationOrganizationInvalidSpawnErrorDetailSchema,
+  SessionCreationCorrespondenceConflictSpawnErrorDetailSchema,
+]);
+export type SessionCreationTerminalSpawnErrorDetail = z.infer<
+  typeof SessionCreationTerminalSpawnErrorDetailSchema
+>;
+
 export type SpawnSessionErrorDetail =
   | ConnectedServiceResumeUnreachableSpawnErrorDetail
   | ConnectedServiceUxDiagnosticSpawnErrorDetail
-  | ProviderSpawnErrorDetail;
+  | ProviderSpawnErrorDetail
+  | SessionCreationTerminalSpawnErrorDetail;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -314,6 +361,20 @@ function normalizeProviderSpawnErrorDetail(
   return { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR, providerError: providerError.data };
 }
 
+function normalizeSessionCreationOrganizationInvalidSpawnErrorDetail(
+  detail: Record<string, unknown>,
+): SessionCreationOrganizationInvalidSpawnErrorDetail | undefined {
+  const parsed = SessionCreationOrganizationInvalidSpawnErrorDetailSchema.safeParse(detail);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function normalizeSessionCreationCorrespondenceConflictSpawnErrorDetail(
+  detail: Record<string, unknown>,
+): SessionCreationCorrespondenceConflictSpawnErrorDetail | undefined {
+  const parsed = SessionCreationCorrespondenceConflictSpawnErrorDetailSchema.safeParse(detail);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export function isConnectedServiceResumeUnreachableSpawnErrorDetail(
   value: unknown,
 ): value is ConnectedServiceResumeUnreachableSpawnErrorDetail {
@@ -338,10 +399,34 @@ export function isConnectedServiceUxDiagnosticSpawnErrorDetail(
     && isPublicSafeUxDiagnostic(detail.uxDiagnostic);
 }
 
+export function isSessionCreationOrganizationInvalidSpawnErrorDetail(
+  value: unknown,
+): value is SessionCreationOrganizationInvalidSpawnErrorDetail {
+  return normalizeSessionCreationOrganizationInvalidSpawnErrorDetail(
+    asRecord(value) ?? {},
+  ) !== undefined;
+}
+
+export function isSessionCreationCorrespondenceConflictSpawnErrorDetail(
+  value: unknown,
+): value is SessionCreationCorrespondenceConflictSpawnErrorDetail {
+  return normalizeSessionCreationCorrespondenceConflictSpawnErrorDetail(
+    asRecord(value) ?? {},
+  ) !== undefined;
+}
+
+export function isSessionCreationTerminalSpawnErrorDetail(
+  value: unknown,
+): value is SessionCreationTerminalSpawnErrorDetail {
+  return isSessionCreationOrganizationInvalidSpawnErrorDetail(value)
+    || isSessionCreationCorrespondenceConflictSpawnErrorDetail(value);
+}
+
 export function isSpawnSessionErrorDetail(value: unknown): value is SpawnSessionErrorDetail {
   return isConnectedServiceResumeUnreachableSpawnErrorDetail(value)
     || isConnectedServiceUxDiagnosticSpawnErrorDetail(value)
-    || normalizeProviderSpawnErrorDetail(asRecord(value) ?? {}) !== undefined;
+    || normalizeProviderSpawnErrorDetail(asRecord(value) ?? {}) !== undefined
+    || isSessionCreationTerminalSpawnErrorDetail(value);
 }
 
 export function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionErrorDetail | undefined {
@@ -349,7 +434,9 @@ export function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionEr
   if (!detail) return undefined;
   return normalizeConnectedServiceResumeUnreachableDetail(detail)
     ?? normalizeConnectedServiceUxDiagnosticDetail(detail)
-    ?? normalizeProviderSpawnErrorDetail(detail);
+    ?? normalizeProviderSpawnErrorDetail(detail)
+    ?? normalizeSessionCreationOrganizationInvalidSpawnErrorDetail(detail)
+    ?? normalizeSessionCreationCorrespondenceConflictSpawnErrorDetail(detail);
 }
 
 export type SpawnSessionResult =

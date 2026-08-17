@@ -1,5 +1,27 @@
 import { z } from 'zod';
 
+import { SessionIdSchema } from '../sessions/idsV1.js';
+import { PluginDomainChangeEntrySchema } from './pluginDomain.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+
+export {
+  PluginDomainAvailabilityChangeHintSchema,
+  PluginDomainChangeEntrySchema,
+  PluginDomainChangeHintSchema,
+  PluginDomainDataCollectionChangeHintSchema,
+  PluginDomainDataKvChangeHintSchema,
+  PluginDomainSettingsChangeHintSchema,
+  PluginDomainWebhookChangeHintSchema,
+  buildPluginDomainAccountChangeEntityId,
+  type PluginDomainAvailabilityChangeHint,
+  type PluginDomainChangeEntry,
+  type PluginDomainChangeHint,
+  type PluginDomainDataCollectionChangeHint,
+  type PluginDomainDataKvChangeHint,
+  type PluginDomainSettingsChangeHint,
+  type PluginDomainWebhookChangeHint,
+} from './pluginDomain.js';
+
 export const ChangeKindSchema = z.enum([
   'account',
   'automation',
@@ -11,6 +33,7 @@ export const ChangeKindSchema = z.enum([
   'kv',
   'machine',
   'pet',
+  'pluginDomain',
   'session',
   'share',
 ]);
@@ -23,14 +46,111 @@ export const ChangeEntrySchema = z.object({
   entityId: z.string(),
   changedAt: z.number().int().min(0),
   hint: z.unknown().nullable().optional(),
-}).strict();
+}).strict().superRefine((entry, context) => {
+  if (entry.kind !== 'pluginDomain') return;
+  const parsed = PluginDomainChangeEntrySchema.safeParse(entry);
+  if (!parsed.success) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Invalid pluginDomain AccountChange entry.',
+    });
+  }
+});
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
+
+export const SessionAccessWitnessStatusV1Schema = z.enum([
+  'available',
+  'unavailable',
+]);
+
+export type SessionAccessWitnessStatusV1 = z.infer<
+  typeof SessionAccessWitnessStatusV1Schema
+>;
+
+export const SessionAccessWitnessEntryV1Schema = z.object({
+  sessionId: z.string().trim().min(1),
+  cursor: z.number().int().min(0),
+  status: SessionAccessWitnessStatusV1Schema,
+}).strict();
+
+export type SessionAccessWitnessEntryV1 = z.infer<
+  typeof SessionAccessWitnessEntryV1Schema
+>;
+
+/**
+ * Account-change pages carry this additive proof when the server can attest
+ * the current Account-scoped access state of every Session change on the
+ * page. It is intentionally optional for supported older servers; callers
+ * decide which scoped operation must fail closed when it is absent.
+ */
+export const SessionAccessWitnessV1Schema = z.object({
+  v: z.literal(1),
+  throughCursor: z.number().int().min(0),
+  entries: z.array(SessionAccessWitnessEntryV1Schema).max(500),
+}).strict().superRefine((witness, context) => {
+  const sessionIds = new Set<string>();
+  for (const entry of witness.entries) {
+    if (entry.cursor > witness.throughCursor) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Session access witness entry exceeds its captured cursor.',
+      });
+    }
+    if (sessionIds.has(entry.sessionId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Session access witness has duplicate Session entries.',
+      });
+    }
+    sessionIds.add(entry.sessionId);
+  }
+});
+
+export type SessionAccessWitnessV1 = z.infer<typeof SessionAccessWitnessV1Schema>;
+
+/**
+ * Host-private, one-Session access proof returned by the incumbent Account
+ * change carrier. Callers use it for admission only and never acknowledge its
+ * cursor as a consumed change-feed page.
+ */
+export const SessionAccessProbeV1Schema = z.object({
+  v: z.literal(1),
+  sessionId: asProtocolZod(SessionIdSchema),
+  throughCursor: z.number().int().min(0),
+  status: SessionAccessWitnessStatusV1Schema,
+}).strict();
+
+export type SessionAccessProbeV1 = z.infer<typeof SessionAccessProbeV1Schema>;
 
 export const ChangesResponseSchema = z.object({
   changes: z.array(ChangeEntrySchema),
   nextCursor: z.number().int().min(0),
-}).strict();
+  sessionAccessWitness: SessionAccessWitnessV1Schema.optional(),
+  sessionAccessProbe: SessionAccessProbeV1Schema.optional(),
+}).strict().superRefine((response, context) => {
+  if (
+    response.sessionAccessWitness !== undefined
+    && response.sessionAccessWitness.throughCursor !== response.nextCursor
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Session access witness must be captured through nextCursor.',
+    });
+  }
+  if (response.sessionAccessProbe !== undefined) {
+    if (
+      response.sessionAccessProbe.throughCursor !== response.nextCursor
+      || response.changes.length !== 0
+      || response.sessionAccessWitness !== undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Session access probe must be the sole fact captured through nextCursor.',
+      });
+    }
+  }
+});
 
 export type ChangesResponse = z.infer<typeof ChangesResponseSchema>;
 

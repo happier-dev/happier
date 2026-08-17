@@ -1,11 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 
 import * as protocol from '../index.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/index.js';
-import { ExecutionRunIntentSchema } from '../execution/runs/index.js';
+import {
+  ExecutionRunGetResponseSchema,
+  ExecutionRunIntentSchema,
+  ExecutionRunListResponseSchema,
+  ExecutionRunSendResponseSchema,
+  ExecutionRunStartResponseSchema,
+  ExecutionRunStopResponseSchema,
+} from '../execution/runs/index.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { ActionSpecSchema, ActionSurfaceSchema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
+import { ActionInputHintsSchema, ActionSpecSchema, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
+import type { ActionSpec } from './actionSpecs.js';
 import { ActionIdSchema, RuntimeActionIdV1Schema, type ActionId } from './actionIds.js';
 
 const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
@@ -127,6 +135,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',
   'action.options.resolve',
+  'account.plugins.data.erase',
   'sessions.subagents.list',
   'sessions.subagents.get',
   'sessions.subagents.watch',
@@ -176,6 +185,11 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'approval.request.get',
   'plugins.permissions.grants.list',
   'plugins.list',
+  'plugins.settings.list',
+  'plugins.settings.get',
+  'plugins.settings.secret.status',
+  'plugin.webhook.endpoint.read',
+  'plugin.webhook.endpoint.checkCorrespondence',
   'plugins.sessionHooks.status.get',
   'session.log.tail',
   'transcript.page',
@@ -221,6 +235,28 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'plugins.permissions.grants.grant',
   'plugins.permissions.grants.revoke',
   'plugins.permissions.grants.dismissRequest',
+  'plugin.webhook.endpoint.ensure',
+  'plugin.webhook.endpoint.revoke',
+  'plugin.webhook.endpoint.retarget',
+  'plugin.webhook.delivery.movePending',
+  'plugin.webhook.endpoint.credential.configure',
+  'plugin.webhook.endpoint.credential.rotate',
+  'plugin.webhook.endpoint.credential.finishRotation',
+  'plugins.settings.set',
+  'plugins.settings.reset',
+  'plugins.settings.secret.bind',
+  'plugins.settings.secret.unbind',
+  'plugins.settings.secret.delete',
+  'automation.event.sources.list',
+  'automation.event.admit',
+  'automation.event.source.status.report',
+  'automation.conversation.targets.list',
+  'automation.conversation.target.verify',
+  'automation.conversation.admit',
+  'session.permission.remote.pending.list',
+  'session.permission.remote.respond',
+  'session.permission.remote.grants.list',
+  'session.permission.remote.grants.revoke',
   'reviews.comments.create',
   'reviews.comments.list',
   'reviews.comments.get',
@@ -262,7 +298,6 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'session.handoff.commit',
   'session.handoff.abort',
   'session.spawn_new',
-  'session.spawn_picker',
   'session.message.send',
   'session.permission.respond',
   'session.user_action.answer',
@@ -335,6 +370,23 @@ describe('Action Spec Registry', () => {
     }
   });
 
+  it('does not advertise Settings administration on the UI surface without a UI executor', () => {
+    for (const actionId of [
+      'plugins.settings.list',
+      'plugins.settings.get',
+      'plugins.settings.set',
+      'plugins.settings.reset',
+      'plugins.settings.secret.status',
+      'plugins.settings.secret.bind',
+      'plugins.settings.secret.unbind',
+      'plugins.settings.secret.delete',
+    ] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.ui).toBe(false);
+      expect(spec.surfaces.cli).toBe(true);
+    }
+  });
+
   it('keeps package trust approval outside Plugin, Agent, ActionSpec RPC, and SDK surfaces', () => {
     for (const retiredActionId of ['plugins.call', 'plugins.trust']) {
       expect(ActionIdSchema.safeParse(retiredActionId).success).toBe(false);
@@ -383,10 +435,12 @@ describe('Action Spec Registry', () => {
       agent: true,
       rpc: false,
       sdk: true,
+      plugin: true,
     });
 
     expect(parsed.agent).toBe(true);
     expect(parsed.sdk).toBe(true);
+    expect(parsed.plugin).toBe(true);
     expect(() => ActionSurfaceSchema.parse({
       [`ui_${'button'}`]: true,
       agent: true,
@@ -401,6 +455,7 @@ describe('Action Spec Registry', () => {
       cli: false,
       rpc: false,
       sdk: true,
+      plugin: false,
       // Retired R7 spelling must stay rejected; no compatibility alias.
       session_agent: true,
     })).toThrow();
@@ -426,6 +481,7 @@ describe('Action Spec Registry', () => {
         cli: true,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       bindings: { mcpToolName: 'review_start' },
       outputSchema: z.unknown(),
@@ -459,6 +515,102 @@ describe('Action Spec Registry', () => {
     }).success).toBe(false);
   });
 
+  it('fails closed when a plugin-visible ActionSpec has no representable output schema', () => {
+    const base = {
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      approval: { result: 'optional', flow: 'deferred' },
+      placements: [],
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+        plugin: true,
+      },
+      inputSchema: z.object({}).strict(),
+    } as const;
+
+    expect(ActionSpecSchema.safeParse(base).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({ ...base, outputSchema: z.unknown() }).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      outputSchema: z.object({ ok: z.boolean() }).strict(),
+    }).success).toBe(true);
+  });
+
+  it('requires an explicit host-stamped caller policy for every non-safe Plugin Action', () => {
+    const base = {
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'danger',
+      approval: { result: 'optional', flow: 'deferred' },
+      placements: [],
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+        plugin: true,
+      },
+      inputSchema: z.object({}).strict(),
+      outputSchema: z.object({ ok: z.boolean() }).strict(),
+    } as const;
+
+    expect(ActionSpecSchema.safeParse(base).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      pluginCallerPolicy: { kind: 'caller' },
+    }).success).toBe(true);
+  });
+
+  it('validates owner-local RPC and plugin surface bindings without serializing a second action row', () => {
+    const transform = (value: unknown) => value;
+    const parsed = ActionSpecSchema.parse({
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      approval: { result: 'optional', flow: 'deferred' },
+      placements: [],
+      bindings: { rpcMethod: 'review.start' },
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: true,
+        sdk: false,
+        plugin: true,
+      },
+      inputSchema: z.object({ semantic: z.string() }).strict(),
+      outputSchema: z.object({ result: z.string() }).strict(),
+      surfaceBindings: {
+        rpc: {
+          inputSchema: z.object({ carrier: z.string() }).strict(),
+          decodeInput: transform,
+          outputSchema: z.object({ carrierResult: z.string() }).strict(),
+          encodeOutput: transform,
+        },
+        plugin: {
+          inputSchema: z.object({ callerInput: z.string() }).strict(),
+          bindInput: transform,
+          projectOutput: transform,
+        },
+      },
+    });
+
+    expect(parsed.surfaceBindings?.rpc?.decodeInput).toBe(transform);
+    expect(parsed.surfaceBindings?.plugin?.projectOutput).toBe(transform);
+  });
+
   it('exposes stable action specs', () => {
     const all = listActionSpecs();
     expect(all.length).toBeGreaterThan(0);
@@ -466,6 +618,630 @@ describe('Action Spec Registry', () => {
       // Runtime safety: registry objects must validate against the schema.
       ActionSpecSchema.parse(spec);
     }
+  });
+
+  it('classifies every current ActionSpec explicitly for plugin invocation', () => {
+    for (const spec of listActionSpecs()) {
+      expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'plugin')).toBe(true);
+      expect(typeof spec.surfaces.plugin).toBe('boolean');
+    }
+
+    expect(getActionSpec('memory.search').surfaces.plugin).toBe(true);
+    expect(getActionSpec('memory.get_window').surfaces.plugin).toBe(true);
+    expect(getActionSpec('memory.ensure_up_to_date').surfaces.plugin).toBe(true);
+    expect(getActionSpec('daemon.promptAssets.discover').surfaces.plugin).toBe(true);
+    expect(getActionSpec('daemon.promptAssets.delete').surfaces.plugin).toBe(true);
+    expect(getActionSpec('daemon.promptRegistry.scanSource').surfaces.plugin).toBe(true);
+    expect(getActionSpec('daemon.promptRegistry.install').surfaces.plugin).toBe(true);
+    expect(getActionSpec('sessions.external.takeover.start').surfaces.plugin).toBe(false);
+    expect(getActionSpec('sessions.external.takeover').surfaces.plugin).toBe(false);
+    expect(getActionSpec('sessions.external.materialize.start').surfaces.plugin).toBe(true);
+    const pluginExternalSessionActions = new Set([
+      'sessions.external.follow',
+      'sessions.external.unfollow',
+      'sessions.external.backgroundFollow.set',
+      'sessions.external.status.get',
+      'sessions.external.materialize.start',
+      'sessions.external.operation.status.get',
+      'sessions.external.operation.cancel',
+      'sessions.external.operation.resume',
+      'sessions.external.operation.retry',
+      'sessions.external.operation.discard',
+    ]);
+    for (const spec of listActionSpecs()) {
+      if (spec.id.startsWith('sessions.external.')) {
+        expect(spec.surfaces.plugin, spec.id).toBe(
+          pluginExternalSessionActions.has(spec.id),
+        );
+      }
+    }
+    for (const actionId of [
+      'plugins.sessionHooks.status.get',
+      'plugins.sessionHooks.install',
+      'plugins.sessionHooks.disable',
+      'plugins.sessionHooks.enable',
+      'plugins.sessionHooks.uninstall',
+    ] as const) {
+      expect(getActionSpec(actionId).surfaces.plugin, actionId).toBe(true);
+    }
+    expect(getActionSpec('voice_agent.start').surfaces.plugin).toBe(false);
+    for (const spec of listActionSpecs()) {
+      if (spec.id.startsWith('approval.request.')) {
+        expect(spec.surfaces.plugin, spec.id).toBe(false);
+      }
+    }
+    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(false);
+    expect(getActionSpec('session.user_action.answer').surfaces.plugin).toBe(true);
+  });
+
+  it('keeps permission approval unavailable to plugins while retaining plugin user-action answers', () => {
+    const permission = getActionSpec('session.permission.respond');
+    const userAction = getActionSpec('session.user_action.answer');
+    const permissionInput = permission.surfaceBindings?.plugin?.inputSchema;
+    const userActionInput = userAction.surfaceBindings?.plugin?.inputSchema;
+
+    expect(permissionInput).toBeUndefined();
+    expect(permission.surfaces).toMatchObject({
+      ui: true,
+      cli: true,
+      rpc: true,
+      agent: false,
+      mcp: false,
+      voice: false,
+      plugin: false,
+    });
+
+    expect(userActionInput?.parse({
+      requestId: 'question-1',
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
+    })).toEqual({
+      requestId: 'question-1',
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
+    });
+    expect(userActionInput?.safeParse({
+      requestId: 'question-1',
+      decision: 'approve',
+      updatedPermissions: {},
+    }).success).toBe(false);
+    expect(permission.outputSchema.parse({ ok: true })).toEqual({ ok: true });
+    expect(permission.outputSchema.safeParse({ ok: true, sessionId: 'private' }).success).toBe(false);
+    expect(userAction.outputSchema.parse({ ok: true })).toEqual({ ok: true });
+  });
+
+  it('exposes the remote permission mediation Actions only through their canonical caller surfaces', () => {
+    const pending = getActionSpec('session.permission.remote.pending.list' as any);
+    const respond = getActionSpec('session.permission.remote.respond' as any);
+    const grantsList = getActionSpec('session.permission.remote.grants.list' as any);
+    const grantsRevoke = getActionSpec('session.permission.remote.grants.revoke' as any);
+
+    expect(pending.surfaces).toMatchObject({
+      plugin: true,
+      ui: false,
+      cli: false,
+      rpc: false,
+      agent: false,
+      mcp: false,
+      voice: false,
+    });
+    expect(respond.surfaces).toMatchObject({
+      plugin: true,
+      ui: false,
+      cli: false,
+      rpc: false,
+      agent: false,
+      mcp: false,
+      voice: false,
+    });
+    expect(grantsList.surfaces).toMatchObject({ plugin: true, ui: true, cli: true, rpc: true, agent: false, mcp: false, voice: false });
+    expect(grantsRevoke.surfaces).toMatchObject({ plugin: true, ui: true, cli: true, rpc: true, agent: false, mcp: false, voice: false });
+
+    expect(respond.inputSchema.safeParse({
+      sessionId: 'session-1',
+      requestId: 'request-1',
+      sourceRef: 'binding-1',
+      sourceRevisionOrEpoch: 'rev-1',
+      idempotencyKey: 'retry-1',
+      actor: { namespace: 'discord', principalId: 'user-1' },
+      decision: 'allow',
+      scope: 'request',
+      mediatorPluginId: 'forged',
+    }).success).toBe(false);
+  });
+
+  it('generates runtime plugin ids and schema maps from the canonical registry rows', () => {
+    const expected = listActionSpecsForSurface('plugin').map((spec) => spec.id).sort();
+    expect([...PLUGIN_INVOCABLE_ACTION_IDS].sort()).toEqual(expected);
+    expect(Object.keys(PLUGIN_ACTION_INPUT_SCHEMAS).sort()).toEqual(expected);
+    expect(Object.keys(PLUGIN_ACTION_OUTPUT_SCHEMAS).sort()).toEqual(expected);
+    for (const actionId of PLUGIN_INVOCABLE_ACTION_IDS) {
+      const spec = getActionSpec(actionId);
+      expect(PLUGIN_ACTION_INPUT_SCHEMAS[actionId]).toBe(
+        spec.surfaceBindings?.plugin?.inputSchema ?? spec.inputSchema,
+      );
+      const pluginOutputSchema = Reflect.get(
+        spec.surfaceBindings?.plugin ?? {},
+        'outputSchema',
+      );
+      expect(PLUGIN_ACTION_OUTPUT_SCHEMAS[actionId]).toBe(
+        pluginOutputSchema ?? spec.outputSchema,
+      );
+    }
+
+    const runStartInput = {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      connectedServices: 'openai-codex:native',
+    };
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS['execution.run.start'].safeParse(runStartInput).success).toBe(true);
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS['execution.run.start'].safeParse({
+      ...runStartInput,
+      intent: undefined,
+    }).success).toBe(false);
+
+    const installSchema = PLUGIN_ACTION_INPUT_SCHEMAS['plugins.sessionHooks.install'];
+    expect(installSchema.safeParse({
+      agent: { localId: 'codex' },
+      expectedPreviewId: `hook-install-preview:v1:${'a'.repeat(64)}`,
+    }).success).toBe(true);
+    expect(installSchema.safeParse({
+      machineId: 'caller-controlled-machine',
+      agent: { localId: 'codex' },
+      expectedPreviewId: `hook-install-preview:v1:${'a'.repeat(64)}`,
+    }).success).toBe(false);
+    expect(installSchema.safeParse({
+      agent: { pluginId: 'spoofed-plugin', localId: 'codex' },
+      expectedPreviewId: `hook-install-preview:v1:${'a'.repeat(64)}`,
+    }).success).toBe(false);
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS['execution.run.start'].safeParse({
+      ...runStartInput,
+      profileId: 'profile-1',
+    }).success).toBe(false);
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS['session.usageLimit.checkNow'].parse({
+      sessionId: 'session-1',
+      provider: 'codex',
+    })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
+    expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(false);
+  });
+
+  it('keeps raw session-subagent Actions on the RPC surface instead of the Plugin Action surface', () => {
+    const rawSubagentActionIds = [
+      'sessions.subagents.list',
+      'sessions.subagents.get',
+      'sessions.subagents.watch',
+      'sessions.subagents.upsert',
+      'sessions.subagents.updateStatus',
+      'sessions.subagents.complete',
+    ] as const;
+
+    for (const actionId of rawSubagentActionIds) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.plugin).toBe(false);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
+    }
+  });
+
+  it('keeps the non-safe Plugin Action caller-policy census to one reload exception', () => {
+    const nonSafePluginActions = listActionSpecsForSurface('plugin').filter(
+      (spec) => spec.safety !== 'safe',
+    );
+
+    expect(nonSafePluginActions).toHaveLength(49);
+    expect(nonSafePluginActions.filter(
+      (spec) => spec.pluginCallerPolicy?.kind === 'caller',
+    )).toHaveLength(48);
+    expect(nonSafePluginActions.filter(
+      (spec) => spec.pluginCallerPolicy?.kind === 'self_or_inspector_admin',
+    ).map((spec) => spec.id)).toEqual(['plugins.reload']);
+  });
+
+  it('keeps plugin Session input and transcript access at the closed admission projection', () => {
+    const pluginMessageInput = PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send'];
+    expect(pluginMessageInput.safeParse({
+      sessionId: 'session-1',
+      message: 'Forward this',
+      idempotencyKey: 'message-42',
+      source: {
+        sourceRef: 'channel-7',
+        sourceRevisionOrEpoch: 'message-42',
+        remoteApprovalMaxScope: 'request',
+        requestedPermissionCeiling: 'read-only',
+      },
+    }).success).toBe(true);
+    expect(pluginMessageInput.safeParse({
+      sessionId: 'session-1',
+      message: 'Forward this',
+      idempotencyKey: 'message-42',
+      permissionModeOverride: 'yolo',
+    }).success).toBe(false);
+
+    const pluginTranscriptInput = PLUGIN_ACTION_INPUT_SCHEMAS['session.transcript.get'];
+    expect(pluginTranscriptInput.safeParse({
+      sessionId: 'session-1',
+      projection: 'externalShareableV1',
+      cursor: '7',
+      limit: 20,
+    }).success).toBe(true);
+    expect(pluginTranscriptInput.safeParse({
+      sessionId: 'session-1',
+      includeRaw: true,
+    }).success).toBe(false);
+
+    const pluginTranscriptOutput = PLUGIN_ACTION_OUTPUT_SCHEMAS['session.transcript.get'];
+    expect(pluginTranscriptOutput.safeParse({
+      ok: true,
+      sessionId: 'session-1',
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+      diagnostics: {
+        rawRowsScanned: 0,
+        pagesFetched: 0,
+        scanLimitReached: false,
+        payloadTruncations: 0,
+      },
+    }).success).toBe(false);
+
+    for (const actionId of [
+      'session.permission_mode.set',
+      'session.history.get',
+      'session.events.get',
+      'session.messages.recent.get',
+    ]) {
+      expect(getActionSpec(actionId as ActionId).surfaces.plugin).toBe(false);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(false);
+    }
+  });
+
+  it('keeps plugin External Session action inputs and results public-safe and strict', async () => {
+    const status = getActionSpec('sessions.external.status.get');
+    expect(status.inputSchema.parse({ sessionId: 'session-1' })).toEqual({
+      sessionId: 'session-1',
+    });
+    expect(status.inputSchema.safeParse({
+      sessionId: 'session-1',
+      machineId: 'private-machine',
+    }).success).toBe(false);
+    expect(status.outputSchema?.safeParse({
+      ok: true,
+      machineOnline: true,
+      runnerActive: false,
+      activity: 'idle',
+      canTakeOverDirect: false,
+      canTakeOverPersist: true,
+      canForceStop: false,
+      trustedPid: 42,
+    }).success).toBe(false);
+
+    expect(getActionSpec('sessions.external.follow').inputSchema.parse({
+      sessionId: 'session-1',
+      ttlMs: 1_000,
+    })).toEqual({ sessionId: 'session-1', ttlMs: 1_000 });
+    expect(getActionSpec('sessions.external.follow').inputSchema.safeParse({
+      sessionId: 'session-1',
+      acceptedTailCursor: ' happier_external_cursor_v1:Y3Vyc29y ',
+    }).success).toBe(false);
+    expect(getActionSpec('sessions.external.unfollow').inputSchema.safeParse({
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+      source: { kind: 'private' },
+    }).success).toBe(false);
+    expect(getActionSpec('sessions.external.backgroundFollow.set').inputSchema.parse({
+      sessionId: 'session-1',
+      enabled: true,
+    })).toEqual({ sessionId: 'session-1', enabled: true });
+
+    for (const actionId of [
+      'sessions.external.status.get',
+      'sessions.external.unfollow',
+      'sessions.external.backgroundFollow.set',
+    ] as const) {
+      const spec = getActionSpec(actionId);
+      const projectedFailure = await spec.surfaceBindings?.plugin?.projectOutput?.({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'agent_unavailable',
+        retryable: true,
+        providerMessage: 'private provider detail',
+      }, {
+        actionId,
+        surface: 'plugin',
+        caller: { kind: 'plugin', pluginId: 'fixture' },
+      });
+
+      expect(projectedFailure, actionId).toEqual({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'agent_unavailable',
+      });
+      expect(await spec.surfaceBindings?.plugin?.projectOutput?.({
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'invalid_request',
+      }, {
+        actionId,
+        surface: 'plugin',
+        caller: { kind: 'plugin', pluginId: 'fixture' },
+      }), actionId).toEqual({
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'invalid_request',
+      });
+      expect(spec.outputSchema?.safeParse({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'agent_unavailable',
+      }).success, actionId).toBe(true);
+      expect(spec.outputSchema?.safeParse({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'agent_unavailable',
+        retryable: true,
+      }).success, actionId).toBe(false);
+      expect(spec.outputSchema?.safeParse({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'agent_unavailable',
+        providerMessage: 'private provider detail',
+      }).success, actionId).toBe(false);
+    }
+
+    // A follow lease is the one External Session result a caller re-requests on
+    // a timer, so its terminal classification is part of the public contract:
+    // the daemon's authored boolean survives the projection while the daemon's
+    // own message never does.
+    const follow = getActionSpec('sessions.external.follow');
+    expect(await follow.surfaceBindings?.plugin?.projectOutput?.({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_follow_unavailable',
+      retryable: false,
+      providerMessage: 'private provider detail',
+    }, {
+      actionId: follow.id,
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'fixture' },
+    })).toEqual({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_follow_unavailable',
+      retryable: false,
+    });
+    // A released daemon omits the field; the projection must not invent one.
+    expect(await follow.surfaceBindings?.plugin?.projectOutput?.({
+      ok: false,
+      errorCode: 'machine_offline',
+      error: 'machine_offline',
+    }, {
+      actionId: follow.id,
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'fixture' },
+    })).toEqual({
+      ok: false,
+      errorCode: 'machine_offline',
+      error: 'machine_offline',
+    });
+    expect(follow.outputSchema?.safeParse({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'agent_unavailable',
+      retryable: true,
+    }).success).toBe(true);
+    expect(follow.outputSchema?.safeParse({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'agent_unavailable',
+      retryable: 'no',
+    }).success).toBe(false);
+    expect(follow.outputSchema?.safeParse({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'agent_unavailable',
+      providerMessage: 'private provider detail',
+    }).success).toBe(false);
+
+    const operation = getActionSpec('sessions.external.operation.status.get');
+    const operationRef = {
+      sessionId: 'session-1',
+      operationId: 'operation-1',
+      revision: 3,
+    };
+    expect(operation.inputSchema.parse(operationRef)).toEqual(operationRef);
+    expect(operation.inputSchema.safeParse({
+      ...operationRef,
+      sessionId: ' session-1 ',
+    }).success).toBe(false);
+    expect(operation.inputSchema.safeParse({
+      ...operationRef,
+      operationId: ' operation-1 ',
+    }).success).toBe(false);
+    expect(operation.surfaceBindings?.rpc?.inputSchema.safeParse({
+      ...operationRef,
+      sessionId: ' session-1 ',
+      operationId: ' operation-1 ',
+    }).success).toBe(false);
+    expect(operation.surfaceBindings?.rpc?.inputSchema.parse(operationRef)).toEqual(operationRef);
+
+    const materialize = getActionSpec('sessions.external.materialize.start');
+    const materializeRequest = {
+      request: {
+        v: 1,
+        idempotencyKey: 'materialize-1',
+        sessionId: 'session-1',
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+        targetRuntimeMode: null,
+      },
+    };
+    expect(materialize.inputSchema.parse(materializeRequest)).toEqual(materializeRequest);
+    expect(materialize.inputSchema.safeParse({
+      request: {
+        ...materializeRequest.request,
+        idempotencyKey: ' materialize-1 ',
+      },
+    }).success).toBe(false);
+    expect(materialize.inputSchema.safeParse({
+      request: {
+        ...materializeRequest.request,
+        idempotencyKey: 'x'.repeat(256),
+      },
+    }).success).toBe(true);
+    expect(materialize.inputSchema.safeParse({
+      request: {
+        ...materializeRequest.request,
+        idempotencyKey: 'x'.repeat(257),
+      },
+    }).success).toBe(false);
+    expect(materialize.surfaceBindings?.rpc?.inputSchema.parse({
+      request: {
+        ...materializeRequest.request,
+        idempotencyKey: ' materialize-1 ',
+      },
+    })).toEqual(materializeRequest);
+    const publicResult = {
+      ok: true,
+      operation: operationRef,
+      presentation: {
+        v: 1,
+        operationId: 'operation-1',
+        revision: 3,
+        kind: 'materialize',
+        status: 'running',
+        phase: 'validating',
+      },
+    };
+    expect(operation.outputSchema?.parse(publicResult)).toEqual(publicResult);
+    expect(operation.outputSchema?.safeParse({
+      ...publicResult,
+      progress: { private: true },
+    }).success).toBe(false);
+
+    const privateResponse = {
+      ok: true,
+      progress: {
+        v: 1,
+        operationId: 'operation-1',
+        revision: 3,
+        request: {
+          plan: 'materialize',
+          targetStorageMode: 'external-linked',
+          targetRuntimeMode: null,
+        },
+        timeline: ['validating', 'staging', 'importing', 'publishing'],
+        status: 'running',
+        phase: 'validating',
+        updatedAtMs: 10,
+        priorStableStorage: { state: 'machine_only' },
+        currentStorageState: 'machine_only',
+        checkpoint: {
+          sourcePagesRead: 1,
+          stagedItemCount: 2,
+          importedItemCount: 1,
+          requiredItemFailures: {
+            total: 0,
+            record: 0,
+            media: 0,
+            conversion: 0,
+            diagnosticsTruncated: false,
+          },
+        },
+        fence: { kind: 'none' },
+      },
+    };
+    const projected = await operation.surfaceBindings?.plugin?.projectOutput?.(privateResponse, {
+      actionId: 'sessions.external.operation.status.get',
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'fixture' },
+      input: operationRef,
+    });
+    expect(projected).toEqual(publicResult);
+    expect(await operation.surfaceBindings?.plugin?.projectOutput?.(publicResult, {
+      actionId: 'sessions.external.operation.status.get',
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'fixture' },
+      input: operationRef,
+    })).toEqual(publicResult);
+    expect(() => operation.surfaceBindings?.plugin?.projectOutput?.({
+      ...publicResult,
+      operation: { ...publicResult.operation, sessionId: 'session-other' },
+    }, {
+      actionId: 'sessions.external.operation.status.get',
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'fixture' },
+      input: operationRef,
+    })).toThrow('external_session_operation_session_mismatch');
+    expect(operation.surfaceBindings?.rpc?.outputSchema.parse(privateResponse))
+      .toEqual(privateResponse);
+    expect(await operation.surfaceBindings?.rpc?.encodeOutput(privateResponse, {
+      actionId: 'sessions.external.operation.status.get',
+      surface: 'rpc',
+      caller: { kind: 'host' },
+      input: operationRef,
+    })).toEqual(privateResponse);
+  });
+
+  it('keeps user decisions directional while exposing host-bound plugin grant operations', () => {
+    expect(getActionSpec('plugins.permissions.grants.list').surfaces.plugin).toBe(true);
+    expect(getActionSpec('plugins.permissions.grants.request').surfaces.plugin).toBe(true);
+    expect(getActionSpec('plugins.permissions.grants.revoke').surfaces.plugin).toBe(true);
+    expect(getActionSpec('plugins.permissions.grants.grant').surfaces.plugin).toBe(false);
+    expect(getActionSpec('plugins.permissions.grants.dismissRequest').surfaces.plugin).toBe(false);
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS['plugins.permissions.grants.list'].safeParse({
+      grantId: 'grant-host-private-exact-lookup',
+    }).success).toBe(false);
+  });
+
+  it('binds credential permission subjects to the host-stamped plugin identity', async () => {
+    const spec = getActionSpec('plugins.permissions.grants.request');
+    const input = {
+      capability: 'credentials.materialize.raw',
+      targetScope: { kind: 'account' },
+      subject: {
+        kind: 'credential_access_disclosure',
+        contribution: { localId: 'voice-provider' },
+        credentialSlotId: 'voice-api-key',
+        purpose: 'voice.conversation',
+        accessDeclarationDigest: 'a'.repeat(64),
+        selectedAuthorityDigest: 'c'.repeat(64),
+        selectedRawAccessDigest: 'd'.repeat(64),
+        installedGenerationId: 'generation-1',
+        installReviewPrincipalDigest: 'b'.repeat(64),
+      },
+      reason: 'Use the declared voice credential',
+    };
+    const parsed = spec.surfaceBindings?.plugin?.inputSchema?.parse(input);
+    const bound = await spec.surfaceBindings?.plugin?.bindInput?.(parsed, {
+      actionId: spec.id,
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'acme.voice' },
+    });
+
+    expect(bound).toMatchObject({
+      pluginId: 'acme.voice',
+      requester: { kind: 'plugin', pluginId: 'acme.voice' },
+      subject: {
+        contribution: { pluginId: 'acme.voice', localId: 'voice-provider' },
+      },
+    });
+  });
+
+  it('uses nameable output schemas for plugin-visible Memory actions', () => {
+    const search = getActionSpec('memory.search');
+    const window = getActionSpec('memory.get_window');
+    const ensure = getActionSpec('memory.ensure_up_to_date');
+
+    expect(search.outputSchema?.safeParse({ v: 1, ok: true, hits: [] }).success).toBe(true);
+    expect(window.outputSchema?.safeParse({ v: 1, snippets: [], citations: [] }).success).toBe(true);
+    expect(ensure.outputSchema?.safeParse({ ok: true }).success).toBe(true);
+    expect(search.outputSchema?.safeParse({ arbitrary: true }).success).toBe(false);
+    expect(window.outputSchema?.safeParse({ arbitrary: true }).success).toBe(false);
   });
 
   it('declares approval result metadata for every action spec', () => {
@@ -528,6 +1304,7 @@ describe('Action Spec Registry', () => {
         cli: true,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       bindings: { mcpToolName: 'review_start' },
       outputSchema: z.unknown(),
@@ -568,6 +1345,7 @@ describe('Action Spec Registry', () => {
         cli: true,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       bindings: { mcpToolName: 'review_start' },
       outputSchema: z.unknown(),
@@ -609,6 +1387,7 @@ describe('Action Spec Registry', () => {
         cli: false,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       inputSchema: z.object({}).strict(),
     });
@@ -625,6 +1404,118 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('execution.run.list');
     expect(spec.id).toBe('execution.run.list');
     expect(spec.surfaces.voice).toBe(true);
+  });
+
+  it('documents the four execution-run Session scope cases without a second Action family', () => {
+    const start = getActionSpec('execution.run.start');
+    const sessionId = start.inputHints?.fields.find((field) => field.path === 'sessionId');
+
+    expect(start.inputSchema.safeParse({
+      intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Inspect the requested change.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      sessionId: 'session_1',
+    }).success).toBe(true);
+    expect(start.inputSchema.safeParse({
+      intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Inspect the requested change.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      sessionId: null,
+    }).success).toBe(true);
+    expect(start.inputSchema.safeParse({
+      intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Inspect the requested change.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }).success).toBe(true);
+    expect(start.description).toContain('A nonempty sessionId selects that exact authorized Session.');
+    expect(start.description).toContain('Omitting sessionId inherits the current Action Session, or selects detached scope when none exists.');
+    expect(start.description).toContain('sessionId:null selects detached scope even inside a current Session.');
+    expect(sessionId?.description).toBe('Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.');
+    expect(listActionSpecs().some((spec) => spec.id.startsWith('execution.oneShot.'))).toBe(false);
+  });
+
+  it('keeps execution-run Action docs, hints, and examples aligned on scope and wait semantics', () => {
+    const scopeActionIds = [
+      'execution.run.start',
+      'execution.run.list',
+      'execution.run.get',
+      'execution.run.send',
+      'execution.run.stop',
+      'execution.run.action',
+      'execution.run.wait',
+    ] as const;
+
+    for (const id of scopeActionIds) {
+      const spec = getActionSpec(id);
+      const sessionId = spec.inputHints?.fields.find((field) => field.path === 'sessionId');
+      expect(spec.description).toContain('A nonempty sessionId selects that exact authorized Session.');
+      expect(spec.description).toContain('Omitting sessionId inherits the current Action Session, or selects detached scope when none exists.');
+      expect(spec.description).toContain('sessionId:null selects detached scope even inside a current Session.');
+      expect(sessionId?.description).toContain('Use a nonempty value for an exact authorized Session.');
+      expect(sessionId?.description).toContain('Omit it to inherit the current Action Session, or to select detached scope when no current Session exists.');
+      expect(sessionId?.description).toContain('Set null to select detached scope even inside a current Session.');
+    }
+
+    const startExample = JSON.parse(getActionSpec('execution.run.start').examples?.mcp?.argsExample ?? '{}');
+    const listExample = JSON.parse(getActionSpec('execution.run.list').examples?.voice?.argsExample ?? '{}');
+    const getExample = JSON.parse(getActionSpec('execution.run.get').examples?.voice?.argsExample ?? '{}');
+    expect(startExample.sessionId).toBe('{{sessionId}}');
+    expect(startExample.waitForCompletion).toBe(true);
+    expect(startExample.waitTimeoutSeconds).toBe(60);
+    expect(listExample).not.toHaveProperty('sessionId');
+    expect(getExample.sessionId).toBeNull();
+
+    const start = getActionSpec('execution.run.start');
+    const waitForCompletion = start.inputHints?.fields.find((field) => field.path === 'waitForCompletion');
+    const waitTimeoutSeconds = start.inputHints?.fields.find((field) => field.path === 'waitTimeoutSeconds');
+    expect(start.description).toContain('Set waitForCompletion=true to wait for a terminal run result.');
+    expect(start.description).toContain('waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run.');
+    expect(waitForCompletion).toEqual({
+      path: 'waitForCompletion',
+      title: 'Wait for completion',
+      description: 'Return the terminal run disposition under wait instead of returning immediately after start.',
+      widget: 'boolean',
+    });
+    expect(waitTimeoutSeconds).toEqual({
+      path: 'waitTimeoutSeconds',
+      title: 'Wait timeout seconds',
+      description: 'Optional observation deadline; requires waitForCompletion=true and never stops the run.',
+      widget: 'text',
+    });
+
+    const wait = getActionSpec('execution.run.wait');
+    expect(wait.description).toContain('Timeout only ends this observation; it does not stop, retry, or start the run.');
+    expect(wait.description).toContain('Cancellation only ends this wait.');
+  });
+
+  it("keeps Voice's Session execution-run subset on the canonical plugin Action projection", () => {
+    const voiceOperations = [
+      ['execution.run.start', 'startExecutionRun'],
+      ['execution.run.get', 'getExecutionRun'],
+      ['execution.run.send', 'sendExecutionRunMessage'],
+      ['execution.run.stop', 'stopExecutionRun'],
+      ['execution.run.list', 'listExecutionRuns'],
+    ] as const;
+
+    for (const [actionId, voiceClientToolName] of voiceOperations) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces).toMatchObject({ voice: true, plugin: true, sdk: false });
+      expect(spec.bindings?.voiceClientToolName).toBe(voiceClientToolName);
+    }
+
+    expect(getActionSpec('execution.run.wait').surfaces).toMatchObject({ voice: false, plugin: true, sdk: false });
   });
 
   it('surfaces action discovery tools on both agent and external mcp', () => {
@@ -803,6 +1694,12 @@ describe('Action Spec Registry', () => {
         expect.objectContaining({ value: 'custom' }),
       ]),
     });
+    expect(cancel.inputHints?.fields.map((field) => field.path)).toEqual(expect.arrayContaining([
+      'issueFingerprint',
+      'armedAtMs',
+      'runtimeAuthRecoveryAttemptId',
+    ]));
+    expect(cancel.examples?.mcp?.argsExample).toContain('armedAtMs');
     expect(checkNow.inputHints?.fields.find((field) => field.path === 'provider')).toMatchObject({
       path: 'provider',
       widget: 'text',
@@ -972,6 +1869,7 @@ describe('Action Spec Registry', () => {
         cli: false,
         rpc: false,
         sdk: false,
+        plugin: id === 'browser.navigate',
       });
       expect(spec.bindings).toBeUndefined();
     }
@@ -1150,6 +2048,57 @@ describe('Action Spec Registry', () => {
       maxCharsPerMessage: 50_000,
     });
     expect(() => transcript.inputSchema.parse({ sessionId: 's1', maxCharsPerMessage: 50_001 })).toThrow();
+    expect(transcript.inputSchema.parse({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      cursor: '7',
+      limit: 20,
+    })).toEqual({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      cursor: '7',
+      limit: 20,
+    });
+    expect(SessionTranscriptGetExternalShareableInputV1Schema.parse({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      cursor: '7',
+      limit: 20,
+    })).toEqual({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      cursor: '7',
+      limit: 20,
+    });
+    expect(() => transcript.inputSchema.parse({ sessionId: 's1', projection: 'rawExternalV1' })).toThrow();
+    expect(() => transcript.inputSchema.parse({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      includeRaw: true,
+    })).toThrow();
+    expect(() => SessionTranscriptGetExternalShareableInputV1Schema.parse({
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      includeRaw: true,
+    })).toThrow();
+  });
+
+  it('declares a closed result contract for the external shareable transcript projection', () => {
+    const transcript = getActionSpec('session.transcript.get' as ActionId);
+    const externalShareableResult = {
+      ok: true,
+      sessionId: 's1',
+      projection: 'externalShareableV1',
+      items: [],
+      scannedThroughSeq: 0,
+      hasMore: false,
+    } as const;
+
+    expect(transcript.outputSchema.safeParse(externalShareableResult).success).toBe(true);
+    expect(transcript.outputSchema.safeParse({
+      ...externalShareableResult,
+      serverOnlyReceipt: { accountId: 'private-account' },
+    }).success).toBe(false);
   });
 
   it('surfaces approval actions on external mcp and cli (power user/internal)', () => {
@@ -1275,7 +2224,7 @@ describe('Action Spec Registry', () => {
         expect.objectContaining({
           path: 'confirmed',
           required: true,
-          widget: 'checkbox',
+          widget: 'boolean',
         }),
       ]));
   });
@@ -1334,24 +2283,24 @@ describe('Action Spec Registry', () => {
   });
 
   it('projects external-session actions through canonical external-session RPC bindings and legacy direct-session aliases', () => {
-    const expected: readonly [ActionId, string, string, string | null, 'read' | 'write' | 'danger'][] = [
-      ['sessions.external.candidates.list', RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY, 'sessions.external.listCandidates', 'read'],
-      ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, 'write'],
-      ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write'],
-      ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write'],
-      ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, 'read'],
-      ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', 'read'],
-      ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'sessions.external.readAfterTranscript', 'read'],
-      ['sessions.external.takeover', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY, 'sessions.external.takeover', 'danger'],
+    const expected: readonly [ActionId, string, string, string | null, boolean, 'read' | 'write' | 'danger'][] = [
+      ['sessions.external.candidates.list', RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY, 'sessions.external.listCandidates', false, 'read'],
+      ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, false, 'write'],
+      ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, false, 'write'],
+      ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, false, 'write'],
+      ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, false, 'read'],
+      ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', false, 'read'],
+      ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'sessions.external.readAfterTranscript', false, 'read'],
+      ['sessions.external.takeover', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY, 'sessions.external.takeover', false, 'danger'],
     ];
 
-    for (const [id, rpcMethod, legacyRpcMethod, sdkMethod, sideEffectClass] of expected) {
+    for (const [id, rpcMethod, legacyRpcMethod, sdkMethod, sdkSurface, sideEffectClass] of expected) {
       const spec = getActionSpec(id);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
       expect(spec.bindings?.rpcMethodAliases).toContain(legacyRpcMethod);
       expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
       expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.sdk).toBe(sdkMethod !== null);
+      expect(spec.surfaces.sdk).toBe(sdkSurface);
       expect(spec.surfaces.mcp).toBe(false);
       expect(spec.surfaces.voice).toBe(false);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
@@ -1391,6 +2340,12 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.sdk).toBe(false);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
     }
+
+    const takeoverStart = getActionSpec('sessions.external.takeover.start');
+    expect(takeoverStart.surfaceBindings?.rpc?.inputSchema).toBe(takeoverStart.inputSchema);
+    expect(takeoverStart.surfaceBindings?.rpc?.outputSchema).toBe(takeoverStart.outputSchema);
+    expect(takeoverStart.surfaceBindings?.rpc?.decodeInput).toBeDefined();
+    expect(takeoverStart.surfaceBindings?.rpc?.encodeOutput).toBeDefined();
 
     expect(getActionSpec('sessions.external.takeover').bindings?.rpcMethod).toBe(
       RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
@@ -1506,6 +2461,18 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
     }
+
+    expect(getActionSpec('execution.run.ensure_or_start').bindings?.rpcMethodAliases).toEqual([
+      SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+    ]);
+  });
+
+  it('uses canonical execution-run response DTOs for the plugin Action projection', () => {
+    expect(getActionSpec('execution.run.start').outputSchema).toBe(ExecutionRunStartResponseSchema);
+    expect(getActionSpec('execution.run.list').outputSchema).toBe(ExecutionRunListResponseSchema);
+    expect(getActionSpec('execution.run.get').outputSchema).toBe(ExecutionRunGetResponseSchema);
+    expect(getActionSpec('execution.run.send').outputSchema).toBe(ExecutionRunSendResponseSchema);
+    expect(getActionSpec('execution.run.stop').outputSchema).toBe(ExecutionRunStopResponseSchema);
   });
 
   it('requires backendTargetKey when listing models for customAcp', () => {
@@ -1660,194 +2627,89 @@ describe('Action Spec Registry', () => {
     }).success).toBe(true);
   });
 
-  it('requires backendTargetKey when spawning a customAcp session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'customAcp',
-      path: '/tmp/project',
-    });
+  const canonicalSessionSpawnInput = {
+    creationKey: 'manual:attempt-7',
+    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+    directory: '/tmp/project',
+    organizationPlacement: { folderId: null, tagIds: [] },
+    agentTarget: {
+      kind: 'agent',
+      identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    },
+  } as const;
 
-    expect(parsed.success).toBe(false);
+  it('accepts the exact canonical Session creation contract', () => {
+    const spec = getActionSpec('session.spawn_new');
+
+    expect(spec.inputSchema.parse(canonicalSessionSpawnInput)).toEqual(canonicalSessionSpawnInput);
   });
 
-  it('requires backendTargetKey when spawning a legacy configured ACP flavor carrier directly', () => {
+  it('accepts a structured provider-bound model selection without flat model carriers', () => {
     const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'acp:review-bot',
-      path: '/tmp/project',
-    });
 
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects mismatched agentId and backendTargetKey when spawning a session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'claude',
-      backendTargetKey: 'acpBackend:review-bot',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(false);
+    expect(spec.inputSchema.safeParse({
+      ...canonicalSessionSpawnInput,
+      modelSelection: {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_work',
+          modelId: 'provider-model',
+        },
+      },
+    }).success).toBe(true);
   });
 
   it.each([
-    ['agentId', { agentId: 'claude' }],
-    ['backendTargetKey', { backendTargetKey: 'agent:claude' }],
-    ['runtimeDescriptorV1', {
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'claude',
-        agent: {},
-      },
-    }],
-  ] as const)(
-    'rejects a structured spawn target that conflicts with %s (remote-dev 490a27a compatibility vector)',
-    (_label, conflictingInput) => {
-      const spec = getActionSpec('session.spawn_new');
-      const parsed = spec.inputSchema.safeParse({
-        backendTarget: {
-          kind: 'backend',
-          backendId: 'codex',
-          sourceKind: 'built_in',
-        },
-        path: '/tmp/project',
-        ...conflictingInput,
-      });
-
-      expect(parsed.success).toBe(false);
-    },
-  );
-
-  it('accepts matching structured, key, Agent, and runtime-descriptor spawn carriers', () => {
+    ['flat Agent id', { agentId: 'codex' }],
+    ['flat backend target key', { backendTargetKey: 'backend:codex' }],
+    ['flat model selection', { modelId: 'provider-model', providerConnectionId: 'pc_work' }],
+    ['legacy backend transport', { backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }],
+    ['legacy runtime carrier', { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} } }],
+    ['flat machine target', { machineId: 'machine-2' }],
+    ['legacy path', { path: '/other/project' }],
+    ['host assertion', { host: 'machine-1.local' }],
+  ] as const)('rejects retired Session spawn ingress: %s', (_label, legacyField) => {
     const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'codex',
-      backendTargetKey: 'backend:codex',
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'codex',
-        sourceKind: 'built_in',
-      },
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        agent: {},
-      },
-      path: '/tmp/project',
-    });
 
-    expect(parsed.success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...canonicalSessionSpawnInput, ...legacyField }).success).toBe(false);
   });
 
-  it('rejects agent:customAcp as a backendTargetKey when spawning a session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'agent:customAcp',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when spawning a session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'claude',
-      backendTargetKey: 'backend:plugin-review-bot',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts a matching legacy configured ACP flavor carrier when spawning a configured backend session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'acp:review-bot',
-      backendTargetKey: 'backend:review-bot:configured:review-bot',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts a canonical built-in backendTargetKey outside the direct-session allowlist when spawning a session directly', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:gemini',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts canonical built-in backendTargetKey values for protocol-owned built-ins that rely on inferred runtime carriers', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:pi',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('requires an explicit model when a provider connection is selected for spawn', () => {
+  it.each([
+    ['execution target', { ...canonicalSessionSpawnInput, executionTarget: undefined }],
+    ['directory', { ...canonicalSessionSpawnInput, directory: undefined }],
+    ['Agent target', { ...canonicalSessionSpawnInput, agentTarget: undefined }],
+  ] as const)('requires canonical %s for Session creation', (_label, input) => {
     const spec = getActionSpec('session.spawn_new');
 
-    expect(spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:claude',
-      providerConnectionId: 'pc_work',
-      path: '/tmp/project',
-    }).success).toBe(false);
-    expect(spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:claude',
-      modelId: 'default',
-      providerConnectionId: 'pc_work',
-      path: '/tmp/project',
-    }).success).toBe(true);
-    expect(spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:claude',
-      modelId: 'provider-model',
-      providerConnectionId: 'pc_work',
-      path: '/tmp/project',
-    }).success).toBe(true);
-  });
-
-  it('accepts first-party Antigravity backendTargetKey values that rely on inferred runtime carriers', () => {
-    const spec = getActionSpec('session.spawn_new');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:antigravity',
-      path: '/tmp/project',
-    });
-
-    expect(parsed.success).toBe(true);
+    expect(spec.inputSchema.safeParse(input).success).toBe(false);
   });
 
   it('advertises dynamic option sources for rich session.spawn_new fields', () => {
     const spec = getActionSpec('session.spawn_new');
     const fieldsByPath = new Map((spec.inputHints?.fields ?? []).map((field) => [field.path, field]));
 
-    expect(fieldsByPath.get('backendTargetKey')).toMatchObject({
+    expect(fieldsByPath.get('agentTarget')).toMatchObject({
       optionsSourceId: 'agents.backends.enabled',
     });
-    expect(fieldsByPath.get('modelId')).toMatchObject({
+    expect(fieldsByPath.get('modelSelection')).toMatchObject({
       optionsSourceId: 'agents.models.available',
     });
     expect(fieldsByPath.get('agentModeId')).toMatchObject({
       optionsSourceId: 'agents.session_modes.available',
     });
-    expect(fieldsByPath.get('sessionConfigOptionOverrides')).toMatchObject({
+    expect(fieldsByPath.get('configuration')).toMatchObject({
       optionsSourceId: 'agents.config_options.available',
-    });
-    expect(fieldsByPath.get('path')).toMatchObject({
-      optionsSourceId: 'sessions.spawn.paths.recent',
     });
     expect(fieldsByPath.get('directory')).toMatchObject({
       optionsSourceId: 'sessions.spawn.paths.recent',
     });
-    expect(fieldsByPath.get('machineId')).toMatchObject({
+    expect(fieldsByPath.get('executionTarget.machineId')).toMatchObject({
       optionsSourceId: 'sessions.spawn.machines.available',
+    });
+    expect(fieldsByPath.get('executionTarget.serverId')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.servers.available',
     });
     expect(fieldsByPath.get('profileId')).toMatchObject({
       optionsSourceId: 'sessions.spawn.profiles.available',
@@ -1858,6 +2720,10 @@ describe('Action Spec Registry', () => {
     expect(fieldsByPath.get('mcpSelection')).toMatchObject({
       optionsSourceId: 'sessions.spawn.mcp_servers.preview',
     });
+    expect(fieldsByPath.has('backendTargetKey')).toBe(false);
+    expect(fieldsByPath.has('modelId')).toBe(false);
+    expect(fieldsByPath.has('path')).toBe(false);
+    expect(fieldsByPath.has('machineId')).toBe(false);
   });
 
   it.each([
@@ -1872,81 +2738,6 @@ describe('Action Spec Registry', () => {
   ] as const)('surfaces %s for agent spawn option discovery', (actionId) => {
     const spec = getActionSpec(actionId as any);
     expect(spec.surfaces.agent).toBe(true);
-  });
-
-  it('requires backendTargetKey when spawning a customAcp picker session directly', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'customAcp',
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it('requires backendTargetKey when spawning a legacy configured ACP flavor carrier through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'acp:review-bot',
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects mismatched agentId and backendTargetKey when spawning through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'claude',
-      backendTargetKey: 'acpBackend:review-bot',
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects agent:customAcp as a backendTargetKey when spawning through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'agent:customAcp',
-    });
-
-    expect(parsed.success).toBe(false);
-  });
-
-  it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when spawning through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'claude',
-      backendTargetKey: 'backend:plugin-review-bot',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts a matching legacy configured ACP flavor carrier when spawning through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      agentId: 'acp:review-bot',
-      backendTargetKey: 'backend:review-bot:configured:review-bot',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts a canonical built-in backendTargetKey outside the direct-session allowlist when spawning through the picker', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:gemini',
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts canonical built-in backendTargetKey values for picker flows when the runtime carrier can be inferred', () => {
-    const spec = getActionSpec('session.spawn_picker');
-    const parsed = spec.inputSchema.safeParse({
-      backendTargetKey: 'backend:pi',
-    });
-
-    expect(parsed.success).toBe(true);
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {
@@ -2092,7 +2883,6 @@ describe('Action Spec Registry', () => {
 
   it('binds session lifecycle RPC wire methods to ActionSpec rows', () => {
     const expectedBindings = new Map([
-      ['session.spawn_new', 'spawn-happy-session'],
       ['session.stop', 'stop-session'],
       ['session.fork', 'session.fork'],
       ['session.continue_with_replay', 'session.continueWithReplay'],
@@ -2107,6 +2897,7 @@ describe('Action Spec Registry', () => {
       ['session.handoff.commit', 'daemon.sessionHandoff.commit'],
       ['session.handoff.abort', 'daemon.sessionHandoff.abort'],
       ['session.handoff.status.get', 'daemon.sessionHandoff.status.get'],
+      ['session.spawn_new', RPC_METHODS.SESSION_SPAWN_NEW],
     ]);
 
     for (const [actionId, rpcMethod] of expectedBindings) {
@@ -2115,6 +2906,8 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
     }
+
+    expect(getActionSpec('session.spawn_new').surfaceBindings?.rpc).toBeDefined();
   });
 
   it('binds prepare-target result-get output to its bounded shared response schema', () => {
@@ -2258,6 +3051,7 @@ describe('Action Spec Registry', () => {
           cli: true,
           rpc: false,
           sdk: false,
+          plugin: false,
         },
         bindings: { mcpToolName: 'review_start' },
         outputSchema: z.unknown(),
@@ -2290,6 +3084,7 @@ describe('Action Spec Registry', () => {
         cli: true,
         rpc: false,
         sdk: false,
+        plugin: false,
       },
       bindings: { mcpToolName: 'review_start' },
       outputSchema: z.unknown(),
@@ -2328,10 +3123,11 @@ describe('Action Spec Registry', () => {
         agent: true,
         mcp: true,
         cli: true,
-        rpc: true,
+        rpc: false,
         sdk: false,
+        plugin: false,
       },
-      bindings: { mcpToolName: 'session_spawn_new', rpcMethod: 'spawn-happy-session' },
+      bindings: { mcpToolName: 'session_spawn_new' },
       outputSchema: z.unknown(),
       inputSchema: z.object({}).passthrough(),
       inputHints: {
@@ -2346,6 +3142,28 @@ describe('Action Spec Registry', () => {
     });
 
     expect(parsed.inputHints?.fields[0]?.widget).toBe('json');
+  });
+
+  it('retains canonical dynamic option sources for non-select rich fields', () => {
+    expect(ActionInputHintsSchema.parse({
+      fields: [{
+        path: 'sessionConfigOptionOverrides',
+        title: 'Config option overrides',
+        widget: 'json',
+        optionsSourceId: 'agents.config_options.available',
+      }],
+    })).toMatchObject({
+      fields: [{ optionsSourceId: 'agents.config_options.available' }],
+    });
+  });
+
+  it('describes structured user-action answers through one JSON leaf field', () => {
+    const fields = getActionSpec('session.user_action.answer').inputHints?.fields ?? [];
+
+    expect(fields.find((field) => field.path === 'answers')).toMatchObject({
+      widget: 'json',
+    });
+    expect(fields.some((field) => field.path.startsWith('answers.'))).toBe(false);
   });
 
   it('requires select/multiselect hints to declare options or optionsSourceId', () => {
@@ -2364,6 +3182,7 @@ describe('Action Spec Registry', () => {
           cli: true,
           rpc: false,
           sdk: false,
+          plugin: false,
         },
         bindings: { mcpToolName: 'review_start' },
         outputSchema: z.unknown(),
@@ -2395,6 +3214,7 @@ describe('Action Spec Registry', () => {
           cli: true,
           rpc: false,
           sdk: false,
+          plugin: false,
         },
         bindings: { mcpToolName: 'review_start' },
         outputSchema: z.unknown(),
@@ -2428,6 +3248,7 @@ describe('Action Spec Registry', () => {
           cli: true,
           rpc: false,
           sdk: false,
+          plugin: false,
         },
         bindings: { mcpToolName: 'review_start' },
         outputSchema: z.unknown(),
@@ -2501,6 +3322,33 @@ describe('Action Spec Registry', () => {
     expect(parsed.permissionMode).toBe('workspace_write');
   });
 
+  it('advertises and validates the canonical delegate permission modes at the tool boundary', () => {
+    const spec = getActionSpec('subagents.delegate.start');
+    const baseInput = {
+      backendTargetKeys: ['agent:pi'],
+      instructions: 'Do it.',
+    };
+
+    for (const permissionMode of ['read_only', 'default', 'workspace_write', 'yolo']) {
+      const parsed = (spec.inputSchema as z.ZodTypeAny).safeParse({ ...baseInput, permissionMode });
+      expect(parsed.success, permissionMode).toBe(true);
+    }
+
+    const invalid = (spec.inputSchema as z.ZodTypeAny).safeParse({
+      ...baseInput,
+      permissionMode: 'workspace_read',
+    });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error.issues[0]?.path).toEqual(['permissionMode']);
+      expect(invalid.error.issues[0]?.message).toContain('read_only');
+      expect(invalid.error.issues[0]?.message).toContain('workspace_write');
+    }
+
+    const permissionModeHint = spec.inputHints?.fields.find((field) => field.path === 'permissionMode');
+    expect(permissionModeHint?.description).toContain('read_only | default | workspace_write | yolo');
+  });
+
   it('projects subagent registry actions through ActionSpec RPC bindings', () => {
     const expected = [
       'sessions.subagents.list',
@@ -2516,6 +3364,7 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.rpcMethod).toBe(id);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.sdk).toBe(false);
+      expect(spec.surfaces.plugin).toBe(false);
     }
 
     expect(getActionSpec('sessions.subagents.list').inputSchema.parse({
@@ -2588,7 +3437,7 @@ describe('Action Spec Registry', () => {
     expect(byVoiceToolName.has('teleportVoiceAgentToSessionRoot')).toBe(true);
 
     // Inventory + discovery tools (safe by default; may be gated by user settings in the UI).
-    expect(byVoiceToolName.has('spawnSessionPicker')).toBe(true);
+    expect(byVoiceToolName.has('spawnSessionPicker')).toBe(false);
     expect(byVoiceToolName.has('listRecentPaths')).toBe(true);
     expect(byVoiceToolName.has('listMachines')).toBe(true);
     expect(byVoiceToolName.has('listServers')).toBe(true);
@@ -2604,6 +3453,25 @@ describe('Action Spec Registry', () => {
       .map((spec) => spec.id);
 
     expect(unclassified).toEqual([]);
+  });
+
+  it('derives Voice SDK safety solely from the Action side-effect class', () => {
+    expectTypeOf(isVoiceSdkSafeActionSpec)
+      .parameter(0)
+      .toEqualTypeOf<Pick<ActionSpec, 'sideEffectClass'>>();
+    expect(isVoiceSdkSafeActionSpec({ sideEffectClass: 'none' })).toBe(true);
+    expect(isVoiceSdkSafeActionSpec({ sideEffectClass: 'read' })).toBe(true);
+    expect(isVoiceSdkSafeActionSpec({ sideEffectClass: 'write' })).toBe(false);
+    expect(isVoiceSdkSafeActionSpec({ sideEffectClass: 'external' })).toBe(false);
+    expect(isVoiceSdkSafeActionSpec({ sideEffectClass: 'danger' })).toBe(false);
+  });
+
+  it('derives Voice prompt hot-path membership solely from prompting metadata', () => {
+    expectTypeOf(isVoicePromptHotPathSpec)
+      .parameter(0)
+      .toEqualTypeOf<Pick<ActionSpec, 'prompting'>>();
+    expect(isVoicePromptHotPathSpec({ prompting: { voiceHotPath: true } })).toBe(true);
+    expect(isVoicePromptHotPathSpec({ prompting: { voiceHotPath: false } })).toBe(false);
   });
 
   it('uses concrete schema-shaped voice args examples for all voice surfaces', () => {

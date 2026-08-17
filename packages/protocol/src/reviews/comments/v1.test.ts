@@ -281,7 +281,10 @@ describe('review comment mutation schemas', () => {
 
     const transition = ReviewCommentTransitionRequestV1Schema.parse({
       commentId: 'comment-1',
+      projectId: 'project-1',
       toState: 'resolved',
+      expectedState: 'open',
+      expectedServerRevision: 1,
       evidence: [{ kind: 'test', testResultRef: 'test-run-1', status: 'passed' }],
       clientMutationId: 'mutation-3',
     });

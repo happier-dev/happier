@@ -1,22 +1,55 @@
 import { sha256 } from '@noble/hashes/sha256';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { z } from 'zod';
 
-import { SessionIdSchema } from '../idsV1.js';
+import { SessionIdSchema, SidechainIdSchema } from '../idsV1.js';
 import {
   StrictSessionStoredMessageContentEnvelopeSchema,
 } from '../messages/sessionStoredMessageContent.js';
 import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
+import { SessionTranscriptSourceTimestampMsSchema } from '../messages/transcriptSourceTimestampV1.js';
 import {
   SessionMetadataOwnerPatchV1Schema,
+  SessionMetadataPublisherPreconditionV1Schema,
 } from '../metadata/sessionMetadataEnvelopesV1.js';
-import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
 import {
   ExternalSessionMaterializationPublicationV1Schema,
-  ExternalSessionOperationProgressV1Schema,
-  ExternalSessionOperationSemanticRequestV1Schema,
   ExternalSessionPriorStableStorageV1Schema,
 } from './operationV1.js';
+
+export {
+  ExternalSessionMaterializeActionInputV1Schema,
+  ExternalSessionMaterializeActionResultV1Schema,
+  ExternalSessionMaterializeStartInputV1Schema,
+  ExternalSessionOperationActionErrorCodeV1Schema,
+  ExternalSessionOperationActionErrorV1Schema,
+  ExternalSessionOperationActionResponseV1Schema,
+  ExternalSessionOperationActionResultV1Schema,
+  ExternalSessionOperationCancelInputV1Schema,
+  ExternalSessionOperationDiscardInputV1Schema,
+  ExternalSessionOperationReferenceV1Schema,
+  ExternalSessionOperationResumeInputV1Schema,
+  ExternalSessionOperationRetryInputV1Schema,
+  ExternalSessionOperationStatusInputV1Schema,
+  ExternalSessionOperationTransportReferenceV1Schema,
+  ExternalSessionTakeoverStartInputV1Schema,
+  projectExternalSessionMaterializeActionResultV1,
+  projectExternalSessionOperationActionResultV1,
+  type ExternalSessionMaterializeActionResultV1,
+  type ExternalSessionMaterializeStartInputV1,
+  type ExternalSessionOperationActionErrorCodeV1,
+  type ExternalSessionOperationActionErrorV1,
+  type ExternalSessionOperationActionResponseV1,
+  type ExternalSessionOperationActionResultV1,
+  type ExternalSessionOperationCancelInputV1,
+  type ExternalSessionOperationDiscardInputV1,
+  type ExternalSessionOperationReferenceV1,
+  type ExternalSessionOperationResumeInputV1,
+  type ExternalSessionOperationRetryInputV1,
+  type ExternalSessionOperationStatusInputV1,
+  type ExternalSessionTakeoverStartInputV1,
+} from './operationActionSchemasV1.js';
 
 const OperationReferenceIdSchema = z.string().trim().min(1).max(512);
 const OperationIdSchema = z.string().trim().min(1).max(256);
@@ -62,148 +95,12 @@ export function makeExternalSessionHistoricalImportBatchIdV1(
  * durable claim binding by the socket handler.
  */
 export const ExternalSessionOperationClaimV1Schema = z.object({
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   operationId: OperationIdSchema,
   operationClaimId: OperationReferenceIdSchema,
 }).strict();
 export type ExternalSessionOperationClaimV1 = z.infer<
   typeof ExternalSessionOperationClaimV1Schema
->;
-
-const ExternalSessionMaterializeStartIntentRequestV1Schema = z.object({
-  v: z.literal(1),
-  idempotencyKey: OperationIdSchema,
-  sessionId: SessionIdSchema,
-  plan: z.literal('materialize'),
-  targetStorageMode: z.literal('external-linked'),
-  targetRuntimeMode: z.null(),
-}).strict();
-
-/**
- * Public materialization intent. The linked source identity and all lifecycle
- * generations are daemon-owned and are captured immediately before the
- * durable semantic operation is created.
- */
-export const ExternalSessionMaterializeStartInputV1Schema = z.object({
-  request: ExternalSessionMaterializeStartIntentRequestV1Schema,
-}).strict();
-export type ExternalSessionMaterializeStartInputV1 = z.infer<
-  typeof ExternalSessionMaterializeStartInputV1Schema
->;
-
-const ExternalSessionTakeoverStartIntentSourceV1Schema = z.object({
-  machineId: OperationIdSchema,
-  remoteSessionId: z.string().trim().min(1).max(2_000),
-  qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
-  linkGeneration: z.string().trim().min(1).max(256),
-}).strict();
-
-const ExternalSessionTakeoverStartIntentRequestV1Schema = z.object({
-  v: z.literal(1),
-  idempotencyKey: OperationIdSchema,
-  sessionId: SessionIdSchema,
-  source: ExternalSessionTakeoverStartIntentSourceV1Schema,
-  plan: z.literal('takeover'),
-  targetStorageMode: z.enum(['external-linked', 'persisted']),
-  targetRuntimeMode: z.literal('terminal'),
-}).strict();
-
-/**
- * Public takeover intent. Generation fences owned by the machine/plugin
- * lifecycle are intentionally absent: the daemon re-reads and persists them
- * from the canonical linked session and active contribution.
- */
-export const ExternalSessionTakeoverStartInputV1Schema = z.object({
-  request: ExternalSessionTakeoverStartIntentRequestV1Schema,
-}).strict();
-export type ExternalSessionTakeoverStartInputV1 = z.infer<
-  typeof ExternalSessionTakeoverStartInputV1Schema
->;
-
-/**
- * Public-safe descriptive reference. The owner machine resolves the private
- * claim from its canonical operation row and revalidates the exact revision.
- */
-export const ExternalSessionOperationReferenceV1Schema = z.object({
-  sessionId: SessionIdSchema,
-  operationId: OperationIdSchema,
-  revision: OperationRevisionSchema,
-}).strict();
-export type ExternalSessionOperationReferenceV1 = z.infer<
-  typeof ExternalSessionOperationReferenceV1Schema
->;
-
-/**
- * The status input has no intent field, so merely hydrating it cannot be
- * interpreted as Resume, Retry, Cancel, or Discard.
- */
-export const ExternalSessionOperationStatusInputV1Schema =
-  ExternalSessionOperationReferenceV1Schema;
-export type ExternalSessionOperationStatusInputV1 = z.infer<
-  typeof ExternalSessionOperationStatusInputV1Schema
->;
-
-const ExternalSessionOperationRevisionIntentInputV1Schema =
-  ExternalSessionOperationReferenceV1Schema;
-
-export const ExternalSessionOperationCancelInputV1Schema =
-  ExternalSessionOperationRevisionIntentInputV1Schema;
-export const ExternalSessionOperationResumeInputV1Schema =
-  ExternalSessionOperationRevisionIntentInputV1Schema;
-export const ExternalSessionOperationRetryInputV1Schema =
-  ExternalSessionOperationRevisionIntentInputV1Schema;
-export const ExternalSessionOperationDiscardInputV1Schema =
-  ExternalSessionOperationRevisionIntentInputV1Schema;
-
-export type ExternalSessionOperationCancelInputV1 = z.infer<
-  typeof ExternalSessionOperationCancelInputV1Schema
->;
-export type ExternalSessionOperationResumeInputV1 = z.infer<
-  typeof ExternalSessionOperationResumeInputV1Schema
->;
-export type ExternalSessionOperationRetryInputV1 = z.infer<
-  typeof ExternalSessionOperationRetryInputV1Schema
->;
-export type ExternalSessionOperationDiscardInputV1 = z.infer<
-  typeof ExternalSessionOperationDiscardInputV1Schema
->;
-
-export const ExternalSessionOperationActionErrorCodeV1Schema = z.enum([
-  'upgrade_required',
-  'operation_not_found',
-  'operation_conflict',
-  'stale_revision',
-  'invalid_state',
-  'not_allowed',
-  'reconciliation_required',
-  'source_unavailable',
-  'internal_error',
-]);
-export type ExternalSessionOperationActionErrorCodeV1 = z.infer<
-  typeof ExternalSessionOperationActionErrorCodeV1Schema
->;
-
-export const ExternalSessionOperationActionErrorV1Schema = z.object({
-  code: ExternalSessionOperationActionErrorCodeV1Schema,
-  message: z.string().trim().min(1).max(2_000),
-}).strict();
-export type ExternalSessionOperationActionErrorV1 = z.infer<
-  typeof ExternalSessionOperationActionErrorV1Schema
->;
-
-export const ExternalSessionOperationActionResponseV1Schema =
-  z.discriminatedUnion('ok', [
-    z.object({
-      ok: z.literal(true),
-      progress: ExternalSessionOperationProgressV1Schema,
-    }).strict(),
-    z.object({
-      ok: z.literal(false),
-      error: ExternalSessionOperationActionErrorV1Schema,
-    }).strict(),
-  ]);
-export type ExternalSessionOperationActionResponseV1 = z.infer<
-  typeof ExternalSessionOperationActionResponseV1Schema
 >;
 
 export const EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 =
@@ -217,11 +114,11 @@ const ExternalSessionOperationSocketCommandBaseV1Schema = z.object({
 
 export const ExternalSessionOperationSocketBatchItemV1Schema = z.object({
   localId: TranscriptItemIdSchema,
-  sidechainId: TranscriptItemIdSchema.nullable(),
+  sidechainId: SidechainIdSchema.nullable(),
   messageRole: SessionMessageRoleSchema.nullable(),
   content: StrictSessionStoredMessageContentEnvelopeSchema,
-  sourceCreatedAtMs: OperationTimestampSchema.optional(),
-  sourceUpdatedAtMs: OperationTimestampSchema.optional(),
+  sourceCreatedAtMs: SessionTranscriptSourceTimestampMsSchema.optional(),
+  sourceUpdatedAtMs: SessionTranscriptSourceTimestampMsSchema.optional(),
 }).strict().superRefine((item, context) => {
   if (
     item.sourceCreatedAtMs !== undefined
@@ -239,8 +136,45 @@ export type ExternalSessionOperationSocketBatchItemV1 = z.infer<
   typeof ExternalSessionOperationSocketBatchItemV1Schema
 >;
 
+const ExternalSessionTakeoverAdmissionCommandV1Schema =
+  z.discriminatedUnion('mode', [
+    ExternalSessionOperationSocketCommandBaseV1Schema.extend({
+      kind: z.literal('admit_persisted_takeover'),
+      mode: z.literal('persisted'),
+      attemptId: OperationReferenceIdSchema,
+      publisherPrecondition: SessionMetadataPublisherPreconditionV1Schema,
+      expectedSessionMetadataVersion: OperationRevisionSchema,
+      metadataPatch: SessionMetadataOwnerPatchV1Schema,
+      expectedSessionSeq: OperationSequenceSchema,
+      expectedPending: z.object({
+        version: OperationRevisionSchema,
+        count: OperationCountSchema,
+        blockedCount: OperationCountSchema,
+      }).strict(),
+      expectedPublication: z.object({
+        materializationPublicationId: OperationReferenceIdSchema,
+        materializedThroughSourceAt: OperationTimestampSchema,
+        publishedThroughServerSeq: OperationSequenceSchema,
+      }).strict(),
+    }).strict(),
+    ExternalSessionOperationSocketCommandBaseV1Schema.extend({
+      kind: z.literal('admit_persisted_takeover'),
+      mode: z.literal('external_linked'),
+      attemptId: OperationReferenceIdSchema,
+      publisherPrecondition: SessionMetadataPublisherPreconditionV1Schema,
+      expectedSessionMetadataVersion: OperationRevisionSchema,
+      expectedSessionSeq: OperationSequenceSchema,
+      expectedPending: z.object({
+        version: OperationRevisionSchema,
+        count: OperationCountSchema,
+        blockedCount: OperationCountSchema,
+      }).strict(),
+      expectedPriorStableStorage: ExternalSessionPriorStableStorageV1Schema,
+    }).strict(),
+  ]);
+
 export const ExternalSessionOperationSocketCommandV1Schema =
-  z.discriminatedUnion('kind', [
+  z.union([
     ExternalSessionOperationSocketCommandBaseV1Schema.extend({
       kind: z.literal('inspect'),
     }).strict(),
@@ -263,23 +197,7 @@ export const ExternalSessionOperationSocketCommandV1Schema =
       kind: z.literal('finalize'),
       expectedAcceptedThroughServerSeq: OperationSequenceSchema,
     }).strict(),
-    ExternalSessionOperationSocketCommandBaseV1Schema.extend({
-      kind: z.literal('admit_persisted_takeover'),
-      attemptId: OperationReferenceIdSchema,
-      expectedSessionMetadataVersion: OperationRevisionSchema,
-      metadataPatch: SessionMetadataOwnerPatchV1Schema,
-      expectedSessionSeq: OperationSequenceSchema,
-      expectedPending: z.object({
-        version: OperationRevisionSchema,
-        count: OperationCountSchema,
-        blockedCount: OperationCountSchema,
-      }).strict(),
-      expectedPublication: z.object({
-        materializationPublicationId: OperationReferenceIdSchema,
-        materializedThroughSourceAt: OperationTimestampSchema,
-        publishedThroughServerSeq: OperationSequenceSchema,
-      }).strict(),
-    }).strict(),
+    ExternalSessionTakeoverAdmissionCommandV1Schema,
     ExternalSessionOperationSocketCommandBaseV1Schema.extend({
       kind: z.literal('discard'),
     }).strict(),
@@ -350,6 +268,7 @@ export const ExternalSessionOperationSocketResponseV1Schema =
     }).strict(),
     ExternalSessionOperationSocketResponseBaseV1Schema.extend({
       kind: z.literal('takeover_admitted'),
+      mode: z.enum(['persisted', 'external_linked']),
       attemptId: OperationReferenceIdSchema,
     }).strict(),
     ExternalSessionOperationSocketResponseBaseV1Schema.extend({

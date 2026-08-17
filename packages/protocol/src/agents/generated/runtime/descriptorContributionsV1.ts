@@ -7,6 +7,13 @@
  */
 
 import {
+  buildAntigravityRuntimeDescriptorV1,
+  readCanonicalAntigravityRuntimeDescriptorV1,
+  readStrictCanonicalAntigravityRuntimeDescriptorV1,
+  type CanonicalAntigravityRuntimeDescriptorV1,
+  type AntigravityRuntimeDescriptorV1,
+} from './descriptors/antigravity.js';
+import {
   buildCodexAgentRuntimeDescriptorV1,
   readCanonicalCodexAgentRuntimeDescriptorV1,
   readStrictCanonicalCodexAgentRuntimeDescriptorV1,
@@ -29,12 +36,15 @@ import {
 } from './descriptors/pi.js';
 
 export {
+  buildAntigravityRuntimeDescriptorV1,
   buildCodexAgentRuntimeDescriptorV1,
   buildOpenCodeAgentRuntimeDescriptorV1,
   buildPiAgentRuntimeDescriptorV1,
 };
 
 export type {
+  CanonicalAntigravityRuntimeDescriptorV1,
+  AntigravityRuntimeDescriptorV1,
   CanonicalCodexAgentRuntimeDescriptorV1,
   CodexAgentRuntimeDescriptorV1,
   CanonicalOpenCodeAgentRuntimeDescriptorV1,
@@ -44,6 +54,7 @@ export type {
 };
 
 export const GENERATED_RUNTIME_DESCRIPTOR_PROVIDER_IDS_V1 = [
+  'antigravity',
   'codex',
   'opencode',
   'pi',
@@ -53,12 +64,14 @@ export type GeneratedRuntimeDescriptorProviderIdV1 =
   (typeof GENERATED_RUNTIME_DESCRIPTOR_PROVIDER_IDS_V1)[number];
 
 export type GeneratedRuntimeDescriptorByProviderIdV1 = {
+  antigravity: AntigravityRuntimeDescriptorV1;
   codex: CodexAgentRuntimeDescriptorV1;
   opencode: OpenCodeAgentRuntimeDescriptorV1;
   pi: PiAgentRuntimeDescriptorV1;
 };
 
 export type GeneratedCanonicalRuntimeDescriptorByProviderIdV1 = {
+  antigravity: CanonicalAntigravityRuntimeDescriptorV1;
   codex: CanonicalCodexAgentRuntimeDescriptorV1;
   opencode: CanonicalOpenCodeAgentRuntimeDescriptorV1;
   pi: CanonicalPiAgentRuntimeDescriptorV1;
@@ -71,6 +84,15 @@ type GeneratedRuntimeDescriptorContributionV1 = Readonly<{
 }>;
 
 export const GENERATED_RUNTIME_DESCRIPTOR_CONTRIBUTIONS_V1 = Object.freeze({
+  antigravity: Object.freeze({
+    agentId: 'antigravity',
+    readCanonicalDescriptor: (descriptor: unknown) => readCanonicalAntigravityRuntimeDescriptorV1(
+      descriptor as AntigravityRuntimeDescriptorV1 | null,
+    ),
+    readStrictCanonicalDescriptor: (descriptor: unknown) => readStrictCanonicalAntigravityRuntimeDescriptorV1(
+      descriptor as AntigravityRuntimeDescriptorV1 | null,
+    ),
+  }),
   codex: Object.freeze({
     agentId: 'codex',
     readCanonicalDescriptor: (descriptor: unknown) => readCanonicalCodexAgentRuntimeDescriptorV1(

@@ -1,27 +1,23 @@
-import { z } from 'zod';
-
+import {
+  defineProtocolObject,
+  defineProtocolString,
+} from '../plugins/actions/jsonSchemaValidation.js';
 import {
   PluginContributionIdentityV1Schema,
 } from '../plugins/contributionIdentity.js';
-import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 
-export const QualifiedConnectedAccountIdSchema = z.string()
-  .min(1)
-  .regex(/^(?!\s)[\s\S]*\S$/u)
-  .regex(/^[\s\S]{1,256}$/u);
+export const QualifiedConnectedAccountIdSchema = defineProtocolString({
+  minLength: 1,
+  maxLength: 256,
+  pattern: '^(?!\\s)[\\s\\S]*\\S$',
+});
 
-export const QualifiedConnectedAccountRefSchema = z.object({
+export const QualifiedConnectedAccountRefSchema = defineProtocolObject({
   service: PluginContributionIdentityV1Schema,
   accountId: QualifiedConnectedAccountIdSchema,
-}).strict();
+}, { policy: 'closed' });
 
 /** Canonical portable JSON Schema projection of the qualified account ref. */
-export const QualifiedConnectedAccountRefJsonSchema = PluginJsonSchemaV2Schema.parse(
-  QualifiedConnectedAccountRefSchema.toJSONSchema({
-    io: 'input',
-    target: 'draft-7',
-    unrepresentable: 'throw',
-  }),
-);
+export const QualifiedConnectedAccountRefJsonSchema = QualifiedConnectedAccountRefSchema.jsonSchema;
 
-export type QualifiedConnectedAccountRef = z.infer<typeof QualifiedConnectedAccountRefSchema>;
+export type QualifiedConnectedAccountRef = ReturnType<typeof QualifiedConnectedAccountRefSchema.parse>;

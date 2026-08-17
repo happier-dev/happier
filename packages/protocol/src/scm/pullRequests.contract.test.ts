@@ -27,7 +27,7 @@ describe('SCM pull-request protocol contracts', () => {
     });
 
     expect(provider).toMatchObject({
-      id: 'happier.scm.hosting.github/github',
+      id: 'happier.scm.forge.github/github',
       kind: 'github',
       displayName: 'GitHub',
       baseUrl: 'https://github.com',

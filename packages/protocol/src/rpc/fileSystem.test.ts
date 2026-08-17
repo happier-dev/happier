@@ -25,6 +25,10 @@ describe('RPC_METHODS file-system surface', () => {
     expect(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK).toBe('daemon.bulkTransfer.download.chunk');
     expect(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE).toBe('daemon.bulkTransfer.download.finalize');
     expect(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT).toBe('daemon.bulkTransfer.download.abort');
+    expect(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1).toBe(
+      'daemon.bulkTransfer.composerMedia.capability.get.v1',
+    );
+    expect(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE).toBe('daemon.bulkTransfer.composerMedia.release');
     expect('DAEMON_BULK_TRANSFER_UPLOAD_INIT' in RPC_METHODS).toBe(false);
     expect('DAEMON_BULK_TRANSFER_DOWNLOAD_INIT' in RPC_METHODS).toBe(false);
 

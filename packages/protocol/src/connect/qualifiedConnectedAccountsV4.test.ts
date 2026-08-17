@@ -857,6 +857,7 @@ describe('qualified connected-account V4 wire contract', () => {
     const group = {
       v: 1,
       ref: { service, groupId: 'fallback-pool' },
+      incarnation: 'qualified-group-row-fallback-pool',
       displayName: 'Fallback',
       policy: {},
       activeConnectedAccountId: ref.accountId,

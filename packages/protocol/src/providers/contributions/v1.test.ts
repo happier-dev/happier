@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ProviderContributionV1Schema,
+  createProviderManagedRuntimeDeclarationEqualityKeyV1,
   resolveProviderManagedRuntimeDeclarationV1,
 } from './v1.js';
 
@@ -54,6 +55,10 @@ describe('ProviderContributionV1Schema', () => {
         connectedAccounts: [{
           purpose: 'upstream',
           service: 'openai',
+          title: {
+            key: 'plugins.acme.gateway.connectedAccounts.upstream',
+            fallback: 'OpenAI upstream account',
+          },
           required: true,
           materializationKinds: ['httpHeaders'],
         }],
@@ -87,9 +92,116 @@ describe('ProviderContributionV1Schema', () => {
       pluginId: 'acme.gateway',
       localId: 'openai',
     });
+    expect(relative.connectedAccounts[0]?.title).toEqual({
+      key: 'plugins.acme.gateway.connectedAccounts.upstream',
+      fallback: 'OpenAI upstream account',
+    });
+    expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({
+      implementationIdentity: {
+        pluginId: 'acme.gateway',
+        localId: 'gateway',
+      },
+      managedRuntime: {
+        ...relative,
+        connectedAccounts: [{
+          ...relative.connectedAccounts[0]!,
+          title: 'Use the renamed upstream account',
+        }],
+      },
+    })).toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({
+      implementationIdentity: {
+        pluginId: 'acme.gateway',
+        localId: 'gateway',
+      },
+      managedRuntime: relative,
+    }));
     expect(Object.isFrozen(relative)).toBe(true);
     expect(Object.isFrozen(relative.connectedAccounts)).toBe(true);
     expect(Object.isFrozen(relative.connectedAccounts[0]?.service)).toBe(true);
+  });
+
+  it('canonicalizes managed declaration set fields without reordering endpoint templates', () => {
+    const implementationIdentity = {
+      pluginId: 'acme.gateway',
+      localId: 'gateway',
+    };
+    const declaration = {
+      kind: 'managed' as const,
+      dependencies: ['bridge-a', 'bridge-b'],
+      endpointTemplateIds: ['responses', 'chat'],
+      connectedAccounts: [
+        {
+          purpose: 'upstream',
+          service: 'openai',
+          required: true,
+          materializationKinds: ['environment', 'httpHeaders'],
+        },
+        {
+          purpose: 'audit',
+          service: 'audit-service',
+          materializationKinds: ['httpHeaders'],
+        },
+      ],
+      requestAuthUses: [
+        {
+          purpose: 'upstream',
+          materialization: {
+            kind: 'httpHeaders' as const,
+            origin: 'https://api.example.test',
+            headerNames: ['authorization', 'x-trace-id'],
+          },
+        },
+        {
+          purpose: 'audit',
+          materialization: {
+            kind: 'httpHeaders' as const,
+            origin: 'https://audit.example.test',
+            headerNames: ['authorization'],
+          },
+        },
+      ],
+    };
+    const canonical = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: declaration,
+    });
+    const permuted = resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: {
+        ...declaration,
+        dependencies: [...declaration.dependencies].reverse(),
+        connectedAccounts: declaration.connectedAccounts
+          .map((account) => ({
+            ...account,
+            ...(account.materializationKinds
+              ? {
+                  materializationKinds: [
+                    ...account.materializationKinds,
+                  ].reverse(),
+                }
+              : {}),
+          }))
+          .reverse(),
+        requestAuthUses: declaration.requestAuthUses
+          .map((use) => ({
+            ...use,
+            materialization: {
+              ...use.materialization,
+              headerNames: [...use.materialization.headerNames].reverse(),
+            },
+          }))
+          .reverse(),
+      },
+    });
+
+    expect(permuted).toEqual(canonical);
+    expect(resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: {
+        ...declaration,
+        endpointTemplateIds: ['chat', 'responses'],
+      },
+    })).not.toEqual(canonical);
   });
 
   it('accepts the cold managed-runtime declaration and rejects endpoint/dependency bound violations', () => {

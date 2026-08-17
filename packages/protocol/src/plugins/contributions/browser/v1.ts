@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
 
 import { BrowserProfileStorageModeV1Schema } from '../../../browser/profile/v1.js';
 import { BrowserHttpUrlV1Schema } from '../../../browser/url.js';
@@ -6,7 +7,7 @@ import { PluginContributionLocalIdSchema } from '../../contributionIdentity.js';
 import { PluginAvailabilityDescriptorV2Schema, PluginContributionReferenceV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from '../publicTypes.js';
 
 const DisplayShape = {
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
@@ -22,8 +23,8 @@ export type PluginBrowserTargetContributionInputV1 = z.input<typeof PluginBrowse
 export type PluginBrowserTargetContributionV1 = z.infer<typeof PluginBrowserTargetContributionV1Schema>;
 export const PluginBrowserActionContributionV1Schema = z.object({
   ...DisplayShape,
-  action: PluginContributionReferenceV2Schema,
-  target: PluginContributionReferenceV2Schema,
+  action: asProtocolZod(PluginContributionReferenceV2Schema),
+  target: asProtocolZod(PluginContributionReferenceV2Schema),
   placement: z.enum(['toolbar', 'detailsPanel', 'contextMenu']).default('toolbar'),
   icon: z.string().trim().regex(/^[a-z][a-z0-9.-]*$/i).optional(),
   order: z.number().int().optional(),

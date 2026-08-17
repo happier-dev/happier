@@ -38,17 +38,35 @@ describe('session update payloads', () => {
   it('types the split metadata layout and owner envelope on new-session updates', () => {
     const parsed = UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
       metadataLayoutVersion: 1,
-      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      ownerMetadata: {
+        t: 'plain',
+        v: { v: 1 },
+      },
     }));
 
     expect(parsed.success).toBe(true);
     expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
+      metadataLayoutVersion: 1,
+      ownerMetadata: {
+        t: 'encrypted',
+        c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      },
+    })).success).toBe(true);
+    expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
       metadataLayoutVersion: '1',
-      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      ownerMetadata: {
+        t: 'plain',
+        v: { v: 1 },
+      },
     })).success).toBe(false);
     expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
       metadataLayoutVersion: 1,
       ownerMetadata: 42,
+    })).success).toBe(false);
+    expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
+      metadataLayoutVersion: 1,
+      ownerMetadata:
+        'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
     })).success).toBe(false);
   });
 });

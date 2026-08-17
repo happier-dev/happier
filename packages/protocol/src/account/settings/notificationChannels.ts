@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-import { SecretStringV1Schema, type SecretStringV1 } from '../../crypto/settingsSecretStringsV1.js';
+import {
+  SecretStringV1Schema,
+  type SecretStringV1,
+} from '../../crypto/settingsSecretStringSchemasV1.js';
 import type { NotificationsSettingsV1 } from './accountSettings.js';
 
 export const BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID = 'builtin:expo_push';

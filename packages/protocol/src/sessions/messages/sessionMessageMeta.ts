@@ -7,6 +7,14 @@ import {
   createSessionMediaMessageMetaV1Schema,
 } from './sessionMediaV1.js';
 import { ConversationTurnOriginV1Schema } from '../../messages/structured/conversationTurnOriginV1.js';
+import {
+  SESSION_INPUT_AUTHORITY_META_KEY,
+  SESSION_INPUT_REQUEST_META_KEY,
+  SESSION_MESSAGE_PROVENANCE_META_KEY,
+  SessionInputAuthorityV1Schema,
+  SessionInputRequestV1Schema,
+  SessionMessageProvenanceV1Schema,
+} from './sessionInputAdmission.js';
 
 export type SessionUserMessageDeliveryIntentV1 =
   | 'default'
@@ -73,6 +81,9 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       allowedTools: zod.array(zod.string()).nullable().optional(),
       disallowedTools: zod.array(zod.string()).nullable().optional(),
       displayText: zod.string().optional(),
+      [SESSION_MESSAGE_PROVENANCE_META_KEY]: SessionMessageProvenanceV1Schema.optional(),
+      [SESSION_INPUT_REQUEST_META_KEY]: SessionInputRequestV1Schema.optional(),
+      [SESSION_INPUT_AUTHORITY_META_KEY]: SessionInputAuthorityV1Schema.optional(),
       happier: zod
         .object({
           kind: zod.string(),
@@ -95,7 +106,19 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
         .optional(),
       happierMedia: sessionMediaMessageMetaV1Schema.optional(),
     })
-    .passthrough();
+    .passthrough()
+    .superRefine((value, ctx) => {
+      if (
+        value[SESSION_INPUT_REQUEST_META_KEY] !== undefined
+        && value[SESSION_INPUT_AUTHORITY_META_KEY] !== undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [SESSION_INPUT_AUTHORITY_META_KEY],
+          message: 'Input request and admitted authority metadata cannot coexist',
+        });
+      }
+    });
 }
 
 export const SessionMessageMetaSchema = createSessionMessageMetaSchema(z);

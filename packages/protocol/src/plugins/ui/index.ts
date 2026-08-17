@@ -1,29 +1,59 @@
 export * from './artifactCompatibility.js';
+export * from './artifactArchive.js';
 export * from './artifactIntegrity.js';
-export * from './artifacts.js';
+export * from './composer.js';
 export * from './hostApi.js';
 export * from './hostApiRequests.js';
+export * from './selectedActionInput.js';
+// `hostApiRequests` consumes this semantic identity, but UI host integrations
+// import the canonical public schema from this barrel rather than an unexported
+// source-file subpath.
+export {
+  PluginUiInstanceKeyV1Schema,
+  type PluginUiInstanceKeyV1,
+} from './semanticCommands.js';
 export * from './hostApiWire.js';
 export * from './hostedWebBuild.js';
+export * from './hostedWebAssetPolicy.js';
+export * from './hostedWebAssetPolicyNative.js';
 export * from './hostedWebBridge.js';
 export * from './hostedWebEndpoint.js';
 export * from './hostRuntimeExternals.js';
-export * from './reactNativeBundleManifest.js';
 export * from './reactNativeCompatibility.js';
-export * from './reactNativeHostApi.js';
-export * from './resourceSnapshots.js';
 export * from './subscriptions.js';
 export * from './surfaceContext.js';
+export * from './targetedContributions.js';
 export * from './uiArtifactsManifest.js';
+export type { ComposerContentHandleV1 } from '../../runtime/input/composerContentV1.js';
+export {
+  PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH,
+  PluginUiRendererChainBindingV1Schema,
+  type PluginUiRendererChainBindingV1,
+} from '../contributions/ui/rendererChainBinding.js';
+export {
+  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+  PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
+  PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
+  PluginHostedWebCollectionUiQueryBridgeRequestV1Schema,
+  PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
+  PluginHostedWebCollectionUiQueryBridgeSnapshotV1Schema,
+  type PluginHostedWebCollectionUiQueryBridgeChangeV1,
+  type PluginHostedWebCollectionUiQueryBridgeOperationV1,
+  type PluginHostedWebCollectionUiQueryBridgeRequestV1,
+  type PluginHostedWebCollectionUiQueryBridgeResponseV1,
+  type PluginHostedWebCollectionUiQueryBridgeSnapshotV1,
+} from '../data/hostedWebCollectionUiQueryBridgeV1.js';
 export {
   PluginUiArtifactFileV1Schema,
   type PluginUiArtifactFileV1,
 } from '../contributions/ui/artifacts.js';
 export {
-  PluginUiActionDescriptorV1Schema,
+  normalizePluginSessionHeaderActionDescriptorV1,
+  type NormalizedPluginSessionHeaderActionDescriptorV1,
+} from '../contributions/ui/sessionHeaderActions.js';
+export {
   PluginUiFallbackRefV1Schema,
   isExecutablePluginUiFallbackRefV1,
-  type PluginUiActionDescriptorV1,
   type PluginUiFallbackRefV1,
 } from '../contributions/ui/actions.js';
 export {
@@ -45,6 +75,43 @@ export {
   type PluginSessionResourceTargetV1,
 } from '../contributions/ui/resources.js';
 export {
+  PluginSurfaceTargetV1Schema,
+  type PluginSurfaceTargetV1,
+} from '../contributions/ui/surfaceTargets.js';
+export {
+  MAX_PLUGIN_UI_DESTINATION_BADGE_UTF8_BYTES_V1,
+  MAX_PLUGIN_UI_DESTINATION_RANK_HINT_V1,
+  MAX_PLUGIN_UI_SETTINGS_DEFAULT_RANK_V1,
+  MAX_PLUGIN_UI_SETTINGS_KEYWORDS_V1,
+  MAX_PLUGIN_UI_SETTINGS_KEYWORD_UTF8_BYTES_V1,
+  MAX_PLUGIN_UI_SETTINGS_SUBTITLE_UTF8_BYTES_V1,
+  MAX_PLUGIN_UI_SETTINGS_TITLE_UTF8_BYTES_V1,
+  MIN_PLUGIN_UI_DESTINATION_RANK_HINT_V1,
+  MIN_PLUGIN_UI_SETTINGS_DEFAULT_RANK_V1,
+  PluginUiDestinationBadgeV1Schema,
+  PluginUiDestinationGroupHintV1Schema,
+  PluginUiDestinationRankHintV1Schema,
+  PluginUiSettingsGroupReferenceV1Schema,
+  PluginUiSettingsGroupV1Schema,
+  PluginUiSettingsHostGroupIdV1Schema,
+  PluginUiSettingsPageV1Schema,
+  PluginDeclarativeComposerApplyEffectV1Schema,
+  type PluginUiDestinationBadgeV1,
+  type PluginUiDestinationGroupHintV1,
+  type PluginUiSettingsGroupReferenceV1,
+  type PluginUiSettingsGroupV1,
+  type PluginUiSettingsHostGroupIdV1,
+  type PluginUiSettingsPageV1,
+  type PluginDeclarativeComposerApplyEffectV1,
+} from '../contributions/ui/v2.js';
+export {
+  PLUGIN_UI_ICON_TOKENS_V1,
+  PluginUiIconTokenV1Schema,
+  PluginUiToneV1Schema,
+  type PluginUiIconTokenV1,
+  type PluginUiToneV1,
+} from '../contributions/ui/tokens.js';
+export {
   PluginUiChannelV1Schema,
   PluginUiCompatibilityV1Schema,
   PluginUiPlatformV1Schema,
@@ -53,59 +120,32 @@ export {
   type PluginUiPlatformV1,
 } from '../contributions/ui/compatibility.js';
 export {
-  PLUGIN_HOST_PLACEMENT_RENDERER_IDS,
-  PluginHostPlacementRendererIdV1Schema,
-  PluginStructuredMessageRendererIdV1Schema,
-  isRenderableHostRendererId,
-  type PluginHostPlacementRendererIdV1,
-  type PluginStructuredMessageRendererIdV1,
-} from '../contributions/ui/renderers.js';
-export {
-  resolveExpectedHostActionPolicyOwner,
-  PluginSurfaceBrowserHostActionPolicyOwnerV1Schema,
-  type PluginSurfaceBrowserHostActionPolicyOwnerV1,
-  type PluginSurfaceBrowserHostActionEffectV1,
-} from '../contributions/ui/surfacePlacements.js';
-export {
-  CANONICAL_RUNTIME_MODE_HOST,
-  GENERIC_HOST_RENDERER_IDS,
-  KNOWN_HOST_RENDERER_IDS,
-  LIVE_SURFACE_RUNTIME_HOSTS,
-  PLUGIN_SURFACE_REGISTRY,
-  PluginSurfaceCategoryV1Schema,
-  PluginSurfaceContainerIdV1Schema,
-  PluginSurfaceContentBindingV1Schema,
-  PluginSurfaceRuntimeHostV1Schema,
-  PluginSurfaceRuntimeModeV1Schema,
-  PluginSurfaceScopeV1Schema,
-  PluginSurfaceTypeIdV1Schema,
-  SESSION_HEADER_ACTION_RENDERER_IDS,
-  SESSION_SURFACE_HOST_RENDERER_IDS,
-  STRUCTURED_MESSAGE_HOST_RENDERER_IDS,
-  SURFACE_DESCRIPTORS,
-  createPluginSurfaceRegistry,
-  defaultHostApiMethodsForCategory,
-  defineSurfaceDescriptor,
-  deriveDefaultRuntimeModesForCategory,
-  resolveSupportedRuntimeModes,
-  selectFirstAvailableRuntimeMode,
-  type PluginSurfaceAnchorV1,
-  type PluginSurfaceCategoryV1,
-  type PluginSurfaceContainerIdV1,
-  type PluginSurfaceContentBindingV1,
-  type PluginSurfaceDescriptorV1,
-  type PluginSurfaceHostApiShapeV1,
-  type PluginSurfaceProjectionResultV1,
-  type PluginSurfaceRegistryV1,
-  type PluginSurfaceRendererBindingV1,
-  type PluginSurfaceRendererSetV1,
-  type PluginSurfaceRuntimeHostV1,
-  type PluginSurfaceRuntimeModeV1,
-  type PluginSurfaceScopeV1,
-  type PluginSurfaceTypeIdV1,
-  type PluginSurfaceWhenGatingV1,
-  type ProjectContributionOptionsV1,
-  type SelectRuntimeModeOptionsV1,
+  PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
+  PluginUiContainerV1Schema,
+  PluginUiDestinationBindingV1Schema,
+  PluginUiDestinationBindingInputV1Schema,
+  PluginUiDestinationInstancePolicyV1Schema,
+  PluginUiDestinationBindingSelectorV1Schema,
+  PluginUiRightSidebarScopeV1Schema,
+  PluginUiTargetKindV1Schema,
+  isPluginUiDestinationBindingAdmittedAtRuntimeV1,
+  isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1,
+  matchesPluginUiDestinationBindingV1,
+  normalizePluginUiDestinationBindingV1,
+  normalizePluginUiSettingsPageBindingV1,
+  resolvePluginUiDestinationBindingSlotV1,
+  selectPluginUiRendererChainMemberV1,
+  selectPluginUiDestinationBindingRendererV1,
+  type PluginUiContainerV1,
+  type PluginUiDestinationBindingInputV1,
+  type PluginUiDestinationBindingSelectorV1,
+  type PluginUiDestinationBindingSlotV1,
+  type PluginUiDestinationBindingV1,
+  type PluginUiDestinationCollisionDomainV1,
+  type PluginUiDestinationInstancePolicyV1,
+  type PluginUiDestinationRuntimeFormFactorV1,
+  type PluginUiRightSidebarScopeV1,
+  type PluginUiTargetKindV1,
 } from '../contributions/ui/surfaceRegistry.js';
 export {
   RuntimeActionHostEffectClassSchema,

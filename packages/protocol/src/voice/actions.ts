@@ -183,11 +183,14 @@ export function extractVoiceActionsFromAssistantText(
 ): Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }> {
   const assistantText = String(assistantTextRaw ?? '');
 
-  const startIndex = assistantText.lastIndexOf(VOICE_ACTIONS_BLOCK.startTag);
+  const startIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.startTag);
   if (startIndex < 0) return { assistantText: assistantText.trim(), actions: [] };
 
   const endIndex = assistantText.indexOf(VOICE_ACTIONS_BLOCK.endTag, startIndex);
-  if (endIndex < 0) return { assistantText: assistantText.trim(), actions: [] };
+  const stripped = endIndex < 0
+    ? assistantText.slice(0, startIndex)
+    : `${assistantText.slice(0, startIndex)}${assistantText.slice(endIndex + VOICE_ACTIONS_BLOCK.endTag.length)}`;
+  if (endIndex < 0) return { assistantText: stripped.trim(), actions: [] };
 
   const jsonRaw = assistantText
     .slice(startIndex + VOICE_ACTIONS_BLOCK.startTag.length, endIndex)
@@ -196,12 +199,12 @@ export function extractVoiceActionsFromAssistantText(
   try {
     const parsedJson = JSON.parse(jsonRaw) as unknown;
     if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-      return { assistantText: assistantText.trim(), actions: [] };
+      return { assistantText: stripped.trim(), actions: [] };
     }
 
     const rawActionsValue = (parsedJson as { actions?: unknown }).actions;
     if (rawActionsValue !== undefined && !Array.isArray(rawActionsValue)) {
-      return { assistantText: assistantText.trim(), actions: [] };
+      return { assistantText: stripped.trim(), actions: [] };
     }
 
     const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
@@ -210,12 +213,11 @@ export function extractVoiceActionsFromAssistantText(
       .filter((action): action is VoiceAssistantAction => action !== null);
 
     if (rawActions.length > 0 && actions.length === 0) {
-      return { assistantText: assistantText.trim(), actions: [] };
+      return { assistantText: stripped.trim(), actions: [] };
     }
 
-    const stripped = `${assistantText.slice(0, startIndex)}${assistantText.slice(endIndex + VOICE_ACTIONS_BLOCK.endTag.length)}`;
     return { assistantText: stripped.trim(), actions };
   } catch {
-    return { assistantText: assistantText.trim(), actions: [] };
+    return { assistantText: stripped.trim(), actions: [] };
   }
 }

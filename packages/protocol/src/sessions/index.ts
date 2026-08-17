@@ -40,3 +40,6 @@ export * from './messages/canonicalTurnDiffTool.js';
 export * from './messages/spawnedFirstTurn.js';
 export * from './presentation/index.js';
 export * from './metadata/sessionMetadataEnvelopesV1.js';
+export * from './metadata/sessionWorkspaceLocationV1.js';
+export * from './creation/index.js';
+export * from './permissions/index.js';

@@ -148,19 +148,15 @@ const SavedSecretSlotRecordV1Schema = z.record(
 export const SavedSecretSlotBindingsV1Schema = z.object({
   account: SavedSecretSlotRecordV1Schema.optional(),
   byMachineId: z.record(ProviderMachineIdSchema, SavedSecretSlotRecordV1Schema).optional(),
-}).strict().superRefine((value, ctx) => {
-  if (Object.keys(value.byMachineId ?? {}).length > PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection) {
-    ctx.addIssue({ code: 'custom', path: ['byMachineId'], message: 'Too many machine secret-binding branches' });
-  }
-});
+}).strict();
 export type SavedSecretSlotBindingsV1 = Readonly<z.infer<typeof SavedSecretSlotBindingsV1Schema>>;
 
 const ProviderSettingsV1BaseSchema = z.object({
   v: z.literal(1),
-  connections: z.array(ProviderConnectionV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.connections),
+  connections: z.array(ProviderConnectionV1Schema),
   connectionTombstones: z.array(ProviderConnectionTombstoneV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones),
-  accountGrants: z.array(ProviderAccountGrantV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.accountGrants),
-  machineGrants: z.array(ProviderMachineGrantV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.machineGrants),
+  accountGrants: z.array(ProviderAccountGrantV1Schema),
+  machineGrants: z.array(ProviderMachineGrantV1Schema),
   secretBindingsByConnectionId: z.record(ProviderConnectionIdSchema, SavedSecretSlotBindingsV1Schema),
   manualModelsByConnectionId: z.record(
     ProviderConnectionIdSchema,
@@ -279,20 +275,11 @@ export class ProviderSettingsLimitError extends Error {
 export function assertProviderSettingsV1WithinLimits(value: unknown): ProviderSettingsV1 {
   const record = rawRecord(value);
   const count = (key: string) => Array.isArray(record[key]) ? record[key].length : 0;
-  if (count('connections') > PROVIDER_SETTINGS_LIMITS_V1.connections
-    || count('connectionTombstones') > PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones
-    || count('accountGrants') > PROVIDER_SETTINGS_LIMITS_V1.accountGrants
-    || count('machineGrants') > PROVIDER_SETTINGS_LIMITS_V1.machineGrants
+  if (count('connectionTombstones') > PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones
     || count('experimentalBindingConfirmations') > PROVIDER_SETTINGS_LIMITS_V1.experimentalBindingConfirmations
     || Object.keys(rawRecord(record.modelVisibilityByRef)).length > PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions
     || Object.keys(rawRecord(record.defaultsByAgentTargetKey)).length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
     throw new ProviderSettingsLimitError('Provider settings exceed a record-count limit');
-  }
-  for (const connection of Array.isArray(record.connections) ? record.connections : []) {
-    const endpointOverridesByMachineId = rawRecord(rawRecord(connection).endpointOverridesByMachineId);
-    if (Object.keys(endpointOverridesByMachineId).length > PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection) {
-      throw new ProviderSettingsLimitError('Provider settings exceed the machine-binding limit');
-    }
   }
   const manualModelsByConnectionId = rawRecord(record.manualModelsByConnectionId);
   let manualModelsTotal = 0;
@@ -312,9 +299,6 @@ export function assertProviderSettingsV1WithinLimits(value: unknown): ProviderSe
       throw new ProviderSettingsLimitError('Provider settings exceed the credential-slot limit');
     }
     const byMachineId = rawRecord(bindingRecord.byMachineId);
-    if (Object.keys(byMachineId).length > PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection) {
-      throw new ProviderSettingsLimitError('Provider settings exceed the machine-binding limit');
-    }
     for (const machineBindings of Object.values(byMachineId)) {
       if (Object.keys(rawRecord(machineBindings)).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
         throw new ProviderSettingsLimitError('Provider settings exceed the credential-slot limit');
@@ -354,10 +338,10 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
 }> {
   const diagnostics: ProviderSettingsParseDiagnosticV1[] = [];
   const raw = rawRecord(value);
-  const parseArray = <T>(key: string, schema: z.ZodType<T>, max: number): T[] => {
+  const parseArray = <T>(key: string, schema: z.ZodType<T>, max?: number): T[] => {
     const rawEntries = Array.isArray(raw[key]) ? raw[key] : [];
-    if (rawEntries.length > max) diagnostics.push({ path: key, reason: 'limit_exceeded' });
-    const entries = rawEntries.slice(0, max);
+    if (max !== undefined && rawEntries.length > max) diagnostics.push({ path: key, reason: 'limit_exceeded' });
+    const entries = max === undefined ? rawEntries : rawEntries.slice(0, max);
     return entries.flatMap((entry, index) => {
       const parsed = schema.safeParse(entry);
       if (parsed.success) return [parsed.data];
@@ -382,7 +366,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
   const connections: ProviderConnectionV1[] = [];
   const connectionIds = new Set<string>();
   const defaultContributionKeys = new Set<string>();
-  for (const parsed of parseArray('connections', ProviderConnectionV1Schema, PROVIDER_SETTINGS_LIMITS_V1.connections)) {
+  for (const parsed of parseArray('connections', ProviderConnectionV1Schema)) {
     const connection: ProviderConnectionV1 = parsed.source.kind === 'contribution'
       ? {
           ...parsed,
@@ -410,12 +394,12 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
   });
 
   const accountGrants = uniqueFirst(
-    keepRef(parseArray('accountGrants', ProviderAccountGrantV1Schema, PROVIDER_SETTINGS_LIMITS_V1.accountGrants), 'accountGrants'),
+    keepRef(parseArray('accountGrants', ProviderAccountGrantV1Schema), 'accountGrants'),
     (grant) => grant.connectionId,
     'accountGrants',
   );
   const machineGrants = uniqueFirst(
-    keepRef(parseArray('machineGrants', ProviderMachineGrantV1Schema, PROVIDER_SETTINGS_LIMITS_V1.machineGrants), 'machineGrants'),
+    keepRef(parseArray('machineGrants', ProviderMachineGrantV1Schema), 'machineGrants'),
     (grant) => `${grant.machineId}\0${grant.connectionId}`,
     'machineGrants',
   );

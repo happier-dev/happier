@@ -340,10 +340,12 @@ export type ReviewCommentCreateRequestV1 = z.infer<typeof ReviewCommentCreateReq
 
 export const ReviewCommentTransitionRequestV1Schema = z.object({
   commentId: z.string().min(1),
+  projectId: z.string().min(1),
   toState: ReviewCommentStateV1Schema,
   reason: z.string().min(1).optional(),
   evidence: z.array(ReviewCommentEvidenceV1Schema).optional(),
-  expectedState: ReviewCommentStateV1Schema.optional(),
+  expectedState: ReviewCommentStateV1Schema,
+  expectedServerRevision: z.number().int().positive(),
   clientMutationId: z.string().min(1),
   authorDeviceId: z.string().min(1).optional(),
   clientLamport: z.number().int().nonnegative().optional(),
@@ -363,8 +365,10 @@ export type ReviewCommentTransitionRequestV1 = z.infer<typeof ReviewCommentTrans
 
 export const ReviewCommentEditRequestV1Schema = z.object({
   commentId: z.string().min(1),
+  projectId: z.string().min(1),
   nextBody: ReviewCommentInputBodyContentV1Schema,
-  expectedBodyVersion: z.number().int().positive().optional(),
+  expectedBodyVersion: z.number().int().positive(),
+  expectedServerRevision: z.number().int().positive(),
   reason: z.string().min(1).optional(),
   clientMutationId: z.string().min(1),
   authorDeviceId: z.string().min(1).optional(),
@@ -375,6 +379,8 @@ export type ReviewCommentEditRequestV1 = z.infer<typeof ReviewCommentEditRequest
 
 export const ReviewCommentReplyRequestV1Schema = z.object({
   parentCommentId: z.string().min(1),
+  projectId: z.string().min(1),
+  expectedParentServerRevision: z.number().int().positive(),
   body: ReviewCommentInputBodyContentV1Schema,
   evidence: z.array(ReviewCommentEvidenceV1Schema).optional(),
   clientMutationId: z.string().min(1),
@@ -386,6 +392,8 @@ export type ReviewCommentReplyRequestV1 = z.infer<typeof ReviewCommentReplyReque
 
 export const ReviewCommentRedactRequestV1Schema = z.object({
   commentId: z.string().min(1),
+  projectId: z.string().min(1),
+  expectedServerRevision: z.number().int().positive(),
   reason: z.string().min(1).optional(),
   redactBody: z.boolean().optional(),
   clientMutationId: z.string().min(1),
@@ -397,6 +405,8 @@ export type ReviewCommentRedactRequestV1 = z.infer<typeof ReviewCommentRedactReq
 
 export const ReviewCommentSetDispositionRequestV1Schema = z.object({
   commentId: z.string().min(1),
+  projectId: z.string().min(1),
+  expectedServerRevision: z.number().int().positive(),
   disposition: ReviewCommentDispositionV1Schema,
   clientMutationId: z.string().min(1),
   authorDeviceId: z.string().min(1).optional(),
@@ -407,6 +417,8 @@ export type ReviewCommentSetDispositionRequestV1 = z.infer<typeof ReviewCommentS
 
 export const ReviewCommentAttachEvidenceRequestV1Schema = z.object({
   commentId: z.string().min(1),
+  projectId: z.string().min(1),
+  expectedServerRevision: z.number().int().positive(),
   evidence: z.array(ReviewCommentEvidenceV1Schema).min(1),
   clientMutationId: z.string().min(1),
   authorDeviceId: z.string().min(1).optional(),

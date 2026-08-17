@@ -7,6 +7,7 @@ import {
 } from '../plugins/contributions/composerReferenceProviders.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export const PLUGIN_DIAGNOSTIC_TEXT_MAX_UTF8_BYTES_V1 = 2_048;
 
@@ -20,7 +21,7 @@ export const PluginDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', 
   z.object({ kind: z.literal('openSettings'), path: z.string().trim().min(1) }).strict(),
   z.object({
     kind: z.literal('selectAccount'),
-    service: z.object({ pluginId: PluginIdSchema, localId: z.string().trim().min(1) }).strict(),
+    service: z.object({ pluginId: asProtocolZod(PluginIdSchema), localId: z.string().trim().min(1) }).strict(),
   }).strict(),
   z.object({ kind: z.literal('installDependency'), dependencyId: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('openUrl'), url: z.string().url() }).strict(),
@@ -37,7 +38,7 @@ export const PluginDiagnosticDataV1Schema = z.object({
 export type PluginDiagnosticDataV1 = z.infer<typeof PluginDiagnosticDataV1Schema>;
 
 const PluginContributionIntrospectionIdentityBaseV1Schema = z.object({
-  pluginId: PluginIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
   family: z.string().trim().min(1),
   qualifiedId: z.string().trim().min(1),
 });
@@ -88,11 +89,11 @@ export const PluginDiagnosticRecordV1Schema = z.object({
   id: z.string().trim().min(1),
   data: PluginDiagnosticDataV1Schema,
   plugin: z.object({
-    id: PluginIdSchema,
+    id: asProtocolZod(PluginIdSchema),
     version: z.string().trim().min(1),
     source: z.enum(['bundled', 'npm', 'localPath', 'archive', 'development']),
   }).strict(),
-  contribution: PluginContributionIdentityV1Schema.optional(),
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
   stage: PluginDiagnosticStageV1Schema,
   generation: z.string().trim().min(1).optional(),
   host: PluginDiagnosticHostV1Schema,

@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
+import { CanonicalHttpOriginSchema } from '../plugins/canonicalHttpOrigin.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
 import {
   PluginConfigurationSettingFieldV2Schema,
   PluginSettingFieldV2Schema,
 } from '../plugins/contributions/settings.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const PluginConnectedAccountAuthenticationFieldV2Schema =
   PluginSettingFieldV2Schema.transform((field) => ({
@@ -24,6 +26,18 @@ const PluginConnectedAccountOriginValueSchemaV2Schema = z.object({
   description: z.string().optional(),
   minLength: z.number().int().min(1),
   maxLength: z.number().int().nonnegative().optional(),
+}).strict();
+
+/**
+ * The closed choice set of a fixed-origin field. Its persisted value is the
+ * choice, never the origin: a user picking a named deployment is not asked to
+ * retype a URL the descriptor already knows.
+ */
+const PluginConnectedAccountFixedOriginChoiceSchemaV2Schema = z.object({
+  type: z.literal('string'),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  enum: z.array(z.string().min(1)).min(1),
 }).strict();
 
 export const PluginConnectedAccountConfigurationFieldV2Schema =
@@ -48,6 +62,65 @@ export const PluginConnectedAccountConfigurationFieldV2Schema =
       })
       .extend({
         semantic: z.literal('connectedAccountOrigin'),
+        schema: PluginConnectedAccountOriginValueSchemaV2Schema,
+        default: z.never().optional(),
+        required: z.literal(true),
+      })
+      .strict()
+      .transform((field) => ({
+        ...field,
+        secret: false as const,
+      })),
+    PluginPublicConfigurationSettingFieldV2Schema
+      .omit({
+        schema: true,
+        default: true,
+        required: true,
+      })
+      .extend({
+        semantic: z.literal('connectedAccountFixedOrigin'),
+        schema: PluginConnectedAccountFixedOriginChoiceSchemaV2Schema,
+        originByValue: z.record(z.string().min(1), CanonicalHttpOriginSchema),
+        default: z.never().optional(),
+        required: z.literal(true),
+      })
+      .strict()
+      .superRefine((field, context) => {
+        // The choice set and the route table are one declaration seen from two
+        // sides. Letting them disagree would leave a pickable value with no
+        // route, or a route no user can select.
+        const choices = new Set(field.schema.enum);
+        const routed = new Set(Object.keys(field.originByValue));
+        if (
+          choices.size !== field.schema.enum.length
+          || choices.size !== routed.size
+          || [...choices].some((choice) => !routed.has(choice))
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['originByValue'],
+            message: 'Fixed-origin choices must declare exactly one origin per distinct choice.',
+          });
+        }
+      })
+      .transform((field) => ({
+        ...field,
+        secret: false as const,
+      })),
+    // A configured *service base* is a second, distinct fact from the network
+    // origin: a deployment reached beneath a path segment — an Azure DevOps
+    // organization or collection, a path-prefixed self-hosted GitLab or Sentry —
+    // routes by the base while HostAccess keeps governing by the origin the
+    // host derives from it. `connectedAccountOrigin` is deliberately not
+    // loosened to carry a path, so `origin` keeps meaning scheme://host[:port].
+    PluginPublicConfigurationSettingFieldV2Schema
+      .omit({
+        schema: true,
+        default: true,
+        required: true,
+      })
+      .extend({
+        semantic: z.literal('connectedAccountBase'),
         schema: PluginConnectedAccountOriginValueSchemaV2Schema,
         default: z.never().optional(),
         required: z.literal(true),
@@ -111,7 +184,7 @@ const PluginConnectedAccountOutcomeReconciliationV2Schema =
 export const PluginConnectedAccountAuthenticationModeV2Schema =
   z.discriminatedUnion('kind', [
     z.object({
-      id: PluginContributionLocalIdSchema,
+      id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('manual'),
       title: PluginLocalizedStringV2Schema.optional(),
       outcomeReconciliation: z.literal('none'),
@@ -119,7 +192,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       configuration: PluginConnectedAccountConfigurationV2Schema.optional(),
     }).strict(),
     z.object({
-      id: PluginContributionLocalIdSchema,
+      id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthAuthorizationCode'),
       title: PluginLocalizedStringV2Schema.optional(),
       callbackUrl: z.url().max(2_048).optional(),
@@ -129,7 +202,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       configuration: PluginConnectedAccountConfigurationV2Schema.optional(),
     }).strict(),
     z.object({
-      id: PluginContributionLocalIdSchema,
+      id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthDeviceCode'),
       title: PluginLocalizedStringV2Schema.optional(),
       scopes: z.array(z.string().trim().min(1)).optional(),
@@ -141,7 +214,7 @@ export type PluginConnectedAccountAuthenticationModeV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationModeV2Schema>;
 
 export const PluginConnectedAccountAuthenticationV2Schema = z.object({
-  defaultModeId: PluginContributionLocalIdSchema,
+  defaultModeId: asProtocolZod(PluginContributionLocalIdSchema),
   modes: z.array(PluginConnectedAccountAuthenticationModeV2Schema).min(1),
 }).strict().superRefine((authentication, context) => {
   const modeIds = new Set<string>();

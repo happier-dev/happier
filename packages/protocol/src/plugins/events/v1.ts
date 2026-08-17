@@ -13,7 +13,7 @@ export const PluginEventLocalIdV1Schema = z.string()
   });
 export type PluginEventLocalIdV1 = z.infer<typeof PluginEventLocalIdV1Schema>;
 
-export const HostEventNamespaceV1Schema = z.enum(['runtime', 'lifecycle', 'session']);
+export const HostEventNamespaceV1Schema = z.enum(['runtime', 'lifecycle', 'session', 'automation']);
 export type HostEventNamespaceV1 = z.infer<typeof HostEventNamespaceV1Schema>;
 
 export const EventSourceV1Schema = z.discriminatedUnion('kind', [

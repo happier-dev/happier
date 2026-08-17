@@ -1,22 +1,17 @@
 import { z } from 'zod';
 
-import { addSessionSystemRecordPlainContentPayloadIssue } from './sessionSystemRecordCatalog.js';
-import { SessionSystemRecordContentSchema } from './sessionSystemRecordContent.js';
-import { SessionSystemRecordKindSchema } from './sessionSystemRecordKind.js';
-import { SessionSystemRecordNamespaceSchema } from './sessionSystemRecordNamespace.js';
+import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
+import { SessionSystemRecordAddressSchema } from './sessionSystemRecordAddress.js';
+import { SessionSystemRecordRevisionSchema } from './sessionSystemRecordRevision.js';
 
 export const SessionSystemRecordSchema = z
   .object({
     id: z.string().trim().min(1),
-    accountId: z.string().trim().min(1).optional(),
-    sessionId: z.string().trim().min(1),
-    namespace: SessionSystemRecordNamespaceSchema,
-    kind: SessionSystemRecordKindSchema,
-    localId: z.string().trim().min(1),
-    content: SessionSystemRecordContentSchema,
-    createdAt: z.string().trim().min(1),
-    updatedAt: z.string().trim().min(1),
+    address: SessionSystemRecordAddressSchema,
+    content: StrictJsonValueSchema,
+    revision: SessionSystemRecordRevisionSchema,
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
   })
-  .passthrough()
-  .superRefine(addSessionSystemRecordPlainContentPayloadIssue);
+  .strict();
 export type SessionSystemRecord = z.infer<typeof SessionSystemRecordSchema>;

@@ -1,7 +1,24 @@
 import { z } from 'zod';
 
+import {
+  defineProtocolObject,
+  defineProtocolUnion,
+} from '../actions/jsonSchemaValidation.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
+import {
+  PluginJsonSchemaV2Schema,
+  PluginJsonValueV2Schema,
+  type PluginJsonSchemaV2,
+  type PluginJsonValueV2,
+} from './jsonSchema.js';
+
+export {
+  PluginJsonSchemaV2Schema,
+  PluginJsonValueV2Schema,
+  type PluginJsonSchemaV2,
+  type PluginJsonValueV2,
+} from './jsonSchema.js';
 
 export const PluginLocalizedStringV2Schema = z.union([
   z.string().trim().min(1),
@@ -9,52 +26,12 @@ export const PluginLocalizedStringV2Schema = z.union([
 ]);
 export type PluginLocalizedStringV2 = z.infer<typeof PluginLocalizedStringV2Schema>;
 
-export const PluginContributionReferenceV2Schema = z.union([
+export const PluginContributionReferenceV2Schema = defineProtocolUnion([
   PluginContributionLocalIdSchema,
-  z.object({ pluginId: PluginIdSchema, localId: PluginContributionLocalIdSchema }).strict(),
+  defineProtocolObject({ pluginId: PluginIdSchema, localId: PluginContributionLocalIdSchema }, { policy: 'closed' }),
 ]);
-export type PluginContributionReferenceV2 = z.infer<typeof PluginContributionReferenceV2Schema>;
+export type PluginContributionReferenceV2 = ReturnType<typeof PluginContributionReferenceV2Schema.parse>;
 
-export type PluginJsonValueV2 = null | boolean | number | string | PluginJsonValueV2[] | { [key: string]: PluginJsonValueV2 };
-export const PluginJsonValueV2Schema: z.ZodType<PluginJsonValueV2> = z.lazy(() => z.union([
-  z.null(), z.boolean(), z.number().finite(), z.string(),
-  z.array(PluginJsonValueV2Schema),
-  z.record(z.string(), PluginJsonValueV2Schema),
-]));
-
-export type PluginJsonSchemaV2 = {
-  type?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object';
-  title?: string;
-  description?: string;
-  default?: PluginJsonValueV2;
-  enum?: PluginJsonValueV2[];
-  const?: PluginJsonValueV2;
-  properties?: Record<string, PluginJsonSchemaV2>;
-  required?: string[];
-  additionalProperties?: boolean | PluginJsonSchemaV2;
-  items?: PluginJsonSchemaV2;
-  minItems?: number;
-  maxItems?: number;
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  anyOf?: PluginJsonSchemaV2[];
-  oneOf?: PluginJsonSchemaV2[];
-  allOf?: PluginJsonSchemaV2[];
-};
-export const PluginJsonSchemaV2Schema: z.ZodType<PluginJsonSchemaV2> = z.lazy(() => z.object({
-  type: z.enum(['null', 'boolean', 'number', 'integer', 'string', 'array', 'object']).optional(),
-  title: z.string().optional(), description: z.string().optional(),
-  default: PluginJsonValueV2Schema.optional(), enum: z.array(PluginJsonValueV2Schema).optional(), const: PluginJsonValueV2Schema.optional(),
-  properties: z.record(z.string(), PluginJsonSchemaV2Schema).optional(), required: z.array(z.string()).optional(),
-  additionalProperties: z.union([z.boolean(), PluginJsonSchemaV2Schema]).optional(), items: PluginJsonSchemaV2Schema.optional(),
-  minItems: z.number().int().nonnegative().optional(), maxItems: z.number().int().nonnegative().optional(),
-  minimum: z.number().finite().optional(), maximum: z.number().finite().optional(),
-  minLength: z.number().int().nonnegative().optional(), maxLength: z.number().int().nonnegative().optional(), pattern: z.string().optional(),
-  anyOf: z.array(PluginJsonSchemaV2Schema).optional(), oneOf: z.array(PluginJsonSchemaV2Schema).optional(), allOf: z.array(PluginJsonSchemaV2Schema).optional(),
-}).strict());
 
 type PluginPolicyExpressionV2 =
   | { fact: string; operator: string; value: boolean | string }

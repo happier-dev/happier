@@ -45,11 +45,53 @@ export const PluginAgentCliManualInstallRecipesSchema = z.object({
 );
 export type PluginAgentCliManualInstallRecipes = z.infer<typeof PluginAgentCliManualInstallRecipesSchema>;
 
+const MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES = 512 * 1024 * 1024;
+
+export const PluginAgentCliArchiveExtractionLimitsSchema = z.object({
+  maxFileBytes: z.number().int().positive().max(MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES),
+  maxExpandedBytes: z.number().int().positive().max(MAX_PLUGIN_ARCHIVE_EXTRACTION_BYTES),
+}).strict().superRefine((value, ctx) => {
+  if (value.maxFileBytes > value.maxExpandedBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['maxFileBytes'],
+      message: 'Per-file extraction limit must not exceed the cumulative expanded-byte limit.',
+    });
+  }
+});
+export type PluginAgentCliArchiveExtractionLimits = z.infer<typeof PluginAgentCliArchiveExtractionLimitsSchema>;
+
+export const PluginAgentCliManagedArchiveEntrySchema = z.object({
+  archivePath: NonEmptyStringSchema,
+  destinationPath: NonEmptyStringSchema,
+}).strict();
+export type PluginAgentCliManagedArchiveEntry = z.infer<typeof PluginAgentCliManagedArchiveEntrySchema>;
+
+const PluginAgentCliAssetNameByArchSchema = z.object({
+  arm64: NonEmptyStringSchema,
+  x64: NonEmptyStringSchema,
+}).strict();
+
+const PluginAgentCliAssetNameByPlatformSchema = z.object({
+  darwin: PluginAgentCliAssetNameByArchSchema,
+  linux: PluginAgentCliAssetNameByArchSchema,
+  win32: PluginAgentCliAssetNameByArchSchema,
+}).strict();
+
+const PluginAgentCliArchiveEntriesByPlatformSchema = z.object({
+  darwin: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
+  linux: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
+  win32: z.array(PluginAgentCliManagedArchiveEntrySchema).min(1),
+}).strict();
+
 export const PluginAgentCliManagedInstallSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('github_release_binary'),
     githubRepo: NonEmptyStringSchema,
     binaryName: NonEmptyStringSchema,
+    assetNameByPlatform: PluginAgentCliAssetNameByPlatformSchema.optional(),
+    archiveEntriesByPlatform: PluginAgentCliArchiveEntriesByPlatformSchema.optional(),
+    archiveExtractionLimits: PluginAgentCliArchiveExtractionLimitsSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('managed_package'),

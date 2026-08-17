@@ -33,10 +33,6 @@ function ownerSortValue(owner: InstallableContributionOwner): number {
   }
 }
 
-export function isCuratedFirstPartyInstallableOwner(owner: InstallableContributionOwner): boolean {
-  return owner.provenance === 'built_in' || owner.provenance === 'bundled_first_party_plugin';
-}
-
 function compareContribution(
   left: InstallableRegistryContribution,
   right: InstallableRegistryContribution,
@@ -96,21 +92,6 @@ function createDiagnostic(params: Readonly<{
   });
 }
 
-function createDisallowedSourceProvenanceDiagnostic(
-  candidate: InstallableRegistryContribution,
-): InstallableRegistryDiagnostic {
-  return Object.freeze({
-    code: 'installable_disallowed_source_provenance',
-    message: `Installable source '${candidate.descriptor.source.kind}' from '${candidate.owner.ownerId}' is restricted to curated first-party contributions`,
-    conflictedField: 'source',
-    disabledDescriptorKey: candidate.descriptor.key,
-    disabledCapabilityId: candidate.descriptor.capabilityId,
-    disabledOwnerId: candidate.owner.ownerId,
-    disabledProvenance: candidate.owner.provenance,
-    ...(candidate.owner.pluginId ? { disabledPluginId: candidate.owner.pluginId } : {}),
-  });
-}
-
 export function resolveInstallablesRegistry(
   input: ResolveInstallablesRegistryInput,
 ): InstallablesRegistry {
@@ -126,14 +107,6 @@ export function resolveInstallablesRegistry(
   ].sort(compareContribution);
 
   for (const candidate of candidates) {
-    if (
-      candidate.descriptor.source.kind === 'managed_pypi_wheel_asset' &&
-      !isCuratedFirstPartyInstallableOwner(candidate.owner)
-    ) {
-      diagnostics.push(createDisallowedSourceProvenanceDiagnostic(candidate));
-      continue;
-    }
-
     const existingByKey = descriptorsByKey[candidate.descriptor.key];
     if (existingByKey) {
       if (!isIntentionalIdenticalDuplicate(existingByKey, candidate)) {

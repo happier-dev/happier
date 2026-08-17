@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { SessionIdSchema } from '../idsV1.js';
 import { HappierManagedSessionRuntimeModeV1Schema } from '../runtimeModeV1.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const ExternalSessionTakeoverStorageModeV1Schema = z.enum(['external-linked', 'persisted']);
 export type ExternalSessionTakeoverStorageModeV1 = z.infer<typeof ExternalSessionTakeoverStorageModeV1Schema>;
 
 export const ExternalSessionTakeoverInputV1Schema = z.object({
-  linkedSessionId: SessionIdSchema,
+  linkedSessionId: asProtocolZod(SessionIdSchema),
   machineId: z.string().trim().min(1).max(2_000).optional(),
   targetRuntimeMode: HappierManagedSessionRuntimeModeV1Schema,
   storageMode: ExternalSessionTakeoverStorageModeV1Schema,
@@ -26,7 +27,7 @@ export type ExternalSessionDestructiveQuiescenceStatusV1 = z.infer<
 
 export const ExternalSessionDestructiveSourceIdentityV1Schema = z.object({
   machineId: z.string().trim().min(1).max(2_000),
-  linkedSessionId: SessionIdSchema,
+  linkedSessionId: asProtocolZod(SessionIdSchema),
   remoteSessionId: z.string().trim().min(1).max(2_000),
   linkGeneration: z.string().trim().min(1).max(2_000),
   sourceKey: z.string().trim().min(1).max(10_000),
@@ -178,7 +179,7 @@ export type ExternalSessionTakeoverFailureDetailsV1 = z.infer<
 export const ExternalSessionTakeoverResultV1Schema = z.union([
   z.object({
     ok: z.literal(true),
-    sessionId: SessionIdSchema,
+    sessionId: asProtocolZod(SessionIdSchema),
     targetRuntimeMode: HappierManagedSessionRuntimeModeV1Schema,
     storageMode: ExternalSessionTakeoverStorageModeV1Schema,
     converted: z.boolean(),

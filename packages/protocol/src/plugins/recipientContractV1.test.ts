@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createRecipientContractDigestV1,
+  createVoiceProviderRecipientContractFromCredentialsV1,
   materializeRecipientOperationRequestV1,
   normalizeRecipientContractV1,
   serializeRecipientContractV1,
@@ -62,6 +63,18 @@ const input = {
 };
 
 describe('RecipientContractV1', () => {
+  it('projects the final Voice credentials owner without reconstructing account mediation', () => {
+    expect(createVoiceProviderRecipientContractFromCredentialsV1({
+      package: input.package,
+      publisher: input.publisher,
+      contribution: input.contribution,
+      credentials: {
+        slot: { id: 'api-key' },
+        hostMediated: { operations: input.operations },
+      },
+    })).toEqual(normalizeRecipientContractV1(input));
+  });
+
   it('has a stable canonical serialization and digest golden vector', () => {
     const normalized = normalizeRecipientContractV1(input);
     expect(serializeRecipientContractV1(normalized)).toBe(
@@ -162,6 +175,72 @@ describe('RecipientContractV1', () => {
         },
       }],
     })).toThrow();
+  });
+
+  it('omits absent optional query and header mappings while encoding present values', () => {
+    const contract = {
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        request: {
+          ...input.operations[0].request,
+          pathTemplate: '/v1/tools',
+          queryTemplate: [{ name: 'page_size', value: '100' }],
+        },
+        parameters: {
+          schema: {
+            type: 'object' as const,
+            properties: {
+              cursor: { type: 'string' as const, minLength: 1, maxLength: 512 },
+              requestId: { type: 'string' as const, minLength: 1, maxLength: 128 },
+            },
+            additionalProperties: false,
+          },
+          mapping: [
+            { parameter: 'cursor', target: { kind: 'query' as const, name: 'cursor' } },
+            { parameter: 'requestId', target: { kind: 'header' as const, name: 'x-request-id' } },
+          ],
+        },
+      }],
+    };
+
+    const firstPage = materializeRecipientOperationRequestV1({
+      contract,
+      operationId: 'mint-client-auth',
+      parameters: {},
+    });
+    expect(firstPage.url).toBe('https://api.example.com/v1/tools?page_size=100');
+    expect(firstPage.headers).toEqual({ accept: 'application/json' });
+
+    const nextPage = materializeRecipientOperationRequestV1({
+      contract,
+      operationId: 'mint-client-auth',
+      parameters: { cursor: 'page/2', requestId: 'request-2' },
+    });
+    expect(nextPage.url).toBe('https://api.example.com/v1/tools?page_size=100&cursor=page%2F2');
+    expect(nextPage.headers).toEqual({ accept: 'application/json', 'x-request-id': 'request-2' });
+  });
+
+  it('fails closed when an unresolved path mapping is optional in the parameter schema', () => {
+    const contract = {
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        parameters: {
+          ...input.operations[0].parameters,
+          schema: {
+            ...input.operations[0].parameters.schema,
+            required: [],
+          },
+        },
+      }],
+    };
+
+    expect(() => materializeRecipientOperationRequestV1({
+      contract,
+      operationId: 'mint-client-auth',
+      parameters: {},
+    })).toThrow(TypeError);
   });
 
   it.each([

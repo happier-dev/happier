@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ClientCompatibilityCapabilitiesV1Schema } from '../../../clientCompatibility/serverRequirementsV1.js';
+import { AccountStoredContentCompatibilityServerRequirementsV1Schema } from '../../../clientCompatibility/accountStoredContentCompatibilityV1.js';
 
 import { OAuthProviderStatusSchema } from '../oauthProviderStatus.js';
 import {
@@ -75,9 +75,15 @@ import {
   ConnectedServicesCapabilitiesSchema,
   DEFAULT_CONNECTED_SERVICES_CAPABILITIES,
 } from './connectedServicesCapabilities.js';
+import {
+  DEFAULT_PLUGINS_CAPABILITIES,
+  PluginsCapabilitiesSchema,
+} from './pluginsCapabilities.js';
+import { PluginDataCollectionsCapabilitiesSchema } from './pluginDataCollectionsCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
-  compatibility: ClientCompatibilityCapabilitiesV1Schema.optional(),
+  accountStoredContentCompatibility:
+    AccountStoredContentCompatibilityServerRequirementsV1Schema.optional(),
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
   pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
@@ -101,6 +107,10 @@ export const CapabilitiesSchema = z.object({
   localServices: LocalServiceCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_CAPABILITIES),
   browser: BrowserCapabilitiesSchema.optional().default(DEFAULT_BROWSER_CAPABILITIES),
   devices: DeviceCapabilitiesSchema.optional().default(DEFAULT_DEVICE_CAPABILITIES),
+  plugins: PluginsCapabilitiesSchema.optional().default(DEFAULT_PLUGINS_CAPABILITIES),
+  // This must remain a root-level optional family: `server` and `plugins` are
+  // strict incumbent children, while the outer capability envelope is additive.
+  pluginDataCollections: PluginDataCollectionsCapabilitiesSchema.optional(),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),

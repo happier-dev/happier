@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -16,12 +18,10 @@ import {
 } from '../../../devices/simulator/runtimeActionBacking.js';
 import { PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from '../v2.js';
 import {
-  PluginSessionHeaderActionRendererIdV1Schema,
-  PluginSessionSurfaceRendererIdV1Schema,
-  PluginStructuredMessageRendererIdV1Schema,
-  PLUGIN_HOST_PLACEMENT_RENDERER_IDS,
-} from './renderers.js';
-import { PLUGIN_SURFACE_REGISTRY } from './surfaceRegistry.js';
+  PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
+  type PluginUiContainerV1,
+  type PluginUiTargetKindV1,
+} from './surfaceRegistry.js';
 
 /**
  * Two-stage coverage matrix — the HONEST-CONTRACT closure test (FINALIZATION-PLAN
@@ -45,7 +45,7 @@ import { PLUGIN_SURFACE_REGISTRY } from './surfaceRegistry.js';
  *                               (nothing is being promised for later), so it is NOT allowlisted.
  *   - `unimplemented`         — NO producer/executor exists yet (a labeled deferral)
  *
- * Stage A asserts NOTHING is silently absent: every family / placement / runtime
+ * Stage A asserts NOTHING is silently absent: every family / destination slot / runtime
  * spec appears with a recognized status. Stage B asserts no in-scope item is
  * `unimplemented` EXCEPT the explicit `DEFERRED_ALLOWLIST` below — each entry
  * carrying a reason. Stage B fails the build if a NEW unlisted item becomes
@@ -172,6 +172,42 @@ type CoverageItem = Readonly<{
   status: CoverageStatus;
 }>;
 
+type DestinationReachabilityFacts = Readonly<{
+  declared: boolean;
+  projected: boolean;
+  launchable: boolean;
+  mounted: boolean;
+}>;
+
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * The only mounted-coverage interpretation lives in this closure test. A
+ * renderer inventory, an admitted slot, or a component fixture cannot make a
+ * destination mounted by itself. The test-owned proof relation names each
+ * independently-owned stage of the real path.
+ */
+function destinationSlotReachabilityFacts(
+  proofRefs: DestinationReachabilityProofReferences | undefined,
+): DestinationReachabilityFacts {
+  return Object.freeze({
+    declared: hasNonEmptyString(proofRefs?.declaration),
+    projected: hasNonEmptyString(proofRefs?.projection),
+    launchable: hasNonEmptyString(proofRefs?.launcherOrOpenPath),
+    mounted: hasNonEmptyString(proofRefs?.productionShell)
+      && hasNonEmptyString(proofRefs?.decidingTest),
+  });
+}
+
+function hasFullDestinationReachability(facts: DestinationReachabilityFacts | undefined): boolean {
+  return facts?.declared === true
+    && facts.projected === true
+    && facts.launchable === true
+    && facts.mounted === true;
+}
+
 // ---------------------------------------------------------------------------
 // Driver 1 — plugin contribution FAMILIES (the canonical `PLUGIN_CORE_*` list,
 // narrowed to the plugin-UI + browser surface families that §0.2 owns). Every
@@ -181,10 +217,6 @@ type CoverageItem = Readonly<{
 const IN_SCOPE_FAMILY_OWNERS: Readonly<
   Record<string, Readonly<{ status: CoverageStatus; owner: string }>>
 > = Object.freeze({
-  structuredMessages: {
-    status: 'plugin-host-owned',
-    owner: 'projection: structuredMessage family + UI structured-message renderer allowlist',
-  },
   sessionHeaderActions: {
     status: 'plugin-host-owned',
     owner: 'projection: sessionHeaderAction family + UI pluginHeaderActions menu items',
@@ -215,74 +247,546 @@ function buildFamilyItems(): readonly CoverageItem[] {
 }
 
 // ---------------------------------------------------------------------------
-// Driver 2 — PLACEMENTS (every surface-registry descriptor). A placement is
-// `surfaced` (mounted) iff its rendererSet binds at least one live host;
-// otherwise `unimplemented` (rejected/unmounted — no silent drop).
+// Driver 2 — normalized destination slots. The Registry admits the direct V2
+// container/target pair; each row is owned by the plugin host projection
+// substrate. A slot is not itself proof of a mounted presentation, so it must
+// not be reported as `surfaced`. The separate reachability facts below close
+// the false renderer-set-is-mounted path without turning this generic inventory
+// into a second runtime authority.
 // ---------------------------------------------------------------------------
 
-function buildPlacementItems(): readonly CoverageItem[] {
-  return PLUGIN_SURFACE_REGISTRY.list().map((descriptor): CoverageItem => {
-    const mounted = Object.keys(descriptor.rendererSet).length > 0;
+function buildDestinationSlotItems(): readonly CoverageItem[] {
+  return PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map((slot): CoverageItem => {
     return {
-      key: `placement:${descriptor.id}`,
-      family: 'placement',
-      owner: `surfaceRegistry descriptor '${descriptor.id}' (${descriptor.category})`,
-      status: mounted ? 'surfaced' : 'unimplemented',
+      key: `destinationSlot:${slot.container}:${slot.targetKind}`,
+      family: 'destinationSlot',
+      owner: `Plugin UI destination registry ${slot.container}/${slot.targetKind}`,
+      status: 'plugin-host-owned',
     };
   });
 }
 
+type DestinationSlotKey = `${PluginUiContainerV1}:${PluginUiTargetKindV1}`;
+type DestinationReachabilityStage =
+  | 'declaration'
+  | 'projection'
+  | 'launcherOrOpenPath'
+  | 'productionShell'
+  | 'decidingTest';
+type DestinationReachabilityProofReferences = Readonly<
+  Record<DestinationReachabilityStage, string>
+>;
+
+type DestinationReachabilitySourceCheck = Readonly<{
+  sourcePath: string;
+  codeIdentifier: string;
+}>;
+
+type DestinationReachabilitySourceProof = Readonly<{
+  stage: DestinationReachabilityStage;
+  ref: string;
+  sourcePath: string;
+  codeIdentifier: string;
+  additionalSourceChecks?: readonly DestinationReachabilitySourceCheck[];
+  supportedSlotKeys: readonly DestinationSlotKey[];
+}>;
+
+/**
+ * Test-owned relation from every admitted direct destination slot to the real
+ * declaration, projection, launcher, shell, and deciding-test owners. The
+ * public Protocol slot stays limited to routing/admission facts; adding a slot
+ * without this proof table must fail the closure below.
+ */
+const DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT: Readonly<
+  Partial<Record<DestinationSlotKey, DestinationReachabilityProofReferences>>
+> = Object.freeze({
+  'appPage:app': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'pluginAppPageNavigation',
+    productionShell: 'PluginAppPageScreen',
+    decidingTest: 'PluginAppPageScreen',
+  },
+  'settingsPage:app': {
+    declaration: 'ui.settingsPages',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'useResolvedSettingsPageCatalog',
+    productionShell: 'PluginSettingsPageScreen',
+    decidingTest: 'PluginSettingsPageScreen',
+  },
+  'rightSidebarTab:app': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'resolveRightSidebarPluginTabs',
+    productionShell: 'AppScopeRightSidebar',
+    decidingTest: 'AppScopeRightSidebar',
+  },
+  'rightSidebarTab:session': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'resolveRightSidebarPluginTabs',
+    productionShell: 'SessionRightPanel',
+    decidingTest: 'SessionRightPanelRightSidebarRegistry',
+  },
+  'rightSidebarTab:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'resolveRightSidebarPluginTabs',
+    productionShell: 'ProjectRightPanel',
+    decidingTest: 'ProjectRightPanelRightSidebarRegistry',
+  },
+  'rightPane:session': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginSurfaceDestinationOpenSurfaceHandler',
+    productionShell: 'AppPaneScopeHost',
+    decidingTest: 'AppPaneScopeHostPluginSurfacePanels',
+  },
+  'rightPane:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginSurfaceDestinationOpenSurfaceHandler',
+    productionShell: 'AppPaneScopeHost',
+    decidingTest: 'AppPaneScopeHostPluginSurfacePanels',
+  },
+  'detailsTab:session': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginDetailsDestinationOpenSurfaceHandler',
+    productionShell: 'PluginDetailsDestination',
+    decidingTest: 'pluginDetailsDestination',
+  },
+  'detailsTab:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginDetailsDestinationOpenSurfaceHandler',
+    productionShell: 'PluginDetailsDestination',
+    decidingTest: 'pluginDetailsDestination',
+  },
+  'detailsPane:session': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginDetailsDestinationOpenSurfaceHandler',
+    productionShell: 'PluginDetailsPaneOverlay',
+    decidingTest: 'PluginDetailsPaneOverlay',
+  },
+  'detailsPane:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginDetailsDestinationOpenSurfaceHandler',
+    productionShell: 'PluginDetailsPaneOverlay',
+    decidingTest: 'PluginDetailsPaneOverlay',
+  },
+  'bottomPane:session': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginSurfaceDestinationOpenSurfaceHandler',
+    productionShell: 'AppPaneScopeHost',
+    decidingTest: 'AppPaneScopeHostPluginSurfacePanels',
+  },
+  'bottomPane:project': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'createPluginSurfaceDestinationOpenSurfaceHandler',
+    productionShell: 'AppPaneScopeHost',
+    decidingTest: 'AppPaneScopeHostPluginSurfacePanels',
+  },
+  'browserPanel:browser': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'BrowserSurfaceHost',
+    productionShell: 'BrowserSurfaceHost',
+    decidingTest: 'BrowserPluginSurfacePlacements',
+  },
+  'servicesPanel:services': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'LocalServicesSurfaceHost',
+    productionShell: 'LocalServicesSurfaceHost',
+    decidingTest: 'LocalServicesSurfaceHost',
+  },
+});
+
+const EVIDENCED_DESTINATION_SLOT_KEYS: readonly DestinationSlotKey[] = Object.freeze(
+  PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map((slot) => (
+    destinationSlotKey(slot.container, slot.targetKind)
+  )),
+);
+
+/**
+ * Test-only source proofs, grouped by the real producer/consumer reference
+ * rather than duplicated per slot. `supportedSlotKeys` is deliberately a
+ * narrow relation oracle: it detects a copied, but otherwise real, reference
+ * being attached to the wrong admitted destination without becoming a runtime
+ * registry, projection, or mounted predicate.
+ */
+const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
+  {
+    stage: 'declaration',
+    ref: 'ui.views',
+    sourcePath: 'packages/protocol/src/plugins/contributions/ui/v2.ts',
+    codeIdentifier: 'PluginUiViewV2Schema',
+    supportedSlotKeys: EVIDENCED_DESTINATION_SLOT_KEYS.filter((key) => key !== 'settingsPage:app'),
+  },
+  {
+    stage: 'declaration',
+    ref: 'ui.settingsPages',
+    sourcePath: 'packages/protocol/src/plugins/contributions/ui/v2.ts',
+    codeIdentifier: 'PluginUiSettingsPageV1Schema',
+    supportedSlotKeys: ['settingsPage:app'],
+  },
+  {
+    stage: 'projection',
+    ref: 'buildPluginProjectionV2',
+    sourcePath: 'apps/cli/src/plugins/projection/registry/projection/v2.ts',
+    codeIdentifier: 'pluginUiProjectionFamily,',
+    additionalSourceChecks: [
+      {
+        sourcePath: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
+        codeIdentifier: 'const binding = normalizePluginUiDestinationBindingV1({',
+      },
+      {
+        sourcePath: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
+        codeIdentifier: 'const binding = normalizePluginUiSettingsPageBindingV1({',
+      },
+    ],
+    supportedSlotKeys: EVIDENCED_DESTINATION_SLOT_KEYS,
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'pluginAppPageNavigation',
+    sourcePath: 'apps/ui/sources/components/appShell/plugins/pluginAppPageNavigation.ts',
+    codeIdentifier: 'export function usePluginAppPageDestinationHandler',
+    supportedSlotKeys: ['appPage:app'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'useResolvedSettingsPageCatalog',
+    sourcePath: 'apps/ui/sources/components/settings/catalog/runtime/useResolvedSettingsPageCatalog.ts',
+    codeIdentifier: 'export function useResolvedSettingsPageCatalog',
+    supportedSlotKeys: ['settingsPage:app'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'resolveRightSidebarPluginTabs',
+    sourcePath: 'apps/ui/sources/components/appShell/rightSidebar/rightSidebarPluginTabs.ts',
+    codeIdentifier: 'export function resolveRightSidebarPluginTabs',
+    supportedSlotKeys: ['rightSidebarTab:app', 'rightSidebarTab:session', 'rightSidebarTab:project'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'createPluginSurfaceDestinationOpenSurfaceHandler',
+    sourcePath: 'apps/ui/sources/components/plugins/surfaces/pluginSurfaceDestinationNavigation.ts',
+    codeIdentifier: 'export function createPluginSurfaceDestinationOpenSurfaceHandler',
+    supportedSlotKeys: ['rightPane:session', 'rightPane:project', 'bottomPane:session', 'bottomPane:project'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'createPluginDetailsDestinationOpenSurfaceHandler',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/details/surfaces/pluginDetailsDestination.tsx',
+    codeIdentifier: 'export function createPluginDetailsDestinationOpenSurfaceHandler',
+    supportedSlotKeys: ['detailsTab:session', 'detailsTab:project', 'detailsPane:session', 'detailsPane:project'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'BrowserSurfaceHost',
+    sourcePath: 'apps/ui/sources/components/browser/surfaces/BrowserSurfaceHost.tsx',
+    codeIdentifier: 'export function BrowserSurfaceHost',
+    supportedSlotKeys: ['browserPanel:browser'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
+    ref: 'LocalServicesSurfaceHost',
+    sourcePath: 'apps/ui/sources/components/sessions/localServices/LocalServicesSurfaceHost.tsx',
+    codeIdentifier: 'export function LocalServicesSurfaceHost',
+    supportedSlotKeys: ['servicesPanel:services'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'PluginAppPageScreen',
+    sourcePath: 'apps/ui/sources/components/appShell/plugins/PluginAppPageScreen.tsx',
+    codeIdentifier: 'placement={page.placement}',
+    supportedSlotKeys: ['appPage:app'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'PluginSettingsPageScreen',
+    sourcePath: 'apps/ui/sources/components/settings/plugins/PluginSettingsPageScreen.tsx',
+    codeIdentifier: '<PluginSettingsPageHost',
+    supportedSlotKeys: ['settingsPage:app'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'AppScopeRightSidebar',
+    sourcePath: 'apps/ui/sources/components/appShell/rightSidebar/AppScopeRightSidebar.tsx',
+    codeIdentifier: 'placement={activePlacement}',
+    supportedSlotKeys: ['rightSidebarTab:app'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'SessionRightPanel',
+    sourcePath: 'apps/ui/sources/components/sessions/panes/SessionRightPanel.tsx',
+    codeIdentifier: 'placement={tab.placement}',
+    supportedSlotKeys: ['rightSidebarTab:session'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'ProjectRightPanel',
+    sourcePath: 'apps/ui/sources/components/projects/detail/ProjectRightPanel.tsx',
+    codeIdentifier: 'placement={tab.placement}',
+    supportedSlotKeys: ['rightSidebarTab:project'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'AppPaneScopeHost',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/AppPaneScopeHost.tsx',
+    codeIdentifier: '<PluginAppPaneSurface',
+    supportedSlotKeys: ['rightPane:session', 'rightPane:project', 'bottomPane:session', 'bottomPane:project'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'PluginDetailsDestination',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/details/surfaces/pluginDetailsDestination.tsx',
+    codeIdentifier: 'placement={props.resolution.placement}',
+    supportedSlotKeys: ['detailsTab:session', 'detailsTab:project'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'PluginDetailsPaneOverlay',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay.tsx',
+    codeIdentifier: 'placement={selection.placement}',
+    supportedSlotKeys: ['detailsPane:session', 'detailsPane:project'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'BrowserSurfaceHost',
+    sourcePath: 'apps/ui/sources/components/browser/surfaces/BrowserSurfaceHost.tsx',
+    codeIdentifier: '<BrowserPluginSurfacePlacements',
+    supportedSlotKeys: ['browserPanel:browser'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'LocalServicesSurfaceHost',
+    sourcePath: 'apps/ui/sources/components/sessions/localServices/LocalServicesSurfaceHost.tsx',
+    codeIdentifier: '<PluginSurfacePlacementStack',
+    supportedSlotKeys: ['servicesPanel:services'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'PluginAppPageScreen',
+    sourcePath: 'apps/ui/sources/components/appShell/plugins/PluginAppPageScreen.test.tsx',
+    codeIdentifier: 'expect(context.surface.mount).toEqual({',
+    supportedSlotKeys: ['appPage:app'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'PluginSettingsPageScreen',
+    sourcePath: 'apps/ui/sources/components/settings/plugins/PluginSettingsPageScreen.test.tsx',
+    codeIdentifier: 'expect(hostSpy).toHaveBeenCalledWith(expect.objectContaining({',
+    supportedSlotKeys: ['settingsPage:app'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'AppScopeRightSidebar',
+    sourcePath: 'apps/ui/sources/components/appShell/rightSidebar/AppScopeRightSidebar.test.tsx',
+    codeIdentifier: "expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeTruthy();",
+    supportedSlotKeys: ['rightSidebarTab:app'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'SessionRightPanelRightSidebarRegistry',
+    sourcePath: 'apps/ui/sources/components/sessions/panes/SessionRightPanel.rightSidebarRegistry.test.tsx',
+    codeIdentifier: "expect(host.props.placement.descriptorId).toBe('review-panel');",
+    supportedSlotKeys: ['rightSidebarTab:session'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'ProjectRightPanelRightSidebarRegistry',
+    sourcePath: 'apps/ui/sources/components/projects/detail/ProjectRightPanel.rightSidebarRegistry.test.tsx',
+    codeIdentifier: "expect(host.props.placement.descriptorId).toBe('project-review-panel');",
+    supportedSlotKeys: ['rightSidebarTab:project'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'AppPaneScopeHostPluginSurfacePanels',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/AppPaneScopeHost.pluginSurfacePanels.test.tsx',
+    codeIdentifier: "mountInstanceKey: 'instance-right',",
+    supportedSlotKeys: ['rightPane:session', 'rightPane:project', 'bottomPane:session', 'bottomPane:project'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'pluginDetailsDestination',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/details/surfaces/pluginDetailsDestination.test.ts',
+    codeIdentifier: "expect(rendered.props).not.toHaveProperty('launchInput');",
+    supportedSlotKeys: ['detailsTab:session', 'detailsTab:project'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'PluginDetailsPaneOverlay',
+    sourcePath: 'apps/ui/sources/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay.test.tsx',
+    codeIdentifier: "screen.root.findByType('PluginSurfacePlacementHostStub' as never).props",
+    supportedSlotKeys: ['detailsPane:session', 'detailsPane:project'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'BrowserPluginSurfacePlacements',
+    sourcePath: 'apps/ui/sources/components/browser/surfaces/BrowserPluginSurfacePlacements.test.tsx',
+    codeIdentifier: "screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();",
+    supportedSlotKeys: ['browserPanel:browser'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'LocalServicesSurfaceHost',
+    sourcePath: 'apps/ui/sources/components/sessions/localServices/LocalServicesSurfaceHost.test.tsx',
+    codeIdentifier: "container: 'servicesPanel',",
+    supportedSlotKeys: ['servicesPanel:services'],
+  },
+] as const satisfies readonly DestinationReachabilitySourceProof[];
+
+const DESTINATION_REACHABILITY_STAGES = [
+  'declaration',
+  'projection',
+  'launcherOrOpenPath',
+  'productionShell',
+  'decidingTest',
+] as const satisfies readonly DestinationReachabilityStage[];
+
+function destinationSlotKey(
+  container: PluginUiContainerV1,
+  targetKind: PluginUiTargetKindV1,
+): DestinationSlotKey {
+  return `${container}:${targetKind}` as DestinationSlotKey;
+}
+
+function destinationReachabilitySourceProofKey(
+  stage: DestinationReachabilityStage,
+  ref: string,
+): string {
+  return `${stage}:${ref}`;
+}
+
+/**
+ * The master 03a-L0 ruling rejects these fixture-only App pane combinations
+ * for Preview. App retains its routed page and right-sidebar destinations;
+ * it does not gain a global AppPane scope merely because the generic pane
+ * registry can describe one.
+ */
+const REJECTED_APP_WHOLE_PANE_SLOT_KEYS = [
+  'rightPane:app',
+  'detailsPane:app',
+  'bottomPane:app',
+] as const satisfies readonly DestinationSlotKey[];
+
 // ---------------------------------------------------------------------------
-// Driver 3 — RENDERER ids. The generic host + session-surface renderer ids and
-// the structured-message renderer ids are `surfaced` (real UI dispatch tables,
-// verified by the colocated `renderers.test.ts` / UI allowlist). The
-// session-header-action renderer ids are `intentionally-internal`: declared in
-// the registry vocabulary but NOT selectable by any contribution (the
-// `sessionHeaderActions` descriptor schema has no `renderer` field) — header
-// actions render through the fixed `pluginHeaderActions` menu-item path.
+// Historical placement-ID disposition. These strings are deliberately
+// TEST-ONLY: L1 removed their production schema, parser, and mounted-placement
+// predicate. The list preserves the approved compatibility audit boundary
+// without reviving a runtime registry or an ingress adapter that has no
+// released-provenance consumer.
 // ---------------------------------------------------------------------------
 
-function buildRendererItems(): readonly CoverageItem[] {
-  const items: CoverageItem[] = [];
-  for (const id of PLUGIN_HOST_PLACEMENT_RENDERER_IDS) {
-    items.push({
-      key: `renderer:host:${id}`,
-      family: 'renderer.hostPlacement',
-      owner: 'UI PLUGIN_HOST_RENDERERS dispatch (descriptorRenderer)',
-      status: 'surfaced',
-    });
-  }
-  for (const id of PluginStructuredMessageRendererIdV1Schema.options) {
-    items.push({
-      key: `renderer:structuredMessage:${id}`,
-      family: 'renderer.structuredMessage',
-      owner: 'UI HOST_STRUCTURED_MESSAGE_RENDERERS dispatch',
-      status: 'surfaced',
-    });
-  }
-  for (const id of PluginSessionSurfaceRendererIdV1Schema.options) {
-    items.push({
-      key: `renderer:sessionSurface:${id}`,
-      family: 'renderer.sessionSurface',
-      // The 8 session-surface ids are unified INTO the host-placement dispatch
-      // table (PLUGIN_HOST_PLACEMENT_RENDERER_IDS), so they are surfaced there.
-      owner: 'UI PLUGIN_HOST_RENDERERS dispatch (unified session-surface ids)',
-      status: 'surfaced',
-    });
-  }
-  for (const id of PluginSessionHeaderActionRendererIdV1Schema.options) {
-    items.push({
-      key: `renderer:sessionHeaderAction:${id}`,
-      family: 'renderer.sessionHeaderAction',
-      owner: 'registry vocabulary only; no contribution renderer field; menu-item render path',
-      status: 'intentionally-internal',
-    });
-  }
-  return items;
+const HISTORICAL_CURRENT_UI_SURFACE_IDS = [
+  'session.details',
+  'session.preview',
+  'session.tool',
+  'session.side',
+  'session.rightSidebarTab',
+  'session.headerAction',
+  'session.structuredMessage',
+  'workspace.details',
+  'workspace.main',
+  'project.details',
+  'project.main',
+  'project.rightSidebarTab',
+  'app.settingsPage',
+  'app.rightSidebarTab',
+  'app.sidePanel',
+  'app.bottomPanel',
+  'app.page',
+  'browser.panel',
+  'services.panel',
+] as const;
+type HistoricalCurrentUiSurfaceId = (typeof HISTORICAL_CURRENT_UI_SURFACE_IDS)[number];
+
+type HistoricalCurrentUiSurfaceDisposition =
+  | Readonly<{ kind: 'removed' }>
+  | Readonly<{
+    kind: 'binding';
+    container: PluginUiContainerV1;
+    targetKind: PluginUiTargetKindV1;
+  }>
+  | Readonly<{
+    kind: 'semantic';
+    family: 'sessionHeaderActions';
+  }>;
+
+type HistoricalBindingDisposition = Extract<
+  HistoricalCurrentUiSurfaceDisposition,
+  Readonly<{ kind: 'binding' }>
+>;
+type HistoricalSemanticDisposition = Extract<
+  HistoricalCurrentUiSurfaceDisposition,
+  Readonly<{ kind: 'semantic' }>
+>;
+type HistoricalDispositionEntry = readonly [
+  HistoricalCurrentUiSurfaceId,
+  HistoricalCurrentUiSurfaceDisposition,
+];
+type HistoricalBindingEntry = readonly [
+  HistoricalCurrentUiSurfaceId,
+  HistoricalBindingDisposition,
+];
+type HistoricalSemanticEntry = readonly [
+  HistoricalCurrentUiSurfaceId,
+  HistoricalSemanticDisposition,
+];
+
+const HISTORICAL_CURRENT_UI_SURFACE_DISPOSITIONS: Readonly<
+  Record<HistoricalCurrentUiSurfaceId, HistoricalCurrentUiSurfaceDisposition>
+> = Object.freeze({
+  'session.details': { kind: 'binding', container: 'detailsTab', targetKind: 'session' },
+  'session.preview': { kind: 'removed' },
+  'session.tool': { kind: 'removed' },
+  'session.side': { kind: 'removed' },
+  'session.rightSidebarTab': { kind: 'binding', container: 'rightSidebarTab', targetKind: 'session' },
+  'session.headerAction': { kind: 'semantic', family: 'sessionHeaderActions' },
+  'session.structuredMessage': { kind: 'removed' },
+  'workspace.details': { kind: 'removed' },
+  'workspace.main': { kind: 'removed' },
+  'project.details': { kind: 'binding', container: 'detailsTab', targetKind: 'project' },
+  'project.main': { kind: 'removed' },
+  'project.rightSidebarTab': { kind: 'binding', container: 'rightSidebarTab', targetKind: 'project' },
+  'app.settingsPage': { kind: 'binding', container: 'settingsPage', targetKind: 'app' },
+  'app.rightSidebarTab': { kind: 'binding', container: 'rightSidebarTab', targetKind: 'app' },
+  'app.sidePanel': { kind: 'removed' },
+  'app.bottomPanel': { kind: 'removed' },
+  'app.page': { kind: 'binding', container: 'appPage', targetKind: 'app' },
+  'browser.panel': { kind: 'binding', container: 'browserPanel', targetKind: 'browser' },
+  'services.panel': { kind: 'binding', container: 'servicesPanel', targetKind: 'services' },
+});
+
+function isHistoricalBindingDisposition(
+  disposition: HistoricalCurrentUiSurfaceDisposition,
+): disposition is HistoricalBindingDisposition {
+  return disposition.kind === 'binding';
+}
+
+function isHistoricalSemanticDisposition(
+  disposition: HistoricalCurrentUiSurfaceDisposition,
+): disposition is HistoricalSemanticDisposition {
+  return disposition.kind === 'semantic';
+}
+
+function isHistoricalBindingEntry(entry: HistoricalDispositionEntry): entry is HistoricalBindingEntry {
+  return isHistoricalBindingDisposition(entry[1]);
+}
+
+function isHistoricalSemanticEntry(entry: HistoricalDispositionEntry): entry is HistoricalSemanticEntry {
+  return isHistoricalSemanticDisposition(entry[1]);
 }
 
 // ---------------------------------------------------------------------------
-// Driver 4 — runtime ACTION SPECS (the §12.4 "browser targets/actions, simulator
+// Driver 3 — runtime ACTION SPECS (the §12.4 "browser targets/actions, simulator
 // actions, preview/tunnel routes, diagnostics families"). Status derives from
 // the canonical `getActionSpec(id).surfaces.ui` flag (true = a real executor
 // routes the id through the ActionExecutor front door) — NOT a hand list. Ids
@@ -324,8 +828,7 @@ function buildRuntimeActionItems(): readonly CoverageItem[] {
 function buildCoverageMatrix(): readonly CoverageItem[] {
   return [
     ...buildFamilyItems(),
-    ...buildPlacementItems(),
-    ...buildRendererItems(),
+    ...buildDestinationSlotItems(),
     ...buildRuntimeActionItems(),
   ];
 }
@@ -350,14 +853,14 @@ describe('coverage matrix — Stage A (inventory)', () => {
     }
   });
 
-  it('enumerates every surface-registry placement (no silent drop)', () => {
-    const placementKeys = new Set(
-      matrix.filter((i) => i.family === 'placement').map((i) => i.key),
+  it('enumerates every direct destination slot (no silent drop)', () => {
+    const destinationSlotKeys = new Set(
+      matrix.filter((i) => i.family === 'destinationSlot').map((i) => i.key),
     );
-    for (const descriptor of PLUGIN_SURFACE_REGISTRY.list()) {
+    for (const slot of PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1) {
       expect(
-        placementKeys.has(`placement:${descriptor.id}`),
-        `placement '${descriptor.id}' must be classified`,
+        destinationSlotKeys.has(`destinationSlot:${slot.container}:${slot.targetKind}`),
+        `destination slot '${slot.container}/${slot.targetKind}' must be classified`,
       ).toBe(true);
     }
   });
@@ -484,28 +987,137 @@ describe('coverage matrix — Stage B (enforcement)', () => {
     }
   });
 
-  it('no placement remains unimplemented (every declared surface is mounted or rejected, not dead)', () => {
-    const deadPlacements = matrix.filter(
-      (i) => i.family === 'placement' && i.status === 'unimplemented',
+  it('no normalized destination slot remains unimplemented', () => {
+    const unimplementedSlots = matrix.filter(
+      (i) => i.family === 'destinationSlot' && i.status === 'unimplemented',
     );
-    // Placement deferrals are not allowed: a placement is either mounted
-    // (surfaced) or it is not a registry descriptor at all (rejected at
-    // projection). A registered-but-dead placement is a half-implementation.
-    expect(deadPlacements.map((i) => i.key)).toEqual([]);
+    expect(unimplementedSlots.map((i) => i.key)).toEqual([]);
   });
 
-  it('no contribution family or renderer remains unimplemented', () => {
+  it('keeps mounted reachability proof identities in this closure owner, not Protocol slot data', () => {
+    const admittedSlotKeys = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map((slot) => (
+      destinationSlotKey(slot.container, slot.targetKind)
+    ));
+    expect(Object.keys(DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT).sort()).toEqual(
+      [...admittedSlotKeys].sort(),
+    );
+
+    const productionSlotsWithReachability = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
+      .filter((slot) => Object.prototype.hasOwnProperty.call(slot, 'reachability'))
+      .map((slot) => destinationSlotKey(slot.container, slot.targetKind));
+    expect(productionSlotsWithReachability).toEqual([]);
+  });
+
+  it('requires separate declaration, projection, launcher, and mount evidence for every evidenced public binding', () => {
+    // RED discriminator: a renderer inventory was the retired false source of
+    // mounted truth. It has none of the real path evidence and must stay false.
+    expect(destinationSlotReachabilityFacts(undefined)).toEqual({
+      declared: false,
+      projected: false,
+      launchable: false,
+      mounted: false,
+    });
+
+    const slots = matrix.filter((item) => item.family === 'destinationSlot');
+    expect(slots).toHaveLength(PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.length);
+    const unprovenSlots = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.filter((slot) => (
+      !hasFullDestinationReachability(
+        destinationSlotReachabilityFacts(
+          DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT[
+            destinationSlotKey(slot.container, slot.targetKind)
+          ],
+        ),
+      )
+    ));
+    expect(unprovenSlots.map((slot) => destinationSlotKey(slot.container, slot.targetKind))).toEqual([]);
+
+    for (const slot of PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1) {
+      const slotKey = destinationSlotKey(slot.container, slot.targetKind);
+      expect(
+        destinationSlotReachabilityFacts(DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT[slotKey]),
+        `${slotKey} must name its declaration, projection producer, launcher/open path, production shell, and deciding test`,
+      ).toEqual({
+        declared: true,
+        projected: true,
+        launchable: true,
+        mounted: true,
+      });
+    }
+  });
+
+  it('does not admit fixture-only App whole-pane bindings without an approved App shell journey', () => {
+    const admittedAppWholePaneSlots = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
+      .filter((slot) => REJECTED_APP_WHOLE_PANE_SLOT_KEYS.includes(
+        destinationSlotKey(slot.container, slot.targetKind) as typeof REJECTED_APP_WHOLE_PANE_SLOT_KEYS[number],
+      ))
+      .map((slot) => destinationSlotKey(slot.container, slot.targetKind));
+
+    expect(admittedAppWholePaneSlots).toEqual([]);
+  });
+
+  it('binds each reachability reference to its current source owner and supported destination slots', () => {
+    const proofsByStageAndRef = new Map(
+      DESTINATION_REACHABILITY_SOURCE_PROOFS_V1.map((proof) => [
+        destinationReachabilitySourceProofKey(proof.stage, proof.ref),
+        proof,
+      ]),
+    );
+    expect(proofsByStageAndRef.size).toBe(DESTINATION_REACHABILITY_SOURCE_PROOFS_V1.length);
+
+    const repoRoot = resolve(import.meta.dirname, '../../../../../..');
+    const sourceByPath = new Map<string, string>();
+    const usedProofKeys = new Set<string>();
+
+    for (const slot of PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1) {
+      const slotKey = destinationSlotKey(slot.container, slot.targetKind);
+      const proofRefs = DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT[slotKey];
+      if (proofRefs === undefined) {
+        throw new Error(`${slotKey} has no test-owned reachability proof references`);
+      }
+
+      for (const stage of DESTINATION_REACHABILITY_STAGES) {
+        const ref = proofRefs[stage];
+        const proofKey = destinationReachabilitySourceProofKey(stage, ref);
+        const proof = proofsByStageAndRef.get(proofKey);
+        if (proof === undefined) {
+          throw new Error(`${slotKey} has no source proof for ${stage}:${ref}`);
+        }
+
+        expect(
+          proof.supportedSlotKeys,
+          `${slotKey} must not borrow ${stage}:${ref} from an unrelated binding`,
+        ).toContain(slotKey);
+
+        const sourceChecks: readonly DestinationReachabilitySourceCheck[] = [
+          { sourcePath: proof.sourcePath, codeIdentifier: proof.codeIdentifier },
+          ...(proof.additionalSourceChecks ?? []),
+        ];
+        for (const sourceCheck of sourceChecks) {
+          const source = sourceByPath.get(sourceCheck.sourcePath)
+            ?? readFileSync(resolve(repoRoot, ...sourceCheck.sourcePath.split('/')), 'utf8');
+          sourceByPath.set(sourceCheck.sourcePath, source);
+          expect(
+            source,
+            `${stage}:${ref} must remain bound to ${sourceCheck.sourcePath}#${sourceCheck.codeIdentifier}`,
+          ).toContain(sourceCheck.codeIdentifier);
+        }
+        usedProofKeys.add(proofKey);
+      }
+    }
+
+    expect([...usedProofKeys].sort()).toEqual([...proofsByStageAndRef.keys()].sort());
+  });
+
+  it('no contribution family remains unimplemented', () => {
     const dead = matrix.filter(
-      (i) =>
-        (i.family === 'contributionFamily' || i.family.startsWith('renderer.')) &&
-        i.status === 'unimplemented',
+      (i) => i.family === 'contributionFamily' && i.status === 'unimplemented',
     );
     expect(dead.map((i) => i.key)).toEqual([]);
   });
 
   it('the deferred set is bounded and runtime-action-scoped (no creeping deferrals)', () => {
     // Every deferral is a runtime action (the only in-scope family that legitimately
-    // carries labeled support-matrix deferrals). Families/placements/renderers must
+    // carries labeled support-matrix deferrals). Families/destination slots must
     // never be deferred — they are structural and must be live or absent.
     for (const key of Object.keys(DEFERRED_ALLOWLIST)) {
       expect(key.startsWith('runtimeAction:'), `deferral '${key}' must be a runtime action`).toBe(true);
@@ -522,6 +1134,106 @@ describe('coverage matrix — Stage B (enforcement)', () => {
     expect(Object.keys(DEFERRED_ALLOWLIST)).toEqual([]);
     const matrix = buildCoverageMatrix();
     expect(matrix.filter((item) => item.status === 'unimplemented')).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// Historical UI placement disposition — this is intentionally separate from
+// destination-slot coverage. A retained semantic family is real, but it is not
+// a page/pane placement and must never acquire a mounted-slot claim by sharing
+// the generic coverage inventory.
+// ===========================================================================
+
+describe('coverage matrix — historical UI surface disposition', () => {
+  const entries: readonly HistoricalDispositionEntry[] = HISTORICAL_CURRENT_UI_SURFACE_IDS.map((id) => [
+    id,
+    HISTORICAL_CURRENT_UI_SURFACE_DISPOSITIONS[id],
+  ] as const);
+
+  it('keeps the exact disjoint 18 placement candidates plus 1 semantic family', () => {
+    expect(HISTORICAL_CURRENT_UI_SURFACE_IDS).toHaveLength(19);
+    expect(new Set(HISTORICAL_CURRENT_UI_SURFACE_IDS).size).toBe(19);
+
+    const bindings = entries.filter(isHistoricalBindingEntry);
+    const removed = entries.filter(([, disposition]) => disposition.kind === 'removed');
+    const semantic = entries.filter(isHistoricalSemanticEntry);
+
+    expect(bindings.map(([id, disposition]) => (
+      `${id}->${disposition.container}/${disposition.targetKind}`
+    ))).toEqual([
+      'session.details->detailsTab/session',
+      'session.rightSidebarTab->rightSidebarTab/session',
+      'project.details->detailsTab/project',
+      'project.rightSidebarTab->rightSidebarTab/project',
+      'app.settingsPage->settingsPage/app',
+      'app.rightSidebarTab->rightSidebarTab/app',
+      'app.page->appPage/app',
+      'browser.panel->browserPanel/browser',
+      'services.panel->servicesPanel/services',
+    ]);
+    expect(removed.map(([id]) => id)).toEqual([
+      'session.preview',
+      'session.tool',
+      'session.side',
+      'session.structuredMessage',
+      'workspace.details',
+      'workspace.main',
+      'project.main',
+      'app.sidePanel',
+      'app.bottomPanel',
+    ]);
+    expect(semantic.map(([id, disposition]) => `${id}->${disposition.family}`)).toEqual([
+      'session.headerAction->sessionHeaderActions',
+    ]);
+
+    expect(bindings).toHaveLength(9);
+    expect(removed).toHaveLength(9);
+    expect(semantic).toHaveLength(1);
+    expect(bindings.length + removed.length + semantic.length).toBe(19);
+  });
+
+  it('keeps retained placement successors direct and fully evidenced', () => {
+    const slotsByKey = new Map(
+      PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map((slot) => [
+        `${slot.container}:${slot.targetKind}`,
+        slot,
+      ]),
+    );
+    const unprovenHistoricalBindings: HistoricalCurrentUiSurfaceId[] = [];
+    for (const [historicalId, disposition] of entries) {
+      if (!isHistoricalBindingDisposition(disposition)) continue;
+      const slot = slotsByKey.get(`${disposition.container}:${disposition.targetKind}`);
+      expect(
+        slot,
+        `${historicalId} must resolve only to an admitted direct destination slot`,
+      ).toBeDefined();
+      const proofRefs = DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT[
+        destinationSlotKey(disposition.container, disposition.targetKind)
+      ];
+      if (!hasFullDestinationReachability(destinationSlotReachabilityFacts(proofRefs))) {
+        unprovenHistoricalBindings.push(historicalId);
+      }
+    }
+    expect(unprovenHistoricalBindings).toEqual([]);
+  });
+
+  it('retains semantic families without admitting them to mounted-placement coverage', () => {
+    const canonicalFamilies = new Set(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((family) => family.family));
+    const semanticIds = entries
+      .filter(isHistoricalSemanticEntry)
+      .map(([id, disposition]) => ({ id, family: disposition.family }));
+    expect(semanticIds).toEqual([
+      { id: 'session.headerAction', family: 'sessionHeaderActions' },
+    ]);
+    for (const semantic of semanticIds) {
+      expect(canonicalFamilies.has(semantic.family), `${semantic.id} must remain a real semantic family`).toBe(true);
+    }
+
+    const historicalMountedIds = entries
+      .filter(isHistoricalBindingEntry)
+      .map(([id]) => id);
+    expect(historicalMountedIds).not.toContain('session.headerAction');
+    expect(historicalMountedIds).not.toContain('session.structuredMessage');
   });
 });
 
@@ -657,29 +1369,23 @@ describe('coverage matrix — classification snapshot', () => {
     };
     for (const item of matrix) counts[item.status] += 1;
 
-    // UNSURFACED (DZ-2) = exactly the statically-unbacked simulator ids (today: absolute
-    // orientation). These make no product promise and are NOT carried as allowlist deferrals.
+    // UNSURFACED (DZ-2) = statically-unbacked simulator ids only. Destination
+    // slots are admission records, not claims that a presentation is mounted.
     const staticallyUnbackedSimulatorCount = ACTION_ID_FAMILIES_V1.devices_simulator.filter(
       (id) => classifySimulatorRuntimeActionBackingV1(id as never) === 'statically-unbacked',
     ).length;
     expect(counts.unsurfaced).toBe(staticallyUnbackedSimulatorCount);
 
-    // Structural items (families + placements + renderers) are all live; the only
-    // `unimplemented` items are the labeled runtime-action deferrals. Forward-only
+    // The only `unimplemented` items are the labeled runtime-action deferrals. Forward-only
     // ratchet (DZ-1): this is `<=`, never equality — when a deferred id ships, its
     // status flips to runtime-owned and `unimplemented` falls below the allowlist
     // size until the allowlist entry is pruned. Equality here was the inverted
     // invariant that turned shipping a deferred id into a build break.
     expect(counts.unimplemented).toBeLessThanOrEqual(Object.keys(DEFERRED_ALLOWLIST).length);
-    expect(counts['plugin-host-owned']).toBe(Object.keys(IN_SCOPE_FAMILY_OWNERS).length);
-    // Every placement is surfaced (mounted); the 8 session-surface + generic host
-    // ids + 7 structured-message ids are surfaced renderers.
-    expect(counts.surfaced).toBeGreaterThanOrEqual(PLUGIN_SURFACE_REGISTRY.list().length);
-    // Intentionally-internal = the 3 header-action renderer vocabulary ids PLUS the
-    // runtime-action ids that have a real executor but a dedicated live owner.
-    expect(counts['intentionally-internal']).toBe(
-      PluginSessionHeaderActionRendererIdV1Schema.options.length
-        + Object.keys(INTENTIONALLY_INTERNAL_RUNTIME_ACTIONS).length,
+    expect(counts['plugin-host-owned']).toBe(
+      Object.keys(IN_SCOPE_FAMILY_OWNERS).length + PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.length,
     );
+    expect(counts.surfaced).toBe(0);
+    expect(counts['intentionally-internal']).toBe(Object.keys(INTENTIONALLY_INTERNAL_RUNTIME_ACTIONS).length);
   });
 });

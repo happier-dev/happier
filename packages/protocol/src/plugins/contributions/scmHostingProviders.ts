@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginContributionReferenceV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const PluginScmOperationV2Schema = z.enum(['detect', 'clone', 'fetch', 'status', 'diff', 'commit', 'push', 'pullRequest']);
 export const PluginScmOperationsV2Schema = z.array(PluginScmOperationV2Schema)
@@ -20,12 +21,12 @@ export const PluginScmOperationsV2Schema = z.array(PluginScmOperationV2Schema)
     });
   });
 export const ScmHostingProviderContributionSchema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   kind: z.string().trim().min(1),
   capabilities: PluginScmOperationsV2Schema,
-  authService: PluginContributionReferenceV2Schema.optional(),
+  authService: asProtocolZod(PluginContributionReferenceV2Schema).optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict();
 export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderContributionSchema>;

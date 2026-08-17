@@ -31,3 +31,20 @@ export {
 } from './subagentRefV1.js';
 
 export * from './durableCustodyV1.js';
+
+export {
+  parseParticipantMessageV1,
+  type ParticipantMessageV1,
+  type ParticipantRecipientV1,
+} from '../../messages/structured/participantMessageV1.js';
+export {
+  parseSubagentCommandV1,
+  type SubagentCommandV1,
+} from '../../messages/structured/subagentCommandV1.js';
+export {
+  parseSubagentLaunchV1,
+  type SubagentLaunchV1,
+} from '../../messages/structured/subagentLaunchV1.js';
+export type {
+  PluginExecutionRunProfileContributionV2,
+} from '../../plugins/contributions/executionRunProfiles.js';

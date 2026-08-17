@@ -75,7 +75,10 @@ describe('updates sharing', () => {
       id: 'sess_1',
       metadataLayoutVersion: 1,
       ownerMetadata: {
-        value: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        value: {
+          t: 'plain',
+          v: { v: 1 },
+        },
       },
     }).success).toBe(true);
     expect(UpdateBodySchema.safeParse({
@@ -83,7 +86,21 @@ describe('updates sharing', () => {
       id: 'sess_1',
       metadataLayoutVersion: 1,
       ownerMetadata: {
-        value: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        value: {
+          t: 'encrypted',
+          c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        },
+      },
+    }).success).toBe(true);
+    expect(UpdateBodySchema.safeParse({
+      t: 'update-session',
+      id: 'sess_1',
+      metadataLayoutVersion: 1,
+      ownerMetadata: {
+        value: {
+          t: 'plain',
+          v: { v: 1 },
+        },
         version: 3,
       },
     }).success).toBe(false);
@@ -92,7 +109,10 @@ describe('updates sharing', () => {
       id: 'sess_1',
       metadataLayoutVersion: '1',
       ownerMetadata: {
-        value: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        value: {
+          t: 'plain',
+          v: { v: 1 },
+        },
       },
     }).success).toBe(false);
     expect(UpdateBodySchema.safeParse({
@@ -100,6 +120,15 @@ describe('updates sharing', () => {
       id: 'sess_1',
       metadataLayoutVersion: 1,
       ownerMetadata: 42,
+    }).success).toBe(false);
+    expect(UpdateBodySchema.safeParse({
+      t: 'update-session',
+      id: 'sess_1',
+      metadataLayoutVersion: 1,
+      ownerMetadata: {
+        value:
+          'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      },
     }).success).toBe(false);
   });
 

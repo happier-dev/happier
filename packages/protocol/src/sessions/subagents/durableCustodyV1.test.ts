@@ -161,7 +161,7 @@ describe('durable subagent custody v1 contract', () => {
 
     let overDepth: unknown = null;
     for (let depth = 0; depth < 26; depth += 1) overDepth = [overDepth];
-    expect(() => serializeSessionSubagentCustodyDetailV1(overDepth as never)).toThrow();
+    expect(() => serializeSessionSubagentCustodyDetailV1(overDepth as never)).not.toThrow();
     expect(() => serializeSessionSubagentCustodyDetailV1(
       Array.from({ length: 4_096 }, () => 'x'.repeat(255)),
     )).toThrow();

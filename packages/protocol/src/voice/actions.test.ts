@@ -58,11 +58,18 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ]);
   });
 
-  it('ignores invalid action blocks (returns no actions and keeps text)', () => {
+  it('strips invalid action blocks so protocol markup cannot reach speech or history', () => {
     const input = ['Hello', '<voice_actions>', '{not json}', '</voice_actions>'].join('\n');
     const result = extractVoiceActionsFromAssistantText(input);
-    expect(result.actions).toEqual([]);
-    expect(result.assistantText).toContain('Hello');
+    expect(result).toEqual({ assistantText: 'Hello', actions: [] });
+  });
+
+  it('strips an unterminated action block from the first opening tag', () => {
+    const input = ['Hello', '<voice_actions>', '{"actions": ['].join('\n');
+    expect(extractVoiceActionsFromAssistantText(input)).toEqual({
+      assistantText: 'Hello',
+      actions: [],
+    });
   });
 
   it('supports session targeting actions for global voice', () => {

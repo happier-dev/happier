@@ -1,4 +1,5 @@
 import { bytesToHex } from '@noble/hashes/utils';
+import { asProtocolZod } from "./actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod';
 
@@ -23,7 +24,7 @@ const RecipientPackageSourceV1Schema = z.object({
 }).strict();
 
 const RecipientPackageIdentityV1Schema = z.object({
-  pluginId: PluginIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
   source: RecipientPackageSourceV1Schema,
 }).strict();
 
@@ -38,6 +39,7 @@ const RecipientCredentialSlotV1Schema = z.object({
 }).strict();
 
 const RecipientOperationIdV1Schema = PluginContributionLocalIdSchema;
+const RecipientOperationIdV1ZodSchema = asProtocolZod(RecipientOperationIdV1Schema);
 const RecipientPurposeIdV1Schema = z.string()
   .trim()
   .min(1)
@@ -119,7 +121,7 @@ const RecipientParameterMappingV1Schema = z.object({
 }).strict();
 
 export const RecipientOperationV1Schema = z.object({
-  id: RecipientOperationIdV1Schema,
+  id: RecipientOperationIdV1ZodSchema,
   purpose: RecipientPurposeIdV1Schema,
   credentialSlotId: z.string().trim().min(1).max(128),
   effect: z.enum(['read', 'mutation']),
@@ -274,7 +276,7 @@ export const RecipientContractV1Schema = z.object({
   version: z.literal(1),
   package: RecipientPackageIdentityV1Schema,
   publisher: RecipientPublisherIdentityV1Schema,
-  contribution: PluginContributionIdentityV1Schema,
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   credentialSlot: RecipientCredentialSlotV1Schema,
   operations: z.array(RecipientOperationV1Schema).min(1).max(64),
   presentation: z.object({
@@ -390,26 +392,28 @@ export function createRecipientContractDigestV1(input: unknown): RecipientContra
   return RecipientContractDigestV1Schema.parse(`sha256:${bytesToHex(sha256(bytes))}`);
 }
 
-export function createVoiceProviderRecipientContractV1(input: Readonly<{
+/**
+ * Final Voice declaration projection. The credential slot and mediated
+ * operations stay owned by `credentials`; callers do not reconstruct the
+ * retired top-level account-mediation shape.
+ */
+export function createVoiceProviderRecipientContractFromCredentialsV1(input: Readonly<{
   package: RecipientContractV1['package'];
   publisher: RecipientContractV1['publisher'];
   contribution: RecipientContractV1['contribution'];
-  accountMediation: Readonly<{
-    credentialSlots: readonly RecipientContractV1['credentialSlot'][];
-    operations: readonly RecipientOperationV1[];
+  credentials: Readonly<{
+    slot: Readonly<{ id: RecipientContractV1['credentialSlot']['id'] }>;
+    hostMediated: Readonly<{ operations: readonly RecipientOperationV1[] }>;
   }>;
   presentation?: RecipientContractV1['presentation'];
 }>): RecipientContractV1 {
-  if (input.accountMediation.credentialSlots.length !== 1) {
-    throw new TypeError('Voice recipient contracts require exactly one account credential slot');
-  }
   return normalizeRecipientContractV1({
     version: 1,
     package: input.package,
     publisher: input.publisher,
     contribution: input.contribution,
-    credentialSlot: input.accountMediation.credentialSlots[0],
-    operations: input.accountMediation.operations,
+    credentialSlot: { id: input.credentials.slot.id, scope: 'account' },
+    operations: input.credentials.hostMediated.operations,
     ...(input.presentation ? { presentation: input.presentation } : {}),
   });
 }
@@ -508,6 +512,12 @@ export function materializeRecipientOperationRequestV1FromOperation(input: Reado
     ? cloneJsonValue(operation.request.bodyTemplate.value)
     : null;
   for (const mapping of operation.parameters.mapping) {
+    if (
+      !Object.prototype.hasOwnProperty.call(parameters, mapping.parameter)
+      && (mapping.target.kind === 'query' || mapping.target.kind === 'header')
+    ) {
+      continue;
+    }
     const value = readParameter(parameters, mapping.parameter);
     if (mapping.target.kind === 'path') {
       path = path.replace(

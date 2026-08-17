@@ -35,6 +35,7 @@ export const BackendSurfaceAvailabilityV1Schema = z.discriminatedUnion('availabl
       'evaluation_error',
     ]),
     retryable: z.boolean().optional(),
+    safeMessage: z.string().trim().min(1).max(1_000).optional(),
   }).strict(),
 ]);
 export type BackendSurfaceAvailabilityV1 = z.infer<typeof BackendSurfaceAvailabilityV1Schema>;

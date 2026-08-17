@@ -24,10 +24,11 @@ import {
 } from '../securityFingerprintsV1.js';
 import {
   ProviderManagedRuntimeDeclarationV1Schema,
+  createProviderManagedPurposeBindingsEqualityKeyV1,
   resolveProviderManagedRuntimeDeclarationV1,
 } from '../contributions/v1.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
-import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export {
   AgentSessionProviderBindingV1Schema,
@@ -83,7 +84,7 @@ const ProviderRuntimeManagedBindingBasisV1Schema =
   ProviderRuntimeBindingBasisCommonV1Schema.extend({
     deployment: z.object({
       kind: z.literal('managedLocal'),
-      implementationIdentity: PluginContributionIdentityV1Schema,
+      implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
       managedRuntime: ProviderManagedRuntimeDeclarationV1Schema,
       purposeBindings: QualifiedConnectedAccountPurposeBindingsV1Schema,
     }).strict().transform((deployment) => ({
@@ -162,20 +163,6 @@ export function readSessionProviderBindingMetadataStateV1(
     : { kind: 'invalid' };
 }
 
-function canonicalPurposeBindings(
-  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 | undefined,
-): string | null {
-  return purposeBindings
-    ? JSON.stringify(
-        [...purposeBindings.bindings].sort((left, right) =>
-          compareProviderCanonicalStringsV1(
-            JSON.stringify(left),
-            JSON.stringify(right),
-          )),
-      )
-    : null;
-}
-
 export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
   input: Readonly<{
     selection: Readonly<{
@@ -196,10 +183,16 @@ export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
     && input.binding.materialization === basis.prepared.materialization
     && (input.binding.adapterBindingKey ?? null)
       === (basis.prepared.adapterBindingKey ?? null)
-    && canonicalPurposeBindings(input.binding.managedPurposeBindings)
+    && (input.binding.managedPurposeBindings
+      ? createProviderManagedPurposeBindingsEqualityKeyV1(
+          input.binding.managedPurposeBindings,
+        )
+      : null)
       === (
         basis.deployment.kind === 'managedLocal'
-          ? canonicalPurposeBindings(basis.deployment.purposeBindings)
+          ? createProviderManagedPurposeBindingsEqualityKeyV1(
+              basis.deployment.purposeBindings,
+            )
           : null
       );
   if (!structuralFactsMatch) return false;

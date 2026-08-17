@@ -9,6 +9,10 @@ import {
   type ActionSurfaces,
 } from './actionSpecs.js';
 import {
+  actionInputOptionValueSearchText,
+  type ActionInputOptionValue,
+} from './actionInputHints.js';
+import {
   type ActionDefinitionSummaryV1,
   type ActionDefinitionV1,
 } from './actionDefinitionV1.js';
@@ -17,7 +21,7 @@ import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 export type SerializedActionSpec = ActionDefinitionSummaryV1;
 
 export type ResolvedActionOption = Readonly<{
-  value: string;
+  value: ActionInputOptionValue;
   label: string;
   description?: string;
   disabled?: boolean;
@@ -43,7 +47,11 @@ function actionSearchText(spec: ActionSpec): string {
           field.description ?? '',
           field.widget,
           ...(Array.isArray((field as any).options)
-            ? ((field as any).options as readonly ActionInputOption[]).flatMap((option) => [option.value, option.label, option.description ?? ''])
+            ? ((field as any).options as readonly ActionInputOption[]).flatMap((option) => [
+              actionInputOptionValueSearchText(option.value),
+              option.label,
+              option.description ?? '',
+            ])
             : []),
         ])
         .join(' ')
@@ -210,7 +218,9 @@ export function serializeActionFieldOptions(field: ActionInputFieldHint): readon
           ...(typeof option.description === 'string' ? { description: option.description } : {}),
           ...(option.disabled === true ? { disabled: true as const } : {}),
         }))
-        .filter((option) => option.value.trim().length > 0)
+        .filter((option) => (
+          typeof option.value !== 'string' || option.value.trim().length > 0
+        ))
     : [];
 }
 
@@ -225,7 +235,7 @@ export function filterResolvedActionOptions(
 
   const filtered = query
     ? options.filter((option) =>
-        [option.value, option.label, option.description ?? '']
+        [actionInputOptionValueSearchText(option.value), option.label, option.description ?? '']
           .join(' ')
           .toLowerCase()
           .includes(query))

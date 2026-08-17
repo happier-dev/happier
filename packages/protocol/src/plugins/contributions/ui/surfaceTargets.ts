@@ -5,15 +5,6 @@ export const PluginSurfaceSessionTargetV1Schema = z.object({
   sessionIdPath: z.string().trim().min(1).optional(),
 }).strict();
 
-export const PluginSurfaceWorkspaceTargetV1Schema = z.object({
-  kind: z.literal('workspace'),
-  workspaceRefIdPath: z.string().trim().min(1).optional(),
-  serverIdPath: z.string().trim().min(1).optional(),
-  machineIdPath: z.string().trim().min(1).optional(),
-  rootPathPath: z.string().trim().min(1).optional(),
-  activeRootPathPath: z.string().trim().min(1).optional(),
-}).strict();
-
 export const PluginSurfaceProjectTargetV1Schema = z.object({
   kind: z.literal('project'),
   workspaceRefIdPath: z.string().trim().min(1).optional(),
@@ -43,19 +34,9 @@ export const PluginSurfaceServicesTargetV1Schema = z.object({
 
 export const PluginSurfaceTargetV1Schema = z.discriminatedUnion('kind', [
   PluginSurfaceSessionTargetV1Schema,
-  PluginSurfaceWorkspaceTargetV1Schema,
   PluginSurfaceProjectTargetV1Schema,
   PluginSurfaceAppTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
   PluginSurfaceServicesTargetV1Schema,
 ]);
 export type PluginSurfaceTargetV1 = z.infer<typeof PluginSurfaceTargetV1Schema>;
-
-export const PluginBrowserPanelHostActionScopeV1Schema = z.object({
-  kind: z.literal('browserView'),
-  browserViewIdPath: z.string().trim().min(1),
-  sessionIdPath: z.string().trim().min(1).optional(),
-  profileIdPath: z.string().trim().min(1).optional(),
-}).strict();
-export type PluginBrowserPanelHostActionScopeV1 =
-  z.infer<typeof PluginBrowserPanelHostActionScopeV1Schema>;

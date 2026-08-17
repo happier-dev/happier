@@ -7,7 +7,10 @@ import {
   SESSION_ORGANIZATION_ORDER_ITEM_KINDS,
   SESSION_ORGANIZATION_ORDER_SCOPE_KINDS,
 } from './constants.js';
-import { SessionOrganizationContentEnvelopeSchema } from './content.js';
+import {
+  SessionOrganizationContentEnvelopeSchema,
+  SessionOrganizationDisplayStateSchema,
+} from './content.js';
 
 const SessionOrganizationScopeKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
 const SessionOrganizationItemKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
@@ -38,6 +41,7 @@ export const SessionOrganizationLabelSchema = z
     labelKind: SessionOrganizationLabelKindSchema,
     scopeKey: SessionOrganizationScopeKeySchema,
     display: SessionOrganizationContentEnvelopeSchema.nullable(),
+    displayState: SessionOrganizationDisplayStateSchema.optional(),
     archivedAt: z.number().int().nonnegative().nullable(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),

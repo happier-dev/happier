@@ -105,6 +105,10 @@ describe('connected-account consumer purposes', () => {
         pluginId: 'happier.connected-account.openai',
         localId: 'openai-codex',
       },
+      title: {
+        key: 'plugins.example.connectedAccounts.realtimeUpstream',
+        fallback: 'Realtime upstream account',
+      },
       required: false,
       materializationKinds: ['files', 'environment'],
     })).toEqual({
@@ -112,6 +116,10 @@ describe('connected-account consumer purposes', () => {
       service: {
         pluginId: 'happier.connected-account.openai',
         localId: 'openai-codex',
+      },
+      title: {
+        key: 'plugins.example.connectedAccounts.realtimeUpstream',
+        fallback: 'Realtime upstream account',
       },
       required: false,
       materializationKinds: ['files', 'environment'],

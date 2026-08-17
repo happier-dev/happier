@@ -46,9 +46,6 @@ export const ReviewCommentPrincipalProofV1Schema = z.object({
 export type ReviewCommentPrincipalProofV1 = z.infer<typeof ReviewCommentPrincipalProofV1Schema>;
 
 const ReviewCommentCurrentIntentIdV1Schema = z.string().trim().min(1).max(512);
-const ReviewCommentCurrentIntentDigestV1Schema = z.string().regex(
-  /^(?:sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})$/,
-);
 
 export const ReviewCommentCurrentIntentV1Schema = z.object({
   v: z.literal(1),
@@ -65,8 +62,6 @@ export const ReviewCommentCurrentIntentV1Schema = z.object({
   projectId: ReviewCommentCurrentIntentIdV1Schema,
   workspaceId: ReviewCommentCurrentIntentIdV1Schema,
   immutableGenerationId: ReviewCommentCurrentIntentIdV1Schema,
-  packageDigest: ReviewCommentCurrentIntentDigestV1Schema,
-  manifestDigest: ReviewCommentCurrentIntentDigestV1Schema,
 }).strict();
 export type ReviewCommentCurrentIntentV1 = z.infer<typeof ReviewCommentCurrentIntentV1Schema>;
 
@@ -197,9 +192,11 @@ export const ReviewCommentReplyResponseV1Schema = z.object({
 export type ReviewCommentReplyResponseV1 = z.infer<typeof ReviewCommentReplyResponseV1Schema>;
 
 export const ReviewCommentBulkTransitionRequestV1Schema = z.object({
+  projectId: z.string().min(1),
   commentIds: z.array(z.string().min(1)).min(1),
   toState: ReviewCommentStateV1Schema,
-  expectedState: ReviewCommentStateV1Schema.optional(),
+  expectedState: ReviewCommentStateV1Schema,
+  expectedServerRevisions: z.record(z.string().min(1), z.number().int().positive()),
   evidence: z.array(ReviewCommentEvidenceV1Schema).default([]),
   reason: z.string().min(1).optional(),
   bulkActionId: z.string().min(1).optional(),

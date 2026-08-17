@@ -6,6 +6,7 @@ import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { SubagentStatusV1Schema } from './subagentRefV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const SESSION_SUBAGENT_CUSTODY_CAPABILITY_V1 = 'session.subagents.durable-custody.v1' as const;
 export const MAX_SESSION_SUBAGENT_CUSTODY_RECORDS = 256;
@@ -46,8 +47,8 @@ export type SessionSubagentCustodyContentV1 = z.infer<typeof SessionSubagentCust
 export type SessionSubagentCustodyDetailV1 = Extract<SessionSubagentCustodyContentV1, { t: 'plain' }>['v'];
 
 export const SessionSubagentCustodyScopeV1Schema = z.object({
-  pluginId: PluginIdSchema,
-  contributionId: PluginContributionLocalIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
+  contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   immutableGenerationId: IndexedKeySchema,
 }).strict();
 export type SessionSubagentCustodyScopeV1 = z.infer<typeof SessionSubagentCustodyScopeV1Schema>;
@@ -151,8 +152,8 @@ export const SessionSubagentCustodyMutationResponseV1Schema = z.object({
 export type SessionSubagentCustodyMutationResponseV1 = z.infer<typeof SessionSubagentCustodyMutationResponseV1Schema>;
 
 export const SessionSubagentCustodyListQueryV1Schema = z.object({
-  pluginId: PluginIdSchema,
-  contributionId: PluginContributionLocalIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
+  contributionId: asProtocolZod(PluginContributionLocalIdSchema),
   immutableGenerationId: IndexedKeySchema,
   custodyKey: CustodyKeySchema,
 }).strict();
@@ -164,7 +165,7 @@ export const SessionSubagentCustodyPageV1Schema = z.object({
 export type SessionSubagentCustodyPageV1 = z.infer<typeof SessionSubagentCustodyPageV1Schema>;
 
 export const SessionSubagentCustodyRetirementRequestV1Schema = z.object({
-  pluginId: PluginIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
   immutableGenerationId: IndexedKeySchema,
 }).strict();
 export type SessionSubagentCustodyRetirementRequestV1 = z.infer<typeof SessionSubagentCustodyRetirementRequestV1Schema>;

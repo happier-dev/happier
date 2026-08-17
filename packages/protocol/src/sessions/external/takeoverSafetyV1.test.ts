@@ -7,9 +7,6 @@ import {
   ExternalSessionTakeoverResultV1Schema,
   doesExternalSessionDestructiveQuiescencePermitAdmissionV1,
 } from './takeoverV1.js';
-import {
-  mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1,
-} from './takeoverCompatV1.js';
 
 const sourceIdentity = {
   machineId: 'machine-1',
@@ -79,15 +76,6 @@ describe('External Sessions takeover safety contract', () => {
         ...unsafe,
       }).success).toBe(false);
     }
-  });
-
-  it('fails closed when a released legacy takeover request carries stop authority', () => {
-    const mapped = mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1({
-      linkedSessionId: 'session-1',
-      forceStop: true,
-    });
-
-    expect(ExternalSessionTakeoverInputV1Schema.safeParse(mapped).success).toBe(false);
   });
 
   it('requires destructive quiescence evidence bound to the exact source and process identity', () => {

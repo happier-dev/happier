@@ -7,6 +7,7 @@ export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
   idUtf16Units: 512,
   surfaceUtf16Units: 64,
   summaryUtf16Units: 1_024,
+  detailUtf16Units: 4_096,
 });
 
 const boundedId = z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.idUtf16Units);
@@ -21,6 +22,7 @@ export const TargetActionApprovalRequestV1Schema = z.object({
   generation: boundedId, policyFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   subjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   summary: z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.summaryUtf16Units),
+  detail: z.string().min(1).max(TARGET_ACTION_APPROVAL_LIMITS_V1.detailUtf16Units).optional(),
   decision: ApprovalDecisionV1Schema.optional(), execution: ApprovalExecutionV1Schema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'open' && (value.decision || value.execution)) ctx.addIssue({ code: 'custom', message: 'open target-action approval cannot contain a decision or execution' });

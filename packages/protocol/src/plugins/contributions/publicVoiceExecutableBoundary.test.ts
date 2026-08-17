@@ -3,6 +3,86 @@ import { describe, expect, it } from 'vitest';
 import * as protocol from '../../index.js';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from './catalog.js';
 import { PluginContributesV2Schema } from './v2.js';
+import * as voiceContributionProtocol from './voiceProviders.js';
+
+const voiceHostOperations = [{
+  id: 'mint-session',
+  purpose: 'voice.client-auth',
+  credentialSlotId: 'api_key',
+  effect: 'read' as const,
+  request: {
+    origin: 'https://voice.example.test',
+    pathTemplate: '/v1/session',
+    queryTemplate: [],
+    headerTemplate: [
+      { name: 'accept', value: 'application/json' },
+      { name: 'content-type', value: 'application/json' },
+    ],
+    bodyTemplate: { kind: 'json' as const, value: {} },
+    method: 'POST' as const,
+    credential: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const },
+    redirect: 'error' as const,
+    maxBodyBytes: 64 * 1024,
+    contentTypes: ['application/json'],
+  },
+  parameters: {
+    schema: {
+      type: 'object' as const,
+      properties: { body: { type: 'object' as const, additionalProperties: true } },
+      required: ['body'],
+      additionalProperties: false,
+    },
+    mapping: [{ parameter: 'body', target: { kind: 'body' as const, pointer: '' } }],
+  },
+  response: { maxBytes: 64 * 1024, contentTypes: ['application/json'] },
+}, {
+  id: 'list-voices',
+  purpose: 'voice.catalog.voices',
+  credentialSlotId: 'api_key',
+  effect: 'read' as const,
+  request: {
+    origin: 'https://voice.example.test',
+    pathTemplate: '/v1/voices',
+    queryTemplate: [],
+    headerTemplate: [{ name: 'accept', value: 'application/json' }],
+    bodyTemplate: { kind: 'none' as const },
+    method: 'GET' as const,
+    credential: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const },
+    redirect: 'error' as const,
+    maxBodyBytes: 0,
+    contentTypes: [],
+  },
+  parameters: {
+    schema: { type: 'object' as const, properties: {}, additionalProperties: false },
+    mapping: [],
+  },
+  response: { maxBytes: 2 * 1024 * 1024, contentTypes: ['application/json'] },
+}] as const;
+
+const voiceCredentials = {
+  slot: {
+    id: 'api_key',
+    purpose: 'voice.provider',
+    title: 'API key',
+  },
+  requirement: { kind: 'always' as const },
+  sources: [{
+    kind: 'savedSecret' as const,
+    secretKinds: ['apiKey' as const],
+    operationProjections: [{
+      kind: 'recipientCredential' as const,
+      operation: 'mint-session',
+      phase: 'prepare' as const,
+      format: 'bearer' as const,
+    }, {
+      kind: 'recipientCredential' as const,
+      operation: 'list-voices',
+      phase: 'settings' as const,
+      format: 'bearer' as const,
+    }],
+  }],
+  hostMediated: { operations: voiceHostOperations },
+} as const;
 
 describe('public voice executable contribution boundary', () => {
   it('accepts unique non-empty web/iOS/Android platform subsets', () => {
@@ -14,7 +94,6 @@ describe('public voice executable contribution boundary', () => {
         roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
         platforms: ['web', 'ios', 'android'],
         capabilities: {
-          readiness: { requirements: [] },
           turn: {
             cancelResponse: true,
             bargeIn: true,
@@ -51,7 +130,9 @@ describe('public voice executable contribution boundary', () => {
       consumer: 'voice-host',
       platforms: ['web', 'ios', 'android'],
     });
-    expect(protocol).toHaveProperty('PluginVoiceProviderContributionV1Schema');
+    expect(protocol).toHaveProperty('VoiceProviderContributionSchema');
+    expect(protocol).not.toHaveProperty('PluginVoiceProviderContributionV1Schema');
+    expect(voiceContributionProtocol).not.toHaveProperty('PluginVoiceProviderContributionV1Schema');
   });
 
   it('uses the canonical contribution-reference vocabulary for declaration-gated Agent realtime', () => {
@@ -62,7 +143,6 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
@@ -75,7 +155,11 @@ describe('public voice executable contribution boundary', () => {
       expect(PluginContributesV2Schema.parse({
         voiceProviders: [{
           ...base,
-          execution: { kind: 'experimental_agent_session_realtime', agent },
+          execution: {
+            kind: 'experimental_agent_session_realtime',
+            agent,
+            supportedRuntimeVersions: ['1.2.3'],
+          },
           settings: {
             schemaVersion: 2,
             fields: [],
@@ -88,8 +172,29 @@ describe('public voice executable contribution boundary', () => {
           },
         }],
       }).voiceProviders[0]).toMatchObject({
-        execution: { kind: 'experimental_agent_session_realtime', agent },
+        execution: {
+          kind: 'experimental_agent_session_realtime',
+          agent,
+          supportedRuntimeVersions: ['1.2.3'],
+        },
       });
+    }
+    for (const supportedRuntimeVersions of [
+      [],
+      ['1.2.x'],
+      ['1.2.3', '1.2.3'],
+      Array.from({ length: 17 }, (_, index) => `1.2.${index}`),
+    ]) {
+      expect(PluginContributesV2Schema.safeParse({
+        voiceProviders: [{
+          ...base,
+          execution: {
+            kind: 'experimental_agent_session_realtime',
+            agent: 'codex',
+            supportedRuntimeVersions,
+          },
+        }],
+      }).success).toBe(false);
     }
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
@@ -97,6 +202,7 @@ describe('public voice executable contribution boundary', () => {
         execution: {
           kind: 'experimental_agent_session_realtime',
           agent: { pluginId: 'happier.agent.codex', localId: 'codex', sessionId: 'forbidden' },
+          supportedRuntimeVersions: ['1.2.3'],
         },
       }],
     }).success).toBe(false);
@@ -111,10 +217,13 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
-      execution: { kind: 'experimental_agent_session_realtime', agent },
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent,
+        supportedRuntimeVersions: ['1.2.3'],
+      },
       settings: {
         schemaVersion: 2,
         fields: [],
@@ -188,7 +297,6 @@ describe('public voice executable contribution boundary', () => {
         roles: ['realtime_conversation'],
         platforms: ['web'],
         capabilities: {
-          readiness: { requirements: [] },
           turn: { cancelResponse: true, bargeIn: false },
         },
         client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
@@ -196,9 +304,33 @@ describe('public voice executable contribution boundary', () => {
     });
 
     expect(protocol.derivePluginContributionRegistrationRights(contributes)).toEqual([
-      { family: 'voiceProviders', localId: 'conversation' },
+      {
+        family: 'voiceProviders',
+        localId: 'conversation',
+        target: {
+          realm: 'client',
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+          platforms: ['web'],
+        },
+      },
     ]);
     expect(protocol.derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([]);
+    expect(protocol.derivePluginClientContributionRegistrationRights(contributes, {
+      artifactId: 'voice-runtime-web',
+      modulePath: './voiceRuntime',
+      exportName: 'activate',
+      platform: 'web',
+    })).toEqual([
+      expect.objectContaining({ family: 'voiceProviders', localId: 'conversation' }),
+    ]);
+    expect(protocol.derivePluginClientContributionRegistrationRights(contributes, {
+      artifactId: 'voice-runtime-web',
+      modulePath: './voiceRuntime',
+      exportName: 'wrongExport',
+      platform: 'web',
+    })).toEqual([]);
   });
 
   it('derives only speech declarations as daemon Voice registration rights', () => {
@@ -209,17 +341,30 @@ describe('public voice executable contribution boundary', () => {
         kind: 'speech',
         roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
         platforms: ['web', 'ios', 'android'],
-        capabilities: {
-          readiness: { requirements: ['credential'] },
+        settings: {
+          schemaVersion: 2,
+          fields: [{
+            id: 'model',
+            title: 'Model',
+            schema: { type: 'string', minLength: 1, maxLength: 128 },
+            default: 'speech-model',
+            presentation: { control: 'text' },
+          }, {
+            id: 'voiceName',
+            title: 'Voice',
+            schema: { type: 'string', minLength: 1, maxLength: 128 },
+            default: 'speech-voice',
+            presentation: { control: 'text' },
+          }],
         },
       }],
     });
 
     expect(protocol.derivePluginContributionRegistrationRights(contributes)).toEqual([
-      { family: 'voiceProviders.speech', localId: 'speech' },
+      { family: 'voiceProviders', localId: 'speech', target: { realm: 'daemon' } },
     ]);
     expect(protocol.derivePluginDaemonContributionRegistrationRights(contributes)).toEqual([
-      { family: 'voiceProviders.speech', localId: 'speech' },
+      { family: 'voiceProviders', localId: 'speech', target: { realm: 'daemon' } },
     ]);
   });
 
@@ -231,12 +376,12 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
     } as const;
 
+    expect(PluginContributesV2Schema.safeParse({ voiceProviders: [valid] }).success).toBe(true);
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{ ...valid, id: 'acme.voice/conversation' }],
     }).success).toBe(false);
@@ -253,7 +398,7 @@ describe('public voice executable contribution boundary', () => {
     }).success).toBe(false);
   });
 
-  it('accepts the credential requirement used by bundled public leaves and rejects unearned daemon requirements', () => {
+  it('encodes credential readiness in the final declaration and rejects the removed capabilities spelling', () => {
     const contribution = {
       id: 'conversation',
       title: 'Conversation',
@@ -261,8 +406,24 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: ['credential'] },
         turn: { cancelResponse: false, bargeIn: false },
+      },
+      credentials: {
+        slot: { id: 'api_key', purpose: 'voice.provider', title: 'API key' },
+        requirement: { kind: 'always' },
+        sources: [{
+          kind: 'savedSecret',
+          secretKinds: ['apiKey'],
+          rawGrants: [{
+            realm: 'web',
+            phase: 'connection',
+            request: {
+              kind: 'httpHeaders',
+              origin: 'https://voice.example.test',
+              headerNames: ['authorization'],
+            },
+          }],
+        }],
       },
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
     } as const;
@@ -275,7 +436,7 @@ describe('public voice executable contribution boundary', () => {
         ...contribution,
         capabilities: {
           ...contribution.capabilities,
-          readiness: { requirements: ['execution_machine'] },
+          readiness: { requirements: ['credential'] },
         },
       }],
     }).success).toBe(false);
@@ -289,7 +450,6 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
       settings: {
@@ -368,11 +528,11 @@ describe('public voice executable contribution boundary', () => {
           fields: [{
             id: 'mode',
             title: 'Mode',
-            schema: { type: 'string', enum: ['default'] },
-            default: 'default',
+            schema: { type: 'string', enum: [] },
+            default: '',
             presentation: {
               control: 'select',
-              options: [{ value: 'default', title: 'Default' }],
+              options: [],
             },
           }],
         },
@@ -400,65 +560,9 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: ['credential'] },
         turn: { cancelResponse: true, bargeIn: false },
       },
-      accountMediation: {
-        credentialSlots: [{ id: 'api_key', scope: 'account' }],
-        operations: [{
-          id: 'mint-session',
-          purpose: 'voice.client-auth',
-          credentialSlotId: 'api_key',
-          effect: 'read',
-          request: {
-            origin: 'https://voice.example.test',
-            pathTemplate: '/v1/session',
-            queryTemplate: [],
-            headerTemplate: [
-              { name: 'accept', value: 'application/json' },
-              { name: 'content-type', value: 'application/json' },
-            ],
-            bodyTemplate: { kind: 'json', value: {} },
-            method: 'POST',
-            credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
-            redirect: 'error',
-            maxBodyBytes: 64 * 1024,
-            contentTypes: ['application/json'],
-          },
-          parameters: {
-            schema: {
-              type: 'object',
-              properties: { body: { type: 'object', additionalProperties: true } },
-              required: ['body'],
-              additionalProperties: false,
-            },
-            mapping: [{ parameter: 'body', target: { kind: 'body', pointer: '' } }],
-          },
-          response: { maxBytes: 64 * 1024, contentTypes: ['application/json'] },
-        }, {
-          id: 'list-voices',
-          purpose: 'voice.catalog.voices',
-          credentialSlotId: 'api_key',
-          effect: 'read',
-          request: {
-            origin: 'https://voice.example.test',
-            pathTemplate: '/v1/voices',
-            queryTemplate: [],
-            headerTemplate: [{ name: 'accept', value: 'application/json' }],
-            bodyTemplate: { kind: 'none' },
-            method: 'GET',
-            credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
-            redirect: 'error',
-            maxBodyBytes: 0,
-            contentTypes: [],
-          },
-          parameters: {
-            schema: { type: 'object', properties: {}, additionalProperties: false },
-            mapping: [],
-          },
-          response: { maxBytes: 2 * 1024 * 1024, contentTypes: ['application/json'] },
-        }],
-      },
+      credentials: voiceCredentials,
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
     } as const;
 
@@ -467,57 +571,7 @@ describe('public voice executable contribution boundary', () => {
     }).success).toBe(true);
   });
 
-  it('rejects unsupported slot breadth, catalog-only mediation, colliding actions, undeclared slots, and a mutating catalog request', () => {
-    const operations = [{
-      id: 'mint-session',
-      purpose: 'voice.client-auth',
-      credentialSlotId: 'api_key',
-      effect: 'read' as const,
-      request: {
-        origin: 'https://voice.example.test',
-        pathTemplate: '/v1/session',
-        queryTemplate: [],
-        headerTemplate: [{ name: 'content-type', value: 'application/json' }],
-        bodyTemplate: { kind: 'json' as const, value: {} },
-        method: 'POST' as const,
-        credential: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const },
-        redirect: 'error' as const,
-        maxBodyBytes: 64 * 1024,
-        contentTypes: ['application/json'],
-      },
-      parameters: {
-        schema: {
-          type: 'object' as const,
-          properties: { body: { type: 'object' as const, additionalProperties: true } },
-          required: ['body'],
-          additionalProperties: false,
-        },
-        mapping: [{ parameter: 'body', target: { kind: 'body' as const, pointer: '' } }],
-      },
-      response: { maxBytes: 64 * 1024, contentTypes: ['application/json'] },
-    }, {
-      id: 'list-voices',
-      purpose: 'voice.catalog.voices',
-      credentialSlotId: 'api_key',
-      effect: 'read' as const,
-      request: {
-        origin: 'https://voice.example.test',
-        pathTemplate: '/v1/voices',
-        queryTemplate: [],
-        headerTemplate: [{ name: 'accept', value: 'application/json' }],
-        bodyTemplate: { kind: 'none' as const },
-        method: 'GET' as const,
-        credential: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const },
-        redirect: 'error' as const,
-        maxBodyBytes: 0,
-        contentTypes: [],
-      },
-      parameters: {
-        schema: { type: 'object' as const, properties: {}, additionalProperties: false },
-        mapping: [],
-      },
-      response: { maxBytes: 2 * 1024 * 1024, contentTypes: ['application/json'] },
-    }];
+  it('rejects legacy slot breadth, empty mediation, duplicate operations, and undeclared slots', () => {
     const contribution = {
       id: 'conversation',
       title: 'Credentialed conversation',
@@ -525,35 +579,19 @@ describe('public voice executable contribution boundary', () => {
       roles: ['realtime_conversation'],
       platforms: ['web'],
       capabilities: {
-        readiness: { requirements: ['credential'] },
         turn: { cancelResponse: true, bargeIn: false },
       },
-      accountMediation: {
-        credentialSlots: [{ id: 'api_key', scope: 'account' }],
-        operations,
-      },
+      credentials: voiceCredentials,
       client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },
     } as const;
 
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
         ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
+        credentials: {
+          ...contribution.credentials,
           credentialSlots: [
             { id: 'api_key', scope: 'account' },
-            { id: 'api_key', scope: 'account' },
-          ],
-        },
-      }],
-    }).success).toBe(false);
-    expect(PluginContributesV2Schema.safeParse({
-      voiceProviders: [{
-        ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          credentialSlots: [
-            ...contribution.accountMediation.credentialSlots,
             { id: 'secondary_key', scope: 'account' },
           ],
         },
@@ -562,53 +600,42 @@ describe('public voice executable contribution boundary', () => {
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
         ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          operations: [],
+        credentials: {
+          ...contribution.credentials,
+          hostMediated: { operations: [] },
         },
       }],
     }).success).toBe(false);
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
         ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          operations: contribution.accountMediation.operations.map((operation, index) => (
+        credentials: {
+          ...contribution.credentials,
+          hostMediated: { operations: contribution.credentials.hostMediated.operations.map((operation, index) => (
             index === 1 ? { ...operation, credentialSlotId: 'missing' } : operation
-          )),
+          )) },
         },
       }],
     }).success).toBe(false);
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
         ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          operations: contribution.accountMediation.operations.map((operation, index) => (
-            index === 0 ? { ...operation, credentialSlotId: 'missing' } : operation
-          )),
-        },
-      }],
-    }).success).toBe(false);
-    expect(PluginContributesV2Schema.safeParse({
-      voiceProviders: [{
-        ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          operations: contribution.accountMediation.operations.map((operation, index) => (
+        credentials: {
+          ...contribution.credentials,
+          hostMediated: { operations: contribution.credentials.hostMediated.operations.map((operation, index) => (
             index === 1 ? { ...operation, id: 'mint-session' } : operation
-          )),
+          )) },
         },
       }],
     }).success).toBe(false);
     expect(PluginContributesV2Schema.safeParse({
       voiceProviders: [{
         ...contribution,
-        accountMediation: {
-          ...contribution.accountMediation,
-          operations: contribution.accountMediation.operations.map((operation, index) => (
+        credentials: {
+          ...contribution.credentials,
+          hostMediated: { operations: contribution.credentials.hostMediated.operations.map((operation, index) => (
             index === 1 ? { ...operation, purpose: 'voice.client-auth' } : operation
-          )),
+          )) },
         },
       }],
     }).success).toBe(false);
@@ -623,7 +650,6 @@ describe('public voice executable contribution boundary', () => {
         roles: ['dictation_stt'],
         platforms: ['web'],
         capabilities: {
-          readiness: { requirements: [] },
           turn: { cancelResponse: false, bargeIn: false },
         },
         client: { artifactId: 'voice-runtime-web', modulePath: './voiceRuntime', exportName: 'activate' },

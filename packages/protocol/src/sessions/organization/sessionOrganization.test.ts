@@ -15,6 +15,8 @@ import {
   SESSION_ORGANIZATION_ORDER_SCOPE_KINDS,
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
   SessionOrganizationContentEnvelopeSchema,
+  SessionOrganizationDisplayStateSchema,
+  SessionOrganizationAccountEncryptionMigrationInventorySchema,
   SessionOrganizationFolderSchema,
   SessionOrganizationLabelSchema,
   SessionOrganizationSnapshotRequestSchema,
@@ -56,6 +58,102 @@ describe('session organization protocol contracts', () => {
         updatedAt: 2,
       }).display,
     ).toEqual({ t: 'encrypted', c: 'ciphertext' });
+  });
+
+  it.each([
+    ['missing value', { t: 'plain' }],
+    ['undefined', { t: 'plain', v: undefined }],
+    ['function', { t: 'plain', v: () => undefined }],
+    ['symbol', { t: 'plain', v: Symbol('organization') }],
+    ['NaN', { t: 'plain', v: Number.NaN }],
+    ['Infinity', { t: 'plain', v: Number.POSITIVE_INFINITY }],
+    ['BigInt', { t: 'plain', v: 1n }],
+  ])('rejects plain display content with a non-JSON %s', (_label, envelope) => {
+    expect(SessionOrganizationContentEnvelopeSchema.safeParse(envelope).success).toBe(false);
+  });
+
+  it('rejects cyclic plain display content', () => {
+    const value: Record<string, unknown> = {};
+    value.self = value;
+
+    expect(SessionOrganizationContentEnvelopeSchema.safeParse({
+      t: 'plain',
+      v: value,
+    }).success).toBe(false);
+  });
+
+  it.each([
+    { t: 'plain', v: { name: 'Work' }, extra: 'unexpected' },
+    { t: 'encrypted', c: 'ciphertext', extra: 'unexpected' },
+  ])('rejects unknown top-level display-envelope fields before normalization', (envelope) => {
+    expect(SessionOrganizationContentEnvelopeSchema.safeParse(envelope).success).toBe(false);
+  });
+
+  it('represents corrupt or mode-mismatched display rows without dropping their structure', () => {
+    expect(SessionOrganizationDisplayStateSchema.parse({
+      status: 'unavailable',
+      reason: 'invalid_stored_display',
+    })).toEqual({
+      status: 'unavailable',
+      reason: 'invalid_stored_display',
+    });
+
+    expect(SessionOrganizationFolderSchema.parse({
+      folderId: 'folder_locked',
+      folderKey: 'private/folder/key',
+      parentFolderId: null,
+      parentFolderKey: null,
+      sortKey: 'a',
+      display: null,
+      displayState: {
+        status: 'unavailable',
+        reason: 'storage_mode_mismatch',
+      },
+      archivedAt: null,
+      createdAt: 1,
+      updatedAt: 2,
+    })).toMatchObject({
+      folderId: 'folder_locked',
+      display: null,
+      displayState: {
+        status: 'unavailable',
+        reason: 'storage_mode_mismatch',
+      },
+    });
+  });
+
+  it('defines an exact bounded migration inventory including archived display rows', () => {
+    expect(SessionOrganizationAccountEncryptionMigrationInventorySchema.parse({
+      version: 14,
+      folders: [{
+        folderId: 'folder-archived',
+        display: { t: 'plain', v: { name: 'Archived' } },
+      }],
+      tags: [{
+        tagId: 'tag-archived',
+        display: { t: 'encrypted', c: 'ciphertext' },
+      }],
+      labels: [{
+        labelKind: 'workspace',
+        scopeKey: 'private/workspace/key',
+        display: { t: 'plain', v: { label: 'Project' } },
+      }],
+    })).toEqual({
+      version: 14,
+      folders: [{
+        folderId: 'folder-archived',
+        display: { t: 'plain', v: { name: 'Archived' } },
+      }],
+      tags: [{
+        tagId: 'tag-archived',
+        display: { t: 'encrypted', c: 'ciphertext' },
+      }],
+      labels: [{
+        labelKind: 'workspace',
+        scopeKey: 'private/workspace/key',
+        display: { t: 'plain', v: { label: 'Project' } },
+      }],
+    });
   });
 
   it('parses scoped snapshots without requiring all historical assignments', () => {

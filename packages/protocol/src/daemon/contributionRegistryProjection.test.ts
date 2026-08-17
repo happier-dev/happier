@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema,
   DaemonContributionRegistryProjectionDescribeRequestSchema,
   DaemonContributionRegistryProjectionDescribeResponseSchema,
   DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
   DaemonPluginUiTargetedSurfaceMountV1Schema,
+  DaemonPluginReactNativeCrashFailureV1Schema,
   DaemonPluginReactNativeCrashReportRequestV1Schema,
   DaemonPluginReactNativeCrashReportResponseV1Schema,
   DaemonPluginReactNativeCrashBindingTokenV1Schema,
@@ -18,6 +20,8 @@ import {
   DaemonPluginComposerReferenceSearchResponseSchema,
   DaemonPluginUiResourceReadRequestSchema,
   DaemonPluginUiResourceWatchOpenRequestSchema,
+  DaemonPluginSettingsWatchRequestSchema,
+  DaemonPluginSettingsWatchResponseSchema,
   DaemonPluginUiArtifactBytesReadRequestSchema,
   DaemonPluginUiArtifactBytesReadResponseSchema,
   PluginProjectedActionV2Schema,
@@ -26,12 +30,54 @@ import {
   PluginProjectionV2Schema,
   PluginUiResourceBindingCapabilityV1Schema,
   projectPluginSettingsContributionV2,
+  readDaemonPluginUiTargetedSurfaceMountV1,
 } from './contributionRegistryProjection.js';
 import * as protocol from '../index.js';
 import { RPC_METHODS } from '../rpc/index.js';
 import { PluginSettingsContributionV2Schema } from '../plugins/contributions/settings.js';
 
 describe('daemon contribution registry projection (wire)', () => {
+  it('keeps exact daemon Settings watches content-free and revision-scoped', () => {
+    const request = {
+      serverIdentityId: 'srv_settings',
+      machineId: 'machine-settings',
+      pluginId: 'acme.settings',
+      scope: { kind: 'daemon' },
+    } as const;
+
+    expect(DaemonPluginSettingsWatchRequestSchema.parse(request)).toEqual(request);
+    expect(DaemonPluginSettingsWatchRequestSchema.parse({
+      ...request,
+      knownRevision: 'settings-r1',
+    })).toMatchObject({ knownRevision: 'settings-r1' });
+    expect(DaemonPluginSettingsWatchRequestSchema.safeParse({
+      ...request,
+      scope: { kind: 'account' },
+    }).success).toBe(false);
+    expect(DaemonPluginSettingsWatchRequestSchema.safeParse({
+      ...request,
+      values: { endpoint: 'must-not-cross-the-watch' },
+    }).success).toBe(false);
+
+    expect(DaemonPluginSettingsWatchResponseSchema.parse({
+      status: 'ready',
+      revision: 'settings-r1',
+    })).toEqual({ status: 'ready', revision: 'settings-r1' });
+    expect(DaemonPluginSettingsWatchResponseSchema.parse({
+      status: 'changed',
+      revision: 'settings-r2',
+    })).toEqual({ status: 'changed', revision: 'settings-r2' });
+    expect(DaemonPluginSettingsWatchResponseSchema.parse({
+      status: 'idle',
+      revision: 'settings-r2',
+    })).toEqual({ status: 'idle', revision: 'settings-r2' });
+    expect(DaemonPluginSettingsWatchResponseSchema.safeParse({
+      status: 'changed',
+      revision: 'settings-r2',
+      values: { endpoint: 'must-not-cross-the-watch' },
+    }).success).toBe(false);
+  });
+
   it('keeps daemon-selected composer renderer facts generation-bound without accepting UI-selected candidates', () => {
     const entry = {
       contribution: { pluginId: 'acme.review', localId: 'review' },
@@ -236,6 +282,27 @@ describe('daemon contribution registry projection (wire)', () => {
     } as const;
 
     expect(DaemonPluginUiTargetedSurfaceMountV1Schema.parse(mount)).toEqual(mount);
+    const surface = {
+      point: mount.point,
+      contributor: mount.contributor,
+      role: mount.role,
+      presentation: mount.presentation,
+    } as const;
+    expect(readDaemonPluginUiTargetedSurfaceMountV1({
+      mounts: [mount],
+      target: mount.target,
+      surface,
+    })).toBe(mount);
+    expect(readDaemonPluginUiTargetedSurfaceMountV1({
+      mounts: [mount],
+      target: { ...mount.target, immutableGenerationId: 'stale-target' },
+      surface,
+    })).toBeNull();
+    expect(readDaemonPluginUiTargetedSurfaceMountV1({
+      mounts: [mount, mount],
+      target: mount.target,
+      surface,
+    })).toBeNull();
     expect(DaemonPluginUiTargetedSurfaceMountV1Schema.safeParse({
       ...mount,
       methodCeiling: ['context'],
@@ -1064,7 +1131,7 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
   });
 
-  it('carries one bounded current Event Automation composer sibling without changing PluginProjectionV2', () => {
+  it('carries current Event Automation composer siblings without changing PluginProjectionV2', () => {
     const automationEligibleEvents = [{
       event: {
         id: 'acme.events/repository/updated',
@@ -1132,6 +1199,41 @@ describe('daemon contribution registry projection (wire)', () => {
       diagnostics: [],
       automationEligibleEvents,
     }).success).toBe(false);
+  });
+
+  it('does not inherit the retired manifest array-entry ceiling for Automation siblings', () => {
+    const eligibleEvent = {
+      event: {
+        id: 'acme.events/repository/updated',
+        identity: { pluginId: 'acme.events', localId: 'repository/updated' },
+        immutableGenerationId: 'event-generation-a',
+        title: 'Repository updated',
+        description: null,
+        automation: {
+          v: 1,
+          eligible: true,
+          source: {
+            sourceContractVersion: 1,
+            supportedObservationTransports: ['checkpointedPull'],
+            sourceConfigSchema: { type: 'object', additionalProperties: false },
+            setupActionRef: { pluginId: 'acme.events', localId: 'configure-source' },
+          },
+        },
+      },
+      setupAction: {
+        id: 'acme.events/configure-source',
+        identity: { pluginId: 'acme.events', localId: 'configure-source' },
+        immutableGenerationId: 'event-generation-a',
+        title: 'Configure source',
+        description: null,
+        inputSchema: { type: 'object', additionalProperties: false },
+        inputHints: null,
+      },
+    } as const;
+
+    expect(DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema.safeParse(
+      Array.from({ length: 8_193 }, () => eligibleEvent),
+    ).success).toBe(true);
   });
 
   it('accepts a deployed legacy managed-dependency title while current writers omit it', () => {
@@ -2306,6 +2408,13 @@ describe('daemon contribution registry projection (wire)', () => {
       },
     }).success).toBe(false);
 
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_timeout').success).toBe(true);
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('invalid_surface_module').success).toBe(true);
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_error').success).toBe(true);
+    // Existing daemon crash-state records can retain the previously emitted
+    // timeout classification; new UI writers use `load_timeout` instead.
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('startup_ack_timeout').success).toBe(true);
+
     expect(DaemonPluginReactNativeCrashReportRequestV1Schema.safeParse({
       protocolVersion: 1,
       machineId: 'machine_1',
@@ -2326,7 +2435,6 @@ describe('daemon contribution registry projection (wire)', () => {
         },
         disabledReason: 'render_error_threshold',
         crashCount: 2,
-        startupFailureCount: 0,
         observedAtMs: 1_000,
         diagnostics: ['threshold_reached'],
       },
@@ -2639,6 +2747,18 @@ describe('daemon contribution registry projection (wire)', () => {
       machineId: 'm1',
       cacheIdentity,
     });
+    const collectionMigrationsRequest = DaemonPluginUiArtifactBytesReadRequestSchema.parse({
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'collectionMigrations',
+      machineId: 'm1',
+      cacheIdentity,
+    });
+    expect(collectionMigrationsRequest).toEqual({
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'collectionMigrations',
+      machineId: 'm1',
+      cacheIdentity,
+    });
     expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
       ...rendererRequest,
       reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal' },
@@ -2662,6 +2782,10 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
     expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
       ...voiceRequest,
+      crashStateToken,
+    }).success).toBe(false);
+    expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
+      ...collectionMigrationsRequest,
       crashStateToken,
     }).success).toBe(false);
     expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
@@ -2723,8 +2847,27 @@ describe('daemon contribution registry projection (wire)', () => {
       },
       bytesBase64: 'Ly8gYnVuZGxl',
     }).success).toBe(false);
+    expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+      ok: true,
+      artifactFamily: 'reactNative',
+      artifactOwnerKind: 'collectionMigrations',
+      cacheIdentity: collectionMigrationsRequest.cacheIdentity,
+      artifact: {
+        pluginId: 'acme.preview',
+        contributionId: 'native-preview',
+        artifactKind: 'reactNativeBundle',
+        digest: `sha256:${'a'.repeat(64)}`,
+        format: 'plainJs',
+        byteSize: 9,
+      },
+      bytesBase64: 'Ly8gYnVuZGxl',
+    })).toMatchObject({
+      ok: true,
+      artifactOwnerKind: 'collectionMigrations',
+    });
     expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('renderer')).toBe('renderer');
     expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('voiceProvider')).toBe('voiceProvider');
+    expect(protocol.DaemonPluginReactNativeArtifactOwnerKindV1Schema.parse('collectionMigrations')).toBe('collectionMigrations');
 
     expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
       ok: false,

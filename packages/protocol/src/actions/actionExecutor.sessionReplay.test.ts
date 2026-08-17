@@ -16,7 +16,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
@@ -63,9 +62,10 @@ describe('createActionExecutor (session.continue_with_replay)', () => {
       },
     };
 
-    const result = await executor.execute('session.continue_with_replay', input, { surface: 'rpc' });
+    const signal = new AbortController().signal;
+    const result = await executor.execute('session.continue_with_replay', input, { surface: 'rpc', signal });
 
     expect(result).toEqual({ ok: true, result: { type: 'success', sessionId: 'sess_child' } });
-    expect(sessionContinueWithReplay).toHaveBeenCalledWith(input);
+    expect(sessionContinueWithReplay).toHaveBeenCalledWith({ ...input, signal });
   });
 });

@@ -9,6 +9,7 @@ export {
   type ActionIdFamilyV1,
   type RuntimeActionIdV1,
 } from './actionIds.js';
+export type { ActionExecuteResult } from './actionExecutionResult.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 export {
   ACTION_SETTINGS_OPT_IN_PLACEMENTS,
@@ -28,11 +29,16 @@ export {
 } from './actionApprovalPolicy.js';
 export {
   ACTION_SPECS,
+  PLUGIN_ACTION_INPUT_SCHEMAS,
+  PLUGIN_ACTION_OUTPUT_SCHEMAS,
+  PLUGIN_INVOCABLE_ACTION_IDS,
+  PluginInvocableActionIdSchema,
   ActionApprovalFlowSchema,
   ActionApprovalResultSchema,
   ActionApprovalSchema,
   ActionSafetySchema,
   ActionSpecSchema,
+  ActionSpecSurfaceBindingsSchema,
   ActionSurfaceSchema,
   ActionToolExposureModeSchema,
   ActionToolExposureSchema,
@@ -40,9 +46,14 @@ export {
   ActionInputFieldHintSchema,
   ActionInputHintsSchema,
   ActionInputOptionSchema,
+  ActionInputOptionValueSchema,
+  readActionInputOptionValue,
   ActionInputWidgetSchema,
+  PluginScaffoldUiModeSchema,
   SessionEventsGetInputSchema,
+  SessionTranscriptGetExternalShareableInputV1Schema,
   SessionTranscriptGetInputSchema,
+  SessionTranscriptGetResultSchema,
   getActionSpec,
   actionAcceptsContextualSessionId,
   isVoicePromptHotPathSpec,
@@ -63,18 +74,32 @@ export {
   type ActionInputFieldHint,
   type ActionInputHints,
   type ActionInputOption,
+  type ActionInputOptionValue,
   type ActionInputWidget,
   type ActionSpec,
+  type ActionSpecSurfaceBindings,
+  type ActionSurfaceBindingCaller,
+  type ActionSurfaceBindingContext,
+  type ActionSurfaceBindingTransform,
   type ActionSurfaces,
   type ActionToolExposure,
   type ActionToolExposureMode,
   type ActionToolExposureSurface,
+  type CanonicalActionSpecDefinition,
+  type PluginActionInputById,
+  type PluginActionResultById,
+  type PluginInvocableActionId,
+  type PluginInvocableActionSpecDefinition,
+  type PluginScaffoldUiMode,
   type SessionEventsGetInput,
   type SessionEventsGetItem,
   type SessionEventsGetOutput,
+  type SessionTranscriptGetExternalShareableInputV1,
   type SessionTranscriptGetInput,
+  type SessionTranscriptGetExternalShareableResultV1,
   type SessionTranscriptGetItem,
   type SessionTranscriptGetOutput,
+  type SessionTranscriptGetResult,
 } from './actionSpecs.js';
 
 export {
@@ -101,9 +126,13 @@ export {
 
 export {
   createActionExecutor,
-  type ActionExecuteResult,
+  type ActionAutomationRunCaller,
+  type ActionCaller,
   type ActionExecutorContext,
   type ActionExecutorDeps,
+  type ActionPluginCaller,
+  type ScmActionExecute,
+  type ScmActionId,
   type ApprovalQueueListItemV1,
   type ApprovalQueueListResultV1,
   type ApprovalQueueQueryPlanV1,
@@ -129,8 +158,11 @@ export {
 
 export {
   assertNonEscalatingPermissionMode,
+  resolveEffectivePermissionMode,
   resolveNearestPermissionModeAtOrBelow,
   resolvePermissionPrivilegeOrdinal,
+  type EffectivePermissionModeFailureReason,
+  type EffectivePermissionModeResolution,
   type PermissionEscalationDecision,
   type PermissionPrivilegeOrdinal,
 } from './permissionPrivilege.js';
@@ -155,6 +187,16 @@ export {
   resolveEffectiveActionInputFields,
   type EffectiveActionInputField,
 } from './actionInputHintsRuntime.js';
+export {
+  ActionInputPathSchema,
+  ActionInputPredicateSchema,
+  ActionInputPrimitiveSchema,
+  readActionInputPath,
+  evaluateActionInputPredicate,
+  type ActionInputPath,
+  type ActionInputPredicate,
+  type ActionInputPrimitive,
+} from './actionInputPredicates.js';
 export { buildActionDraftSeedInput } from './actionDraftSeed.js';
 export {
   describeActionInputFieldForVoice,
@@ -180,6 +222,18 @@ export {
   type SerializedActionSpec,
 } from './actionCatalog.js';
 
-export { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
-export { actionSpecToElevenLabsClientToolParameters } from './actionInputElevenLabsToolSchema.js';
+export {
+  ActionJsonSchemaProjectionError,
+  zodSchemaToJsonSchemaObject,
+  type JsonSchemaObject,
+} from './actionInputJsonSchema.js';
 export { resolveRequestedSessionModeId } from './sessionModeIds.js';
+
+export {
+  ExecutionRunStartFailureDetailsV1Schema,
+  ExecutionRunStartRunCreationSchema,
+  readExecutionRunStartRunCreation,
+  withExecutionRunStartFailureDetails,
+  type ExecutionRunStartFailureDetailsV1,
+  type ExecutionRunStartRunCreation,
+} from '../execution/runs/index.js';

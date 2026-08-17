@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BackendSurfaceAvailabilityV1Schema,
   BackendSurfaceDeclarationV1Schema,
   BackendSurfaceKindV1Schema,
   BackendSurfaceOperationCatalogV1,
@@ -8,6 +9,23 @@ import {
 } from './backendSurfaceDeclarationV1.js';
 
 describe('BackendSurfaceDeclarationV1Schema', () => {
+  it('preserves a bounded safe explanation for unavailable surface operations', () => {
+    expect(BackendSurfaceAvailabilityV1Schema.parse({
+      available: false,
+      reasonCode: 'missing_metadata',
+      safeMessage: 'Session metadata is missing a Provider session id.',
+    })).toEqual({
+      available: false,
+      reasonCode: 'missing_metadata',
+      safeMessage: 'Session metadata is missing a Provider session id.',
+    });
+    expect(BackendSurfaceAvailabilityV1Schema.safeParse({
+      available: false,
+      reasonCode: 'missing_metadata',
+      safeMessage: 'x'.repeat(1_001),
+    }).success).toBe(false);
+  });
+
   it('rejects the retired external-session handler carrier while retaining the other handler families', () => {
     const declaration = (kind: string, operation: string) => ({
       surfaceApiVersion: 1,

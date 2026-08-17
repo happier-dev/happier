@@ -22,13 +22,14 @@ type ExternalSessionKeySegmentDeclaration =
       profileField: string;
       when: ExternalSessionWhenDeclaration;
     }>;
-type ExternalSessionInstanceDeclaration =
-  | Readonly<{ kind: 'default'; constants: Readonly<Record<string, unknown>> }>
-  | Readonly<{
-      kind: 'connectedServiceProfiles';
-      constants: Readonly<Record<string, unknown>>;
-      fields: Readonly<{ serviceId: string; profileId: string }>;
-    }>;
+// Reference checking also runs while a declaration is still being validated, so
+// instance members are read defensively rather than assumed well formed.
+type ExternalSessionInstanceDeclaration = Readonly<{
+  kind: string;
+  constants?: Readonly<Record<string, unknown>>;
+  field?: string;
+  fields?: Readonly<{ serviceId?: string; profileId?: string }>;
+}>;
 
 export type BackendExternalSessionSourceReferenceDeclaration = Readonly<{
   sourceKind: string;
@@ -101,12 +102,23 @@ export function findBackendExternalSessionSourceReferenceIssues(
   }
 
   for (const [index, instance] of (declaration.instances ?? []).entries()) {
-    for (const fieldName of Object.keys(instance.constants)) {
+    for (const fieldName of Object.keys(instance.constants ?? {})) {
       addReferenceIssue(issues, declaredFields, fieldName, ['instances', index, 'constants', fieldName]);
     }
-    if (instance.kind === 'default') continue;
-    addReferenceIssue(issues, declaredFields, instance.fields.serviceId, ['instances', index, 'fields', 'serviceId']);
-    addReferenceIssue(issues, declaredFields, instance.fields.profileId, ['instances', index, 'fields', 'profileId']);
+    if (instance.kind === 'agentSetting' || instance.kind === 'agentSettingOverride') {
+      if (instance.field !== undefined) {
+        addReferenceIssue(issues, declaredFields, instance.field, ['instances', index, 'field']);
+      }
+      continue;
+    }
+    const identityFields = instance.fields;
+    if (instance.kind === 'default' || !identityFields) continue;
+    if (identityFields.serviceId !== undefined) {
+      addReferenceIssue(issues, declaredFields, identityFields.serviceId, ['instances', index, 'fields', 'serviceId']);
+    }
+    if (identityFields.profileId !== undefined) {
+      addReferenceIssue(issues, declaredFields, identityFields.profileId, ['instances', index, 'fields', 'profileId']);
+    }
   }
 
   return issues;

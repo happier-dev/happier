@@ -1,677 +1,666 @@
 import { z } from 'zod';
 
-import { FEATURE_IDS, type FeatureId } from '../../../features/catalog.js';
-import { PluginUiHostApiMethodV1Schema, type PluginUiHostApiMethodV1 } from '../../ui/hostApi.js';
-import { PluginUiPredicateOperandV1Schema, type PluginUiPredicateOperandV1 } from './predicates.js';
 import {
-  PLUGIN_HOST_PLACEMENT_RENDERER_IDS,
-  PluginSessionHeaderActionRendererIdV1Schema,
-  PluginSessionSurfaceRendererIdV1Schema,
-  PluginStructuredMessageRendererIdV1Schema,
-} from './renderers.js';
-import { PluginSessionHeaderActionDescriptorV1Schema } from './sessionHeaderActions.js';
-import { PluginStructuredMessageDescriptorV1Schema } from './structuredMessages.js';
-import { PluginSurfacePlacementDescriptorV1Schema } from './surfacePlacements.js';
+  PluginContributionIdentityV1Schema,
+  PluginContributionLocalIdSchema,
+  buildQualifiedPluginContributionKey,
+  type PluginContributionIdentityV1,
+} from '../../contributionIdentity.js';
+import { PluginIdSchema } from '../../pluginId.js';
+import {
+  PluginUiSurfacePlacementV1Schema,
+  type PluginUiSurfacePlacementV1,
+} from '../../ui/surfaceContextPlacement.js';
+import { PluginUiPlatformV1Schema, type PluginUiPlatformV1 } from './compatibility.js';
+import { PluginUiRendererChainBindingV1Schema } from './rendererChainBinding.js';
+import { PluginSurfaceTargetV1Schema, type PluginSurfaceTargetV1 } from './surfaceTargets.js';
+import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
 
 /**
- * Surface Registry — the 8th canonical plugin-UI primitive (FINALIZATION-PLAN §16).
- *
- * One structural `SurfaceDescriptor` keyed by surface TYPE that feeds every pipeline
- * owner, replacing the historically-scattered surface knowledge:
- *   - the placement enum (`PluginSurfacePlacementKindV1Schema`)
- *   - the second `sessionSurfaces` renderer enum (`PluginSessionSurfaceRendererIdV1Schema`)
- *   - the `surfaceContext` placement enum + `resolveSurfaceContextPlacement` mapper
- *   - the placement->target `superRefine` coupling in `surfacePlacements.ts`
- *
- * This module is ADDITIVE. It introduces the descriptor contract + a populated
- * registry of the real surface types, but migrates no consumer onto it — the
- * existing projection/render keeps working unchanged (Phase 2 consumes this).
+ * The canonical registry for public plugin-UI destinations. Authored V2 views
+ * name a container and target directly; this module admits that pair and
+ * produces the sole normalized binding consumed by projection and hosts.
  */
-
-// ---------------------------------------------------------------------------
-// Surface type ids (modeled off the existing placement / session-surface enums,
-// plus the merged `session.headerAction` and the `session.structuredMessage`
-// transcript surface).
-// ---------------------------------------------------------------------------
-
-export const PluginSurfaceTypeIdV1Schema = z.enum([
-  'session.details',
-  'session.preview',
-  'session.tool',
-  'session.side',
-  'session.rightSidebarTab',
-  'session.headerAction',
-  'session.structuredMessage',
-  'workspace.details',
-  'workspace.main',
-  'project.details',
-  'project.main',
-  'project.rightSidebarTab',
-  'app.settingsPage',
-  'app.sidePanel',
-  'app.bottomPanel',
-  'app.rightSidebarTab',
-  'browser.panel',
-  'services.panel',
-]);
-export type PluginSurfaceTypeIdV1 = z.infer<typeof PluginSurfaceTypeIdV1Schema>;
-
-export const PluginSurfaceScopeV1Schema = z.enum([
+export const PluginUiTargetKindV1Schema = z.enum([
+  'app',
   'session',
   'project',
-  'app',
-  'workspace',
   'browser',
   'services',
 ]);
-export type PluginSurfaceScopeV1 = z.infer<typeof PluginSurfaceScopeV1Schema>;
+export type PluginUiTargetKindV1 = z.infer<typeof PluginUiTargetKindV1Schema>;
 
-export const PluginSurfaceCategoryV1Schema = z.enum([
-  'panel',
-  'action',
-  'message',
-  'container',
-]);
-export type PluginSurfaceCategoryV1 = z.infer<typeof PluginSurfaceCategoryV1Schema>;
-
-/**
- * Runtime modes a surface can be rendered through. `*Bundle` names are
- * reserved for artifact kinds/families.
- */
-export const PluginSurfaceRuntimeModeV1Schema = z.enum([
-  'host',
-  'declarative',
-  'structured',
-  'action',
-  'hostedWeb',
-  'reactNative',
-]);
-export type PluginSurfaceRuntimeModeV1 = z.infer<typeof PluginSurfaceRuntimeModeV1Schema>;
-
-/**
- * The closed set of live runtime hosts. Faithful to the actual
- * `PluginSurfaceHost` mount dispatch (`host` -> native blueprint host;
- * `hostedWeb` -> sandboxed web/webview host;
- * `reactNative` -> RN host).
- */
-export const PluginSurfaceRuntimeHostV1Schema = z.enum([
-  'nativeBlueprintHost',
-  'sandboxedWebHost',
-  'reactNativeHost',
-]);
-export type PluginSurfaceRuntimeHostV1 = z.infer<typeof PluginSurfaceRuntimeHostV1Schema>;
-
-export const LIVE_SURFACE_RUNTIME_HOSTS: readonly PluginSurfaceRuntimeHostV1[] = Object.freeze(
-  PluginSurfaceRuntimeHostV1Schema.options,
-);
-
-/**
- * Canonical mode -> live host binding. Single source of truth for "which host
- * serves a mode"; the closure test re-derives `rendererSet` hosts from this.
- */
-export const CANONICAL_RUNTIME_MODE_HOST: Readonly<
-  Record<PluginSurfaceRuntimeModeV1, PluginSurfaceRuntimeHostV1>
-> = Object.freeze({
-  host: 'nativeBlueprintHost',
-  declarative: 'nativeBlueprintHost',
-  structured: 'nativeBlueprintHost',
-  action: 'nativeBlueprintHost',
-  hostedWeb: 'sandboxedWebHost',
-  reactNative: 'reactNativeHost',
-});
-
-function isNativeBlueprintMode(mode: PluginSurfaceRuntimeModeV1): boolean {
-  return CANONICAL_RUNTIME_MODE_HOST[mode] === 'nativeBlueprintHost';
-}
-
-// ---------------------------------------------------------------------------
-// Category-derived default modes + per-surface EXCLUSIONS deny-list (§16).
-//
-// The default mode-set is derived from the surface category, NOT blanket-all.
-// `panel` gets every render mode; `action`/`message`/`container` get only the
-// modes that make sense for them. Per-surface `exclusions` carry ONLY true
-// within-category exceptions (a deny-list, never an allowlist), so adding a mode
-// to a uniform same-category surface is still ZERO files.
-// ---------------------------------------------------------------------------
-
-const CATEGORY_DEFAULT_RUNTIME_MODES: Readonly<
-  Record<PluginSurfaceCategoryV1, readonly PluginSurfaceRuntimeModeV1[]>
-> = Object.freeze({
-  panel: Object.freeze(['host', 'hostedWeb', 'reactNative'] as const),
-  action: Object.freeze(['declarative', 'action'] as const),
-  message: Object.freeze(['structured'] as const),
-  container: Object.freeze(['host', 'declarative'] as const),
-});
-
-export function deriveDefaultRuntimeModesForCategory(
-  category: PluginSurfaceCategoryV1,
-): readonly PluginSurfaceRuntimeModeV1[] {
-  return CATEGORY_DEFAULT_RUNTIME_MODES[category];
-}
-
-/**
- * `supportedRuntimeModes = categoryDefault - exclusions` (order-preserving).
- * Exclusions not present in the default are no-ops, so the result is always a
- * subset of the category default ("the deny-list never adds").
- */
-export function resolveSupportedRuntimeModes(
-  category: PluginSurfaceCategoryV1,
-  exclusions: readonly PluginSurfaceRuntimeModeV1[] = [],
-): readonly PluginSurfaceRuntimeModeV1[] {
-  const excluded = new Set<PluginSurfaceRuntimeModeV1>(exclusions);
-  return Object.freeze(
-    deriveDefaultRuntimeModesForCategory(category).filter((mode) => !excluded.has(mode)),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Host-API allowlist (closed PluginUiHostApi method set the surface grants).
-// ---------------------------------------------------------------------------
-
-const ALL_HOST_API_METHODS: readonly PluginUiHostApiMethodV1[] = Object.freeze(
-  PluginUiHostApiMethodV1Schema.options,
-);
-
-const CATEGORY_DEFAULT_HOST_API_METHODS: Readonly<
-  Record<PluginSurfaceCategoryV1, readonly PluginUiHostApiMethodV1[]>
-> = Object.freeze({
-  panel: ALL_HOST_API_METHODS,
-  container: Object.freeze([
-    'getSurfaceContext',
-    'requestSessionResource',
-    'subscribeResource',
-    'unsubscribeResource',
-    'openSurface',
-    'logDiagnostic',
-  ] as const),
-  action: Object.freeze([
-    'getSurfaceContext',
-    'dispatchAction',
-    'openSurface',
-    'copy',
-    'openExternal',
-    'logDiagnostic',
-  ] as const),
-  message: Object.freeze([
-    'getSurfaceContext',
-    'dispatchAction',
-    'copy',
-    'openExternal',
-    'logDiagnostic',
-  ] as const),
-});
-
-export function defaultHostApiMethodsForCategory(
-  category: PluginSurfaceCategoryV1,
-): readonly PluginUiHostApiMethodV1[] {
-  return CATEGORY_DEFAULT_HOST_API_METHODS[category];
-}
-
-export type PluginSurfaceHostApiShapeV1 = Readonly<{
-  methods: readonly PluginUiHostApiMethodV1[];
-}>;
-
-// ---------------------------------------------------------------------------
-// Anchor — two-level container<-content binding (replaces the placement->target
-// `superRefine` coupling). `container` is the UI region; `content` is the
-// resource kind bound into it.
-// ---------------------------------------------------------------------------
-
-export const PluginSurfaceContainerIdV1Schema = z.enum([
-  'sessionDetailPane',
-  'sessionPreviewPane',
-  'sessionToolPane',
-  'sessionSidePane',
-  'sessionHeader',
-  'transcript',
-  'rightSidebar',
-  'workspaceDetailPane',
-  'workspaceMain',
-  'projectDetailPane',
-  'projectMain',
-  'appSettingsPage',
-  'appSidePanel',
-  'appBottomPanel',
+export const PluginUiContainerV1Schema = z.enum([
+  'appPage',
+  'settingsPage',
+  'rightSidebarTab',
+  'rightPane',
+  'detailsTab',
+  'detailsPane',
+  'bottomPane',
   'browserPanel',
   'servicesPanel',
 ]);
-export type PluginSurfaceContainerIdV1 = z.infer<typeof PluginSurfaceContainerIdV1Schema>;
+export type PluginUiContainerV1 = z.infer<typeof PluginUiContainerV1Schema>;
 
-export const PluginSurfaceContentBindingV1Schema = z.enum([
+/**
+ * Author-selectable `ui.views` containers. `settingsPage` remains a real host
+ * container, but its declaration is owned exclusively by `ui.settingsPages`.
+ * Keeping that distinction structural makes the generated public JSON schema
+ * reject the same wrong-owner shape as the canonical parser.
+ */
+export const PluginUiViewContainerV1Schema = PluginUiContainerV1Schema.exclude([
+  'settingsPage',
+]);
+export type PluginUiViewContainerV1 = z.infer<typeof PluginUiViewContainerV1Schema>;
+
+export const PluginUiDestinationInstancePolicyV1Schema = z.enum([
+  'singleton',
+  'multiple',
+]);
+export type PluginUiDestinationInstancePolicyV1 =
+  z.infer<typeof PluginUiDestinationInstancePolicyV1Schema>;
+
+export type PluginUiDestinationCollisionDomainV1<
+  TContainer extends PluginUiContainerV1 = PluginUiContainerV1,
+  TTargetKind extends PluginUiTargetKindV1 = PluginUiTargetKindV1,
+> = Readonly<{
+  container: TContainer;
+  targetKind: TTargetKind;
+}>;
+
+export const PluginUiRightSidebarScopeV1Schema = z.enum([
+  'app',
   'session',
   'project',
-  'app',
-  'workspace',
-  'browser',
-  'services',
 ]);
-export type PluginSurfaceContentBindingV1 = z.infer<typeof PluginSurfaceContentBindingV1Schema>;
+export type PluginUiRightSidebarScopeV1 = z.infer<typeof PluginUiRightSidebarScopeV1Schema>;
 
-export type PluginSurfaceAnchorV1 = Readonly<{
-  container: PluginSurfaceContainerIdV1;
-  content: PluginSurfaceContentBindingV1;
+export type PluginUiDestinationBindingSlotV1<
+  TContainer extends PluginUiContainerV1 = PluginUiContainerV1,
+  TTargetKind extends PluginUiTargetKindV1 = PluginUiTargetKindV1,
+> = Readonly<{
+  container: TContainer;
+  targetKind: TTargetKind;
+  /** The lossy host-API context vocabulary for this admitted host slot. */
+  surfaceContextPlacement: PluginUiSurfacePlacementV1;
+  platforms: readonly PluginUiPlatformV1[];
+  collisionDomain: PluginUiDestinationCollisionDomainV1<TContainer, TTargetKind>;
+  /** Present only for an admitted right-sidebar binding. */
+  rightSidebarScope?: PluginUiRightSidebarScopeV1;
+  /**
+   * Every policy this slot can actually fulfill through its canonical launcher
+   * and isolated mount. Slots are singleton unless the registry explicitly
+   * proves a bounded instance-key path.
+  */
+  instancePolicies: readonly PluginUiDestinationInstancePolicyV1[];
 }>;
 
-// ---------------------------------------------------------------------------
-// Renderer set — per-mode binding to a live host. Native-host modes carry the
-// allowed host renderer ids (this unifies the previously-split renderer enums:
-// the generic `descriptorPanel`, the 8 `sessionSurface` ids, the structured
-// message ids, and the header-action ids into ONE registry).
-// ---------------------------------------------------------------------------
-
-export type PluginSurfaceRendererBindingV1 = Readonly<{
-  host: PluginSurfaceRuntimeHostV1;
-  rendererIds?: readonly string[];
-}>;
-export type PluginSurfaceRendererSetV1 = Readonly<
-  Partial<Record<PluginSurfaceRuntimeModeV1, PluginSurfaceRendererBindingV1>>
->;
-
-export const SESSION_SURFACE_HOST_RENDERER_IDS: readonly string[] = Object.freeze([
-  ...PluginSessionSurfaceRendererIdV1Schema.options,
+const ALL_DESTINATION_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
+  ...PluginUiPlatformV1Schema.options,
 ]);
-export const STRUCTURED_MESSAGE_HOST_RENDERER_IDS: readonly string[] = Object.freeze([
-  ...PluginStructuredMessageRendererIdV1Schema.options,
-]);
-export const SESSION_HEADER_ACTION_RENDERER_IDS: readonly string[] = Object.freeze([
-  ...PluginSessionHeaderActionRendererIdV1Schema.options,
-]);
-export const GENERIC_HOST_RENDERER_IDS: readonly string[] = Object.freeze([
-  ...PLUGIN_HOST_PLACEMENT_RENDERER_IDS,
+const DESKTOP_DESTINATION_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
+  'desktop',
+  'web',
 ]);
 
 /**
- * The single recognized native-host renderer-id universe. A descriptor may only
- * bind native-host modes to ids in this set; the closure test enforces it. This
- * is the canonical collapse of the previously-separate renderer enums.
+ * Form factor is a host-runtime observation, not an authored/plugin wire
+ * capability. Keeping it out of the binding schema preserves the existing
+ * OS-level declaration contract while letting native tablet hosts apply the
+ * same desktop/tablet rows as their multi-pane counterparts.
  */
-export const KNOWN_HOST_RENDERER_IDS: ReadonlySet<string> = new Set<string>([
-  ...GENERIC_HOST_RENDERER_IDS,
-  ...SESSION_SURFACE_HOST_RENDERER_IDS,
-  ...STRUCTURED_MESSAGE_HOST_RENDERER_IDS,
-  ...SESSION_HEADER_ACTION_RENDERER_IDS,
+export type PluginUiDestinationRuntimeFormFactorV1 = 'phone' | 'tablet';
+
+function isNativePluginUiPlatformV1(platform: PluginUiPlatformV1): boolean {
+  return platform === 'android' || platform === 'ios';
+}
+
+function hasDesktopTabletDestinationPlatformV1(
+  platforms: readonly PluginUiPlatformV1[],
+): boolean {
+  return platforms.includes('desktop') || platforms.includes('web');
+}
+
+function isDesktopTabletOnlyDestinationBindingSlotV1(
+  binding: Pick<PluginUiDestinationBindingV1, 'container' | 'targetKind'>,
+): boolean {
+  const slot = resolvePluginUiDestinationBindingSlotV1(binding.container, binding.targetKind);
+  return slot !== null
+    && slot.platforms.every((platform) => DESKTOP_DESTINATION_PLATFORMS.includes(platform));
+}
+const SINGLETON_DESTINATION_INSTANCE_POLICIES: readonly PluginUiDestinationInstancePolicyV1[] = Object.freeze([
+  'singleton',
+]);
+const INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES: readonly PluginUiDestinationInstancePolicyV1[] = Object.freeze([
+  'singleton',
+  'multiple',
 ]);
 
-// ---------------------------------------------------------------------------
-// when-gating — declares the fail-closed gate (server enabled bit +
-// dependency closure + context keys). DECLARED here; EVALUATED by the Phase-2
-// policy evaluator via `readServerEnabledBit(payload, featureId) === true` and
-// `applyFeatureDependencies(...)`.
-// ---------------------------------------------------------------------------
-
-export type PluginSurfaceWhenGatingV1 = Readonly<{
-  featureId: FeatureId;
-  contextKeys: readonly PluginUiPredicateOperandV1[];
-  failClosed: true;
-}>;
-
-const FEATURE_ID_SET: ReadonlySet<string> = new Set<string>(FEATURE_IDS);
-
-// ---------------------------------------------------------------------------
-// SurfaceDescriptor — the contract.
-// ---------------------------------------------------------------------------
-
-export type PluginSurfaceDescriptorV1 = Readonly<{
-  id: PluginSurfaceTypeIdV1;
-  scope: PluginSurfaceScopeV1;
-  category: PluginSurfaceCategoryV1;
-  anchor: PluginSurfaceAnchorV1;
-  exclusions: readonly PluginSurfaceRuntimeModeV1[];
-  supportedRuntimeModes: readonly PluginSurfaceRuntimeModeV1[];
-  contributionSchema: z.ZodTypeAny;
-  hostApiShape: PluginSurfaceHostApiShapeV1;
-  rendererSet: PluginSurfaceRendererSetV1;
-  whenGating: PluginSurfaceWhenGatingV1;
-}>;
-
-type DefineSurfaceDescriptorInput = Readonly<{
-  id: PluginSurfaceTypeIdV1;
-  scope: PluginSurfaceScopeV1;
-  category: PluginSurfaceCategoryV1;
-  anchor: PluginSurfaceAnchorV1;
-  contributionSchema: z.ZodTypeAny;
-  whenGating: Readonly<{
-    featureId: FeatureId;
-    contextKeys?: readonly PluginUiPredicateOperandV1[];
-  }>;
-  exclusions?: readonly PluginSurfaceRuntimeModeV1[];
-  /** Native-host renderer ids per native mode (host/declarative/structured/action). */
-  hostRendererIdsByMode?: Readonly<Partial<Record<PluginSurfaceRuntimeModeV1, readonly string[]>>>;
-  hostApiMethods?: readonly PluginUiHostApiMethodV1[];
-}>;
-
-/**
- * Build + validate one descriptor. Reject-at-construction guards make illegal
- * descriptors unrepresentable (complements reject-at-projection):
- *  - native-host supported modes MUST declare known renderer ids
- *  - web/RN supported modes MUST NOT declare renderer ids
- *  - `anchor.content` MUST equal `scope` (the unified placement->target coupling)
- *  - `whenGating.featureId` MUST be a real catalog feature id
- */
-export function defineSurfaceDescriptor(
-  input: DefineSurfaceDescriptorInput,
-): PluginSurfaceDescriptorV1 {
-  const exclusions = Object.freeze([...(input.exclusions ?? [])]);
-  const supportedRuntimeModes = resolveSupportedRuntimeModes(input.category, exclusions);
-
-  if (input.anchor.content !== input.scope) {
-    throw new Error(
-      `Surface '${input.id}' anchor.content (${input.anchor.content}) must equal scope (${input.scope}).`,
-    );
+function surfaceContextPlacementForDestinationBindingSlot(
+  container: PluginUiContainerV1,
+  targetKind: PluginUiTargetKindV1,
+): PluginUiSurfacePlacementV1 {
+  if (container === 'rightSidebarTab') return 'rightSidebarSurface';
+  switch (targetKind) {
+    case 'session':
+      return 'sessionPane';
+    case 'project':
+      return 'projectSurface';
+    case 'app':
+      return 'appSurface';
+    case 'browser':
+      return 'browserSurface';
+    case 'services':
+      return 'servicesSurface';
   }
-  if (!FEATURE_ID_SET.has(input.whenGating.featureId)) {
-    throw new Error(
-      `Surface '${input.id}' whenGating.featureId '${input.whenGating.featureId}' is not a catalog feature id.`,
-    );
-  }
+}
 
-  const rendererSet: Partial<Record<PluginSurfaceRuntimeModeV1, PluginSurfaceRendererBindingV1>> = {};
-
-  for (const mode of supportedRuntimeModes) {
-    const host = CANONICAL_RUNTIME_MODE_HOST[mode];
-    const declaredRendererIds = input.hostRendererIdsByMode?.[mode];
-    if (isNativeBlueprintMode(mode)) {
-      if (!declaredRendererIds || declaredRendererIds.length === 0) {
-        throw new Error(
-          `Surface '${input.id}' native mode '${mode}' must declare at least one host renderer id.`,
-        );
-      }
-      for (const rendererId of declaredRendererIds) {
-        if (!KNOWN_HOST_RENDERER_IDS.has(rendererId)) {
-          throw new Error(
-            `Surface '${input.id}' mode '${mode}' references unknown host renderer id '${rendererId}'.`,
-          );
-        }
-      }
-      rendererSet[mode] = Object.freeze({ host, rendererIds: Object.freeze([...declaredRendererIds]) });
-    } else {
-      if (declaredRendererIds && declaredRendererIds.length > 0) {
-        throw new Error(
-          `Surface '${input.id}' non-native mode '${mode}' must not declare host renderer ids.`,
-        );
-      }
-      rendererSet[mode] = Object.freeze({ host });
-    }
-  }
-
+function defineDestinationBindingSlot<
+  const TContainer extends PluginUiContainerV1,
+  const TTargetKind extends PluginUiTargetKindV1,
+>(
+  container: TContainer,
+  targetKind: TTargetKind,
+  platforms: readonly PluginUiPlatformV1[],
+  rightSidebarScope?: PluginUiRightSidebarScopeV1,
+  instancePolicies: readonly PluginUiDestinationInstancePolicyV1[] = SINGLETON_DESTINATION_INSTANCE_POLICIES,
+): PluginUiDestinationBindingSlotV1<TContainer, TTargetKind> {
   return Object.freeze({
-    id: input.id,
-    scope: input.scope,
-    category: input.category,
-    anchor: Object.freeze({ ...input.anchor }),
-    exclusions,
-    supportedRuntimeModes,
-    contributionSchema: input.contributionSchema,
-    hostApiShape: Object.freeze({
-      methods: Object.freeze([
-        ...(input.hostApiMethods ?? defaultHostApiMethodsForCategory(input.category)),
-      ]),
-    }),
-    rendererSet: Object.freeze(rendererSet),
-    whenGating: Object.freeze({
-      featureId: input.whenGating.featureId,
-      contextKeys: Object.freeze([...(input.whenGating.contextKeys ?? [])]),
-      failClosed: true,
-    }),
+    container,
+    targetKind,
+    surfaceContextPlacement: surfaceContextPlacementForDestinationBindingSlot(container, targetKind),
+    platforms: Object.freeze([...platforms]),
+    collisionDomain: Object.freeze({ container, targetKind }),
+    ...(rightSidebarScope === undefined ? {} : { rightSidebarScope }),
+    instancePolicies: Object.freeze([...instancePolicies]),
   });
 }
 
-// ---------------------------------------------------------------------------
-// Mode selection — trivial "pick first-available provided mode" (§16). The
-// declared `supportedRuntimeModes` order IS the selection order. Configurable
-// preference/fallback ORDER is deferred to P2 (YAGNI until a 2-mode producer
-// exists).
-// ---------------------------------------------------------------------------
+/**
+ * Explicit admitted target/container/platform rows. A missing row is a
+ * fail-closed admission result, never an App fallback. Mounted-path proof is
+ * owned by the closure test rather than embedded as UI implementation names in
+ * these production routing/admission records.
+ */
+export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
+    defineDestinationBindingSlot(
+      'appPage',
+      'app',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'settingsPage',
+      'app',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'rightSidebarTab',
+      'app',
+      ALL_DESTINATION_PLATFORMS,
+      'app',
+    ),
+    defineDestinationBindingSlot(
+      'rightSidebarTab',
+      'session',
+      ALL_DESTINATION_PLATFORMS,
+      'session',
+    ),
+    defineDestinationBindingSlot(
+      'rightSidebarTab',
+      'project',
+      DESKTOP_DESTINATION_PLATFORMS,
+      'project',
+    ),
+    defineDestinationBindingSlot(
+      'rightPane',
+      'session',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'rightPane',
+      'project',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'detailsTab',
+      'session',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'detailsTab',
+      'project',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'detailsPane',
+      'session',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'detailsPane',
+      'project',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'bottomPane',
+      'session',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'bottomPane',
+      'project',
+      DESKTOP_DESTINATION_PLATFORMS,
+      undefined,
+      INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
+    ),
+    defineDestinationBindingSlot(
+      'browserPanel',
+      'browser',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'servicesPanel',
+      'services',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+  ] as const satisfies readonly PluginUiDestinationBindingSlotV1[]);
 
-export type SelectRuntimeModeOptionsV1 = Readonly<{
-  providedModes: readonly PluginSurfaceRuntimeModeV1[];
-  isRuntimeAvailable?: (mode: PluginSurfaceRuntimeModeV1) => boolean;
-  isTrustCompatible?: (mode: PluginSurfaceRuntimeModeV1) => boolean;
+const DESTINATION_BINDING_SLOT_BY_KEY: ReadonlyMap<string, PluginUiDestinationBindingSlotV1> = new Map(
+  PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1.map((slot) => [
+    `${slot.container}\u0000${slot.targetKind}`,
+    slot,
+  ]),
+);
+
+function destinationBindingSlotKey(
+  container: PluginUiContainerV1,
+  targetKind: PluginUiTargetKindV1,
+): string {
+  return `${container}\u0000${targetKind}`;
+}
+
+export function resolvePluginUiDestinationBindingSlotV1(
+  container: unknown,
+  targetKind: unknown,
+): PluginUiDestinationBindingSlotV1 | null {
+  const parsedContainer = PluginUiContainerV1Schema.safeParse(container);
+  const parsedTargetKind = PluginUiTargetKindV1Schema.safeParse(targetKind);
+  if (!parsedContainer.success || !parsedTargetKind.success) return null;
+  return DESTINATION_BINDING_SLOT_BY_KEY.get(
+    destinationBindingSlotKey(parsedContainer.data, parsedTargetKind.data),
+  ) ?? null;
+}
+
+export const PluginUiDestinationBindingInputV1Schema = z.object({
+  pluginId: asProtocolZod(PluginIdSchema),
+  destinationId: asProtocolZod(PluginContributionLocalIdSchema),
+  rendererId: asProtocolZod(PluginContributionLocalIdSchema),
+  /** Ordered fallback candidates after the primary renderer. */
+  fallbackRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
+  /**
+   * Projection-time renderer inventory. It is deliberately input-only: the
+   * normalized binding carries qualified identities, never a second registry.
+   */
+  availableRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
+  container: PluginUiContainerV1Schema,
+  target: PluginSurfaceTargetV1Schema,
+  instancePolicy: PluginUiDestinationInstancePolicyV1Schema.default('singleton'),
+}).strict();
+export type PluginUiDestinationBindingInputV1 =
+  z.input<typeof PluginUiDestinationBindingInputV1Schema>;
+
+/**
+ * One normalized, qualified UI binding. `target` remains the declaration
+ * selector and is not a runtime target or execution authority; its actual
+ * public facts are stamped by the incumbent destination/pane owner at open or
+ * mount time.
+ */
+export type PluginUiDestinationBindingV1 = Readonly<{
+  destination: PluginContributionIdentityV1;
+  /** Authored primary followed by fallbacks, in declaration order. */
+  rendererChain: readonly PluginContributionIdentityV1[];
+  /** The currently admitted member of {@link rendererChain}. */
+  renderer: PluginContributionIdentityV1;
+  container: PluginUiContainerV1;
+  target: PluginSurfaceTargetV1;
+  targetKind: PluginUiTargetKindV1;
+  /** Registry-owned host-API context classification; never a legacy surface id. */
+  surfaceContextPlacement: PluginUiSurfacePlacementV1;
+  instancePolicy: PluginUiDestinationInstancePolicyV1;
+  platforms: readonly PluginUiPlatformV1[];
+  rightSidebarScope?: PluginUiRightSidebarScopeV1;
 }>;
 
-export function selectFirstAvailableRuntimeMode(
-  descriptor: PluginSurfaceDescriptorV1,
-  options: SelectRuntimeModeOptionsV1,
-): PluginSurfaceRuntimeModeV1 | null {
-  const provided = new Set<PluginSurfaceRuntimeModeV1>(options.providedModes);
-  for (const mode of descriptor.supportedRuntimeModes) {
-    if (!provided.has(mode)) continue;
-    if (options.isRuntimeAvailable && !options.isRuntimeAvailable(mode)) continue;
-    if (options.isTrustCompatible && !options.isTrustCompatible(mode)) continue;
-    return mode;
+/**
+ * Projection only knows the OS-level runtime platform. Native desktop/tablet
+ * rows must survive that first gate so the mounted host can apply its actual
+ * phone/tablet observation. This is deliberately not final admission.
+ */
+export function isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1(
+  binding: Pick<PluginUiDestinationBindingV1, 'platforms'>,
+  platform: PluginUiPlatformV1,
+): boolean {
+  return binding.platforms.includes(platform)
+    || (isNativePluginUiPlatformV1(platform)
+      && hasDesktopTabletDestinationPlatformV1(binding.platforms));
+}
+
+/**
+ * Final destination admission at a mounted host. Phone-sized web hosts and
+ * native phones reject desktop/tablet-only rows; web and native tablets use
+ * the incumbent multi-pane host path. Explicit native rows remain valid on
+ * both phone and tablet form factors.
+ */
+export function isPluginUiDestinationBindingAdmittedAtRuntimeV1(input: Readonly<{
+  binding: Pick<PluginUiDestinationBindingV1, 'container' | 'targetKind' | 'platforms'>;
+  platform: PluginUiPlatformV1;
+  formFactor: PluginUiDestinationRuntimeFormFactorV1;
+}>): boolean {
+  // `platforms` on a serialized predecessor binding may be conservative. The
+  // registry slot is the canonical authority for whether this is a
+  // desktop/tablet-only destination, while the binding still controls the
+  // exact platform it advertised.
+  if (
+    input.platform === 'web'
+    && input.formFactor === 'phone'
+    && isDesktopTabletOnlyDestinationBindingSlotV1(input.binding)
+  ) {
+    return false;
   }
-  return null;
+
+  return input.binding.platforms.includes(input.platform)
+    || (input.formFactor === 'tablet'
+      && isNativePluginUiPlatformV1(input.platform)
+      && hasDesktopTabletDestinationPlatformV1(input.binding.platforms));
 }
 
-// ---------------------------------------------------------------------------
-// Reject-at-projection — validate a raw contribution against the descriptor
-// `contributionSchema` (and, optionally, its provided modes against
-// `supportedRuntimeModes`).
-// ---------------------------------------------------------------------------
-
-export type PluginSurfaceProjectionResultV1 =
-  | Readonly<{ status: 'projected'; surfaceId: PluginSurfaceTypeIdV1; value: unknown }>
-  | Readonly<{
-      status: 'rejected';
-      surfaceId: string;
-      reason: 'unknown_surface' | 'schema_mismatch' | 'mode_unsupported';
-      diagnostics: readonly string[];
-    }>;
-
-export type ProjectContributionOptionsV1 = Readonly<{
-  providedModes?: readonly PluginSurfaceRuntimeModeV1[];
-}>;
-
-// ---------------------------------------------------------------------------
-// The registry — single id-keyed collection. `createPluginSurfaceRegistry`
-// rejects duplicate ids (discharges §13.5.6 id-uniqueness: one id-keyed
-// registry, no double-render risk).
-// ---------------------------------------------------------------------------
-
-export interface PluginSurfaceRegistryV1 {
-  get(id: string): PluginSurfaceDescriptorV1 | undefined;
-  has(id: string): boolean;
-  ids(): readonly PluginSurfaceTypeIdV1[];
-  list(): readonly PluginSurfaceDescriptorV1[];
-  projectContribution(
-    id: string,
-    rawContribution: unknown,
-    options?: ProjectContributionOptionsV1,
-  ): PluginSurfaceProjectionResultV1;
-  selectRuntimeMode(
-    id: string,
-    options: SelectRuntimeModeOptionsV1,
-  ): PluginSurfaceRuntimeModeV1 | null;
+export function normalizePluginUiRendererChainV1(input: Readonly<{
+  pluginId: string;
+  rendererId: string;
+  fallbackRendererIds?: readonly string[];
+  availableRendererIds?: readonly string[];
+}>): readonly PluginContributionIdentityV1[] | null {
+  const binding = PluginUiRendererChainBindingV1Schema.safeParse({
+    renderer: input.rendererId,
+    fallbackRenderers: input.fallbackRendererIds,
+  });
+  if (!binding.success) return null;
+  const rendererIds = [binding.data.renderer, ...(binding.data.fallbackRenderers ?? [])];
+  if (
+    input.availableRendererIds
+    && rendererIds.some((rendererId) => !input.availableRendererIds!.includes(rendererId))
+  ) {
+    return null;
+  }
+  return Object.freeze(rendererIds.map((localId) => Object.freeze(
+    PluginContributionIdentityV1Schema.parse({ pluginId: input.pluginId, localId }),
+  )));
 }
 
-export function createPluginSurfaceRegistry(
-  descriptors: readonly PluginSurfaceDescriptorV1[],
-): PluginSurfaceRegistryV1 {
-  const byId = new Map<string, PluginSurfaceDescriptorV1>();
-  for (const descriptor of descriptors) {
-    if (byId.has(descriptor.id)) {
-      throw new Error(`Duplicate surface descriptor id '${descriptor.id}' in surface registry.`);
+export function normalizePluginUiDestinationBindingV1(
+  input: unknown,
+): PluginUiDestinationBindingV1 | null {
+  const parsed = PluginUiDestinationBindingInputV1Schema.safeParse(input);
+  if (!parsed.success) return null;
+
+  const targetKind = PluginUiTargetKindV1Schema.safeParse(parsed.data.target.kind);
+  if (!targetKind.success) return null;
+  const slot = resolvePluginUiDestinationBindingSlotV1(parsed.data.container, targetKind.data);
+  if (!slot) return null;
+  if (!slot.instancePolicies.includes(parsed.data.instancePolicy)) return null;
+
+  const destination = PluginContributionIdentityV1Schema.parse({
+    pluginId: parsed.data.pluginId,
+    localId: parsed.data.destinationId,
+  });
+  const rendererChain = normalizePluginUiRendererChainV1({
+    pluginId: parsed.data.pluginId,
+    rendererId: parsed.data.rendererId,
+    fallbackRendererIds: parsed.data.fallbackRendererIds,
+    availableRendererIds: parsed.data.availableRendererIds,
+  });
+  if (!rendererChain) return null;
+  const renderer = rendererChain[0]!;
+  return Object.freeze({
+    destination: Object.freeze(destination),
+    rendererChain,
+    renderer,
+    container: slot.container,
+    target: Object.freeze({ ...parsed.data.target }),
+    targetKind: slot.targetKind,
+    surfaceContextPlacement: slot.surfaceContextPlacement,
+    instancePolicy: parsed.data.instancePolicy,
+    platforms: slot.platforms,
+    ...(slot.rightSidebarScope === undefined ? {} : { rightSidebarScope: slot.rightSidebarScope }),
+  });
+}
+
+/**
+ * The daemon-to-UI wire shape for a binding already normalized by this
+ * registry. It validates every identity and slot-derived fact instead of letting a UI
+ * reader treat an arbitrary `{ container, target }` record as an admitted
+ * slot. Platform and method lists may be conservative predecessor subsets, but
+ * can never advertise a value outside the current registry slot.
+ */
+export const PluginUiDestinationBindingV1Schema = z.object({
+  destination: asProtocolZod(PluginContributionIdentityV1Schema),
+  rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1),
+  renderer: asProtocolZod(PluginContributionIdentityV1Schema),
+  container: PluginUiContainerV1Schema,
+  target: PluginSurfaceTargetV1Schema,
+  targetKind: PluginUiTargetKindV1Schema,
+  surfaceContextPlacement: PluginUiSurfacePlacementV1Schema,
+  instancePolicy: PluginUiDestinationInstancePolicyV1Schema,
+  platforms: z.array(PluginUiPlatformV1Schema).min(1),
+  rightSidebarScope: PluginUiRightSidebarScopeV1Schema.optional(),
+}).strict().superRefine((binding, ctx) => {
+  const slot = resolvePluginUiDestinationBindingSlotV1(binding.container, binding.targetKind);
+  if (!slot) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['container'],
+      message: 'Plugin UI binding container and target kind do not identify an admitted slot.',
+    });
+    return;
+  }
+  if (binding.target.kind !== binding.targetKind) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetKind'],
+      message: 'Plugin UI binding target kind must match its target selector.',
+    });
+  }
+  if (!slot.instancePolicies.includes(binding.instancePolicy)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['instancePolicy'],
+      message: 'Plugin UI binding instance policy must be admitted by its registry slot.',
+    });
+  }
+  if (binding.renderer.pluginId !== binding.destination.pluginId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['renderer', 'pluginId'],
+      message: 'Plugin UI binding destination and renderer must have the same plugin owner.',
+    });
+  }
+  if (
+    binding.rendererChain.some((renderer) => renderer.pluginId !== binding.destination.pluginId)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rendererChain'],
+      message: 'Plugin UI binding renderer chain must have the same plugin owner as its destination.',
+    });
+  }
+  if (
+    new Set(binding.rendererChain.map((renderer) => buildQualifiedPluginContributionKey(renderer))).size
+    !== binding.rendererChain.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rendererChain'],
+      message: 'Plugin UI binding renderer chain must not repeat a renderer.',
+    });
+  }
+  if (!binding.rendererChain.some((renderer) => (
+    renderer.pluginId === binding.renderer.pluginId
+    && renderer.localId === binding.renderer.localId
+  ))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['renderer'],
+      message: 'Plugin UI binding selected renderer must be a member of its renderer chain.',
+    });
+  }
+  if (binding.surfaceContextPlacement !== slot.surfaceContextPlacement) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['surfaceContextPlacement'],
+      message: 'Plugin UI binding surface context placement must be registry-derived.',
+    });
+  }
+  if (binding.rightSidebarScope !== slot.rightSidebarScope) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rightSidebarScope'],
+      message: 'Plugin UI binding right-sidebar scope must be registry-derived.',
+    });
+  }
+  if (
+    new Set(binding.platforms).size !== binding.platforms.length
+    || binding.platforms.some((platform) => !slot.platforms.includes(platform))
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['platforms'],
+      message: 'Plugin UI binding platforms must be a unique registry-admitted subset.',
+    });
+  }
+});
+
+/**
+ * Exact binding selector for a host that already knows its insertion slot and
+ * projected renderer. It accepts no legacy placement name and does not infer
+ * either identity from an id prefix.
+ */
+export const PluginUiDestinationBindingSelectorV1Schema = z.object({
+  container: PluginUiContainerV1Schema,
+  targetKind: PluginUiTargetKindV1Schema,
+  pluginId: asProtocolZod(PluginIdSchema),
+  rendererId: asProtocolZod(PluginContributionLocalIdSchema),
+}).strict();
+export type PluginUiDestinationBindingSelectorV1 =
+  z.infer<typeof PluginUiDestinationBindingSelectorV1Schema>;
+
+export function matchesPluginUiDestinationBindingV1(
+  binding: unknown,
+  selector: unknown,
+): binding is PluginUiDestinationBindingV1 {
+  const parsedSelector = PluginUiDestinationBindingSelectorV1Schema.safeParse(selector);
+  const parsedBinding = PluginUiDestinationBindingV1Schema.safeParse(binding);
+  if (!parsedSelector.success || !parsedBinding.success) {
+    return false;
+  }
+  const normalized = parsedBinding.data;
+  return normalized.container === parsedSelector.data.container
+    && normalized.targetKind === parsedSelector.data.targetKind
+    && normalized.destination.pluginId === parsedSelector.data.pluginId
+    && normalized.renderer.pluginId === parsedSelector.data.pluginId
+    && normalized.renderer.localId === parsedSelector.data.rendererId;
+}
+
+/**
+ * Select the first technically eligible renderer from a declaration-owned
+ * chain. Projection supplies factual eligibility, but this registry owns the
+ * chain's validation and declaration order so neither a destination nor a
+ * targeted-Surface consumer can choose a later renderer merely because it
+ * observed it first.
+ */
+export function selectPluginUiRendererChainMemberV1(
+  rendererChain: unknown,
+  eligibleRendererIds: unknown,
+): PluginContributionIdentityV1 | null {
+  const parsedRendererChain = z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1).safeParse(rendererChain);
+  if (!parsedRendererChain.success || !Array.isArray(eligibleRendererIds)) return null;
+
+  const rendererKeys = new Set<string>();
+  for (const renderer of parsedRendererChain.data) {
+    const key = buildQualifiedPluginContributionKey(renderer);
+    if (rendererKeys.has(key)) return null;
+    rendererKeys.add(key);
+  }
+
+  const eligibleRendererIdSet = new Set<string>();
+  for (const rendererId of eligibleRendererIds) {
+    const parsedRendererId = PluginContributionLocalIdSchema.safeParse(rendererId);
+    if (!parsedRendererId.success || eligibleRendererIdSet.has(parsedRendererId.data)) {
+      return null;
     }
-    byId.set(descriptor.id, descriptor);
+    eligibleRendererIdSet.add(parsedRendererId.data);
   }
-  const ordered = Object.freeze([...descriptors]);
-  const orderedIds = Object.freeze(ordered.map((descriptor) => descriptor.id));
 
-  const registry: PluginSurfaceRegistryV1 = {
-    get(id: string): PluginSurfaceDescriptorV1 | undefined {
-      return byId.get(id);
-    },
-    has(id: string): boolean {
-      return byId.has(id);
-    },
-    ids(): readonly PluginSurfaceTypeIdV1[] {
-      return orderedIds;
-    },
-    list(): readonly PluginSurfaceDescriptorV1[] {
-      return ordered;
-    },
-    projectContribution(
-      id: string,
-      rawContribution: unknown,
-      options?: ProjectContributionOptionsV1,
-    ): PluginSurfaceProjectionResultV1 {
-      const descriptor = byId.get(id);
-      if (!descriptor) {
-        return {
-          status: 'rejected',
-          surfaceId: id,
-          reason: 'unknown_surface',
-          diagnostics: [`No surface descriptor registered for '${id}'.`],
-        };
-      }
-      const parsed = descriptor.contributionSchema.safeParse(rawContribution);
-      if (!parsed.success) {
-        return {
-          status: 'rejected',
-          surfaceId: id,
-          reason: 'schema_mismatch',
-          diagnostics: parsed.error.issues.map(
-            (issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`,
-          ),
-        };
-      }
-      if (options?.providedModes) {
-        const supported = new Set<PluginSurfaceRuntimeModeV1>(descriptor.supportedRuntimeModes);
-        const unsupported = options.providedModes.filter((mode) => !supported.has(mode));
-        if (unsupported.length > 0) {
-          return {
-            status: 'rejected',
-            surfaceId: id,
-            reason: 'mode_unsupported',
-            diagnostics: unsupported.map(
-              (mode) => `Mode '${mode}' is not in supportedRuntimeModes for surface '${id}'.`,
-            ),
-          };
-        }
-      }
-      return { status: 'projected', surfaceId: descriptor.id, value: parsed.data };
-    },
-    selectRuntimeMode(
-      id: string,
-      options: SelectRuntimeModeOptionsV1,
-    ): PluginSurfaceRuntimeModeV1 | null {
-      const descriptor = byId.get(id);
-      if (!descriptor) return null;
-      return selectFirstAvailableRuntimeMode(descriptor, options);
-    },
-  };
-
-  return Object.freeze(registry);
+  const renderer = parsedRendererChain.data.find((candidate) => (
+    eligibleRendererIdSet.has(candidate.localId)
+  ));
+  return renderer ? Object.freeze({ ...renderer }) : null;
 }
 
-// ---------------------------------------------------------------------------
-// Populated descriptors for the ACTUAL known surface types.
-// ---------------------------------------------------------------------------
-
-function sessionPaneDescriptor(
-  id: Extract<
-    PluginSurfaceTypeIdV1,
-    'session.details' | 'session.preview' | 'session.tool' | 'session.side'
-  >,
-  container: Extract<
-    PluginSurfaceContainerIdV1,
-    'sessionDetailPane' | 'sessionPreviewPane' | 'sessionToolPane' | 'sessionSidePane'
-  >,
-): PluginSurfaceDescriptorV1 {
-  return defineSurfaceDescriptor({
-    id,
-    scope: 'session',
-    category: 'panel',
-    anchor: { container, content: 'session' },
-    contributionSchema: PluginSurfacePlacementDescriptorV1Schema,
-    whenGating: { featureId: 'plugins.ui', contextKeys: ['session.hasBackend'] },
-    hostRendererIdsByMode: { host: SESSION_SURFACE_HOST_RENDERER_IDS },
+export function selectPluginUiDestinationBindingRendererV1(
+  binding: PluginUiDestinationBindingV1,
+  eligibleRendererIds: unknown,
+): PluginUiDestinationBindingV1 | null {
+  const parsedBinding = PluginUiDestinationBindingV1Schema.safeParse(binding);
+  if (!parsedBinding.success) return null;
+  const renderer = selectPluginUiRendererChainMemberV1(
+    parsedBinding.data.rendererChain,
+    eligibleRendererIds,
+  );
+  if (!renderer) return null;
+  return Object.freeze({
+    ...binding,
+    renderer,
   });
 }
 
-function genericPanelDescriptor(
-  id: PluginSurfaceTypeIdV1,
-  scope: PluginSurfaceScopeV1,
-  container: PluginSurfaceContainerIdV1,
-  content: PluginSurfaceContentBindingV1,
-  contextKeys: readonly PluginUiPredicateOperandV1[] = [],
-): PluginSurfaceDescriptorV1 {
-  return defineSurfaceDescriptor({
-    id,
-    scope,
-    category: 'panel',
-    anchor: { container, content },
-    contributionSchema: PluginSurfacePlacementDescriptorV1Schema,
-    whenGating: { featureId: 'plugins.ui', contextKeys },
-    hostRendererIdsByMode: { host: GENERIC_HOST_RENDERER_IDS },
+/**
+ * Settings pages are App-scoped destinations with one fixed host-owned
+ * container. Keep that fixed target/container composition at the registry
+ * boundary so Settings catalog code cannot invent a second binding normalizer.
+ */
+export const PluginUiSettingsPageBindingInputV1Schema = z.object({
+  pluginId: asProtocolZod(PluginIdSchema),
+  pageId: asProtocolZod(PluginContributionLocalIdSchema),
+  rendererId: asProtocolZod(PluginContributionLocalIdSchema),
+}).strict();
+export type PluginUiSettingsPageBindingInputV1 =
+  z.input<typeof PluginUiSettingsPageBindingInputV1Schema>;
+
+export function normalizePluginUiSettingsPageBindingV1(
+  input: unknown,
+): PluginUiDestinationBindingV1 | null {
+  const parsed = PluginUiSettingsPageBindingInputV1Schema.safeParse(input);
+  if (!parsed.success) return null;
+  return normalizePluginUiDestinationBindingV1({
+    pluginId: parsed.data.pluginId,
+    destinationId: parsed.data.pageId,
+    rendererId: parsed.data.rendererId,
+    container: 'settingsPage',
+    target: { kind: 'app' },
   });
 }
-
-export const SURFACE_DESCRIPTORS: readonly PluginSurfaceDescriptorV1[] = Object.freeze([
-  // Session panes (panel).
-  sessionPaneDescriptor('session.details', 'sessionDetailPane'),
-  sessionPaneDescriptor('session.preview', 'sessionPreviewPane'),
-  sessionPaneDescriptor('session.tool', 'sessionToolPane'),
-  sessionPaneDescriptor('session.side', 'sessionSidePane'),
-
-  // Session right-sidebar tab (panel; shared `rightSidebar` container, session content).
-  genericPanelDescriptor('session.rightSidebarTab', 'session', 'rightSidebar', 'session'),
-
-  // Session header action (action) — the merged `sessionHeaderActions` surface.
-  defineSurfaceDescriptor({
-    id: 'session.headerAction',
-    scope: 'session',
-    category: 'action',
-    anchor: { container: 'sessionHeader', content: 'session' },
-    contributionSchema: PluginSessionHeaderActionDescriptorV1Schema,
-    whenGating: { featureId: 'plugins.ui', contextKeys: ['session.hasBackend'] },
-    hostRendererIdsByMode: {
-      declarative: SESSION_HEADER_ACTION_RENDERER_IDS,
-      action: SESSION_HEADER_ACTION_RENDERER_IDS,
-    },
-  }),
-
-  // Session structured message (message) — transcript renderer concern.
-  defineSurfaceDescriptor({
-    id: 'session.structuredMessage',
-    scope: 'session',
-    category: 'message',
-    anchor: { container: 'transcript', content: 'session' },
-    contributionSchema: PluginStructuredMessageDescriptorV1Schema,
-    whenGating: { featureId: 'plugins.ui.structuredMessages', contextKeys: ['message.kind'] },
-    hostRendererIdsByMode: { structured: STRUCTURED_MESSAGE_HOST_RENDERER_IDS },
-  }),
-
-  // Workspace panels.
-  genericPanelDescriptor('workspace.details', 'workspace', 'workspaceDetailPane', 'workspace'),
-  genericPanelDescriptor('workspace.main', 'workspace', 'workspaceMain', 'workspace'),
-
-  // Project panels.
-  genericPanelDescriptor('project.details', 'project', 'projectDetailPane', 'project'),
-  genericPanelDescriptor('project.main', 'project', 'projectMain', 'project'),
-  genericPanelDescriptor('project.rightSidebarTab', 'project', 'rightSidebar', 'project'),
-
-  // App surfaces.
-  defineSurfaceDescriptor({
-    id: 'app.settingsPage',
-    scope: 'app',
-    category: 'container',
-    anchor: { container: 'appSettingsPage', content: 'app' },
-    contributionSchema: PluginSurfacePlacementDescriptorV1Schema,
-    whenGating: { featureId: 'plugins.ui', contextKeys: [] },
-    hostRendererIdsByMode: {
-      host: GENERIC_HOST_RENDERER_IDS,
-      declarative: GENERIC_HOST_RENDERER_IDS,
-    },
-  }),
-  genericPanelDescriptor('app.sidePanel', 'app', 'appSidePanel', 'app'),
-  genericPanelDescriptor('app.bottomPanel', 'app', 'appBottomPanel', 'app'),
-  genericPanelDescriptor('app.rightSidebarTab', 'app', 'rightSidebar', 'app'),
-
-  // Browser + services panels.
-  genericPanelDescriptor('browser.panel', 'browser', 'browserPanel', 'browser'),
-  genericPanelDescriptor('services.panel', 'services', 'servicesPanel', 'services'),
-]);
-
-export const PLUGIN_SURFACE_REGISTRY: PluginSurfaceRegistryV1 =
-  createPluginSurfaceRegistry(SURFACE_DESCRIPTORS);

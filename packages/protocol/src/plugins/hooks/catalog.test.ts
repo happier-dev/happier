@@ -19,12 +19,17 @@ const EXPECTED_PLUGIN_HOOK_IDS_V1 = [
   'agent.spawnEnv.augment',
   'agent.context.before',
   'agent.request.before',
+  'agent.composition.resolve',
   'agent.stream.token',
+  'action.execute.before',
+  'action.execute.after',
+  'agent.tool.execute.before',
+  'agent.tool.execute.after',
 ] as const;
 
 describe('plugin hook catalog v1', () => {
   it('exposes only hook ids with a reachable product emitter', () => {
-    expect(EXPECTED_PLUGIN_HOOK_IDS_V1).toHaveLength(12);
+    expect(EXPECTED_PLUGIN_HOOK_IDS_V1).toHaveLength(17);
     expect(PLUGIN_HOOK_IDS_V1).toEqual([...EXPECTED_PLUGIN_HOOK_IDS_V1]);
 
     const definitions = EXPECTED_PLUGIN_HOOK_IDS_V1.map((hookId) => getPluginHookDefinitionV1(hookId));
@@ -67,6 +72,14 @@ describe('plugin hook catalog v1', () => {
     });
     expect(readSupportedRuntimes('agent.request.before')).toEqual(['acpSession']);
 
+    expect(getPluginHookDefinitionV1('agent.composition.resolve')).toMatchObject({
+      category: 'augmentation',
+      scope: 'agent',
+      aggregation: 'orderedList',
+      failureMode: 'bestEffort',
+    });
+    expect(readSupportedRuntimes('agent.composition.resolve')).toEqual(['hostSession', 'acpSession']);
+
     expect(getPluginHookDefinitionV1('agent.stream.token')).toMatchObject({
       category: 'lifecycle',
       scope: 'agent',
@@ -75,6 +88,31 @@ describe('plugin hook catalog v1', () => {
       failureMode: 'bestEffort',
     });
     expect(readSupportedRuntimes('agent.stream.token')).toEqual(['hostSession']);
+
+    expect(getPluginHookDefinitionV1('action.execute.before')).toMatchObject({
+      category: 'augmentation',
+      scope: 'tool',
+      aggregation: 'replace',
+      failureMode: 'failClosed',
+    });
+    expect(getPluginHookDefinitionV1('action.execute.after')).toMatchObject({
+      category: 'lifecycle',
+      scope: 'tool',
+      purity: 'observer',
+      failureMode: 'bestEffort',
+    });
+    expect(getPluginHookDefinitionV1('agent.tool.execute.before')).toMatchObject({
+      category: 'augmentation',
+      scope: 'tool',
+      aggregation: 'replace',
+      failureMode: 'failClosed',
+    });
+    expect(getPluginHookDefinitionV1('agent.tool.execute.after')).toMatchObject({
+      category: 'lifecycle',
+      scope: 'tool',
+      purity: 'observer',
+      failureMode: 'bestEffort',
+    });
   });
 
   it('validates typed payloads for every locked public hook id', () => {
@@ -152,6 +190,13 @@ describe('plugin hook catalog v1', () => {
         },
         timestampMs: 1,
       },
+      'agent.composition.resolve': {
+        sessionId: 'session-1',
+        agentId: 'codex',
+        runtimeFamily: 'hostSession',
+        declaredToolIds: ['review-summary-tool'],
+        declaredPromptAssetIds: ['review-context'],
+      },
       'agent.stream.token': {
         sessionId: 'session-1',
         agentId: 'codex',
@@ -159,6 +204,47 @@ describe('plugin hook catalog v1', () => {
         turnId: 'turn-1',
         tokenText: 'hel',
         streamKind: 'assistant',
+        timestampMs: 1,
+      },
+      'action.execute.before': {
+        actionId: 'session.title.set',
+        input: { sessionId: 'session-1', title: 'Renamed' },
+        invocation: {
+          surface: 'plugin',
+          sessionId: 'session-1',
+          caller: { kind: 'plugin', pluginId: 'author.plugin' },
+        },
+        timestampMs: 1,
+      },
+      'action.execute.after': {
+        actionId: 'session.title.set',
+        input: { sessionId: 'session-1', title: 'Renamed' },
+        invocation: {
+          surface: 'plugin',
+          sessionId: 'session-1',
+          caller: { kind: 'plugin', pluginId: 'author.plugin' },
+        },
+        outcome: { status: 'succeeded', result: { updated: true } },
+        timestampMs: 1,
+      },
+      'agent.tool.execute.before': {
+        agentId: 'codex',
+        runtimeFamily: 'pluginSession',
+        capability: 'interceptable',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        tool: { callId: 'call-1', name: 'shell', input: { command: 'pwd' } },
+        timestampMs: 1,
+      },
+      'agent.tool.execute.after': {
+        agentId: 'claude',
+        runtimeFamily: 'acpSession',
+        capability: 'observable',
+        caller: { kind: 'plugin', pluginId: 'happier.agent.claude' },
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        tool: { callId: 'call-1', name: 'Bash', input: { command: 'pwd' } },
+        outcome: { status: 'succeeded', result: { output: '/workspace' } },
         timestampMs: 1,
       },
     } satisfies Readonly<Record<typeof EXPECTED_PLUGIN_HOOK_IDS_V1[number], unknown>>;
@@ -225,12 +311,49 @@ describe('plugin hook catalog v1', () => {
     })).toMatchObject({ success: false });
 
     expect(validatePluginHookResultV1({
+      hookId: 'agent.composition.resolve',
+      result: {
+        enabledToolIds: ['review-summary-tool'],
+        enabledPromptAssetIds: [],
+        additionalInstructions: 'Use the bounded review context.',
+      },
+    })).toMatchObject({ success: true });
+    expect(validatePluginHookResultV1({
+      hookId: 'agent.composition.resolve',
+      result: {
+        enabledToolIds: ['review-summary-tool'],
+        impersonate: 'another.plugin',
+      },
+    })).toMatchObject({ success: false });
+
+    expect(validatePluginHookResultV1({
       hookId: 'session.spawned',
       result: undefined,
     })).toMatchObject({ success: true });
     expect(validatePluginHookResultV1({
       hookId: 'session.spawned',
       result: { handled: true },
+    })).toMatchObject({ success: false });
+
+    expect(validatePluginHookResultV1({
+      hookId: 'action.execute.before',
+      result: { status: 'continue', input: { sessionId: 'session-1', title: 'Final' } },
+    })).toMatchObject({ success: true });
+    expect(validatePluginHookResultV1({
+      hookId: 'action.execute.before',
+      result: { status: 'rejected', code: 'policy_denied', message: 'Denied by policy' },
+    })).toMatchObject({ success: true });
+    expect(validatePluginHookResultV1({
+      hookId: 'action.execute.before',
+      result: { status: 'continue', input: {}, privateAuthority: 'must-not-pass' },
+    })).toMatchObject({ success: false });
+    expect(validatePluginHookResultV1({
+      hookId: 'agent.tool.execute.before',
+      result: { status: 'rejected', code: 'tool_denied' },
+    })).toMatchObject({ success: true });
+    expect(validatePluginHookResultV1({
+      hookId: 'agent.tool.execute.after',
+      result: { replacement: 'not-observational' },
     })).toMatchObject({ success: false });
   });
 });

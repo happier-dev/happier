@@ -326,6 +326,13 @@ describe('provider machine RPC contracts', () => {
       contributionKey: 'happier.provider.ollama/ollama',
     })).toMatchObject({ action: 'startLocal' });
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
+      action: 'startLocal', machineId: 'machine-1',
+      contributionKey: 'happier.provider.ollama/ollama',
+    })).toEqual({
+      action: 'startLocal', machineId: 'machine-1',
+      contributionKey: 'happier.provider.ollama/ollama',
+    });
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'setEnabled', machineId: 'machine-1', connectionId: 'pc_1', enabled: false, scope: 'machine',
     })).toMatchObject({ action: 'setEnabled', enabled: false, scope: 'machine' });
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
@@ -378,7 +385,7 @@ describe('provider machine RPC contracts', () => {
         kind: 'managedLocal',
         purposeBindingDefaults: {},
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
       ...managedUpdate,
       deployment: {
@@ -436,7 +443,45 @@ describe('provider machine RPC contracts', () => {
     })).toMatchObject({ status: 'success' });
   });
 
-  it('describes managed connection effects without exposing launch-local authority', () => {
+  it('describes only public managed connection effects without exposing launch-local authority', () => {
+    const publicEffects = {
+      implementationIdentity: {
+        pluginId: 'happier.provider.gateway',
+        localId: 'gateway',
+      },
+      protocols: ['openai-responses', 'openai-chat'],
+      connectedAccountPurposes: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.openai',
+          localId: 'openai',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+        target: {
+          kind: 'account',
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            accountId: 'work',
+          },
+        },
+      }],
+    } as const;
+    const retiredProcess = {
+      localServiceId: 'gateway',
+      manager: 'happier',
+      lifetime: 'session',
+      network: 'loopback',
+      restart: 'never',
+    } as const;
+    const retiredDependency = {
+      kind: 'packaged-runtime-binary',
+      directorySegments: ['cliproxyapi', 'unpacked'],
+      executableBaseName: 'cliproxyapi',
+    } as const;
     const managedConnection = {
       connectionId: 'pc_managed',
       contributionKey: 'happier.provider.gateway/gateway',
@@ -455,44 +500,7 @@ describe('provider machine RPC contracts', () => {
       deployment: {
         kind: 'managedLocal',
         targetMachineId: 'machine-1',
-        effects: {
-          implementationIdentity: {
-            pluginId: 'happier.provider.gateway',
-            localId: 'gateway',
-          },
-          process: {
-            localServiceId: 'gateway',
-            manager: 'happier',
-            lifetime: 'session',
-            network: 'loopback',
-            restart: 'never',
-          },
-          dependency: {
-            kind: 'packaged-runtime-binary',
-            directorySegments: ['cliproxyapi', 'unpacked'],
-            executableBaseName: 'cliproxyapi',
-          },
-          protocols: ['openai-chat', 'openai-responses'],
-          connectedAccountPurposes: [{
-            purpose: 'upstream',
-            service: {
-              pluginId: 'happier.connected-account.openai',
-              localId: 'openai',
-            },
-            required: true,
-            materializationKinds: ['httpHeaders'],
-            target: {
-              kind: 'account',
-              account: {
-                service: {
-                  pluginId: 'happier.connected-account.openai',
-                  localId: 'openai',
-                },
-                accountId: 'work',
-              },
-            },
-          }],
-        },
+        effects: publicEffects,
       },
       endpoints: [],
       scope: 'machine',
@@ -514,6 +522,26 @@ describe('provider machine RPC contracts', () => {
 
     expect(DaemonProviderConnectionsDescribeResponseV1Schema.parse(response))
       .toMatchObject({ connections: [{ deployment: managedConnection.deployment, endpoints: [] }] });
+    for (const retiredEffects of [
+      { ...publicEffects, process: retiredProcess },
+      { ...publicEffects, dependency: retiredDependency },
+      {
+        ...publicEffects,
+        process: retiredProcess,
+        dependency: retiredDependency,
+      },
+    ]) {
+      expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+        ...response,
+        connections: [{
+          ...managedConnection,
+          deployment: {
+            ...managedConnection.deployment,
+            effects: retiredEffects,
+          },
+        }],
+      }).success).toBe(false);
+    }
     expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
       ...response,
       connections: [{
@@ -547,13 +575,15 @@ describe('provider machine RPC contracts', () => {
         },
       }],
     }).success).toBe(false);
-    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
-      ...response,
-      connections: [{ ...managedConnection, provenance: 'external' }],
-    }).success).toBe(false);
+    for (const provenance of ['first_party', 'external', 'custom'] as const) {
+      expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+        ...response,
+        connections: [{ ...managedConnection, provenance }],
+      }).success).toBe(true);
+    }
   });
 
-  it('projects only declared purpose/service facts for managed authoring availability', () => {
+  it('projects declared purpose presentation as a resolved string for managed authoring availability', () => {
     const managedLocalOption = {
       targetMachineId: 'machine-1',
       connectedAccountPurposes: [{
@@ -562,6 +592,7 @@ describe('provider machine RPC contracts', () => {
           pluginId: 'happier.connected-account.openai',
           localId: 'openai',
         },
+        title: 'Use upstream OpenAI account',
         required: true,
         materializationKinds: ['httpHeaders'],
       }],
@@ -614,8 +645,34 @@ describe('provider machine RPC contracts', () => {
       .toMatchObject({ connections: [{ managedLocalOption }] });
     expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
       ...response,
-      connections: [{ ...connection, provenance: 'external' }],
+      connections: [{
+        ...connection,
+        managedLocalOption: {
+          ...managedLocalOption,
+          connectedAccountPurposes: [],
+        },
+      }],
+    }).success).toBe(true);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...connection,
+        managedLocalOption: {
+          ...managedLocalOption,
+          connectedAccountPurposes: [{
+            ...managedLocalOption.connectedAccountPurposes[0],
+            title: {
+              key: 'connectedAccounts.upstream.title',
+              fallback: 'Use upstream OpenAI account',
+            },
+          }],
+        },
+      }],
     }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{ ...connection, provenance: 'external' }],
+    }).success).toBe(true);
     expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
       ...response,
       connections: [{

@@ -32,8 +32,10 @@ import {
   RPC_METHODS,
   SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
   SESSION_RPC_METHODS,
+  isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext,
   isRpcMethodNotFoundResult,
   parseSocketRpcAuthorizationContext,
+  resolveSocketRpcSessionPermissionDecisionAuthorizationMethod,
   resolveSocketRpcSessionWriteAuthorizationMethod,
 } from './index.js';
 
@@ -43,11 +45,13 @@ describe('rpc wire compatibility', () => {
       METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',
       METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',
       FORBIDDEN: 'RPC_FORBIDDEN',
+      SESSION_MACHINE_CONTROL_UNAVAILABLE: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE',
     });
     expect(RPC_ERROR_MESSAGES).toEqual({
       METHOD_NOT_AVAILABLE: 'RPC method not available',
       METHOD_NOT_FOUND: 'Method not found',
       FORBIDDEN: 'Forbidden',
+      SESSION_MACHINE_CONTROL_UNAVAILABLE: 'Session machine control unavailable',
     });
   });
 
@@ -66,11 +70,18 @@ describe('rpc wire compatibility', () => {
 
   it('pins execution-run and replay method literals consumed across rpc boundaries', () => {
     expect(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST).toBe('daemon.executionRuns.list');
+    expect(RPC_METHODS.SESSION_SPAWN_NEW).toBe('session.spawnNew');
     expect(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY).toBe('session.continueWithReplay');
     expect(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE).toBe(
       'daemon.extensions.contributionRegistryProjection.describe',
     );
     expect(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ).toBe('daemon.plugins.uiArtifacts.bytes.read');
+    expect(RPC_METHODS.DAEMON_PLUGIN_COLLECTION_CANDIDATE_PREPARATION_EXECUTE).toBe(
+      'daemon.plugins.collections.candidatePreparation.execute',
+    );
+    expect(RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH).toBe(
+      'daemon.plugins.composerReferences.search',
+    );
     expect(RPC_METHODS.DAEMON_PLUGIN_UI_REACT_NATIVE_CRASH_REPORT_SUBMIT).toBe(
       'daemon.plugins.ui.reactNativeCrashReports.submit',
     );
@@ -117,6 +128,12 @@ describe('rpc wire compatibility', () => {
     expect(RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_ACTION).toBe('daemon.devices.simulator.preview.action');
     expect(SESSION_RPC_METHODS.EXECUTION_RUN_START).toBe('execution.run.start');
     expect(SESSION_RPC_METHODS.EXECUTION_RUN_LIST).toBe('execution.run.list');
+    expect(SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_OPEN_V1)
+      .toBe('managedServer.endpoint.read.open.v1');
+    expect(SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1)
+      .toBe('managedServer.endpoint.read.next.v1');
+    expect(SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_CANCEL_V1)
+      .toBe('managedServer.endpoint.read.cancel.v1');
     expect((SESSION_RPC_METHODS as any).SESSION_TERMINAL_COMPOSER_CLEAR).toBe('session.terminalComposer.clear');
   });
 
@@ -132,6 +149,9 @@ describe('rpc wire compatibility', () => {
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
     )).toBe(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART);
+    expect(resolveSocketRpcSessionWriteAuthorizationMethod(
+      RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2,
+    )).toBe(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2);
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       `machine-1:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART}`,
     )).toBe(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART);
@@ -155,6 +175,92 @@ describe('rpc wire compatibility', () => {
       kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
       sessionId: '',
     })).toBeNull();
+  });
+
+  it('classifies only permission-decision RPCs and accepts only a strict server-stamped account actor', () => {
+    expect(SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND).toBe(
+      'session.permission.respond',
+    );
+    expect(resolveSocketRpcSessionPermissionDecisionAuthorizationMethod(
+      `session-1:${RPC_METHODS.SESSION_PERMISSION_RESPOND}`,
+    )).toBe(RPC_METHODS.SESSION_PERMISSION_RESPOND);
+    expect(resolveSocketRpcSessionPermissionDecisionAuthorizationMethod('session-1:permission')).toBe('permission');
+    expect(resolveSocketRpcSessionPermissionDecisionAuthorizationMethod(
+      `session-1:${RPC_METHODS.SESSION_USER_ACTION_ANSWER}`,
+    )).toBeNull();
+    expect(resolveSocketRpcSessionPermissionDecisionAuthorizationMethod('session-1:permission.extra')).toBeNull();
+
+    expect(parseSocketRpcAuthorizationContext({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: ' session-1 ',
+      actor: {
+        kind: 'accountUser',
+        accountId: 'account-owner',
+        relationship: 'owner',
+      },
+    })).toEqual({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: 'session-1',
+      actor: {
+        kind: 'accountUser',
+        accountId: 'account-owner',
+        relationship: 'owner',
+      },
+    });
+
+    expect(parseSocketRpcAuthorizationContext({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: 'session-1',
+      actor: {
+        kind: 'externalHuman',
+        assurance: 'pluginAsserted',
+        namespace: 'channels',
+        principalId: 'person-1',
+        assertedBy: { pluginId: 'happier.channels', contributionLocalId: 'telegram' },
+      },
+    })).toBeNull();
+    expect(parseSocketRpcAuthorizationContext({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: 'session-1',
+      actor: {
+        kind: 'accountUser',
+        accountId: 'account-owner',
+        relationship: 'owner',
+        forged: true,
+      },
+    })).toBeNull();
+    expect(parseSocketRpcAuthorizationContext({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_PERMISSION_RESPOND,
+      sessionId: 'session-1',
+      actor: {
+        kind: 'accountUser',
+        accountId: 'account-owner',
+        relationship: 'owner',
+      },
+      forged: true,
+    })).toBeNull();
+  });
+
+  it('keeps the Automation reply-handoff transport origin out of the generic session authorization parser', () => {
+    const serverOrigin = {
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN,
+    } as const;
+    const readParsedSessionId = (
+      authorization: ReturnType<typeof parseSocketRpcAuthorizationContext>,
+    ): string | null => authorization?.sessionId ?? null;
+
+    expect(SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN)
+      .toBe('automation.replyHandoff.serverOrigin');
+    expect(isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext(serverOrigin)).toBe(true);
+    expect(isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext({
+      ...serverOrigin,
+      forged: true,
+    })).toBe(false);
+    expect(parseSocketRpcAuthorizationContext(serverOrigin)).toBeNull();
+    expect(readParsedSessionId(parseSocketRpcAuthorizationContext({
+      kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+      sessionId: 'session-1',
+    }))).toBe('session-1');
   });
 
   it('parses Local Services inventory rpc envelopes for snapshot and refresh results', () => {

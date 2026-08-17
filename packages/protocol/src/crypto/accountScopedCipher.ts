@@ -2,29 +2,33 @@ import tweetnacl from 'tweetnacl';
 import { hmac } from '@noble/hashes/hmac';
 import { sha512 } from '@noble/hashes/sha512';
 
+import {
+  ACCOUNT_SCOPED_BLOB_V1_MAGIC,
+  ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES,
+  ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES,
+  ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES,
+  getAccountScopedBlobKindByte,
+  type AccountScopedBlobKind,
+} from './accountScopedCipherEnvelope.js';
 import { decodeBase64, encodeBase64 } from './base64.js';
+import { computeCanonicalDomainSeparatedDigest } from './canonicalDigest.js';
 import { deriveKey } from './keyDerivation.js';
 import { parseSerializedJsonValue } from './serializedJsonValue.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/installationIdentity.js';
 
-export type AccountScopedBlobKind =
-  | 'account_settings'
-  | 'automation_template_payload'
-  | 'connected_service_credential'
-  | 'connected_service_quota_snapshot'
-  | 'provider_account_usage_snapshot'
-  | 'qualified_connected_account_configuration'
-  | 'session_first_intent'
-  | 'session_owner_metadata'
-  | 'session_organization_display'
-  | 'session_respawn_environment';
+export {
+  getAccountScopedBlobCiphertextBase64LengthV1,
+  isAccountScopedBlobCiphertextForKind,
+  readAccountScopedCiphertextKindByte,
+} from './accountScopedCipherEnvelope.js';
+export type { AccountScopedBlobKind } from './accountScopedCipherEnvelope.js';
 
 export type AccountScopedCryptoMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
   | Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 
 export type AccountScopedCryptoMaterialSnapshotV1 = Readonly<{
-  accountEncryptionMode: 'plain' | 'e2ee';
+  accountEncryptionMode: 'e2ee';
   material: AccountScopedCryptoMaterial;
   contentPublicKeyFingerprint: string;
 }>;
@@ -54,21 +58,6 @@ export type AccountScopedHistoricalAliasResealResult = Readonly<{
   opened: Exclude<AccountScopedOpenResult, null>;
   resealed: boolean;
 }>;
-
-const ACCOUNT_SCOPED_MAGIC_V1 = 0xa1;
-
-const ACCOUNT_SCOPED_KIND_BYTE: Record<AccountScopedBlobKind, number> = {
-  account_settings: 1,
-  automation_template_payload: 2,
-  connected_service_credential: 3,
-  connected_service_quota_snapshot: 4,
-  session_respawn_environment: 5,
-  provider_account_usage_snapshot: 6,
-  session_organization_display: 7,
-  session_first_intent: 8,
-  qualified_connected_account_configuration: 9,
-  session_owner_metadata: 10,
-};
 
 const HISTORICAL_ACCOUNT_SCOPED_KIND_BYTE_ALIASES:
   Partial<Record<AccountScopedBlobKind, readonly number[]>> = {
@@ -112,15 +101,12 @@ function clone32ByteKey(label: string, value: Uint8Array): Uint8Array {
  * later credential refresh cannot mutate the attempt already being sealed.
  */
 export function createAccountScopedCryptoMaterialSnapshotV1(params: Readonly<{
-  accountEncryptionMode: 'plain' | 'e2ee';
+  accountEncryptionMode: 'e2ee';
   material: AccountScopedCryptoMaterial;
   dataKeyPublicKey?: Uint8Array;
 }>): AccountScopedCryptoMaterialSnapshotV1 {
-  if (
-    params.accountEncryptionMode !== 'plain'
-    && params.accountEncryptionMode !== 'e2ee'
-  ) {
-    throw new Error('Invalid Account encryption mode');
+  if (params.accountEncryptionMode !== 'e2ee') {
+    throw new Error('Account-scoped crypto material requires E2EE Account mode');
   }
 
   let material: AccountScopedCryptoMaterial;
@@ -175,6 +161,92 @@ function deriveAccountScopedSecretboxKey(params: { machineKey: Uint8Array; kind:
   return hmacSha512(params.machineKey, info).slice(0, 32);
 }
 
+/**
+ * Narrow host-only derivation for Automation Event occurrence equality. It is
+ * deliberately separate from every Account-scoped ciphertext key and does not
+ * expose a caller-selected key-derivation API.
+ */
+export function deriveAutomationTriggerEvidenceEqualityKeyV1(params: Readonly<{
+  material: AccountScopedCryptoMaterial;
+}>): Uint8Array {
+  return hmacSha512(
+    resolveMachineKey(params.material),
+    encodeUtf8('happier:automation-occurrence-equality:v1:trigger-evidence'),
+  ).slice(0, 32);
+}
+
+/**
+ * Domain constants of the plugin Collection identity operation below. They are
+ * module state, never parameters: a caller-selected usage, path, domain or
+ * version would turn this into an Account-root pseudonym oracle.
+ *
+ * `PLUGIN_COLLECTION_IDENTITY_VERSION_V1` separates a future derivation change
+ * from this one. It is deliberately not a collection `schemaVersion` or
+ * `contractDigest`: binding either would re-key every stored identity on an
+ * ordinary schema bump and detach a corpus from its own rows.
+ */
+const PLUGIN_COLLECTION_IDENTITY_VERSION_V1 = 'v1';
+const PLUGIN_COLLECTION_IDENTITY_KEYED_USAGE_V1 = 'Happier Plugin Collection Identity';
+const PLUGIN_COLLECTION_IDENTITY_PLAIN_DOMAIN_V1 = 'happier:plugin-collection-identity:v1:plain';
+
+/**
+ * The closed identity-tag operation behind `PluginAccountCollection.identityTag`.
+ *
+ * It does not expose a caller-selected key-derivation API: the plugin supplies
+ * only identity components, while the mode, version, plugin, collection and
+ * field are stamped by the host from state the plugin cannot influence. Two
+ * plugins, two collections, or two fields therefore live in disjoint derivation
+ * domains by construction rather than by convention.
+ *
+ * Both arms return 43 characters over `[A-Za-z0-9_-]`, so the result is always a
+ * valid Collection row id and indexed string whatever the natural key contained.
+ * The keyed arm consumes each component in its own HMAC step and the plaintext
+ * arm length-delimits each one, so component boundaries survive any byte a
+ * contract-valid identity may contain — including a delimiter.
+ */
+export function derivePluginCollectionIdentityTagV1(params: Readonly<{
+  accountEncryptionMode: 'plain' | 'e2ee';
+  /** `null` on `plain`, required on `e2ee`. Either mismatch fails closed. */
+  material: AccountScopedCryptoMaterial | null;
+  /** Host-stamped from the bound plugin lifecycle. Never caller-supplied. */
+  pluginId: string;
+  /** Host-stamped from the admitted collection contract. Never caller-supplied. */
+  collectionId: string;
+  /** Host-validated against that contract: its row-id field, or a declared index field. */
+  field: string;
+  /** The only caller-supplied input. */
+  components: readonly string[];
+}>): string {
+  const { accountEncryptionMode, material, pluginId, collectionId, field, components } = params;
+  if (accountEncryptionMode === 'e2ee') {
+    if (!material) {
+      throw new Error('An E2EE Account requires Account-scoped identity material for a plugin Collection identity tag');
+    }
+    return encodeBase64(
+      deriveKey(
+        resolveMachineKey(material),
+        PLUGIN_COLLECTION_IDENTITY_KEYED_USAGE_V1,
+        [
+          PLUGIN_COLLECTION_IDENTITY_VERSION_V1,
+          accountEncryptionMode,
+          pluginId,
+          collectionId,
+          field,
+          ...components,
+        ],
+      ),
+      'base64url',
+    );
+  }
+  if (material) {
+    throw new Error('A plaintext Account has no Account-scoped identity material for a plugin Collection identity tag');
+  }
+  return computeCanonicalDomainSeparatedDigest(
+    PLUGIN_COLLECTION_IDENTITY_PLAIN_DOMAIN_V1,
+    [pluginId, collectionId, field, ...components],
+  );
+}
+
 function tryParseJson(value: Uint8Array): unknown | null {
   try {
     const decoded = new TextDecoder().decode(value);
@@ -197,19 +269,19 @@ function sealAccountScopedBlobCiphertextWithKindByte(params: {
 
   const machineKey = resolveMachineKey(params.material);
   const key = deriveAccountScopedSecretboxKey({ machineKey, kind: params.kind });
-  const nonce = params.randomBytes(tweetnacl.secretbox.nonceLength);
-  if (nonce.length !== tweetnacl.secretbox.nonceLength) {
+  const nonce = params.randomBytes(ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES);
+  if (nonce.length !== ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES) {
     throw new Error(`Invalid nonce length: ${nonce.length}`);
   }
 
   const plaintextBytes = encodeUtf8(JSON.stringify(params.payload));
   const boxed = tweetnacl.secretbox(plaintextBytes, nonce, key);
 
-  const out = new Uint8Array(2 + nonce.length + boxed.length);
-  out[0] = ACCOUNT_SCOPED_MAGIC_V1;
+  const out = new Uint8Array(ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES + nonce.length + boxed.length);
+  out[0] = ACCOUNT_SCOPED_BLOB_V1_MAGIC;
   out[1] = params.kindByte;
-  out.set(nonce, 2);
-  out.set(boxed, 2 + nonce.length);
+  out.set(nonce, ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES);
+  out.set(boxed, ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES + nonce.length);
 
   return encodeBase64(out, 'base64');
 }
@@ -223,7 +295,7 @@ export function sealAccountScopedBlobCiphertext(params: {
   if (LEGACY_READ_ONLY_ACCOUNT_SCOPED_BLOB_KINDS.has(params.kind)) {
     throw new Error(`Account-scoped blob kind ${params.kind} is legacy read-only and cannot be sealed`);
   }
-  const kindByte = ACCOUNT_SCOPED_KIND_BYTE[params.kind];
+  const kindByte = getAccountScopedBlobKindByte(params.kind);
   return sealAccountScopedBlobCiphertextWithKindByte({
     ...params,
     kindByte,
@@ -242,29 +314,11 @@ export function sealLegacyQuotaSnapshotAccountScopedCiphertext(params: {
 }): string {
   return sealAccountScopedBlobCiphertextWithKindByte({
     kind: 'connected_service_quota_snapshot',
-    kindByte: ACCOUNT_SCOPED_KIND_BYTE.connected_service_quota_snapshot,
+    kindByte: getAccountScopedBlobKindByte('connected_service_quota_snapshot'),
     material: params.material,
     payload: params.payload,
     randomBytes: params.randomBytes,
   });
-}
-
-export function readAccountScopedCiphertextKindByte(
-  ciphertext: string,
-): number | null {
-  let bytes: Uint8Array;
-  try {
-    bytes = decodeBase64(ciphertext, 'base64');
-  } catch {
-    return null;
-  }
-  if (
-    bytes.length < 2 + tweetnacl.secretbox.nonceLength + 16
-    || bytes[0] !== ACCOUNT_SCOPED_MAGIC_V1
-  ) {
-    return null;
-  }
-  return bytes[1] ?? null;
 }
 
 export function openAccountScopedBlobCiphertext(params: {
@@ -272,7 +326,7 @@ export function openAccountScopedBlobCiphertext(params: {
   material: AccountScopedCryptoMaterial;
   ciphertext: string;
 }): AccountScopedOpenResult {
-  const kindByte = ACCOUNT_SCOPED_KIND_BYTE[params.kind];
+  const kindByte = getAccountScopedBlobKindByte(params.kind);
   if (!Number.isFinite(kindByte)) {
     return null;
   }
@@ -286,7 +340,14 @@ export function openAccountScopedBlobCiphertext(params: {
 
   const machineKey = resolveMachineKey(params.material);
 
-  if (bytes.length >= 2 + tweetnacl.secretbox.nonceLength + 16 && bytes[0] === ACCOUNT_SCOPED_MAGIC_V1) {
+  if (
+    bytes.length >= (
+      ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES
+      + ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES
+      + ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES
+    )
+    && bytes[0] === ACCOUNT_SCOPED_BLOB_V1_MAGIC
+  ) {
     const kindTag =
       bytes[1] === kindByte
         ? 'canonical'
@@ -298,8 +359,13 @@ export function openAccountScopedBlobCiphertext(params: {
     if (!kindTag) {
       return null;
     }
-    const nonce = bytes.slice(2, 2 + tweetnacl.secretbox.nonceLength);
-    const boxed = bytes.slice(2 + tweetnacl.secretbox.nonceLength);
+    const nonce = bytes.slice(
+      ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES,
+      ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES + ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES,
+    );
+    const boxed = bytes.slice(
+      ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES + ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES,
+    );
     const key = deriveAccountScopedSecretboxKey({ machineKey, kind: params.kind });
     const opened = tweetnacl.secretbox.open(boxed, nonce, key);
     const parsed = opened ? tryParseJson(new Uint8Array(opened)) : null;

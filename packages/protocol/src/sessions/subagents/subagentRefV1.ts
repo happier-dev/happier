@@ -7,6 +7,7 @@ import {
   SubagentIdSchema,
 } from '../idsV1.js';
 import { SubagentGroupRefV1Schema } from './subagentGroupRefV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const SubagentKindV1Schema = z.enum(['execution-run', 'native', 'custom']);
 export type SubagentKindV1 = z.infer<typeof SubagentKindV1Schema>;
@@ -30,7 +31,7 @@ export const SubagentAgentRefV1Schema = z.object({
 export type SubagentAgentRefV1 = z.infer<typeof SubagentAgentRefV1Schema>;
 
 export const SubagentTranscriptBindingV1Schema = z.object({
-  parentSessionId: SessionIdSchema,
+  parentSessionId: asProtocolZod(SessionIdSchema),
   sidechainId: SidechainIdSchema,
 }).passthrough();
 export type SubagentTranscriptBindingV1 = z.infer<typeof SubagentTranscriptBindingV1Schema>;
@@ -60,7 +61,7 @@ const SubagentRunRefV1Schema = z.object({
 
 const SubagentRefV1BaseSchema = z.object({
   id: SubagentIdSchema,
-  parentSessionId: SessionIdSchema,
+  parentSessionId: asProtocolZod(SessionIdSchema),
   origin: SubagentOriginV1Schema,
   kind: SubagentKindV1Schema,
   agentRef: SubagentAgentRefV1Schema.optional(),

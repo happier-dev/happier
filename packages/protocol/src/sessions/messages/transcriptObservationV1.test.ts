@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SessionTranscriptObservationAckV1Schema,
   SessionTranscriptObservationV1Schema,
+  isRecoveredHistoryTranscriptObservationProvenance,
 } from './transcriptObservationV1.js';
 
 const observation = {
@@ -39,5 +40,24 @@ describe('SessionTranscriptObservationV1', () => {
       didWrite: true,
       ingestedAt: 300,
     }).success).toBe(true);
+  });
+
+  it('classifies only strict recovered-history provenance', () => {
+    expect(isRecoveredHistoryTranscriptObservationProvenance({
+      kind: 'non_dependent',
+      source: 'history',
+    })).toBe(true);
+    for (const source of ['background', 'external', 'sidechain'] as const) {
+      expect(isRecoveredHistoryTranscriptObservationProvenance({
+        kind: 'non_dependent',
+        source,
+      })).toBe(false);
+    }
+    expect(isRecoveredHistoryTranscriptObservationProvenance({
+      kind: 'non_dependent',
+      source: 'history',
+      trusted: true,
+    })).toBe(false);
+    expect(isRecoveredHistoryTranscriptObservationProvenance(null)).toBe(false);
   });
 });

@@ -6,10 +6,17 @@ import {
   ExecutionRunActionRequestSchema,
   ExecutionRunPublicStateSchema,
   ExecutionRunListRequestSchema,
+  ExecutionRunResumeHandleSchema,
   ExecutionRunSendRequestSchema,
   ExecutionRunStartRequestSchema,
+  ExecutionRunDetachedStartRequestV1Schema,
+  ExecutionRunStartFailureDetailsV1Schema,
+  EXECUTION_RUN_DETACHED_START_PROMPT_FIELDS_V1,
   ExecutionRunTransportErrorCodeSchema,
   ExecutionRunUserTranscriptCommitRequestSchema,
+  normalizeLegacyExecutionRunBackendTargetInput,
+  readExecutionRunStartRunCreation,
+  withExecutionRunStartFailureDetails,
 } from './index.js';
 import { ReviewFindingSchema } from '../../reviews/ReviewFinding.js';
 import { ReviewFollowUpInputSchema } from '../../reviews/reviewFollowUp.js';
@@ -24,6 +31,71 @@ import { ParticipantMessageV1Schema } from '../../messages/structured/participan
 import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from '../../tools/v2/names.js';
 
 describe('executionRuns protocol', () => {
+  it('accepts only the strict execution-run start certainty detail', () => {
+    expect(ExecutionRunStartFailureDetailsV1Schema.parse({
+      executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+    })).toEqual({ executionRunStart: { v: 1, runCreation: 'noRunCreated' } });
+    expect(ExecutionRunStartFailureDetailsV1Schema.parse({
+      executionRunStart: { v: 1, runCreation: 'outcomeUnknown' },
+    })).toEqual({ executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } });
+
+    expect(ExecutionRunStartFailureDetailsV1Schema.safeParse({
+      executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+      featureId: 'execution.runs',
+    }).success).toBe(false);
+    expect(ExecutionRunStartFailureDetailsV1Schema.safeParse({
+      executionRunStart: { v: 1, runCreation: 'noRunCreated', retryable: true },
+    }).success).toBe(false);
+    expect(ExecutionRunStartFailureDetailsV1Schema.safeParse({
+      executionRunStart: { v: 2, runCreation: 'noRunCreated' },
+    }).success).toBe(false);
+
+    expect(withExecutionRunStartFailureDetails({
+      featureId: 'execution.runs',
+      retryable: true,
+      executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+    }, 'outcomeUnknown')).toEqual({
+      executionRunStart: { v: 1, runCreation: 'outcomeUnknown' },
+    });
+    expect(readExecutionRunStartRunCreation({
+      executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+      featureId: 'execution.runs',
+    })).toBe('noRunCreated');
+    expect(readExecutionRunStartRunCreation({
+      executionRunStart: { v: 1, runCreation: 'noRunCreated', retryable: true },
+      featureId: 'execution.runs',
+    })).toBe('outcomeUnknown');
+  });
+
+  it('exposes one strict detached start request projection for durable callers', () => {
+    const request = {
+      intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    } as const;
+
+    expect(ExecutionRunDetachedStartRequestV1Schema.safeParse(request).success).toBe(true);
+    expect(ExecutionRunDetachedStartRequestV1Schema.safeParse({
+      ...request,
+      instructions: 'Prompt text belongs to the materializer.',
+    }).success).toBe(false);
+    expect(ExecutionRunDetachedStartRequestV1Schema.safeParse({
+      ...request,
+      retryable: true,
+    }).success).toBe(false);
+    expect(EXECUTION_RUN_DETACHED_START_PROMPT_FIELDS_V1).toEqual([
+      'instructions',
+      'intentInput',
+      'initialContext',
+      'initialContextMode',
+      'bootstrapMode',
+      'replay',
+    ]);
+  });
+
   it('accepts the remote-dev predecessor user-transcript commit wire vector', () => {
     // Prospective predecessor provenance:
     // ../remote-dev@0649e4de85aacf08476063fef1990f418ce8e80b
@@ -69,9 +141,36 @@ describe('executionRuns protocol', () => {
 
   it('parses supported intents', () => {
     expect(ExecutionRunIntentSchema.parse('review')).toBe('review');
+    expect(ExecutionRunIntentSchema.parse('task')).toBe('task');
     expect(ExecutionRunIntentSchema.parse('voice_agent')).toBe('voice_agent');
     expect(ExecutionRunIntentSchema.parse('memory_hints')).toBe('memory_hints');
     expect(ExecutionRunIntentSchema.parse('scm_commit_message')).toBe('scm_commit_message');
+  });
+
+  it('admits the bounded generic task contract with strict JSON input and result schema', () => {
+    const valid = {
+      intent: 'task',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Summarize the changed files.',
+      intentInput: {
+        input: { changedPaths: ['src/a.ts'] },
+        resultSchema: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+          required: ['summary'],
+        },
+      },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    } as const;
+
+    expect(ExecutionRunStartRequestSchema.safeParse(valid).success).toBe(true);
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...valid,
+      instructions: 'x'.repeat(200_001),
+    }).success).toBe(false);
   });
 
   it('validates public state shape', () => {
@@ -180,6 +279,39 @@ describe('executionRuns protocol', () => {
     expect((parsed as any).futureRunFlag).toBe('run-extra');
   });
 
+  it('carries an exact Provider-bound model selection and rejects target or model split-brains', () => {
+    const request = {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Run with the selected Provider model.',
+      permissionMode: 'default',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      modelId: 'gpt-5.1-codex',
+      modelSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_openai',
+        modelId: 'gpt-5.1-codex',
+      },
+    } as const;
+
+    expect(ExecutionRunStartRequestSchema.parse(request).modelSelection).toEqual(
+      request.modelSelection,
+    );
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...request,
+      modelSelection: {
+        ...request.modelSelection,
+        agentTargetKey: 'backend:claude',
+      },
+    }).success).toBe(false);
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...request,
+      modelId: 'different-model',
+    }).success).toBe(false);
+  });
+
   it('rejects Agent-session startup instructions on execution runs', () => {
     expect(ExecutionRunStartRequestSchema.safeParse({
       intent: 'review',
@@ -270,6 +402,52 @@ describe('executionRuns protocol', () => {
 
     expect(parsed.kind).toBe('scm_commit_message.v1');
     expect(parsed.intent).toBe('scm_commit_message');
+  });
+
+  it('validates Voice commit Provider selection against the Voice Agent target and commit model', () => {
+    const request = {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      modelId: 'chat-model',
+      modelSelection: {
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: 'provider-chat',
+        modelId: 'chat-model',
+      },
+      intentInput: {
+        commitModelSelection: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: 'provider-commit',
+          modelId: 'commit-model',
+        },
+      },
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+    } as const;
+
+    expect(ExecutionRunStartRequestSchema.parse(request).intentInput).toEqual(request.intentInput);
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...request,
+      intentInput: {
+        commitModelSelection: {
+          ...request.intentInput.commitModelSelection,
+          agentTargetKey: 'backend:claude',
+        },
+      },
+    }).success).toBe(false);
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...request,
+      intentInput: {
+        commitModelSelection: {
+          ...request.intentInput.commitModelSelection,
+          modelId: 'different-commit-model',
+        },
+      },
+    }).success).toBe(false);
   });
 
   it('validates scm_diff_summary.v1 start requests as bounded read-only execution runs', () => {
@@ -576,6 +754,36 @@ describe('executionRuns protocol', () => {
       kind: 'provider_session.v1',
       providerSessionId: 'legacy-kind-session',
     });
+  });
+
+  it('normalizes the remote-dev dual Voice resume handle into canonical Provider session fields', () => {
+    // Prospective predecessor provenance:
+    // ../remote-dev@f8c0ecb7919eac4ba8cb060917b97bb6fca89fae
+    // packages/protocol/src/executionRunStartRequest.ts and
+    // apps/ui/sources/voice/agent/VoiceAgentSessionController.persistence.spec.ts
+    const predecessorHandle = {
+      kind: 'voice_agent_sessions.v1',
+      backendId: 'claude',
+      chatVendorSessionId: 'chat-predecessor',
+      commitVendorSessionId: 'commit-predecessor',
+    } as const;
+
+    expect(normalizeLegacyExecutionRunBackendTargetInput(null)).toBeNull();
+    expect(normalizeLegacyExecutionRunBackendTargetInput(undefined)).toBeUndefined();
+
+    const normalized = normalizeLegacyExecutionRunBackendTargetInput(predecessorHandle);
+    expect(normalized).toEqual({
+      kind: 'voice_agent_sessions.v1',
+      backendId: 'claude',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'claude',
+        sourceKind: 'built_in',
+      },
+      chatProviderSessionId: 'chat-predecessor',
+      commitProviderSessionId: 'commit-predecessor',
+    });
+    expect(ExecutionRunResumeHandleSchema.safeParse(normalized).success).toBe(true);
   });
 
   it('accepts legacy backendId fields in resume handles', () => {
@@ -951,6 +1159,11 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_busy')).toBe('execution_run_busy');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_failed')).toBe('execution_run_failed');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_budget_exceeded')).toBe('execution_run_budget_exceeded');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_output_limit_exceeded')).toBe('execution_run_output_limit_exceeded');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_protocol_unsupported')).toBe('execution_run_protocol_unsupported');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_target_not_selected')).toBe('execution_run_target_not_selected');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_target_unavailable')).toBe('execution_run_target_unavailable');
+    expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_scope_mismatch')).toBe('execution_run_scope_mismatch');
     expect(ExecutionRunTransportErrorCodeSchema.parse('run_depth_exceeded')).toBe('run_depth_exceeded');
     expect(ExecutionRunTransportErrorCodeSchema.parse('permission_denied')).toBe('permission_denied');
 

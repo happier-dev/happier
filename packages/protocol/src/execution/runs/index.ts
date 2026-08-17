@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { VoiceAssistantActionSchema } from '../../voice/actions.js';
 import { VoiceAgentOutputEventV1Schema } from '../../voice/outputEvents.js';
-import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import {
   ExecutionRunClassSchema,
@@ -17,6 +16,11 @@ import {
   type ExecutionRunIoMode,
   ExecutionRunReplaySeedRequestSchema,
   type ExecutionRunReplaySeedRequest,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
+  type ExecutionRunVoiceAgentIntentInputV1,
+  EXECUTION_RUN_TASK_INSTRUCTIONS_MAX_CHARS,
+  ExecutionRunTaskIntentInputV1Schema,
+  type ExecutionRunTaskIntentInputV1,
   ExecutionRunResumeHandleSchema,
   type ExecutionRunResumeHandle,
   ExecutionRunResumeHandleProviderSessionV1Schema,
@@ -37,14 +41,58 @@ import {
   type ExecutionRunScmDiffSummaryResultV1,
   ExecutionRunStartRequestSchema,
   type ExecutionRunStartRequest,
-  ExecutionRunStartResponseSchema,
-  type ExecutionRunStartResponse,
+  ExecutionRunDetachedStartRequestV1Schema,
+  type ExecutionRunDetachedStartRequestV1,
+  EXECUTION_RUN_DETACHED_START_PROMPT_FIELDS_V1,
   normalizeLegacyExecutionRunBackendTargetInput,
 } from './startRequest.js';
-import {
-  ExecutionRunListRequestSchema as ExecutionRunListRequestSchemaBase,
-  ExecutionRunStatusSchema as ExecutionRunStatusSchemaBase,
-} from './listRequest.js';
+export {
+  ExecutionRunTransportErrorCodeSchema,
+  ExecutionRunStartRunCreationSchema,
+  ExecutionRunStartFailureDetailsV1Schema,
+  readExecutionRunStartRunCreation,
+  withExecutionRunStartFailureDetails,
+  ExecutionRunStatusSchema,
+  ExecutionRunListRequestSchema,
+  ExecutionRunErrorSchema,
+  ExecutionRunTranscriptSchema,
+  ExecutionRunPublicStateSchema,
+  ExecutionRunListResponseSchema,
+  ExecutionRunGetRequestSchema,
+  ExecutionRunGetResponseSchema,
+  ExecutionRunWaitResultSchema,
+  ExecutionRunStartResponseSchema,
+  ExecutionRunSendResponseSchema,
+  ExecutionRunStopResponseSchema,
+} from './responseSchemas.js';
+export type {
+  ExecutionRunTransportErrorCode,
+  ExecutionRunStartRunCreation,
+  ExecutionRunStartFailureDetailsV1,
+  ExecutionRunStatus,
+  ExecutionRunListRequest,
+  ExecutionRunError,
+  ExecutionRunTranscript,
+  ExecutionRunPublicState,
+  ExecutionRunListResponse,
+  ExecutionRunGetRequest,
+  ExecutionRunGetResponse,
+  ExecutionRunWaitResult,
+  ExecutionRunStartResponse,
+  ExecutionRunSendResponse,
+  ExecutionRunStopResponse,
+} from './responseSchemas.js';
+export {
+  ExecutionRunTerminalStatusSchema,
+  isExecutionRunTerminalStatus,
+  normalizeExecutionRunWaitPollIntervalMs,
+  normalizeExecutionRunWaitTimeoutMs,
+  waitForExecutionRunTerminal,
+  type ExecutionRunTerminalStatus,
+  type ExecutionRunWaitFailure,
+  type ExecutionRunWaitReadResult,
+  type ExecutionRunWaitLoopResult,
+} from './waitForTerminal.js';
 
 /**
  * Public contract for execution runs (sub-agents / reviews / planning / delegation / voice agent).
@@ -66,13 +114,17 @@ export {
   ExecutionRunResumeHandleSchema,
   ExecutionRunDisplaySchema,
   ExecutionRunReplaySeedRequestSchema,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
+  EXECUTION_RUN_TASK_INSTRUCTIONS_MAX_CHARS,
+  ExecutionRunTaskIntentInputV1Schema,
   ExecutionRunScmCommitMessageScopeV1Schema,
   ExecutionRunScmCommitMessageInputV1Schema,
   ExecutionRunScmCommitMessageResultV1Schema,
   ExecutionRunScmDiffSummaryInputV1Schema,
   ExecutionRunScmDiffSummaryResultV1Schema,
   ExecutionRunStartRequestSchema,
-  ExecutionRunStartResponseSchema,
+  ExecutionRunDetachedStartRequestV1Schema,
+  EXECUTION_RUN_DETACHED_START_PROMPT_FIELDS_V1,
 };
 export type {
   ExecutionRunIntent,
@@ -85,89 +137,16 @@ export type {
   ExecutionRunResumeHandle,
   ExecutionRunDisplay,
   ExecutionRunReplaySeedRequest,
+  ExecutionRunVoiceAgentIntentInputV1,
+  ExecutionRunTaskIntentInputV1,
   ExecutionRunScmCommitMessageScopeV1,
   ExecutionRunScmCommitMessageInputV1,
   ExecutionRunScmCommitMessageResultV1,
   ExecutionRunScmDiffSummaryInputV1,
   ExecutionRunScmDiffSummaryResultV1,
   ExecutionRunStartRequest,
-  ExecutionRunStartResponse,
+  ExecutionRunDetachedStartRequestV1,
 };
-
-// Canonical, stable error code vocabulary for RPC `errorCode` and MCP `error.code`.
-// Keep this pinned and deterministic; clients should branch on these strings.
-export const ExecutionRunTransportErrorCodeSchema = z.enum([
-  'execution_run_not_allowed',
-  'execution_run_not_found',
-  'execution_run_action_not_supported',
-  'execution_run_invalid_action_input',
-  'execution_run_stream_not_found',
-  'execution_run_busy',
-  'execution_run_failed',
-  'execution_run_budget_exceeded',
-  'execution_run_connected_service_generation_refresh_required',
-  'run_depth_exceeded',
-  'permission_denied',
-]);
-export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
-export const ExecutionRunStatusSchema = ExecutionRunStatusSchemaBase;
-export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
-export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
-export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
-
-export const ExecutionRunErrorSchema = z.object({
-  code: z.string().min(1),
-  message: z.string().optional(),
-}).passthrough();
-export type ExecutionRunError = z.infer<typeof ExecutionRunErrorSchema>;
-
-export const ExecutionRunTranscriptSchema = z.object({
-  persistenceMode: z.enum(['ephemeral', 'persistent']),
-  epoch: z.number().int().min(0),
-}).passthrough();
-export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
-
-export const ExecutionRunPublicStateSchema = z.object({
-  runId: z.string().min(1),
-  callId: z.string().min(1),
-  sidechainId: z.string().min(1),
-  intent: ExecutionRunIntentSchema,
-  backendTarget: BackendTargetRefSchema,
-  display: ExecutionRunDisplaySchema.optional(),
-  // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
-  permissionMode: z.string().min(1),
-  retentionPolicy: ExecutionRunRetentionPolicySchema,
-  runClass: ExecutionRunClassSchema,
-  ioMode: ExecutionRunIoModeSchema,
-  status: ExecutionRunStatusSchema,
-  turnInFlight: z.boolean().optional(),
-  availableActionIds: z.array(z.string().min(1)).optional(),
-  resumeHandle: ExecutionRunResumeHandleSchema.optional(),
-  transcript: ExecutionRunTranscriptSchema.optional(),
-  startedAtMs: z.number().int().nonnegative(),
-  finishedAtMs: z.number().int().nonnegative().optional(),
-  error: ExecutionRunErrorSchema.optional(),
-}).passthrough();
-export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
-
-export const ExecutionRunListResponseSchema = z.object({
-  runs: z.array(ExecutionRunPublicStateSchema),
-}).passthrough();
-export type ExecutionRunListResponse = z.infer<typeof ExecutionRunListResponseSchema>;
-
-export const ExecutionRunGetRequestSchema = z.object({
-  runId: z.string().min(1),
-  includeStructured: z.boolean().optional(),
-}).passthrough();
-export type ExecutionRunGetRequest = z.infer<typeof ExecutionRunGetRequestSchema>;
-
-export const ExecutionRunGetResponseSchema = z.object({
-  run: ExecutionRunPublicStateSchema,
-  latestToolResult: z.unknown().optional(),
-  structuredMeta: z.object({ kind: z.string(), payload: z.unknown() }).passthrough().optional(),
-  structuredMetaArtifactRef: z.object({ artifactId: z.string().min(1) }).passthrough().optional(),
-}).passthrough();
-export type ExecutionRunGetResponse = z.infer<typeof ExecutionRunGetResponseSchema>;
 
 export const ExecutionRunSendRequestSchema = z.object({
   runId: z.string().min(1),
@@ -177,14 +156,8 @@ export const ExecutionRunSendRequestSchema = z.object({
 }).passthrough();
 export type ExecutionRunSendRequest = z.infer<typeof ExecutionRunSendRequestSchema>;
 
-export const ExecutionRunSendResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
-export type ExecutionRunSendResponse = z.infer<typeof ExecutionRunSendResponseSchema>;
-
 export const ExecutionRunStopRequestSchema = z.object({ runId: z.string().min(1) }).passthrough();
 export type ExecutionRunStopRequest = z.infer<typeof ExecutionRunStopRequestSchema>;
-
-export const ExecutionRunStopResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
-export type ExecutionRunStopResponse = z.infer<typeof ExecutionRunStopResponseSchema>;
 
 export const ExecutionRunEnsureRequestSchema = z.object({
   runId: z.string().min(1),

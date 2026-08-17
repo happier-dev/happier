@@ -13,6 +13,10 @@ import {
   resolveExternalSessionOperationTimelineV1,
 } from '../external/operationV1.js';
 import {
+  buildLinkedExternalSessionMetadataV1,
+  resolveLinkedExternalSessionMetadataV1,
+} from '../external/linkedSessionMetadata.js';
+import {
   SESSION_METADATA_LAYOUT_VERSION_V1,
   SESSION_OWNER_METADATA_VERSION_V1,
   SESSION_SHARED_METADATA_VERSION_V1,
@@ -28,15 +32,23 @@ import {
   SessionMetadataTuplePatchV1Schema,
   SessionMetadataVersionConflictV1Schema,
   SessionOwnerMetadataCiphertextV1Schema,
+  SessionOwnerMetadataEnvelopeV1Schema,
   SessionOwnerMetadataV1Schema,
   SessionSharedMetadataV1Schema,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   createSessionOwnerMetadataV1,
+  encodeSessionOwnerMetadataEnvelopeV1,
+  openSessionOwnerMetadataEnvelopeV1,
   isSessionOwnerMetadataCiphertextV1,
   openSessionOwnerMetadataV1,
+  parseSessionOwnerMetadataEnvelopeV1,
+  projectSessionMetadataAgentVocabularyWriteCompatibilityV1,
   projectSessionOwnerCompatibilityViewV1,
   projectSessionSharedMetadataV1,
   rewrapSessionOwnerMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   sealSessionOwnerMetadataV1,
+  validateSessionOwnerMetadataEnvelopeForAccountModeV1,
 } from './sessionMetadataEnvelopesV1.js';
 
 function deterministicRandomBytes(seed: number): (length: number) => Uint8Array {
@@ -158,7 +170,189 @@ function genericHostSessionRuntimeDescriptor(params: Readonly<{
   } as const;
 }
 
+// Prospective predecessor reader pinned from:
+//   ../remote-dev HEAD fae505bdc6916b3c9fa7a67eac3c4c88df759e9b
+//   apps/ui/sources/sync/domains/state/storageTypes.ts:29-306
+// The real reader is a single top-level safeParse: any missing nested legacy
+// identity or non-positive model window rejects the whole metadata object.
+const RemoteDevScalarValueAtFae505Schema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+const RemoteDevCatalogValueOptionAtFae505Schema = z.object({
+  value: RemoteDevScalarValueAtFae505Schema,
+  name: z.string(),
+  description: z.string().optional(),
+});
+const RemoteDevModelOptionAtFae505Schema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  category: z.string().optional(),
+  type: z.string(),
+  currentValue: RemoteDevScalarValueAtFae505Schema,
+  options: z.array(RemoteDevCatalogValueOptionAtFae505Schema).optional(),
+});
+const RemoteDevModelAtFae505Schema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+  modelOptions: z.array(RemoteDevModelOptionAtFae505Schema).optional(),
+});
+const RemoteDevModeCatalogAtFae505Schema = z.object({
+  v: z.literal(1),
+  provider: z.string(),
+  updatedAt: z.number(),
+  currentModeId: z.string(),
+  availableModes: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+  })),
+});
+const RemoteDevModelCatalogAtFae505Schema = z.object({
+  v: z.literal(1),
+  provider: z.string(),
+  updatedAt: z.number(),
+  currentModelId: z.string(),
+  availableModels: z.array(RemoteDevModelAtFae505Schema),
+});
+const RemoteDevConfigCatalogAtFae505Schema = z.object({
+  v: z.literal(1),
+  provider: z.string(),
+  updatedAt: z.number(),
+  configOptions: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    type: z.string(),
+    currentValue: RemoteDevScalarValueAtFae505Schema,
+    options: z.array(RemoteDevCatalogValueOptionAtFae505Schema).optional(),
+  })),
+});
+const RemoteDevRuntimeDescriptorAtFae505Schema = z.object({
+  v: z.literal(1),
+  providerId: z.string(),
+  provider: z.object({
+    backendMode: z.string().optional(),
+    vendorSessionId: z.string().optional(),
+    serverBaseUrl: z.string().optional(),
+    serverBaseUrlExplicit: z.boolean().optional(),
+    resumeStrategy: z.string().optional(),
+    sessionFile: z.string().optional(),
+    providerExtra: z.object({
+      owner: z.string(),
+      schemaId: z.string(),
+      v: z.number().int().positive(),
+    }).passthrough().optional(),
+  }).passthrough(),
+}).passthrough();
+const RemoteDevMetadataReaderAtFae505Schema = z.object({
+  path: z.string().nullish().transform((value) =>
+    typeof value === 'string' ? value : ''),
+  host: z.string().nullish().transform((value) =>
+    typeof value === 'string' ? value : ''),
+  agentRuntimeDescriptorV1:
+    RemoteDevRuntimeDescriptorAtFae505Schema.optional(),
+  handoffV1: z.object({
+    v: z.literal(1),
+    sourceMachineId: z.string(),
+    targetMachineId: z.string(),
+    providerId: z.string(),
+    sessionStorageBefore: z.enum(['direct', 'persisted']),
+    sessionStorageAfter: z.enum(['direct', 'persisted']),
+    transportStrategy: z.enum(['direct_peer', 'server_routed_stream']),
+    completedAtMs: z.number(),
+    sourceWorkspaceRootPath: z.string().optional(),
+    targetWorkspaceRootPath: z.string().optional(),
+  }).optional(),
+  acpHistoryImportV1: z.object({
+    v: z.literal(1),
+    provider: z.string(),
+    remoteSessionId: z.string(),
+    importedAt: z.number(),
+    lastImportedFingerprint: z.string().optional(),
+  }).optional(),
+  acpSessionModesV1: RemoteDevModeCatalogAtFae505Schema.optional(),
+  sessionModesV1: RemoteDevModeCatalogAtFae505Schema.optional(),
+  acpSessionModelsV1: RemoteDevModelCatalogAtFae505Schema.optional(),
+  sessionModelsV1: RemoteDevModelCatalogAtFae505Schema.optional(),
+  acpConfigOptionsV1: RemoteDevConfigCatalogAtFae505Schema.optional(),
+  sessionConfigOptionsV1: RemoteDevConfigCatalogAtFae505Schema.optional(),
+  forkV1: z.object({
+    v: z.literal(1),
+    parentSessionId: z.string(),
+    parentCutoffSeqInclusive: z.number(),
+    createdAtMs: z.number(),
+    strategy: z.string(),
+    providerHint: z.object({
+      providerId: z.string().optional(),
+      backendMode: z.string().optional(),
+      vendorSessionId: z.string().optional(),
+    }).optional(),
+  }).optional(),
+}).passthrough();
+
 describe('session metadata privacy envelopes v1', () => {
+  it('normalizes deployed Antigravity runtime identity through the host owner projection', () => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'antigravity',
+          provider: {
+            runtimeMode: 'cliPrint',
+            providerSessionId: 'stale-cli-conversation',
+            providerExtra: {
+              owner: 'antigravity',
+              schemaId: 'antigravity.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                runtimeMode: 'sdk',
+                providerSessionId: 'localharness-session-1',
+                localharnessSessionId: 'localharness-session-1',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(created).toMatchObject({
+      ok: true,
+      ownerMetadata: {
+        nativeSession: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'antigravity',
+            runtimeMode: 'sdk',
+            providerSessionId: 'localharness-session-1',
+            localharnessSessionId: 'localharness-session-1',
+          },
+        },
+      },
+    });
+    if (!created.ok) return;
+    expect(projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata: created.ownerMetadata,
+    })).toMatchObject({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'antigravity',
+        agent: {
+          runtimeMode: 'sdk',
+          providerSessionId: 'localharness-session-1',
+          localharnessSessionId: 'localharness-session-1',
+        },
+      },
+    });
+  });
+
   it('admits only the exact canonical padded Base64 spelling of kind-10 ciphertext', () => {
     const canonicalCiphertext =
       'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
@@ -190,6 +384,149 @@ describe('session metadata privacy envelopes v1', () => {
       expect(SessionOwnerMetadataCiphertextV1Schema.safeParse(alias).success)
         .toBe(false);
     }
+  });
+
+  it('opens only the explicit Session owner-envelope branch', () => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: '/private/workspace',
+        machineId: 'machine-1',
+      },
+    });
+    const plain = createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
+    const encrypted = sealSessionOwnerMetadataEnvelopeV1({
+      material: material(6),
+      ownerMetadata,
+      randomBytes: deterministicRandomBytes(1),
+    });
+
+    expect(SessionOwnerMetadataEnvelopeV1Schema.parse(plain)).toEqual(plain);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.parse(encrypted))
+      .toEqual(encrypted);
+    expect(parseSessionOwnerMetadataEnvelopeV1(
+      encodeSessionOwnerMetadataEnvelopeV1(plain),
+    )).toEqual(plain);
+    expect(parseSessionOwnerMetadataEnvelopeV1(
+      encodeSessionOwnerMetadataEnvelopeV1(encrypted),
+    )).toEqual(encrypted);
+    expect(parseSessionOwnerMetadataEnvelopeV1(encrypted.c)).toBeNull();
+    expect(parseSessionOwnerMetadataEnvelopeV1(
+      JSON.stringify(encrypted.c),
+    )).toBeNull();
+    expect(parseSessionOwnerMetadataEnvelopeV1(
+      JSON.stringify({ ...plain, privateBag: {} }),
+    )).toBeNull();
+    expect(parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({
+      ciphertext: encrypted.c,
+    }))).toBeNull();
+    expect(parseSessionOwnerMetadataEnvelopeV1('not-json')).toBeNull();
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse(encrypted.c).success)
+      .toBe(false);
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: plain,
+    })).toEqual({ ok: true, ownerMetadata });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+    })).toEqual({ ok: false, reason: 'material_unavailable' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+      material: material(6),
+    })).toEqual({ ok: true, ownerMetadata });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+      material: material(7),
+    })).toEqual({ ok: false, reason: 'invalid_ciphertext' });
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
+      ...plain,
+      c: encrypted.c,
+    }).success).toBe(false);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
+      ...encrypted,
+      v: ownerMetadata,
+    }).success).toBe(false);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
+      t: 'encrypted',
+      c: 'not-owner-metadata-ciphertext',
+    }).success).toBe(false);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
+      t: 'plain',
+      v: {
+        ...ownerMetadata,
+        privateBag: {},
+      },
+    }).success).toBe(false);
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
+      ciphertext: encrypted.c,
+    }).success).toBe(false);
+  });
+
+  it('uses Account mode, independently of Session mode, as owner-envelope authority', () => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        path: '/private/workspace',
+        machineId: 'machine-1',
+      },
+    });
+    const plain = createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
+    const encrypted = sealSessionOwnerMetadataEnvelopeV1({
+      material: material(6),
+      ownerMetadata,
+      randomBytes: deterministicRandomBytes(1),
+    });
+
+    // Account plain + Session E2EE: owner metadata remains Account-scoped plain.
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: plain,
+    })).toEqual({ ok: true, ownerMetadata });
+
+    // Account E2EE + Session plain: owner metadata remains Account-scoped encrypted.
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+      material: material(6),
+    })).toEqual({ ok: true, ownerMetadata });
+
+    expect(validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+      accountMode: 'plain',
+      envelope: encrypted,
+    })).toEqual({ ok: false, reason: 'account_mode_mismatch' });
+    expect(validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+      accountMode: 'e2ee',
+      envelope: plain,
+    })).toEqual({ ok: false, reason: 'account_mode_mismatch' });
+    expect(validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+      accountMode: 'plain',
+      envelope: { t: 'plain', v: { ...ownerMetadata, privateBag: {} } },
+    })).toEqual({ ok: false, reason: 'invalid_envelope' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: { t: 'plain', v: { ...ownerMetadata, privateBag: {} } },
+    })).toEqual({ ok: false, reason: 'invalid_envelope' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: encrypted,
+      material: material(6),
+    })).toEqual({ ok: false, reason: 'account_mode_mismatch' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: plain,
+    })).toEqual({ ok: false, reason: 'account_mode_mismatch' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+    })).toEqual({ ok: false, reason: 'material_unavailable' });
+    expect(openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'e2ee',
+      envelope: encrypted,
+      material: material(7),
+    })).toEqual({ ok: false, reason: 'invalid_ciphertext' });
   });
 
   it('persists only the canonical applied startup-instructions marker', () => {
@@ -239,7 +576,8 @@ describe('session metadata privacy envelopes v1', () => {
         version: 3,
       },
       ownerMetadata: {
-        ciphertext: ownerCiphertext,
+        t: 'plain',
+        v: { v: 1 },
       },
       agentState: {
         ciphertext: null,
@@ -247,6 +585,19 @@ describe('session metadata privacy envelopes v1', () => {
       },
     } as const;
     expect(SessionMetadataEnvelopeTupleV1Schema.parse(tuple)).toEqual(tuple);
+    expect(SessionMetadataEnvelopeTupleV1Schema.parse({
+      ...tuple,
+      ownerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
+    })).toEqual({
+      ...tuple,
+      ownerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
+    });
     expect(SessionMetadataEnvelopeTupleV1Schema.safeParse({
       ...tuple,
       metadataLayoutVersion: 2,
@@ -258,17 +609,31 @@ describe('session metadata privacy envelopes v1', () => {
         version: 3,
       },
     }).success).toBe(false);
+    expect(SessionMetadataEnvelopeTupleV1Schema.safeParse({
+      ...tuple,
+      ownerMetadata: {
+        ciphertext: ownerCiphertext,
+      },
+    }).success).toBe(false);
 
     const ownerPatch = {
       mode: 'owner',
       metadataLayoutVersion: 1,
-      expectedOwnerMetadataCiphertext: ownerCiphertext,
+      publisherPrecondition: {
+        machineId: 'machine-1',
+        committedFenceMs: 1_000,
+      },
+      expectedOwnerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
       sharedMetadata: {
         ciphertext: 'next-shared-ciphertext',
         expectedVersion: 3,
       },
       ownerMetadata: {
-        ciphertext: ownerCiphertext,
+        t: 'plain',
+        v: { v: 1 },
       },
       agentState: {
         ciphertext: 'next-agent-state-ciphertext',
@@ -285,13 +650,24 @@ describe('session metadata privacy envelopes v1', () => {
     } as const;
     expect(SessionMetadataTuplePatchV1Schema.parse(ownerPatch))
       .toEqual(ownerPatch);
+    expect(SessionMetadataTuplePatchV1Schema.safeParse({
+      ...ownerPatch,
+      publisherPrecondition: {
+        ...ownerPatch.publisherPrecondition,
+        reusablePermit: true,
+      },
+    }).success).toBe(false);
     const {
-      expectedOwnerMetadataCiphertext: _missingExpectedOwnerCiphertext,
-      ...ownerPatchWithoutExpectedOwnerCiphertext
+      expectedOwnerMetadata: _missingExpectedOwnerMetadata,
+      ...ownerPatchWithoutExpectedOwnerMetadata
     } = ownerPatch;
     expect(SessionMetadataTuplePatchV1Schema.safeParse(
-      ownerPatchWithoutExpectedOwnerCiphertext,
+      ownerPatchWithoutExpectedOwnerMetadata,
     ).success).toBe(false);
+    expect(SessionMetadataTuplePatchV1Schema.safeParse({
+      ...ownerPatch,
+      expectedOwnerMetadataCiphertext: ownerCiphertext,
+    }).success).toBe(false);
     expect(SessionMetadataTuplePatchV1Schema.parse(sharedEditorPatch))
       .toEqual(sharedEditorPatch);
     expect(SessionMetadataTuplePatchV1Schema.safeParse({
@@ -301,6 +677,10 @@ describe('session metadata privacy envelopes v1', () => {
     expect(SessionMetadataTuplePatchV1Schema.safeParse({
       ...sharedEditorPatch,
       agentState: { ciphertext: null, expectedVersion: 5 },
+    }).success).toBe(false);
+    expect(SessionMetadataTuplePatchV1Schema.safeParse({
+      ...sharedEditorPatch,
+      publisherPrecondition: ownerPatch.publisherPrecondition,
     }).success).toBe(false);
   });
 
@@ -317,13 +697,17 @@ describe('session metadata privacy envelopes v1', () => {
       mode: 'owner_inactive_model_intent',
       metadataLayoutVersion: 1,
       sessionExpectation,
-      expectedOwnerMetadataCiphertext: ownerCiphertext,
+      expectedOwnerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
       sharedMetadata: {
         ciphertext: 'next-shared-ciphertext',
         expectedVersion: 3,
       },
       ownerMetadata: {
-        ciphertext: ownerCiphertext,
+        t: 'encrypted',
+        c: ownerCiphertext,
       },
       agentState: {
         ciphertext: null,
@@ -339,6 +723,15 @@ describe('session metadata privacy envelopes v1', () => {
     expect(
       SessionMetadataInactiveModelIntentOwnerPatchV1Schema.parse(ownerPatch),
     ).toEqual(ownerPatch);
+    expect(
+      SessionMetadataInactiveModelIntentOwnerPatchV1Schema.safeParse({
+        ...ownerPatch,
+        publisherPrecondition: {
+          machineId: 'machine-1',
+          committedFenceMs: 1_000,
+        },
+      }).success,
+    ).toBe(false);
     expect(SessionMetadataTuplePatchV1Schema.safeParse(ownerPatch).success)
       .toBe(false);
     expect(SessionMetadataTuplePatchV1Schema.safeParse({
@@ -423,7 +816,8 @@ describe('session metadata privacy envelopes v1', () => {
           ciphertext: 'shared-metadata-ciphertext',
         },
         ownerMetadata: {
-          ciphertext: ownerCiphertext,
+          t: 'encrypted',
+          c: ownerCiphertext,
         },
         agentState: {
           ciphertext: 'next-agent-state-ciphertext',
@@ -433,6 +827,33 @@ describe('session metadata privacy envelopes v1', () => {
 
     expect(SessionMetadataTuplePatchV1Schema.parse(migrationPatch))
       .toEqual(migrationPatch);
+    expect(SessionMetadataTuplePatchV1Schema.parse({
+      ...migrationPatch,
+      expectedAccountEncryptionMode: 'plain',
+      expectedAccountContentPublicKeyFingerprint: null,
+      target: {
+        ...migrationPatch.target,
+        ownerMetadata: {
+          t: 'plain',
+          v: { v: 1 },
+        },
+      },
+    })).toEqual({
+      ...migrationPatch,
+      expectedAccountEncryptionMode: 'plain',
+      expectedAccountContentPublicKeyFingerprint: null,
+      target: {
+        ...migrationPatch.target,
+        ownerMetadata: {
+          t: 'plain',
+          v: { v: 1 },
+        },
+      },
+    });
+    expect(SessionMetadataTuplePatchV1Schema.safeParse({
+      ...migrationPatch,
+      expectedAccountEncryptionMode: 'plain',
+    }).success).toBe(false);
     const {
       expectedAccountEncryptionMode: _missingAccountMode,
       ...migrationWithoutAccountMode
@@ -525,7 +946,8 @@ describe('session metadata privacy envelopes v1', () => {
       target: {
         ...migrationPatch.target,
         ownerMetadata: {
-          ciphertext: 'not-owner-metadata-ciphertext',
+          t: 'encrypted',
+          c: 'not-owner-metadata-ciphertext',
         },
       },
     }).success).toBe(false);
@@ -546,13 +968,29 @@ describe('session metadata privacy envelopes v1', () => {
     } as const;
     const ownerProjection = {
       ...sharedProjection,
-      ownerMetadata: ownerCiphertext,
+      ownerMetadata: {
+        t: 'plain',
+        v: { v: 1 },
+      },
       agentState: null,
       agentStateVersion: 5,
     } as const;
 
     expect(SessionMetadataRecipientProjectionV1Schema.parse(ownerProjection))
       .toEqual(ownerProjection);
+    expect(SessionMetadataRecipientProjectionV1Schema.parse({
+      ...ownerProjection,
+      ownerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
+    })).toEqual({
+      ...ownerProjection,
+      ownerMetadata: {
+        t: 'encrypted',
+        c: ownerCiphertext,
+      },
+    });
     expect(SessionMetadataRecipientProjectionV1Schema.parse(sharedProjection))
       .toEqual(sharedProjection);
     expect(sharedProjection).not.toHaveProperty('ownerMetadata');
@@ -747,6 +1185,14 @@ describe('session metadata privacy envelopes v1', () => {
         agent: {
           backendMode: 'appServer',
           providerSessionId: 'private-native-session',
+        },
+      },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          vendorSessionId: 'private-native-session',
         },
       },
       permissionMode: 'default',
@@ -1323,6 +1769,60 @@ describe('session metadata privacy envelopes v1', () => {
     }
   });
 
+  it('reparses the projected Codex host-session runtime identity idempotently', () => {
+    expect(createSessionOwnerMetadataV1({
+      metadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'custom' },
+        },
+      },
+    })).toEqual({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+      unsupportedFields: ['runtimeDescriptorV1'],
+    });
+
+    const genericHostDescriptor = genericHostSessionRuntimeDescriptor({
+      agentId: 'codex',
+    });
+    const descriptor = {
+      ...genericHostDescriptor,
+      agent: {
+        ...genericHostDescriptor.agent,
+        backendMode: 'custom',
+      },
+    } as const;
+
+    const created = createSessionOwnerMetadataV1({
+      metadata: { runtimeDescriptorV1: descriptor },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error('expected canonical Codex host-session owner metadata');
+    }
+
+    const compatibilityView = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata: created.ownerMetadata,
+    });
+    const reparsed = createSessionOwnerMetadataV1({
+      metadata: compatibilityView,
+    });
+
+    if (!reparsed.ok) {
+      throw new Error(
+        `expected reparsed Codex host-session owner metadata; received ${
+          reparsed.error
+        }: ${reparsed.unsupportedFields.join(', ')}`,
+      );
+    }
+    expect(reparsed).toMatchObject({ ok: true });
+    expect(reparsed.ownerMetadata.nativeSession?.runtimeDescriptorV1)
+      .toEqual(created.ownerMetadata.nativeSession?.runtimeDescriptorV1);
+  });
+
   it('projects the reachable account-configured ACP host-session provenance', () => {
     const descriptor = genericHostSessionRuntimeDescriptor({
       agentId: 'acp:account-configured-acp',
@@ -1562,6 +2062,35 @@ describe('session metadata privacy envelopes v1', () => {
     });
   });
 
+  it.each([
+    ['released identity with canonical-only link data', {
+      v: 1,
+      providerId: 'codex',
+      remoteSessionId: 'native-private',
+      importedAtMs: 11,
+      source: { kind: 'codexHome', home: 'user' },
+      linkData: { projectId: 'project-private' },
+    }],
+    ['equal released and canonical identities', {
+      v: 1,
+      providerId: 'codex',
+      agentId: 'codex',
+      remoteSessionId: 'native-private',
+      importedAtMs: 11,
+      source: { kind: 'codexHome', home: 'user' },
+    }],
+  ])('rejects a historical-import tombstone with %s', (_label, tombstone) => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: { externalHistoryImportV1: tombstone },
+    });
+    expect(created).toMatchObject({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+    });
+    if (created.ok) return;
+    expect(created.unsupportedFields).toContain('externalHistoryImportV1');
+  });
+
   it('normalizes predecessor provider vocabulary and direct attention without retaining aliases', () => {
     const created = createSessionOwnerMetadataV1({
       metadata: {
@@ -1649,6 +2178,181 @@ describe('session metadata privacy envelopes v1', () => {
     );
   });
 
+  it('projects every reachable Agent-vocabulary record for the exact prospective predecessor reader', () => {
+    const modeCatalog = {
+      v: 1 as const,
+      agentId: 'codex',
+      updatedAt: 10,
+      currentModeId: 'build',
+      availableModes: [{ id: 'build', name: 'Build' }],
+    };
+    const modelCatalog = {
+      v: 1 as const,
+      agentId: 'codex',
+      updatedAt: 11,
+      currentModelId: 'codex-1',
+      availableModels: [{
+        id: 'codex-1',
+        name: 'Codex 1',
+        contextWindowTokens: 200_000,
+      }],
+    };
+    const configCatalog = {
+      v: 1 as const,
+      agentId: 'codex',
+      updatedAt: 12,
+      configOptions: [{
+        id: 'sandbox',
+        name: 'Sandbox',
+        type: 'boolean',
+        currentValue: true,
+      }],
+    };
+    const canonical = {
+      path: '/private/workspace',
+      host: 'private-host',
+      acpHistoryImportV1: {
+        v: 1 as const,
+        agentId: 'codex',
+        remoteSessionId: 'remote-private',
+        importedAt: 9,
+      },
+      acpSessionModesV1: modeCatalog,
+      sessionModesV1: modeCatalog,
+      acpSessionModelsV1: modelCatalog,
+      sessionModelsV1: modelCatalog,
+      acpConfigOptionsV1: configCatalog,
+      sessionConfigOptionsV1: configCatalog,
+      handoffV1: {
+        v: 1 as const,
+        sourceMachineId: 'machine-a',
+        targetMachineId: 'machine-b',
+        agentId: 'codex',
+        sessionStorageBefore: 'direct' as const,
+        sessionStorageAfter: 'persisted' as const,
+        transportStrategy: 'server_routed_stream' as const,
+        completedAtMs: 13,
+      },
+      runtimeDescriptorV1: {
+        v: 1 as const,
+        agentId: 'opencode',
+        agent: {
+          backendMode: 'server',
+          providerSessionId: 'opencode-private',
+          serverBaseUrl: 'http://127.0.0.1:4096/',
+          serverBaseUrlExplicit: true,
+        },
+      },
+      forkV1: {
+        v: 1 as const,
+        parentSessionId: 'parent-session',
+        parentCutoffSeqInclusive: 42,
+        createdAtMs: 14,
+        strategy: 'provider_native',
+        agentHint: {
+          agentId: 'opencode',
+          backendMode: 'server',
+          agentSessionId: 'opencode-private',
+        },
+      },
+    };
+
+    expect(RemoteDevMetadataReaderAtFae505Schema.safeParse(canonical).success)
+      .toBe(false);
+
+    const compatible =
+      projectSessionMetadataAgentVocabularyWriteCompatibilityV1(canonical);
+    expect(
+      projectSessionMetadataAgentVocabularyWriteCompatibilityV1(compatible),
+    ).toEqual(compatible);
+    const predecessor =
+      RemoteDevMetadataReaderAtFae505Schema.safeParse(compatible);
+    expect(predecessor.success).toBe(true);
+    if (!predecessor.success) return;
+    expect(predecessor.data).toMatchObject({
+      acpHistoryImportV1: { provider: 'codex' },
+      acpSessionModesV1: { provider: 'codex' },
+      sessionModesV1: { provider: 'codex' },
+      acpSessionModelsV1: { provider: 'codex' },
+      sessionModelsV1: { provider: 'codex' },
+      acpConfigOptionsV1: { provider: 'codex' },
+      sessionConfigOptionsV1: { provider: 'codex' },
+      handoffV1: { providerId: 'codex' },
+      agentRuntimeDescriptorV1: {
+        providerId: 'opencode',
+        provider: {
+          backendMode: 'server',
+          vendorSessionId: 'opencode-private',
+          serverBaseUrl: 'http://127.0.0.1:4096/',
+          serverBaseUrlExplicit: true,
+        },
+      },
+      forkV1: {
+        providerHint: {
+          providerId: 'opencode',
+          backendMode: 'server',
+          vendorSessionId: 'opencode-private',
+        },
+      },
+    });
+
+    const canonicalOwner = createSessionOwnerMetadataV1({
+      metadata: compatible,
+    });
+    expect(
+      canonicalOwner.ok,
+      canonicalOwner.ok ? '' : canonicalOwner.unsupportedFields.join(', '),
+    ).toBe(true);
+    if (!canonicalOwner.ok) return;
+    expect(canonicalOwner.ownerMetadata.runtime?.sessionModelsV1)
+      .toMatchObject({ agentId: 'codex' });
+    expect(canonicalOwner.ownerMetadata.handoff?.handoffV1)
+      .toMatchObject({ agentId: 'codex' });
+    expect(JSON.stringify(canonicalOwner.ownerMetadata))
+      .not.toMatch(/"provider"|"providerId"/);
+    expect(canonical.acpSessionModelsV1).not.toHaveProperty('provider');
+    expect(canonical.handoffV1).not.toHaveProperty('providerId');
+    expect(canonical).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(canonical.forkV1).not.toHaveProperty('providerHint');
+  });
+
+  it('narrows model catalog windows at the owner and omits invalid optional hints at the predecessor write projection', () => {
+    const zeroWindowMetadata = {
+      path: '/private/workspace',
+      host: 'private-host',
+      sessionModelsV1: {
+        v: 1 as const,
+        agentId: 'codex',
+        updatedAt: 11,
+        currentModelId: 'codex-1',
+        availableModels: [{
+          id: 'codex-1',
+          name: 'Codex 1',
+          contextWindowTokens: 0,
+        }],
+      },
+    };
+
+    expect(createSessionOwnerMetadataV1({
+      metadata: zeroWindowMetadata,
+    })).toEqual({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+      unsupportedFields: [
+        'runtime.sessionModelsV1.availableModels.0.contextWindowTokens',
+      ],
+    });
+
+    const compatible =
+      projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
+        zeroWindowMetadata,
+      );
+    expect(compatible.sessionModelsV1.availableModels[0])
+      .not.toHaveProperty('contextWindowTokens');
+    expect(RemoteDevMetadataReaderAtFae505Schema.safeParse(compatible).success)
+      .toBe(true);
+  });
+
   it('normalizes legacy voice resume authority before sealing owner metadata', () => {
     const created = createSessionOwnerMetadataV1({
       metadata: {
@@ -1692,6 +2396,56 @@ describe('session metadata privacy envelopes v1', () => {
       },
     });
     expect(JSON.stringify(created)).not.toMatch(/vendor_session|streamId/);
+  });
+
+  it('migrates the remote-dev dual Voice resume handle without dropping resume authority', () => {
+    // Prospective predecessor provenance:
+    // ../remote-dev@f8c0ecb7919eac4ba8cb060917b97bb6fca89fae
+    // packages/protocol/src/executionRunStartRequest.ts and
+    // apps/ui/sources/voice/agent/VoiceAgentSessionController.persistence.spec.ts
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        voiceAgentRunV1: {
+          v: 1,
+          runId: 'voice-run-predecessor',
+          backendId: 'claude',
+          resumeHandle: {
+            kind: 'voice_agent_sessions.v1',
+            backendId: 'claude',
+            chatVendorSessionId: 'chat-predecessor',
+            commitVendorSessionId: 'commit-predecessor',
+          },
+          updatedAtMs: 14,
+        },
+      },
+    });
+
+    expect(created).toEqual({
+      ok: true,
+      ownerMetadata: {
+        v: 1,
+        system: {
+          voiceAgentRunV1: {
+            v: 1,
+            runId: 'voice-run-predecessor',
+            backendId: 'claude',
+            resumeHandle: {
+              kind: 'voice_agent_sessions.v1',
+              backendTarget: {
+                kind: 'backend',
+                backendId: 'claude',
+                sourceKind: 'built_in',
+              },
+              chatProviderSessionId: 'chat-predecessor',
+              commitProviderSessionId: 'commit-predecessor',
+            },
+            updatedAtMs: 14,
+            transcriptContractVersion: 2,
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(created)).not.toMatch(/VendorSessionId/);
   });
 
   it('preserves the representative current and predecessor owner inventory without alias authority', () => {
@@ -1776,6 +2530,19 @@ describe('session metadata privacy envelopes v1', () => {
           provider: 'pi',
           updatedAt: 6,
           currentModelId: 'model-private',
+          activeSelectionV1: {
+            v: 1,
+            selection: {
+              agentTargetKey: 'backend:pi',
+              providerConnectionId: null,
+              modelId: 'model-private',
+            },
+            source: 'runtime_apply',
+            runner: {
+              pid: 123,
+              processStartTimeMs: 1_000,
+            },
+          },
           availableModels: [{
             id: 'model-private',
             name: 'Private model',
@@ -2047,6 +2814,15 @@ describe('session metadata privacy envelopes v1', () => {
     });
     expect(created.ownerMetadata.runtime?.sessionModelsV1).toMatchObject({
       agentId: 'pi',
+      activeSelectionV1: {
+        selection: {
+          modelId: 'model-private',
+        },
+        runner: {
+          pid: 123,
+          processStartTimeMs: 1_000,
+        },
+      },
       availableModels: [{
         modelOptions: [{ category: 'advanced' }],
       }],
@@ -2118,6 +2894,254 @@ describe('session metadata privacy envelopes v1', () => {
             },
           },
         },
+      },
+    });
+  });
+
+  it('preserves canonical follow lifecycle metadata when projecting a linked session into owner metadata', () => {
+    const metadata = buildLinkedExternalSessionMetadataV1({}, {
+      v: 1,
+      agentId: 'opencode',
+      machineId: 'machine-private',
+      remoteSessionId: 'native-private',
+      source: {
+        kind: 'opencodeServer',
+        contractVersion: 1,
+        baseUrl: 'http://127.0.0.1:4096',
+      },
+      followPolicyV1: {
+        v: 1,
+        policy: 'background_follow',
+        updatedAtMs: 100,
+      },
+      followStatusV1: {
+        v: 1,
+        status: 'error',
+        reason: 'source_unavailable',
+        updatedAtMs: 101,
+      },
+      lastFollowIssueV1: {
+        v: 1,
+        code: 'source_unavailable',
+        message: 'Reconnect the source.',
+        retryable: true,
+        observedAtMs: 101,
+      },
+    });
+
+    const created = createSessionOwnerMetadataV1({ metadata });
+
+    expect(created).toMatchObject({
+      ok: true,
+      ownerMetadata: {
+        nativeSession: {
+          externalSessionV1: {
+            followPolicyV1: {
+              policy: 'background_follow',
+            },
+            followStatusV1: {
+              status: 'error',
+              reason: 'source_unavailable',
+            },
+            lastFollowIssueV1: {
+              code: 'source_unavailable',
+              retryable: true,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('rejects conflicting canonical and predecessor linked-session metadata before owner projection', () => {
+    const metadata = buildLinkedExternalSessionMetadataV1({}, {
+      v: 1,
+      agentId: 'opencode',
+      machineId: 'machine-private',
+      remoteSessionId: 'native-private',
+      source: {
+        kind: 'opencodeServer',
+        contractVersion: 1,
+        baseUrl: 'http://127.0.0.1:4096',
+      },
+    });
+    const released = {
+      v: 1,
+      providerId: 'opencode',
+      machineId: 'machine-private',
+      remoteSessionId: 'native-private',
+      source: {
+        kind: 'opencodeServer',
+        contractVersion: 1,
+        baseUrl: 'http://127.0.0.1:4096',
+      },
+    };
+
+    expect(createSessionOwnerMetadataV1({
+      metadata: {
+        ...metadata,
+        directSessionV1: {
+          ...released,
+          remoteSessionId: 'conflicting-native-session',
+        },
+      },
+    })).toMatchObject({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+      unsupportedFields: expect.arrayContaining([
+        'externalSessionV1',
+        'directSessionV1',
+      ]),
+    });
+    expect(SessionOwnerMetadataV1Schema.safeParse({
+      v: 1,
+      nativeSession: {
+        externalSessionV1: metadata.externalSessionV1,
+        directSessionV1: {
+          ...released,
+          remoteSessionId: 'conflicting-native-session',
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('reparses linked-session runtime descriptors after owner projection', () => {
+    const metadata = buildLinkedExternalSessionMetadataV1({}, {
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine-private',
+      remoteSessionId: 'native-private',
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'native-private',
+        },
+      },
+    });
+
+    const created = createSessionOwnerMetadataV1({ metadata });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(SessionOwnerMetadataV1Schema.safeParse(created.ownerMetadata).success)
+      .toBe(true);
+
+    const reopened = openSessionOwnerMetadataEnvelopeV1({
+      accountMode: 'plain',
+      envelope: createPlainSessionOwnerMetadataEnvelopeV1(
+        created.ownerMetadata,
+      ),
+    });
+    expect(reopened.ok).toBe(true);
+    if (!reopened.ok) return;
+    const compatibility = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata: reopened.ownerMetadata,
+    });
+    expect(resolveLinkedExternalSessionMetadataV1(compatibility)).toMatchObject({
+      ok: true,
+      linkedSession: {
+        agentId: 'codex',
+        remoteSessionId: 'native-private',
+        runtimeDescriptorV1: {
+          agentId: 'codex',
+          agent: {
+            backendMode: 'appServer',
+            providerSessionId: 'native-private',
+          },
+        },
+      },
+    });
+
+    const releasedOnly = createSessionOwnerMetadataV1({
+      metadata: {
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine-private',
+          remoteSessionId: 'native-private',
+          source: {
+            kind: 'codexHome',
+            home: 'user',
+          },
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'codex',
+            provider: {
+              backendMode: 'appServer',
+              providerSessionId: 'native-private',
+            },
+          },
+        },
+      },
+    });
+    expect(releasedOnly.ok).toBe(true);
+    if (!releasedOnly.ok) return;
+    expect(releasedOnly.ownerMetadata.nativeSession).toMatchObject({
+      externalSessionV1: {
+        agentId: 'codex',
+        remoteSessionId: 'native-private',
+      },
+    });
+    expect(releasedOnly.ownerMetadata.nativeSession).not.toHaveProperty('directSessionV1');
+    const releasedCompatibility = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata: releasedOnly.ownerMetadata,
+    });
+    expect(resolveLinkedExternalSessionMetadataV1(releasedCompatibility))
+      .toMatchObject({
+        ok: true,
+        linkedSession: {
+          agentId: 'codex',
+          remoteSessionId: 'native-private',
+          runtimeDescriptorV1: {
+            agentId: 'codex',
+            agent: {
+              backendMode: 'appServer',
+              providerSessionId: 'native-private',
+            },
+          },
+        },
+      });
+  });
+
+  it('reads a released provider-only direct owner row and emits canonical compatibility metadata', () => {
+    const ownerMetadata = {
+      v: 1,
+      nativeSession: {
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine-released',
+          remoteSessionId: 'remote-released',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+      },
+    };
+
+    expect(SessionOwnerMetadataV1Schema.safeParse(ownerMetadata).success).toBe(true);
+    const compatibility = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata,
+    });
+    expect(compatibility).toMatchObject({
+      externalSessionV1: {
+        agentId: 'codex',
+        remoteSessionId: 'remote-released',
+      },
+    });
+    expect(compatibility).not.toHaveProperty('directSessionV1');
+    expect(resolveLinkedExternalSessionMetadataV1(compatibility)).toMatchObject({
+      ok: true,
+      source: 'canonical',
+      linkedSession: {
+        agentId: 'codex',
+        remoteSessionId: 'remote-released',
       },
     });
   });

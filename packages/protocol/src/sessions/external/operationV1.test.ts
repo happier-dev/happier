@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import * as externalOperationContract from './index.js';
-
 import {
   ExternalSessionOperationProgressV1Schema,
   ExternalSessionOperationRecordV1Schema,
+  ExternalSessionOperationSharedPresentationV1Schema,
   ExternalSessionMaterializationPublicationV1Schema,
   classifyExternalSessionOperationIdempotencyV1,
   decideExternalSessionOperationUpdateV1,
   projectExternalSessionOperationProgressV1,
+  projectExternalSessionOperationSharedPresentationV1,
   resolveExternalSessionOperationTimelineV1,
 } from './index.js';
 
@@ -64,6 +64,7 @@ function request(
     targetStorageMode: execution === 'takeover_persisted'
       ? 'persisted' as const
       : 'external-linked' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
   };
 }
@@ -116,7 +117,293 @@ function baseRecord(
   };
 }
 
+const takeoverAuthorIntent = {
+  v: 1 as const,
+  surface: 'plugin' as const,
+  kind: 'takeover' as const,
+  agentId: 'example',
+  sourceId: 'codexHome:user:::',
+  remoteSessionId: 'remote-1',
+  targetStorageMode: 'persisted' as const,
+};
+
+const materializeAuthorIntent = {
+  v: 1 as const,
+  surface: 'plugin' as const,
+  kind: 'materialize' as const,
+  sessionId: 'session-1',
+  targetStorageMode: 'external-linked' as const,
+};
+
 describe('External Sessions durable operation contract', () => {
+  it('persists the exact bounded private plugin author-intent union while retaining native rows', () => {
+    const takeover = ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('takeover_persisted'),
+      authorIntent: takeoverAuthorIntent,
+    });
+    expect(takeover.success).toBe(true);
+    if (takeover.success) {
+      expect(takeover.data).toHaveProperty(
+        'authorIntent',
+        takeoverAuthorIntent,
+      );
+    }
+
+    const materialize = ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('materialize'),
+      authorIntent: materializeAuthorIntent,
+    });
+    expect(materialize.success).toBe(true);
+    if (materialize.success) {
+      expect(materialize.data).toHaveProperty(
+        'authorIntent',
+        materializeAuthorIntent,
+      );
+    }
+
+    // Optionality is read compatibility only: an existing native/exact-owner
+    // row remains readable and is not promoted to plugin-authored state.
+    const native = ExternalSessionOperationRecordV1Schema.parse(baseRecord());
+    expect(native).not.toHaveProperty('authorIntent');
+
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('takeover_persisted'),
+      request: {
+        ...baseRecord('takeover_persisted').request,
+        source: {
+          ...baseRecord('takeover_persisted').request.source,
+          remoteSessionId: 'r'.repeat(2_000),
+          qualifiedIdentity: {
+            ...baseRecord('takeover_persisted').request.source
+              .qualifiedIdentity,
+            agent: {
+              ...baseRecord('takeover_persisted').request.source
+                .qualifiedIdentity.agent,
+              localId: 'a'.repeat(128),
+            },
+          },
+        },
+      },
+      authorIntent: {
+        ...takeoverAuthorIntent,
+        agentId: 'a'.repeat(128),
+        sourceId: 's'.repeat(2_000),
+        remoteSessionId: 'r'.repeat(2_000),
+      },
+    }).success).toBe(true);
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('materialize'),
+      request: {
+        ...baseRecord('materialize').request,
+        sessionId: 's'.repeat(191),
+      },
+      authorIntent: {
+        ...materializeAuthorIntent,
+        sessionId: 's'.repeat(191),
+      },
+    }).success).toBe(true);
+
+    for (const invalidAuthorIntent of [
+      { ...takeoverAuthorIntent, generation: 'must-not-persist' },
+      { ...takeoverAuthorIntent, targetDirectory: '/caller-selected/workspace' },
+      { ...takeoverAuthorIntent, agentId: ' codex' },
+      { ...takeoverAuthorIntent, agentId: 'a'.repeat(129) },
+      { ...takeoverAuthorIntent, sourceId: 'codexHome:user::: ' },
+      { ...takeoverAuthorIntent, sourceId: 's'.repeat(2_001) },
+      { ...takeoverAuthorIntent, remoteSessionId: '' },
+      { ...takeoverAuthorIntent, remoteSessionId: 'r'.repeat(2_001) },
+      { ...materializeAuthorIntent, targetStorageMode: 'persisted' },
+      { ...materializeAuthorIntent, remoteSessionId: 'must-not-persist' },
+      { ...materializeAuthorIntent, sessionId: 's'.repeat(192) },
+    ]) {
+      expect(ExternalSessionOperationRecordV1Schema.safeParse({
+        ...baseRecord(
+          invalidAuthorIntent.kind === 'takeover'
+            ? 'takeover_persisted'
+            : 'materialize',
+        ),
+        authorIntent: invalidAuthorIntent,
+      }).success).toBe(false);
+    }
+  });
+
+  it('fails closed for a legacy durable takeover record without an explicit host target directory', () => {
+    const persistedRequest = request('takeover_persisted');
+    if (persistedRequest.plan !== 'takeover') {
+      throw new Error('expected persisted takeover request');
+    }
+    const { targetDirectory: removedTargetDirectory, ...legacyRequest } = persistedRequest;
+    expect(removedTargetDirectory).toBe('/local/selected/workspace');
+
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('takeover_persisted'),
+      request: legacyRequest,
+    }).success).toBe(false);
+  });
+
+  it('rejects plugin author intent that disagrees with its retained semantic request', () => {
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...baseRecord('takeover_persisted'),
+      authorIntent: takeoverAuthorIntent,
+    }).success).toBe(true);
+
+    for (const incoherent of [
+      {
+        ...baseRecord('takeover_persisted'),
+        authorIntent: {
+          ...takeoverAuthorIntent,
+          remoteSessionId: 'different-remote',
+        },
+      },
+      {
+        ...baseRecord('takeover_persisted'),
+        authorIntent: {
+          ...takeoverAuthorIntent,
+          agentId: 'different-agent',
+        },
+      },
+      {
+        ...baseRecord('takeover_external_linked'),
+        authorIntent: takeoverAuthorIntent,
+      },
+      {
+        ...baseRecord('materialize'),
+        authorIntent: {
+          ...materializeAuthorIntent,
+          sessionId: 'different-session',
+        },
+      },
+      {
+        ...baseRecord('takeover_persisted'),
+        authorIntent: materializeAuthorIntent,
+      },
+    ]) {
+      expect(
+        ExternalSessionOperationRecordV1Schema.safeParse(incoherent).success,
+      ).toBe(false);
+    }
+  });
+
+  it('keeps author intent immutable when the retained request changes coherently', () => {
+    const previous = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord('takeover_persisted'),
+      authorIntent: takeoverAuthorIntent,
+    });
+    const next = ExternalSessionOperationRecordV1Schema.parse({
+      ...previous,
+      revision: previous.revision + 1,
+      updatedAtMs: previous.updatedAtMs + 1,
+      request: {
+        ...previous.request,
+        source: {
+          ...previous.request.source,
+          remoteSessionId: 'remote-2',
+        },
+      },
+      authorIntent: {
+        ...takeoverAuthorIntent,
+        remoteSessionId: 'remote-2',
+      },
+    });
+
+    expect(decideExternalSessionOperationUpdateV1(previous, next)).toEqual({
+      kind: 'semantic_mismatch',
+    });
+  });
+
+  it('removes private plugin author intent from complete and shared projections', () => {
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord('takeover_persisted'),
+      authorIntent: takeoverAuthorIntent,
+    });
+    const progress = projectExternalSessionOperationProgressV1(record);
+    expect(progress).not.toHaveProperty('authorIntent');
+    expect(ExternalSessionOperationProgressV1Schema.safeParse({
+      ...progress,
+      authorIntent: takeoverAuthorIntent,
+    }).success).toBe(false);
+
+    const shared = projectExternalSessionOperationSharedPresentationV1(progress);
+    expect(shared).not.toHaveProperty('authorIntent');
+    expect(ExternalSessionOperationSharedPresentationV1Schema.safeParse({
+      ...shared,
+      authorIntent: takeoverAuthorIntent,
+    }).success).toBe(false);
+  });
+
+  it('writes the takeover directory to owner progress while accepting the prior owner projection', () => {
+    const record = ExternalSessionOperationRecordV1Schema.parse(
+      baseRecord('takeover_persisted'),
+    );
+    const progress = projectExternalSessionOperationProgressV1(record);
+    if (progress.request.plan !== 'takeover') {
+      throw new Error('expected takeover progress');
+    }
+    expect(progress.request.targetDirectory).toBe('/local/selected/workspace');
+
+    const {
+      targetDirectory: omittedTargetDirectory,
+      ...priorOwnerRequest
+    } = progress.request;
+    expect(omittedTargetDirectory).toBe('/local/selected/workspace');
+    expect(ExternalSessionOperationProgressV1Schema.safeParse({
+      ...progress,
+      request: priorOwnerRequest,
+    }).success).toBe(true);
+
+    const shared = projectExternalSessionOperationSharedPresentationV1(progress);
+    expect(JSON.stringify(shared)).not.toContain(omittedTargetDirectory);
+  });
+
+  it('projects Retry only for an exact external-linked admission acknowledgement reconciliation', () => {
+    const exact = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord('takeover_external_linked'),
+      revision: 2,
+      status: 'reconciliation_required' as const,
+      phase: 'admitting' as const,
+      updatedAtMs: 1_700_000_000_001,
+      retryTargetPhase: 'admitting' as const,
+      error: {
+        code: 'reconciliation_required' as const,
+        message: 'External-linked takeover admission acknowledgement remains ambiguous after bounded exact-attempt replay.',
+        retryable: true,
+        occurredAtMs: 1_700_000_000_001,
+      },
+      bindings: {
+        operationClaimId: 'operation-claim-1',
+        targetRuntimeAttemptId: 'admission-attempt-1',
+      },
+    });
+    expect(projectExternalSessionOperationProgressV1(exact).error).toEqual({
+      code: 'reconciliation_required',
+      retryable: true,
+      occurredAtMs: 1_700_000_000_001,
+    });
+    expect(ExternalSessionOperationRecordV1Schema.safeParse({
+      ...exact,
+      bindings: {
+        operationClaimId: 'operation-claim-1',
+      },
+    }).success).toBe(false);
+
+    const genericDisagreement = ExternalSessionOperationRecordV1Schema.parse({
+      ...exact,
+      canonicalOwnerEvidence: {
+        linkedSessionRevision: 3,
+        disagreement: {
+          owner: 'runtime_control' as const,
+          expectedRevision: 3,
+          observedRevision: 4,
+        },
+      },
+    });
+    expect(projectExternalSessionOperationProgressV1(genericDisagreement).error).toEqual({
+      code: 'reconciliation_required',
+      retryable: false,
+      occurredAtMs: 1_700_000_000_001,
+    });
+  });
+
   it('requires a bounded progress-projection receipt that cannot acknowledge a future revision', () => {
     const record = baseRecord();
     expect(ExternalSessionOperationRecordV1Schema.safeParse(record).success).toBe(true);
@@ -365,6 +652,13 @@ describe('External Sessions durable operation contract', () => {
       request('takeover_persisted'),
     )).toEqual({ kind: 'semantic_mismatch' });
     expect(classifyExternalSessionOperationIdempotencyV1(
+      request('takeover_persisted'),
+      {
+        ...request('takeover_persisted'),
+        targetDirectory: '/local/different/workspace',
+      },
+    )).toEqual({ kind: 'semantic_mismatch' });
+    expect(classifyExternalSessionOperationIdempotencyV1(
       existing.request,
       {
         ...request(),
@@ -446,6 +740,107 @@ describe('External Sessions durable operation contract', () => {
       },
       publication,
     }).success).toBe(false);
+  });
+
+  it('permits only exact same-claim cancelled Discard transitions', () => {
+    const cancelledInitialPartial = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord(),
+      revision: 2,
+      status: 'cancelled',
+      phase: 'importing',
+      updatedAtMs: 1_700_000_000_001,
+      currentStorageState: 'server_partial',
+      checkpoint: {
+        ...baseRecord().checkpoint,
+        importedItemCount: 12,
+        acceptedThroughServerSeq: 12,
+        acknowledgedBatchId: 'batch-1',
+      },
+      bindings: {
+        ...baseRecord().bindings,
+        historicalImportJobId: 'initial-partial-job',
+      },
+      fence: {
+        kind: 'initial_server_partial',
+        acceptedThroughServerSeq: 12,
+      },
+      cancellation: {
+        requestedAtMs: 1_700_000_000_001,
+        requestedAtRevision: 1,
+      },
+      terminalResult: {
+        kind: 'cancelled',
+      },
+    });
+    const discarded = ExternalSessionOperationRecordV1Schema.parse({
+      ...cancelledInitialPartial,
+      revision: 3,
+      status: 'discarded',
+      updatedAtMs: 1_700_000_000_002,
+      currentStorageState: 'machine_only',
+      checkpoint: baseRecord().checkpoint,
+      bindings: {
+        operationClaimId: cancelledInitialPartial.bindings.operationClaimId,
+      },
+      fence: { kind: 'none' },
+      cancellation: undefined,
+      terminalResult: {
+        kind: 'discarded',
+      },
+    });
+
+    expect(decideExternalSessionOperationUpdateV1(
+      cancelledInitialPartial,
+      discarded,
+    )).toEqual({ kind: 'accept' });
+
+    const differentClaim = ExternalSessionOperationRecordV1Schema.parse({
+      ...discarded,
+      bindings: {
+        operationClaimId: 'replacement-claim',
+      },
+    });
+    expect(decideExternalSessionOperationUpdateV1(
+      cancelledInitialPartial,
+      differentClaim,
+    )).toEqual({ kind: 'terminal_operation' });
+
+    const cancelledLocal = ExternalSessionOperationRecordV1Schema.parse({
+      ...baseRecord(),
+      revision: 2,
+      status: 'cancelled',
+      phase: 'staging',
+      updatedAtMs: 1_700_000_000_001,
+      cancellation: {
+        requestedAtMs: 1_700_000_000_001,
+        requestedAtRevision: 1,
+      },
+      terminalResult: { kind: 'cancelled' },
+    });
+    const discardedLocal = ExternalSessionOperationRecordV1Schema.parse({
+      ...cancelledLocal,
+      revision: 3,
+      status: 'discarded',
+      updatedAtMs: 1_700_000_000_002,
+      checkpoint: baseRecord().checkpoint,
+      bindings: {
+        operationClaimId: cancelledLocal.bindings.operationClaimId,
+      },
+      cancellation: undefined,
+      terminalResult: { kind: 'discarded' },
+    });
+
+    expect(decideExternalSessionOperationUpdateV1(
+      cancelledLocal,
+      discardedLocal,
+    )).toEqual({ kind: 'accept' });
+    expect(decideExternalSessionOperationUpdateV1(
+      cancelledLocal,
+      ExternalSessionOperationRecordV1Schema.parse({
+        ...discardedLocal,
+        bindings: { operationClaimId: 'replacement-local-claim' },
+      }),
+    )).toEqual({ kind: 'terminal_operation' });
   });
 
   it('models cancellation, explicit resume targets, discard, and crash reconciliation without authority', () => {
@@ -797,21 +1192,10 @@ describe('External Sessions durable operation contract', () => {
   ] as const)(
     'projects a poisoned complete %s record to the exact shared presentation fields',
     (execution, expectedKind) => {
-      const project = Reflect.get(
-        externalOperationContract,
-        'projectExternalSessionOperationSharedPresentationV1',
-      ) as ((input: unknown) => unknown) | undefined;
-      const schema = Reflect.get(
-        externalOperationContract,
-        'ExternalSessionOperationSharedPresentationV1Schema',
-      ) as { safeParse(input: unknown): { success: boolean } } | undefined;
-      expect(project).toEqual(expect.any(Function));
-      expect(schema).toBeDefined();
-
       const complete = projectExternalSessionOperationProgressV1(
         ExternalSessionOperationRecordV1Schema.parse(baseRecord(execution)),
       );
-      const projected = project!({
+      const projected = projectExternalSessionOperationSharedPresentationV1({
         ...complete,
         operationClaimId: 'must-not-cross',
         privateStagingId: 'must-not-cross',
@@ -833,12 +1217,12 @@ describe('External Sessions durable operation contract', () => {
         'status',
         'phase',
       ]);
-      expect(schema!.safeParse({
-        ...(projected as object),
+      expect(ExternalSessionOperationSharedPresentationV1Schema.safeParse({
+        ...projected,
         checkpoint: complete.checkpoint,
       }).success).toBe(false);
-      expect(schema!.safeParse({
-        ...(projected as object),
+      expect(ExternalSessionOperationSharedPresentationV1Schema.safeParse({
+        ...projected,
         request: complete.request,
       }).success).toBe(false);
     },

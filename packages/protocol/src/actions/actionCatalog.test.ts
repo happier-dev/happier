@@ -5,6 +5,9 @@ import {
   actionSpecToActionDefinitionV1,
   getActionSpec,
   listActionDefinitionsForCatalogSurface,
+  searchSerializedActionSpecs,
+  serializeActionSpec,
+  SerializedActionDefinitionV1Schema,
 } from '../index.js';
 import { z } from 'zod';
 
@@ -49,6 +52,7 @@ describe('actionCatalog action-definition adapter', () => {
         cli: false,
         rpc: true,
         sdk: true,
+        plugin: true,
       },
       inputHints: null,
       inputSchema: z.object({ id: z.string() }).strict(),
@@ -81,6 +85,34 @@ describe('actionCatalog action-definition adapter', () => {
     }));
   });
 
+  it('normalizes supported predecessor surfaces at the serialized read seam only', () => {
+    const current = actionSpecToActionDefinitionV1(getActionSpec('action.spec.get'));
+    const parsed = SerializedActionDefinitionV1Schema.parse({
+      ...current,
+      surfaces: {
+        ui_button: true,
+        ui_slash_command: false,
+        voice_tool: false,
+        voice_action_block: true,
+        session_agent: true,
+        mcp: true,
+        cli: false,
+        future_surface: true,
+      },
+    });
+
+    expect(parsed.surfaces).toEqual({
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    });
+  });
+
   it('filters action definitions by surface and enabled predicate', () => {
     const definitions = listActionDefinitionsForCatalogSurface({
       surface: 'cli',
@@ -92,6 +124,15 @@ describe('actionCatalog action-definition adapter', () => {
     expect(definitions.every((definition) => definition.surfaces.cli === true)).toBe(true);
   });
 
+  it('projects every Agent-visible Action definition through the canonical schema boundary', () => {
+    const definitions = listActionDefinitionsForCatalogSurface({ surface: 'agent' });
+
+    expect(definitions.length).toBeGreaterThan(0);
+    for (const definition of definitions) {
+      expect(SerializedActionDefinitionV1Schema.safeParse(definition).success).toBe(true);
+    }
+  });
+
   it('preserves strict object semantics in exported input schemas', () => {
     const definition = actionSpecToActionDefinitionV1(getActionSpec('ui.voice_global.reset'));
 
@@ -99,5 +140,65 @@ describe('actionCatalog action-definition adapter', () => {
       type: 'object',
       additionalProperties: false,
     });
+  });
+
+  it('projects constrained Action inputs and outputs through the shared catalog', () => {
+    const spec: ActionSpec = {
+      ...getActionSpec('action.spec.get'),
+      inputSchema: z.object({
+        label: z.string().min(2).max(20).regex(/^[a-z-]+$/).describe('Action label'),
+        attempts: z.number().min(1).max(3),
+        tags: z.array(z.string()).min(1).max(2),
+        mode: z.enum(['safe', 'fast']),
+      }).strict().describe('Constrained action input'),
+      outputSchema: z.string().min(2).describe('Result text'),
+    };
+
+    const definition = actionSpecToActionDefinitionV1(spec);
+    const serialized = serializeActionSpec(spec);
+
+    expect(definition.inputSchema).toMatchObject({
+      description: 'Constrained action input',
+      additionalProperties: false,
+      properties: {
+        label: {
+          minLength: 2,
+          maxLength: 20,
+          pattern: '^[a-z-]+$',
+          description: 'Action label',
+        },
+        attempts: { minimum: 1, maximum: 3 },
+        tags: { minItems: 1, maxItems: 2 },
+        mode: { enum: ['safe', 'fast'] },
+      },
+    });
+    expect(serialized.outputSchema).toMatchObject({
+      type: 'string',
+      minLength: 2,
+      description: 'Result text',
+    });
+  });
+
+  it('preserves structured Connected Account options without making their identifiers catalog search text', () => {
+    const connectedAccountRef = {
+      service: { pluginId: 'com.acme.accounts', localId: 'service' },
+      accountId: 'account-private-42',
+    };
+    const spec: ActionSpec = {
+      ...getActionSpec('action.spec.get'),
+      inputHints: {
+        fields: [{
+          path: 'id',
+          title: 'Selected account',
+          widget: 'select',
+          options: [{ value: connectedAccountRef, label: 'Account' }],
+        }],
+      },
+    };
+
+    const definition = actionSpecToActionDefinitionV1(spec);
+    expect(definition.inputHints?.fields[0]?.options?.[0]?.value).toEqual(connectedAccountRef);
+    expect(searchSerializedActionSpecs([spec], { query: 'account-private-42' })).toEqual([]);
+    expect(searchSerializedActionSpecs([spec], { query: 'com.acme.accounts' })).toEqual([]);
   });
 });

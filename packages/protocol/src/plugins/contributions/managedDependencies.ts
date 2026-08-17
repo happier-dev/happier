@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ManagedPypiWheelAssetInstallableSourceSchema } from '../../installables/sourceKind.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 const PluginManagedPypiWheelAssetSourceV2Schema = ManagedPypiWheelAssetInstallableSourceSchema
   .omit({
@@ -23,7 +24,7 @@ const PluginManagedDependencySourceV2Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('manual'), instructions: PluginLocalizedStringV2Schema }).strict(),
 ]);
 export const PluginManagedDependencyContributionV2Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   sources: z.array(PluginManagedDependencySourceV2Schema).min(1),

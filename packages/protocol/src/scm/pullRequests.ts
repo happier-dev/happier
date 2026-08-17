@@ -104,9 +104,9 @@ export const ScmHostingProviderUrlSafetySchema = z
 export type ScmHostingProviderUrlSafety = z.infer<typeof ScmHostingProviderUrlSafetySchema>;
 
 const LEGACY_SCM_HOSTING_PROVIDER_IDS = Object.freeze({
-  github: 'happier.scm.hosting.github/github',
-  gitlab: 'happier.scm.hosting.gitlab/gitlab',
-  bitbucket: 'happier.scm.hosting.bitbucket/bitbucket',
+  github: 'happier.scm.forge.github/github',
+  gitlab: 'happier.scm.forge.gitlab/gitlab',
+  bitbucket: 'happier.scm.forge.bitbucket/bitbucket',
   unknown: 'legacy.scm.hosting.unknown/unknown',
 } as const);
 

@@ -4,8 +4,25 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 const SHA256_HEX_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
-export const PluginUiArtifactDigestV1Schema = z.string().trim().regex(SHA256_HEX_DIGEST_PATTERN);
-export type PluginUiArtifactDigestV1 = z.infer<typeof PluginUiArtifactDigestV1Schema>;
+export type PluginUiArtifactDigestV1 = `sha256:${string}`;
+
+function isPluginUiArtifactDigestV1(value: string): value is PluginUiArtifactDigestV1 {
+  return SHA256_HEX_DIGEST_PATTERN.test(value);
+}
+
+export const PluginUiArtifactDigestV1Schema = z.string().trim().refine(
+  isPluginUiArtifactDigestV1,
+);
+
+type TypeEqual<Left, Right> = (
+  <Value>() => Value extends Left ? 1 : 2
+) extends (
+  <Value>() => Value extends Right ? 1 : 2
+) ? true : false;
+type AssertType<Condition extends true> = Condition;
+type PluginUiArtifactDigestV1SchemaOutputContract = AssertType<
+  TypeEqual<z.output<typeof PluginUiArtifactDigestV1Schema>, PluginUiArtifactDigestV1>
+>;
 
 export const PluginUiArtifactIntegrityBindingV1Schema = z.object({
   digest: PluginUiArtifactDigestV1Schema,

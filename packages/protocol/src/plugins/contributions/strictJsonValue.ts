@@ -36,23 +36,23 @@ export function measurePluginJsonUtf8Bytes(value: string, path: string): number 
  * deep data off the JavaScript call stack while preserving strict
  * data/accessor/cycle rules.
  */
-type StrictJsonCloneTask =
+type StrictJsonWalkTask =
   | Readonly<{
     kind: 'visit';
     input: unknown;
-    assign: (value: unknown) => void;
+    assign?: (value: unknown) => void;
   }>
   | Readonly<{
     kind: 'finish-array';
     input: object;
-    output: unknown[];
-    assign: (value: unknown) => void;
+    output?: unknown[];
+    assign?: (value: unknown) => void;
   }>
   | Readonly<{
     kind: 'finish-object';
     input: object;
-    output: Record<string, unknown>;
-    assign: (value: unknown) => void;
+    output?: Record<string, unknown>;
+    assign?: (value: unknown) => void;
   }>;
 
 function assertStrictJsonArrayDescriptors(
@@ -99,18 +99,22 @@ function strictJsonObjectKeys(input: object, path: string): readonly string[] {
   return keys as readonly string[];
 }
 
-export function cloneStrictPluginJsonValue(
+function walkStrictPluginJsonValue(
   value: unknown,
   path: string,
+  copiesValue: boolean,
 ): unknown {
   let root: unknown;
   const ancestors = new WeakSet<object>();
-  const tasks: StrictJsonCloneTask[] = [{
+  const rootAssign = copiesValue
+    ? (cloned: unknown) => {
+      root = cloned;
+    }
+    : undefined;
+  const tasks: StrictJsonWalkTask[] = [{
     kind: 'visit',
     input: value,
-    assign: (cloned) => {
-      root = cloned;
-    },
+    ...(rootAssign === undefined ? {} : { assign: rootAssign }),
   }];
 
   while (tasks.length > 0) {
@@ -119,27 +123,31 @@ export function cloneStrictPluginJsonValue(
 
     if (task.kind === 'finish-array') {
       ancestors.delete(task.input);
-      task.assign(Object.freeze(task.output));
+      if (task.assign !== undefined && task.output !== undefined) {
+        task.assign(Object.freeze(task.output));
+      }
       continue;
     }
     if (task.kind === 'finish-object') {
       ancestors.delete(task.input);
-      task.assign(Object.freeze(task.output));
+      if (task.assign !== undefined && task.output !== undefined) {
+        task.assign(Object.freeze(task.output));
+      }
       continue;
     }
 
     const input = task.input;
     if (input === null || typeof input === 'boolean') {
-      task.assign(input);
+      task.assign?.(input);
       continue;
     }
     if (typeof input === 'string') {
-      task.assign(input);
+      task.assign?.(input);
       continue;
     }
     if (typeof input === 'number') {
       if (!Number.isFinite(input)) throw new Error(`${path} must contain finite JSON numbers`);
-      task.assign(input);
+      task.assign?.(input);
       continue;
     }
     if (typeof input !== 'object') throw new Error(`${path} must contain strict JSON data`);
@@ -149,8 +157,12 @@ export function cloneStrictPluginJsonValue(
     if (Array.isArray(input)) {
       const descriptors = assertStrictJsonArrayDescriptors(input, path);
       const length = strictJsonArrayLength(descriptors);
-      const output: unknown[] = new Array(length);
-      tasks.push({ kind: 'finish-array', input, output, assign: task.assign });
+      const output = task.assign === undefined ? undefined : new Array<unknown>(length);
+      tasks.push({
+        kind: 'finish-array',
+        input,
+        ...(output === undefined || task.assign === undefined ? {} : { output, assign: task.assign }),
+      });
       for (let index = length - 1; index >= 0; index -= 1) {
         const descriptor = descriptors[String(index)];
         if (!descriptor || !('value' in descriptor)) {
@@ -159,17 +171,23 @@ export function cloneStrictPluginJsonValue(
         tasks.push({
           kind: 'visit',
           input: descriptor.value,
-          assign: (cloned) => {
+          ...(output === undefined ? {} : { assign: (cloned: unknown) => {
             output[index] = cloned;
-          },
+          } }),
         });
       }
       continue;
     }
 
     const keys = strictJsonObjectKeys(input, path);
-    const output = Object.create(null) as Record<string, unknown>;
-    tasks.push({ kind: 'finish-object', input, output, assign: task.assign });
+    const output = task.assign === undefined
+      ? undefined
+      : Object.create(null) as Record<string, unknown>;
+    tasks.push({
+      kind: 'finish-object',
+      input,
+      ...(output === undefined || task.assign === undefined ? {} : { output, assign: task.assign }),
+    });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
@@ -179,14 +197,14 @@ export function cloneStrictPluginJsonValue(
       tasks.push({
         kind: 'visit',
         input: descriptor.value,
-        assign: (cloned) => {
+        ...(output === undefined ? {} : { assign: (cloned: unknown) => {
           Object.defineProperty(output, key, {
             value: cloned,
             enumerable: true,
             writable: false,
             configurable: false,
           });
-        },
+        } }),
       });
     }
   }
@@ -194,69 +212,21 @@ export function cloneStrictPluginJsonValue(
   return root;
 }
 
-type StrictJsonSerializationTask =
+export function cloneStrictPluginJsonValue(
+  value: unknown,
+  path: string,
+): unknown {
+  return walkStrictPluginJsonValue(value, path, true);
+}
+
+/** @internal Protocol-only non-copying validation for an already admitted input. */
+export function assertStrictPluginJsonValue(value: unknown, path: string): void {
+  walkStrictPluginJsonValue(value, path, false);
+}
+
+type StrictJsonMeasurementTask =
   | Readonly<{ kind: 'text'; value: string }>
   | Readonly<{ kind: 'value'; value: unknown }>;
-
-/**
- * Serializes a strict JSON value without letting a valid deep structure enter
- * JSON.stringify's recursive implementation. The initial clone is both the
- * strict-data admission check and the immutable snapshot that serialization
- * measures, so byte-limited owners cannot race caller mutation.
- */
-export function serializeStrictPluginJsonValue(value: unknown, path: string): string {
-  const normalized = cloneStrictPluginJsonValue(value, path);
-  const chunks: string[] = [];
-  const tasks: StrictJsonSerializationTask[] = [{ kind: 'value', value: normalized }];
-
-  while (tasks.length > 0) {
-    const task = tasks.pop();
-    if (!task) continue;
-    if (task.kind === 'text') {
-      chunks.push(task.value);
-      continue;
-    }
-
-    const current = task.value;
-    if (current === null) {
-      chunks.push('null');
-      continue;
-    }
-    if (typeof current === 'boolean' || typeof current === 'number') {
-      const serialized = JSON.stringify(current);
-      if (serialized === undefined) throw new Error(`${path} must contain strict JSON data`);
-      chunks.push(serialized);
-      continue;
-    }
-    if (typeof current === 'string') {
-      chunks.push(JSON.stringify(current));
-      continue;
-    }
-    if (Array.isArray(current)) {
-      tasks.push({ kind: 'text', value: ']' });
-      for (let index = current.length - 1; index >= 0; index -= 1) {
-        if (index < current.length - 1) tasks.push({ kind: 'text', value: ',' });
-        tasks.push({ kind: 'value', value: current[index] });
-      }
-      tasks.push({ kind: 'text', value: '[' });
-      continue;
-    }
-
-    const object = current as Record<string, unknown>;
-    const keys = Object.keys(object);
-    tasks.push({ kind: 'text', value: '}' });
-    for (let index = keys.length - 1; index >= 0; index -= 1) {
-      const key = keys[index]!;
-      if (index < keys.length - 1) tasks.push({ kind: 'text', value: ',' });
-      tasks.push({ kind: 'value', value: object[key] });
-      tasks.push({ kind: 'text', value: ':' });
-      tasks.push({ kind: 'text', value: JSON.stringify(key) });
-    }
-    tasks.push({ kind: 'text', value: '{' });
-  }
-
-  return chunks.join('');
-}
 
 /**
  * Measures the exact JSON.stringify spelling in UTF-8 bytes without creating
@@ -278,8 +248,24 @@ export function measureSerializedStrictPluginJsonUtf8Bytes(
     throw new TypeError('Strict JSON serialized byte maximum must be a nonnegative safe integer');
   }
 
-  const normalized = cloneStrictPluginJsonValue(value, path);
-  const tasks: StrictJsonSerializationTask[] = [{ kind: 'value', value: normalized }];
+  return measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+    cloneStrictPluginJsonValue(value, path),
+    path,
+    maximumBytes,
+  );
+}
+
+/**
+ * @internal No-copy measurement for a value already admitted as immutable
+ * strict JSON. Unknown or mutable inputs must use the cloning measurement
+ * entry point instead.
+ */
+export function measureSerializedValidatedStrictPluginJsonUtf8Bytes(
+  value: unknown,
+  path: string,
+  maximumBytes?: number,
+): number {
+  const tasks: StrictJsonMeasurementTask[] = [{ kind: 'value', value }];
   let measuredBytes = 0;
 
   const appendText = (text: string): boolean => {
@@ -346,7 +332,7 @@ export function isStrictPluginJsonValue(
   value: unknown,
 ): boolean {
   try {
-    cloneStrictPluginJsonValue(value, 'value');
+    assertStrictPluginJsonValue(value, 'value');
     return true;
   } catch {
     return false;

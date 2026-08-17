@@ -9,6 +9,14 @@ import {
 } from './actionIds.js';
 
 describe('ActionIdSchema', () => {
+  it('publishes the Automation conversation target selector and verifier in the canonical family', () => {
+    expect(ACTION_ID_FAMILIES_V1.automation_conversation).toEqual([
+      'automation.conversation.targets.list',
+      'automation.conversation.target.verify',
+      'automation.conversation.admit',
+    ]);
+  });
+
   it('does not recognize retired plugin call or trust actions', () => {
     expect(ActionIdSchema.safeParse('plugins.call').success).toBe(false);
     expect(ActionIdSchema.safeParse('plugins.trust').success).toBe(false);
@@ -48,6 +56,7 @@ describe('ActionIdSchema', () => {
     expect(() => ActionIdSchema.parse('execution.run.stream.pause' as any)).toThrow();
     expect(() => ActionIdSchema.parse('daemon.browser.recording.start' as any)).toThrow();
     expect(() => ActionIdSchema.parse('daemon.devices.simulator.preview.action' as any)).toThrow();
+    expect(() => ActionIdSchema.parse('session.spawn_picker')).toThrow();
   });
 
   it('exposes runtime-unification action ids as a canonical subset', () => {
@@ -86,7 +95,6 @@ describe('ActionIdSchema', () => {
         'session.handoff.abort',
         'session.handoff.status.get',
         'session.spawn_new',
-        'session.spawn_picker',
       ],
       inventory: [
         'paths.list_recent',
@@ -186,6 +194,10 @@ describe('ActionIdSchema', () => {
       ],
       session_permissions: [
         'session.permission.respond',
+        'session.permission.remote.pending.list',
+        'session.permission.remote.respond',
+        'session.permission.remote.grants.list',
+        'session.permission.remote.grants.revoke',
         'session.user_action.answer',
         'session.mode.set',
       ],
@@ -386,12 +398,46 @@ describe('ActionIdSchema', () => {
         'plugins.sessionHooks.enable',
         'plugins.sessionHooks.uninstall',
       ],
+      plugin_settings_administration: [
+        'plugins.settings.list',
+        'plugins.settings.get',
+        'plugins.settings.set',
+        'plugins.settings.reset',
+        'plugins.settings.secret.status',
+        'plugins.settings.secret.bind',
+        'plugins.settings.secret.unbind',
+        'plugins.settings.secret.delete',
+      ],
       plugin_permission_grants: [
         'plugins.permissions.grants.list',
         'plugins.permissions.grants.request',
         'plugins.permissions.grants.grant',
         'plugins.permissions.grants.revoke',
         'plugins.permissions.grants.dismissRequest',
+      ],
+      plugin_webhooks: [
+        'plugin.webhook.endpoint.ensure',
+        'plugin.webhook.endpoint.read',
+        'plugin.webhook.endpoint.revoke',
+        'plugin.webhook.endpoint.retarget',
+        'plugin.webhook.endpoint.checkCorrespondence',
+        'plugin.webhook.delivery.movePending',
+        'plugin.webhook.endpoint.credential.configure',
+        'plugin.webhook.endpoint.credential.rotate',
+        'plugin.webhook.endpoint.credential.finishRotation',
+      ],
+      account_plugin_data: [
+        'account.plugins.data.erase',
+      ],
+      automation_events: [
+        'automation.event.sources.list',
+        'automation.event.admit',
+        'automation.event.source.status.report',
+      ],
+      automation_conversation: [
+        'automation.conversation.targets.list',
+        'automation.conversation.target.verify',
+        'automation.conversation.admit',
       ],
       scm_pull_request: [
         'scm.pullRequest.list',
@@ -435,7 +481,6 @@ describe('ActionIdSchema', () => {
       'session.handoff.abort',
       'session.handoff.status.get',
       'session.spawn_new',
-      'session.spawn_picker',
       'paths.list_recent',
       'machines.list',
       'servers.list',
@@ -515,6 +560,10 @@ describe('ActionIdSchema', () => {
       'transcript.import',
       'transcript.search',
       'session.permission.respond',
+      'session.permission.remote.pending.list',
+      'session.permission.remote.respond',
+      'session.permission.remote.grants.list',
+      'session.permission.remote.grants.revoke',
       'session.user_action.answer',
       'session.mode.set',
       'sessions.external.candidates.list',
@@ -674,11 +723,35 @@ describe('ActionIdSchema', () => {
       'plugins.sessionHooks.disable',
       'plugins.sessionHooks.enable',
       'plugins.sessionHooks.uninstall',
+      'plugins.settings.list',
+      'plugins.settings.get',
+      'plugins.settings.set',
+      'plugins.settings.reset',
+      'plugins.settings.secret.status',
+      'plugins.settings.secret.bind',
+      'plugins.settings.secret.unbind',
+      'plugins.settings.secret.delete',
       'plugins.permissions.grants.list',
       'plugins.permissions.grants.request',
       'plugins.permissions.grants.grant',
       'plugins.permissions.grants.revoke',
       'plugins.permissions.grants.dismissRequest',
+      'plugin.webhook.endpoint.ensure',
+      'plugin.webhook.endpoint.read',
+      'plugin.webhook.endpoint.revoke',
+      'plugin.webhook.endpoint.retarget',
+      'plugin.webhook.endpoint.checkCorrespondence',
+      'plugin.webhook.delivery.movePending',
+      'plugin.webhook.endpoint.credential.configure',
+      'plugin.webhook.endpoint.credential.rotate',
+      'plugin.webhook.endpoint.credential.finishRotation',
+      'account.plugins.data.erase',
+      'automation.event.sources.list',
+      'automation.event.admit',
+      'automation.event.source.status.report',
+      'automation.conversation.targets.list',
+      'automation.conversation.target.verify',
+      'automation.conversation.admit',
       'scm.pullRequest.list',
       'scm.pullRequest.get',
       'scm.pullRequest.openOrReuse',

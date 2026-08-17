@@ -1,73 +1,132 @@
 import { describe, expect, it } from 'vitest';
 
-import {
+import * as Protocol from '../index.js';
+import * as pluginManifest from './manifest/index.js';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from './actions/jsonSchemaValidation.js';
+import * as contributionIdentity from './contributionIdentity.js';
+import * as pluginId from './pluginId.js';
+
+const {
   PluginContributionIdentityV1Schema,
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  readPersistedAgentContributionIdentityV1,
-  writePersistedAgentContributionIdentityV1,
-} from './contributionIdentity.js';
+  PluginContributionLocalIdSchema,
+  PluginContributionOperationRoleV1Schema,
+  PluginContributionProtocolIdV1Schema,
+} = contributionIdentity;
 
-describe('plugin contribution identity', () => {
-  it('keeps plugin owner identity separate from domain-local contribution ids', () => {
-    const identity = createPluginContributionIdentity({
-      pluginId: 'happier.scm.hosting.github',
-      localId: 'scm/github',
-    });
+describe('PluginContributionLocalIdSchema', () => {
+  it('bounds canonical ASCII local identifiers at 256 bytes', () => {
+    const atLimit = 'a'.repeat(256);
 
-    expect(identity).toEqual({
-      pluginId: 'happier.scm.hosting.github',
-      localId: 'scm/github',
-    });
-    expect(buildQualifiedPluginContributionKey(identity)).toBe(
-      'happier.scm.hosting.github/scm/github',
+    expect(PluginContributionLocalIdSchema.parse(atLimit)).toBe(atLimit);
+    expect(PluginContributionLocalIdSchema.safeParse(`${atLimit}a`).success).toBe(false);
+  });
+
+  it('projects only a strict fully qualified contribution identity for JSON consumers', () => {
+    const schema = (contributionIdentity as typeof contributionIdentity & {
+      PluginContributionIdentityV1JsonSchema?: import('./contributions/publicTypes.js').PluginJsonSchemaV2;
+    }).PluginContributionIdentityV1JsonSchema;
+
+    expect(schema).toBeDefined();
+    if (!schema) return;
+
+    const validates = compilePluginJsonSchema(schema);
+    const valid = { pluginId: 'acme.accounts', localId: 'git/hosting' };
+    const localIdAtLimit = 'a'.repeat(256);
+
+    expect(isValidPluginJsonSchemaValue(validates, valid)).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validates, {
+      ...valid,
+      localId: localIdAtLimit,
+    })).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validates, {
+      ...valid,
+      localId: `${localIdAtLimit}a`,
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validates, {
+      ...valid,
+      localId: 'Git/hosting',
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validates, {
+      ...valid,
+      localId: 'git hosting',
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validates, 'git/hosting')).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validates, {
+      ...valid,
+      unknown: true,
+    })).toBe(false);
+    expect(schema.properties?.pluginId).toBe(
+      (pluginId as typeof pluginId & {
+        PluginIdJsonSchema?: import('./contributions/publicTypes.js').PluginJsonSchemaV2;
+      }).PluginIdJsonSchema,
     );
+    expect((Protocol as Record<string, unknown>).PluginContributionIdentityV1JsonSchema).toBe(schema);
+    expect((pluginManifest as Record<string, unknown>).PluginContributionIdentityV1JsonSchema).toBe(schema);
   });
 
-  it('rejects invalid plugin ids while preserving family-local id syntax', () => {
-    expect(PluginContributionIdentityV1Schema.safeParse({
-      pluginId: 'codex',
-      localId: 'codex',
-    }).success).toBe(false);
+  it('rejects surrounding whitespace in nested Plugin identities at both boundaries', () => {
+    const schema = (contributionIdentity as typeof contributionIdentity & {
+      PluginContributionIdentityV1JsonSchema?: import('./contributions/publicTypes.js').PluginJsonSchemaV2;
+    }).PluginContributionIdentityV1JsonSchema;
 
-    expect(createPluginContributionIdentity({
-      pluginId: 'happier.agent.codex',
-      localId: 'codex',
-    }).localId).toBe('codex');
+    expect(schema).toBeDefined();
+    if (!schema) return;
 
-    expect(PluginContributionIdentityV1Schema.safeParse({
-      pluginId: 'happier.agent.ohmypi',
-      localId: 'ohMyPi',
-    }).success).toBe(false);
+    const whitespaceIdentity = { pluginId: ' acme.accounts ', localId: 'git/hosting' };
+    const validates = compilePluginJsonSchema(schema);
+
+    expect(PluginContributionIdentityV1Schema.safeParse(whitespaceIdentity).success).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validates, whitespaceIdentity)).toBe(false);
   });
+});
 
-  it('keeps projection identity strict so manifest passthrough fields cannot enter dedupe keys', () => {
-    expect(PluginContributionIdentityV1Schema.safeParse({
-      pluginId: 'happier.agent.codex',
-      localId: 'codex',
-      xFutureManifestRoot: { preservedByManifestSchema: true },
-    }).success).toBe(false);
+describe('PluginContributionProtocolIdV1Schema', () => {
+  it('preserves existing local ids while admitting only a bounded fully qualified protocol id', () => {
+    const qualified = 'happier.channels/providers';
+    const atLimit = `acme.${'a'.repeat(249)}/b`;
 
-    const identity = createPluginContributionIdentity({
-      pluginId: 'happier.agent.codex',
-      localId: 'codex',
-    });
+    expect(PluginContributionProtocolIdV1Schema.parse('connection')).toBe('connection');
+    expect(PluginContributionProtocolIdV1Schema.parse('connection/setup')).toBe('connection/setup');
+    expect(PluginContributionProtocolIdV1Schema.parse(qualified)).toBe(qualified);
+    expect(atLimit).toHaveLength(256);
+    expect(PluginContributionProtocolIdV1Schema.parse(atLimit)).toBe(atLimit);
 
-    expect(buildQualifiedPluginContributionKey(identity)).toBe('happier.agent.codex/codex');
+    for (const invalid of [
+      'happier.channels.providers',
+      'happier..channels/providers',
+      'happier.channels//providers',
+      'happier.channels/providers.',
+      'Happier.channels/providers',
+      'happier.channels/providers name',
+      'happier.channels\\providers',
+      'happier.channels/../providers',
+      'happier.__proto__/providers',
+      `acme.${'a'.repeat(249)}/bc`,
+    ]) {
+      expect(PluginContributionProtocolIdV1Schema.safeParse(invalid).success, invalid).toBe(false);
+    }
   });
+});
 
-  it('imports the durable flat Oh My Pi predecessor exactly once and writes only structured identity', () => {
-    const expected = {
-      pluginId: 'happier.agent.ohmypi',
-      localId: 'ohmypi',
-    };
+describe('PluginContributionOperationRoleV1Schema', () => {
+  it('admits lower-camel operation roles without widening contribution local ids', () => {
+    const atLimit = 'a'.repeat(256);
 
-    expect(readPersistedAgentContributionIdentityV1('ohMyPi')).toEqual(expected);
-    expect(readPersistedAgentContributionIdentityV1(expected)).toEqual(expected);
-    expect(readPersistedAgentContributionIdentityV1('ohmypi')).toBeNull();
-    expect(readPersistedAgentContributionIdentityV1('codex')).toBeNull();
+    expect(PluginContributionOperationRoleV1Schema.parse('setup')).toBe('setup');
+    expect(PluginContributionOperationRoleV1Schema.parse('connectionTest')).toBe('connectionTest');
+    expect(PluginContributionOperationRoleV1Schema.parse('messageDeliver')).toBe('messageDeliver');
+    expect(PluginContributionOperationRoleV1Schema.parse('connection/test')).toBe('connection/test');
+    expect(PluginContributionOperationRoleV1Schema.parse(atLimit)).toBe(atLimit);
 
-    expect(writePersistedAgentContributionIdentityV1(expected)).toEqual(expected);
-    expect(() => writePersistedAgentContributionIdentityV1('ohMyPi' as never)).toThrow();
+    for (const invalid of [
+      'connection Test',
+      'connection\\Test',
+      '../connectionTest',
+      'ConnectionTest',
+      '_connectionTest',
+      `${atLimit}a`,
+    ]) {
+      expect(PluginContributionOperationRoleV1Schema.safeParse(invalid).success, invalid).toBe(false);
+    }
   });
 });

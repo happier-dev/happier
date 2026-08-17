@@ -3,6 +3,8 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   ManagedExecutableRefSchema,
   PluginAgentAcpTransportSchema,
+  PluginHostAccessRequestV2Schema,
+  PluginMcpServerTransportV1Schema,
   type ManagedExecutableRef,
   type PluginAgentAcpTransport,
 } from '../../index.js';
@@ -43,6 +45,34 @@ describe('plugin agent ACP transport contract', () => {
       .toEqualTypeOf<string | undefined>();
   });
 
+  it('accepts the logical packaged-runtime binary ref without exposing a host path', () => {
+    const executable = {
+      kind: 'packaged-runtime-binary',
+      directorySegments: ['tools', 'unpacked'],
+      executableBaseName: 'happier-cliproxyapi-managed',
+    } as const satisfies ManagedExecutableRef;
+
+    expect(ManagedExecutableRefSchema.parse(executable)).toEqual(executable);
+    expect(ManagedExecutableRefSchema.safeParse({
+      ...executable,
+      executablePath: '/opt/happier/tools/unpacked/happier-cliproxyapi-managed',
+    }).success).toBe(false);
+    expect(PluginAgentAcpTransportSchema.safeParse({
+      kind: 'stdio',
+      executable,
+    }).success).toBe(false);
+    expect(PluginMcpServerTransportV1Schema.safeParse({
+      kind: 'stdio',
+      executable,
+    }).success).toBe(false);
+    expect(PluginHostAccessRequestV2Schema.safeParse({
+      id: 'claim-packaged-runtime',
+      capability: 'process',
+      reason: 'Try to claim Provider-only packaged authority',
+      scope: { executables: [executable] },
+    }).success).toBe(false);
+  });
+
   it('rejects unknown and retired transport shapes instead of preserving a second ABI', () => {
     for (const candidate of [
       { kind: 'managedDependency', id: 'codex-cli', path: '/usr/bin/codex' },
@@ -62,7 +92,7 @@ describe('plugin agent ACP transport contract', () => {
   it('rejects structurally impossible values without inventing field-local manifest budgets', () => {
     const largeExecutable = {
       kind: 'systemTool',
-      id: 'x'.repeat(300),
+      id: 'large-system-tool',
     } as const;
     const largeArgs = Array.from(
       { length: 300 },

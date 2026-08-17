@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginSettingFieldV2Schema } from './settings.js';
@@ -10,7 +11,7 @@ import {
 } from './publicTypes.js';
 
 const DisplayBaseSchema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
@@ -37,8 +38,8 @@ export type PluginNotificationChannelKindV1 = z.infer<typeof PluginNotificationC
 
 export const PluginNotificationCategoryContributionV2Schema = DisplayBaseSchema.extend({
   kind: PluginNotificationCategoryKindV1Schema,
-  eventIds: z.array(PluginContributionReferenceV2Schema),
-  defaultChannels: z.array(PluginContributionReferenceV2Schema).optional(),
+  eventIds: z.array(asProtocolZod(PluginContributionReferenceV2Schema)),
+  defaultChannels: z.array(asProtocolZod(PluginContributionReferenceV2Schema)).optional(),
   availability: PluginAvailabilityDescriptorV2Schema.optional(),
 }).strict();
 export type PluginNotificationCategoryContributionV2 = z.infer<typeof PluginNotificationCategoryContributionV2Schema>;

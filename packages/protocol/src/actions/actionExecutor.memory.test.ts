@@ -16,7 +16,6 @@ function createDeps(): ActionExecutorDeps {
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),

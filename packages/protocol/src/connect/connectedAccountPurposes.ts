@@ -1,8 +1,12 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { canonicalBoundedRecordKeySchema } from '../common/canonicalRecordKey.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { PluginContributionReferenceV2Schema } from '../plugins/contributions/publicTypes.js';
+import {
+  PluginContributionReferenceV2Schema,
+  PluginLocalizedStringV2Schema,
+} from '../plugins/contributions/publicTypes.js';
 
 export const ConnectedAccountPurposeIdSchema = z.string().trim().min(1).max(128);
 export type ConnectedAccountPurposeId = z.infer<typeof ConnectedAccountPurposeIdSchema>;
@@ -111,7 +115,9 @@ export const PluginConnectedAccountMaterializationKindsSchema = z.array(
 
 export const ConnectedAccountPurposeDeclarationV1Schema = z.object({
   purpose: ConnectedAccountPurposeIdSchema,
-  service: PluginContributionReferenceV2Schema,
+  service: asProtocolZod(PluginContributionReferenceV2Schema),
+  /** Optional human-facing presentation; purpose remains the machine identifier. */
+  title: PluginLocalizedStringV2Schema.optional(),
   required: z.boolean().optional(),
   materializationKinds: PluginConnectedAccountMaterializationKindsSchema.optional(),
 }).strict();
@@ -139,7 +145,7 @@ export type ConnectedAccountPurposeDeclarationsV1 = z.infer<
 >;
 
 export const QualifiedConnectedAccountPurposeV1Schema = z.object({
-  consumer: PluginContributionIdentityV1Schema,
+  consumer: asProtocolZod(PluginContributionIdentityV1Schema),
   purpose: ConnectedAccountPurposeIdSchema,
 }).strict();
 export type QualifiedConnectedAccountPurposeV1 = z.infer<

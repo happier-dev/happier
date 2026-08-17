@@ -129,4 +129,4 @@ export const GENERATED_BUILT_IN_BACKEND_PROFILES = [
   },
 ] as const satisfies ReadonlyArray<AIBackendProfile>;
 
-export const GENERATED_PROVIDER_MIGRATION_SOURCE_PROFILE_IDS = ['deepseek', 'openai', 'zai'] as const;
+export const GENERATED_PROVIDER_MIGRATION_SOURCE_PROFILE_IDS = ['deepseek', 'minimax', 'minimax-cn', 'openai', 'zai'] as const;

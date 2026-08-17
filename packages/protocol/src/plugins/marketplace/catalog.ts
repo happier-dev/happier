@@ -2,13 +2,14 @@ import { z } from 'zod';
 
 import { PluginOptionalStringSchema } from '../_shared.js';
 import { PluginIdSchema } from '../pluginId.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const PluginMarketplaceSourceKindV1Schema = z.enum(['curated', 'user']);
 export type PluginMarketplaceSourceKindV1 = z.infer<typeof PluginMarketplaceSourceKindV1Schema>;
 
 export const PluginMarketplaceEntryV1Schema = z.object({
   id: z.string().trim().min(1),
-  manifestId: PluginIdSchema,
+  manifestId: asProtocolZod(PluginIdSchema),
   title: z.string().trim().min(1),
   version: PluginOptionalStringSchema,
   description: PluginOptionalStringSchema,

@@ -96,7 +96,7 @@ export const EMBEDDED_FEATURE_BUILD_POLICY_RAW = Object.freeze({
 async function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(here, '..', '..', '..');
-  const { kv } = parseArgs(process.argv.slice(2));
+  const { flags, kv } = parseArgs(process.argv.slice(2));
 
   const policyDir = String(kv.get('--policy-dir') ?? '').trim() || join(repoRoot, '.github', 'feature-policy');
   const outPath = String(kv.get('--out') ?? '').trim() || join(repoRoot, 'packages', 'protocol', 'src', 'features', 'embeddedFeaturePolicies.generated.ts');
@@ -124,11 +124,16 @@ async function main() {
     defaultEnv,
   });
 
-  await mkdir(dirname(outPath), { recursive: true });
-
   const previous = await readFile(outPath, 'utf8').catch(() => null);
   if (previous === source) return;
 
+  if (flags.has('--check')) {
+    throw new Error(
+      '[protocol] embedded feature-policy compiler input is stale. Run node packages/protocol/scripts/generate-embedded-feature-policies.mjs to refresh it.',
+    );
+  }
+
+  await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, source, 'utf8');
 }
 

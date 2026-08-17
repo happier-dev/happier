@@ -84,7 +84,6 @@ export type PluginBackendExternalSessionSourceSchemaRefinementV1 =
   z.infer<typeof PluginBackendExternalSessionSourceSchemaRefinementV1Schema>;
 
 export const PluginBackendExternalSessionSourceSchemaV1Schema = z.object({
-  passthrough: z.boolean().optional(),
   fields: z.array(PluginBackendExternalSessionSourceSchemaFieldV1Schema).min(1).refine(
     (fields) => new Set(fields.map((field) => field.name)).size === fields.length,
     'External-session source field names must be unique',
@@ -149,9 +148,85 @@ export const PluginBackendExternalSessionSourceInstanceV1Schema = z.discriminate
       profileId: z.string().trim().min(1),
     }).strict(),
   }).strict(),
+  z.object({
+    kind: z.literal('agentSetting'),
+    settingId: z.string().trim().min(1),
+    byServerIdSettingId: z.string().trim().min(1).optional(),
+    field: z.string().trim().min(1),
+    // How the host turns the raw setting value into the field value; a value the
+    // policy rejects yields no source at all rather than a broken one.
+    normalization: z.literal('httpOrigin'),
+    constants: z.record(z.string().trim().min(1), PluginBackendExternalSessionSourceInstanceConstantV1Schema).default({}),
+  }).strict(),
+  z.object({
+    /**
+     * A configured source which replaces the declaration's paired default.
+     * Keeping this as a distinct kind lets older hosts drop it while retaining
+     * that default, rather than rejecting a known strict instance shape.
+     */
+    kind: z.literal('agentSettingOverride'),
+    settingId: z.string().trim().min(1),
+    byServerIdSettingId: z.string().trim().min(1).optional(),
+    field: z.string().trim().min(1),
+    normalization: z.literal('configuredPath'),
+    constants: z.record(z.string().trim().min(1), PluginBackendExternalSessionSourceInstanceConstantV1Schema).default({}),
+  }).strict(),
 ]);
 export type PluginBackendExternalSessionSourceInstanceV1 =
   z.infer<typeof PluginBackendExternalSessionSourceInstanceV1Schema>;
+
+const EXTERNAL_SESSION_SOURCE_INSTANCE_KINDS_V1 = Object.freeze([
+  'default',
+  'connectedServiceProfiles',
+  'agentSetting',
+  'agentSettingOverride',
+] as const satisfies readonly PluginBackendExternalSessionSourceInstanceV1['kind'][]);
+
+const EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET: ReadonlySet<string> =
+  new Set(EXTERNAL_SESSION_SOURCE_INSTANCE_KINDS_V1);
+
+function isKnownExternalSessionSourceInstanceKind(kind: unknown): boolean {
+  return typeof kind === 'string' && EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET.has(kind);
+}
+
+/**
+ * Instance kinds this reader does not know are ignored rather than failing the
+ * whole declaration, so an older host stays usable against a newer producer's
+ * manifest/projection. Known kinds remain strictly validated, and the accepted
+ * type stays `never` so no first-party declaration can author an unknown kind.
+ */
+const UnknownPluginBackendExternalSessionSourceInstanceV1Schema = z.custom<never>((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const kind = (value as Readonly<Record<string, unknown>>).kind;
+  return typeof kind === 'string'
+    && kind.trim().length > 0
+    && !EXTERNAL_SESSION_SOURCE_INSTANCE_KIND_SET.has(kind);
+});
+
+const PluginBackendExternalSessionSourceInstancesV1Schema = z.array(z.union([
+  PluginBackendExternalSessionSourceInstanceV1Schema,
+  UnknownPluginBackendExternalSessionSourceInstanceV1Schema,
+]))
+  .min(1)
+  .max(MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION)
+  .transform((instances) => instances.filter(
+    (instance): instance is PluginBackendExternalSessionSourceInstanceV1 =>
+      isKnownExternalSessionSourceInstanceKind(instance.kind),
+  ));
+
+function isStructurallyCompleteExternalSessionSourceInstance(
+  instance: PluginBackendExternalSessionSourceInstanceV1,
+): boolean {
+  if (instance.constants === undefined) return false;
+  if (instance.kind === 'connectedServiceProfiles') {
+    return typeof instance.fields?.serviceId === 'string'
+      && typeof instance.fields?.profileId === 'string';
+  }
+  if (instance.kind === 'agentSetting' || instance.kind === 'agentSettingOverride') {
+    return typeof instance.field === 'string';
+  }
+  return true;
+}
 
 function externalSessionInstanceConstantMatchesField(
   field: PluginBackendExternalSessionSourceSchemaFieldV1,
@@ -170,10 +245,15 @@ export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
   sourceKind: z.string().trim().min(1),
   schema: PluginBackendExternalSessionSourceSchemaV1Schema,
   key: PluginBackendExternalSessionSourceKeyV1Schema,
-  instances: z.array(PluginBackendExternalSessionSourceInstanceV1Schema)
-    .min(1)
-    .max(MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION)
-    .optional(),
+  instances: PluginBackendExternalSessionSourceInstancesV1Schema.optional(),
+  /**
+   * Cold, declarative opt-in for terminal transcript follow. Omission is
+   * deliberately unavailable: read/import remain usable, while terminal
+   * follow requires provider-owned explicit user-row classification.
+   */
+  terminalFollow: z.object({
+    userRowClassification: z.literal('explicitV1'),
+  }).strict().optional(),
 }).strict().superRefine((declaration, ctx) => {
   for (const issue of findBackendExternalSessionSourceReferenceIssues(declaration)) {
     ctx.addIssue({
@@ -186,6 +266,23 @@ export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
   if (defaults.length > 1) {
     ctx.addIssue({ code: 'custom', path: ['instances'], message: 'Only one default external-session source instance is allowed' });
   }
+  const settingOverrides = declaration.instances?.filter(
+    (instance) => instance.kind === 'agentSettingOverride',
+  ) ?? [];
+  if (settingOverrides.length > 0 && defaults.length !== 1) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['instances'],
+      message: 'An agent-setting override requires exactly one fallback default source instance',
+    });
+  }
+  if (settingOverrides.length > 1) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['instances'],
+      message: 'Only one agent-setting default override is allowed',
+    });
+  }
   const connectedServiceIds = new Set<string>();
   const fieldsByName = new Map(declaration.schema.fields.map((field) => [field.name, field] as const));
   const kindField = fieldsByName.get('kind');
@@ -197,6 +294,9 @@ export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
     });
   }
   for (const [index, instance] of (declaration.instances ?? []).entries()) {
+    // Declaration-level checks also observe instances the instance schema
+    // already rejected, so structurally incomplete entries are left to it.
+    if (!isStructurallyCompleteExternalSessionSourceInstance(instance)) continue;
     for (const [fieldName, value] of Object.entries(instance.constants)) {
       const field = fieldsByName.get(fieldName);
       if (field && !externalSessionInstanceConstantMatchesField(field, value)) {
@@ -211,6 +311,16 @@ export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
     if (instance.kind === 'connectedServiceProfiles') {
       suppliedFields.add(instance.fields.serviceId);
       suppliedFields.add(instance.fields.profileId);
+    }
+    if (instance.kind === 'agentSetting' || instance.kind === 'agentSettingOverride') {
+      suppliedFields.add(instance.field);
+      if (Object.prototype.hasOwnProperty.call(instance.constants, instance.field)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instances', index, 'constants', instance.field],
+          message: 'Agent-setting target fields cannot also be constants',
+        });
+      }
     }
     for (const field of declaration.schema.fields) {
       if (field.optional || field.nullish || suppliedFields.has(field.name)) continue;

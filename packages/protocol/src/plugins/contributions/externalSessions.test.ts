@@ -66,6 +66,28 @@ function agentWithInstances(count: number) {
 }
 
 describe('Agent External Sessions contribution limits', () => {
+  it('keeps an Agent contribution usable when a newer producer declares an unknown source instance kind', () => {
+    const agent = agentWithSources(1);
+    const parsed = PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      surfaces: {
+        externalSession: {
+          sources: [{
+            ...source(0),
+            instances: [
+              { kind: 'default', constants: {} },
+              { kind: 'someFutureInstanceKind', constants: {}, futureField: 'value' },
+            ],
+          }],
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success ? parsed.data.surfaces?.externalSession.sources[0]?.instances : null)
+      .toEqual([{ kind: 'default', constants: {} }]);
+  });
+
   it('accepts only native prevention or unsupported external-linked takeover writer safety', () => {
     const agent = agentWithSources(1);
     for (const writerSafety of ['native_prevention', 'unsupported'] as const) {

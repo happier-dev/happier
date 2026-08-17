@@ -42,9 +42,10 @@ const transcriptItem = {
   raw: {
     role: 'agent',
     content: {
-      type: 'output',
+      type: 'acp',
+      agentId: 'codex',
       data: {
-        type: 'assistant',
+        type: 'message',
         message: 'content visible only after machine-RPC decryption',
       },
     },
@@ -123,6 +124,23 @@ describe('External Sessions secure refresh contract', () => {
     })).toMatchObject({ result });
   });
 
+  it('rejects malformed current raw records instead of accepting arbitrary bounded JSON', () => {
+    expect(ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.safeParse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [{
+          id: 'malformed-current-record',
+          createdAtMs: 1_701,
+          raw: { role: 'assistant' },
+        }],
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'malformed-current-record',
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects ambiguous empty results and requires diagnostics for empty advanced results', () => {
     expect(ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.safeParse({
       v: 1,
@@ -172,6 +190,36 @@ describe('External Sessions secure refresh contract', () => {
     }).success).toBe(false);
   });
 
+  it('keeps authoritative refresh items and current raw records closed', () => {
+    expect(ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.safeParse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [{
+          ...transcriptItem,
+          sourcePath: '/private/agent/transcript.jsonl',
+        }],
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'boundary-2',
+      },
+    }).success).toBe(false);
+
+    expect(ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.safeParse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [{
+          ...transcriptItem,
+          raw: { ...transcriptItem.raw, sourceNativeFact: 'retained' },
+        }],
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'boundary-2',
+      },
+    }).success).toBe(false);
+  });
+
   it('releases items only for an advanced result with the exact current binding', () => {
     const response = ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
       v: 1,
@@ -187,6 +235,41 @@ describe('External Sessions secure refresh contract', () => {
     expect(decideExternalSessionTranscriptRefreshApplicationV1(binding, requestCursor, response)).toEqual({
       kind: 'apply',
       items: [transcriptItem],
+      nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+      boundary: 'boundary-2',
+    });
+  });
+
+  it('releases canonical root-user and sidechain source metadata from an advanced refresh', () => {
+    const rootUserItem = {
+      id: 'item-user-1',
+      createdAtMs: 1_701,
+      messageRole: 'user',
+      userProjection: 'source_fact',
+      raw: {
+        role: 'user',
+        content: { type: 'text', text: 'root prompt' },
+      },
+    } as const;
+    const sidechainItem = {
+      ...transcriptItem,
+      id: 'item-sidechain-1',
+      sidechainId: 'sidechain-1',
+    } as const;
+    const response = ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [rootUserItem, sidechainItem],
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'boundary-2',
+      },
+    });
+
+    expect(decideExternalSessionTranscriptRefreshApplicationV1(binding, requestCursor, response)).toEqual({
+      kind: 'apply',
+      items: [rootUserItem, sidechainItem],
       nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
       boundary: 'boundary-2',
     });

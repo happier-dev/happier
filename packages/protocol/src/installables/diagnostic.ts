@@ -8,14 +8,12 @@ export type InstallableContributionOwner = Readonly<{
   ownerId: string;
   pluginId?: string;
   manifestPath?: string;
-  manifestDigest?: string;
   sharedGroupId?: string;
 }>;
 
 export type InstallableRegistryDiagnosticCode =
   | 'installable_duplicate_key'
-  | 'installable_duplicate_capability'
-  | 'installable_disallowed_source_provenance';
+  | 'installable_duplicate_capability';
 
 type InstallableRegistryDiagnosticBase = Readonly<{
   code: InstallableRegistryDiagnosticCode;
@@ -27,7 +25,7 @@ type InstallableRegistryDiagnosticBase = Readonly<{
   disabledPluginId?: string;
 }>;
 
-export type InstallableRegistryDiagnostic = InstallableRegistryDiagnosticBase & Readonly<({
+export type InstallableRegistryDiagnostic = InstallableRegistryDiagnosticBase & Readonly<{
   code: 'installable_duplicate_key' | 'installable_duplicate_capability';
   conflictedField: 'key' | 'capabilityId';
   existingDescriptorKey: string;
@@ -35,7 +33,4 @@ export type InstallableRegistryDiagnostic = InstallableRegistryDiagnosticBase & 
   existingOwnerId: string;
   existingProvenance: InstallableOwnerProvenance;
   existingPluginId?: string;
-} | {
-  code: 'installable_disallowed_source_provenance';
-  conflictedField: 'source';
-})>;
+}>;

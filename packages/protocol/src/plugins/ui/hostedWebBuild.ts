@@ -7,10 +7,6 @@ export const PluginHostedWebRuntimeModeV1Schema = z.discriminatedUnion('kind', [
     assetRootId: z.string().trim().min(1),
   }).strict(),
   z.object({
-    kind: z.literal('managedLocalService'),
-    localServiceId: z.string().trim().min(1),
-  }).strict(),
-  z.object({
     kind: z.literal('registeredSessionEndpoint'),
     endpointIdPath: z.string().trim().min(1),
   }).strict(),

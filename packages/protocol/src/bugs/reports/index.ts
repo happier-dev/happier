@@ -27,9 +27,12 @@ export {
   resolveBugReportIssueTargetWithDefaults,
 } from './issueTarget.js';
 export {
+  createSensitiveDiagnosticTextRedactor,
   redactBugReportSensitiveText,
   registerSensitiveDiagnosticValues,
+  trimBugReportTextHeadToMaxBytes,
   trimBugReportTextToMaxBytes,
+  type SensitiveDiagnosticTextRedactor,
   type SensitiveDiagnosticValuesLease,
 } from './redaction.js';
 export { hasAcceptedBugReportArtifactKind, pushBugReportArtifact } from './artifacts.js';

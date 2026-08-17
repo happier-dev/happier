@@ -2,51 +2,10 @@ import { z } from 'zod';
 
 const NonNegativeIntSchema = z.number().int().nonnegative();
 
-type SimulatorJsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly SimulatorJsonValue[]
-  | { readonly [key: string]: SimulatorJsonValue };
-
-function isPlainObject(value: object): value is Record<string, unknown> {
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function isSimulatorJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet()): value is SimulatorJsonValue {
-  if (value === null) return true;
-
-  switch (typeof value) {
-    case 'string':
-    case 'boolean':
-      return true;
-    case 'number':
-      return Number.isFinite(value);
-    case 'object':
-      break;
-    default:
-      return false;
-  }
-
-  if (seen.has(value)) return false;
-  seen.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.every((item) => isSimulatorJsonValue(item, seen));
-    }
-    if (!isPlainObject(value)) return false;
-    return Object.values(value).every((item) => isSimulatorJsonValue(item, seen));
-  } finally {
-    seen.delete(value);
-  }
-}
-
-const SimulatorJsonValueSchema = z.custom<SimulatorJsonValue>(
-  (value): value is SimulatorJsonValue => isSimulatorJsonValue(value),
-  { message: 'Simulator sideband values must be JSON-serializable.' },
-);
+// Sideband payloads cross a JSON transport. Zod's native JSON schema models
+// that recursive wire contract directly and can be faithfully advertised to
+// Action-catalog consumers.
+const SimulatorJsonValueSchema = z.json();
 
 export const SimulatorSidebandKindV1Schema = z.enum([
   'accessibility_tree',

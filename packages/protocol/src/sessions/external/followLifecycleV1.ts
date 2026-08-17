@@ -5,47 +5,29 @@ import { z } from 'zod';
 import {
   buildLinkedExternalSessionMetadataV1,
   LinkedExternalSessionQualifiedIdentityV1Schema,
+  readExternalSessionFollowIssueV1,
   readExternalSessionFollowPolicyV1,
+  readExternalSessionFollowStatusV1,
   readLinkedExternalSessionV1FromMetadata,
+  type ExternalSessionFollowIssueV1,
   type ExternalSessionFollowPolicyV1,
+  type ExternalSessionFollowStatusV1,
   type LinkedExternalSessionQualifiedIdentityV1,
   type LinkedExternalSessionV1,
 } from './linkedSessionMetadata.js';
 
-export const ExternalSessionFollowStatusValueV1Schema = z.enum([
-  'disabled',
-  'paused',
-  'reacquiring',
-  'active',
-  'error',
-]);
-
-export type ExternalSessionFollowStatusValueV1 = z.infer<
-  typeof ExternalSessionFollowStatusValueV1Schema
->;
-
-export const ExternalSessionFollowStatusV1Schema = z.object({
-  v: z.literal(1),
-  status: ExternalSessionFollowStatusValueV1Schema,
-  reason: z.string().trim().min(1).max(256).optional(),
-  updatedAtMs: z.number().int().min(0),
-}).passthrough();
-
-export type ExternalSessionFollowStatusV1 = z.infer<
-  typeof ExternalSessionFollowStatusV1Schema
->;
-
-export const ExternalSessionFollowIssueV1Schema = z.object({
-  v: z.literal(1),
-  code: z.string().trim().min(1).max(256),
-  message: z.string().trim().min(1).max(2_000).optional(),
-  retryable: z.boolean().optional(),
-  observedAtMs: z.number().int().min(0),
-}).passthrough();
-
-export type ExternalSessionFollowIssueV1 = z.infer<
-  typeof ExternalSessionFollowIssueV1Schema
->;
+export {
+  ExternalSessionFollowIssueV1Schema,
+  ExternalSessionFollowStatusV1Schema,
+  ExternalSessionFollowStatusValueV1Schema,
+  readExternalSessionFollowIssueV1,
+  readExternalSessionFollowStatusV1,
+} from './linkedSessionMetadata.js';
+export type {
+  ExternalSessionFollowIssueV1,
+  ExternalSessionFollowStatusV1,
+  ExternalSessionFollowStatusValueV1,
+} from './linkedSessionMetadata.js';
 
 export const ExternalSessionCompletedBoundaryV1Schema = z.object({
   id: z.string().trim().min(1).max(1_024),
@@ -188,33 +170,6 @@ const ExternalSessionsSettingsPatchV1Schema = z.object({
   keepPassivelyFollowingAfterRestart: z.boolean().optional(),
   autoLinkSourcePolicies: ExternalSessionsAutoLinkSourcePoliciesV1Schema.optional(),
 }).strict();
-
-export function readExternalSessionFollowStatusV1(
-  value: unknown,
-): ExternalSessionFollowStatusV1 | null {
-  const parsed = ExternalSessionFollowStatusV1Schema.safeParse(value);
-  if (!parsed.success) return null;
-  return {
-    v: 1,
-    status: parsed.data.status,
-    ...(parsed.data.reason === undefined ? {} : { reason: parsed.data.reason }),
-    updatedAtMs: parsed.data.updatedAtMs,
-  };
-}
-
-export function readExternalSessionFollowIssueV1(
-  value: unknown,
-): ExternalSessionFollowIssueV1 | null {
-  const parsed = ExternalSessionFollowIssueV1Schema.safeParse(value);
-  if (!parsed.success) return null;
-  return {
-    v: 1,
-    code: parsed.data.code,
-    ...(parsed.data.message === undefined ? {} : { message: parsed.data.message }),
-    ...(parsed.data.retryable === undefined ? {} : { retryable: parsed.data.retryable }),
-    observedAtMs: parsed.data.observedAtMs,
-  };
-}
 
 export function readExternalSessionsSettingsV1(
   value: unknown,

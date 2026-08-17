@@ -61,4 +61,89 @@ describe('ConversationTurnOriginV1', () => {
       },
     })).toBeNull();
   });
+
+  it.each([
+    ['happier.voice.elevenlabs', 'realtime_elevenlabs', 'realtime-elevenlabs'],
+    ['happier.voice.google', 'google_gemini', 'gemini-stt'],
+    ['happier.voice.google', 'google_cloud', 'google-cloud-tts'],
+  ] as const)(
+    'normalizes historical Voice source %s/%s on read without changing the stored shape',
+    (pluginId, contributionId, canonicalContributionId) => {
+      const historicalOrigin = {
+        v: 1,
+        channel: 'realtime_conversation',
+        modality: 'voice',
+        source: { pluginId, contributionId },
+      } as const;
+
+      expect(readConversationTurnOriginV1FromMessageMeta({
+        happier: {
+          kind: 'conversation_turn.v1',
+          payload: { v: 1 },
+          conversationTurnOriginV1: historicalOrigin,
+        },
+      })).toEqual({
+        ...historicalOrigin,
+        source: { pluginId, contributionId: canonicalContributionId },
+      });
+      expect(historicalOrigin.source.contributionId).toBe(contributionId);
+    },
+  );
+
+  it('passes canonical and unknown valid identities through while rejecting unowned predecessor ids', () => {
+    const readSource = (source: Readonly<{ pluginId: string; contributionId: string }>) =>
+      readConversationTurnOriginV1FromMessageMeta({
+        happier: {
+          kind: 'conversation_turn.v1',
+          payload: { v: 1 },
+          conversationTurnOriginV1: {
+            v: 1,
+            channel: 'realtime_conversation',
+            modality: 'voice',
+            source,
+          },
+        },
+      })?.source;
+
+    expect(readSource({
+      pluginId: 'happier.voice.openai',
+      contributionId: 'realtime-openai',
+    })).toEqual({
+      pluginId: 'happier.voice.openai',
+      contributionId: 'realtime-openai',
+    });
+    expect(readSource({
+      pluginId: 'acme.voice',
+      contributionId: 'unknown-conversation',
+    })).toEqual({
+      pluginId: 'acme.voice',
+      contributionId: 'unknown-conversation',
+    });
+    expect(readSource({
+      pluginId: 'acme.voice',
+      contributionId: 'unqualified_source',
+    })).toBeUndefined();
+    expect(readSource({
+      pluginId: 'happier.agent.openai-compat',
+      contributionId: 'openai_compat',
+    })).toBeUndefined();
+  });
+
+  it('does not apply Voice predecessor normalization to Agent-thread provenance', () => {
+    expect(readConversationTurnOriginV1FromMessageMeta({
+      happier: {
+        kind: 'conversation_turn.v1',
+        payload: { v: 1 },
+        conversationTurnOriginV1: {
+          v: 1,
+          channel: 'agent_thread',
+          modality: 'text',
+          source: {
+            pluginId: 'happier.agent.codex',
+            contributionId: 'realtime_codex',
+          },
+        },
+      },
+    })).toBeNull();
+  });
 });

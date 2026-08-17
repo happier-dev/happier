@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import {
   PluginContributionIdentityV1Schema,
@@ -26,6 +27,9 @@ export const QualifiedConnectedAccountConfigurationRevisionV4Schema = z
 
 export const QualifiedConnectedAccountModeIdV4Schema =
   PluginContributionLocalIdSchema;
+const QualifiedConnectedAccountModeIdV4ZodSchema = asProtocolZod(
+  QualifiedConnectedAccountModeIdV4Schema,
+);
 
 const QualifiedConnectedAccountRevisionedV4Shape = {
   revisionSemantics: z.literal('revisioned'),
@@ -58,11 +62,25 @@ function createQualifiedConnectedAccountRevisionSemanticsV4Schema<
 }
 
 export const QualifiedConnectedAccountServiceRefSchema = PluginContributionIdentityV1Schema;
+const QualifiedConnectedAccountServiceRefZodSchema = asProtocolZod(
+  QualifiedConnectedAccountServiceRefSchema,
+);
 
 export const QualifiedConnectedAccountGroupRefSchema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: QualifiedConnectedAccountServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
 }).strict();
+
+/**
+ * Opaque identity of one persisted group lifetime. Unlike generation and
+ * runtime-state revision, it does not reset when a logical group id is
+ * deleted and recreated.
+ */
+export const QualifiedConnectedAccountGroupIncarnationV4Schema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128);
 
 export const QualifiedConnectedAccountProviderIdentityV4Schema = z.object({
   accountId: z.string().trim().min(1).max(256).nullable().optional(),
@@ -85,14 +103,14 @@ export const QualifiedConnectedAccountPresentationMetadataV4Schema = z.object({
 }).strict();
 
 const QualifiedConnectedAccountProfileV4Shape = {
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   status: z.enum([
     'connected',
     'refreshing',
     'needs_reauth',
     'refresh_failed_retryable',
   ]),
-  authenticationModeId: QualifiedConnectedAccountModeIdV4Schema.nullable(),
+  authenticationModeId: QualifiedConnectedAccountModeIdV4ZodSchema.nullable(),
   configurationReady: z.boolean(),
   configurationRevision:
     QualifiedConnectedAccountConfigurationRevisionV4Schema.nullable(),
@@ -108,13 +126,13 @@ export const QualifiedConnectedAccountProfileV4Schema =
   );
 
 export const QualifiedConnectedAccountListResponseV4Schema = z.object({
-  service: QualifiedConnectedAccountServiceRefSchema,
+  service: QualifiedConnectedAccountServiceRefZodSchema,
   accounts: z.array(QualifiedConnectedAccountProfileV4Schema).max(500),
 }).strict();
 
 export const QualifiedConnectedAccountConfigurationTargetV4Schema = z.object({
   kind: z.literal('account'),
-  ref: QualifiedConnectedAccountRefSchema,
+  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
 }).strict();
 
 export const QualifiedConnectedAccountCredentialMetadataV4Schema =
@@ -123,7 +141,7 @@ export const QualifiedConnectedAccountCredentialMetadataV4Schema =
 export const QualifiedConnectedAccountConfigurationSnapshotV4Schema =
   createQualifiedConnectedAccountRevisionSemanticsV4Schema({
     target: QualifiedConnectedAccountConfigurationTargetV4Schema,
-    authenticationModeId: QualifiedConnectedAccountModeIdV4Schema.nullable(),
+    authenticationModeId: QualifiedConnectedAccountModeIdV4ZodSchema.nullable(),
     configurationRevision:
       QualifiedConnectedAccountConfigurationRevisionV4Schema,
     configurationContent: StoredJsonContentEnvelopeSchema,
@@ -131,8 +149,8 @@ export const QualifiedConnectedAccountConfigurationSnapshotV4Schema =
 
 export const QualifiedConnectedAccountCredentialSnapshotV4Schema =
   createQualifiedConnectedAccountRevisionSemanticsV4Schema({
-    ref: QualifiedConnectedAccountRefSchema,
-    authenticationModeId: QualifiedConnectedAccountModeIdV4Schema.nullable(),
+    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
+    authenticationModeId: QualifiedConnectedAccountModeIdV4ZodSchema.nullable(),
     configurationRevision:
       QualifiedConnectedAccountConfigurationRevisionV4Schema.nullable(),
     content: StoredJsonContentEnvelopeSchema,
@@ -141,7 +159,7 @@ export const QualifiedConnectedAccountCredentialSnapshotV4Schema =
 
 export const QualifiedConnectedAccountGroupMemberV4Schema = z.object({
   v: z.literal(1),
-  connectedAccountId: QualifiedConnectedAccountIdSchema,
+  connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
   priority: z.number().int().default(100),
   enabled: z.boolean().default(true),
   state: ConnectedServiceAuthGroupMemberStateV1Schema,
@@ -152,9 +170,10 @@ export const QualifiedConnectedAccountGroupMemberV4Schema = z.object({
 export const QualifiedConnectedAccountGroupV4Schema = z.object({
   v: z.literal(1),
   ref: QualifiedConnectedAccountGroupRefSchema,
+  incarnation: QualifiedConnectedAccountGroupIncarnationV4Schema,
   displayName: z.string().trim().min(1).nullable(),
   policy: ConnectedServiceAuthGroupPolicyV1Schema,
-  activeConnectedAccountId: QualifiedConnectedAccountIdSchema.nullable(),
+  activeConnectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema).nullable(),
   generation: z.number().int().nonnegative(),
   runtimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
   state: ConnectedServiceAuthGroupStateV1Schema,

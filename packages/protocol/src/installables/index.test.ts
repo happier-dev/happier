@@ -60,6 +60,7 @@ describe('installables catalog', () => {
   it('does not export provider-owned Codex ACP descriptor policy from protocol', () => {
     expect(Object.prototype.hasOwnProperty.call(installables, 'CODEX_ACP_INSTALLABLE_DESCRIPTOR')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(installables, 'CODEX_ACP_DIST_TAG')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(installables, 'isCuratedFirstPartyInstallableOwner')).toBe(false);
   });
 
   it('has unique keys', () => {
@@ -358,7 +359,7 @@ describe('installables catalog', () => {
     ]);
   });
 
-  it('rejects managed PyPI wheel asset descriptors from external plugins', () => {
+  it('admits managed PyPI wheel asset descriptors from external plugins', () => {
     const descriptor = createManagedPypiWheelDescriptor('external-pypi-wheel-tool');
 
     const registry = installables.resolveInstallablesRegistry({
@@ -372,15 +373,8 @@ describe('installables catalog', () => {
       }],
     });
 
-    expect(registry.descriptorsByKey[descriptor.key]).toBeUndefined();
-    expect(registry.diagnostics).toEqual([
-      expect.objectContaining({
-        code: 'installable_disallowed_source_provenance',
-        disabledDescriptorKey: descriptor.key,
-        disabledOwnerId: 'acme.installables',
-        disabledProvenance: 'external_plugin',
-      }),
-    ]);
+    expect(registry.descriptorsByKey[descriptor.key]?.descriptor).toBe(descriptor);
+    expect(registry.diagnostics).toEqual([]);
   });
 
   it('allows managed PyPI wheel asset descriptors from bundled first-party plugins', () => {
@@ -399,6 +393,38 @@ describe('installables catalog', () => {
 
     expect(registry.descriptorsByKey[descriptor.key]?.descriptor).toBe(descriptor);
     expect(registry.diagnostics).toEqual([]);
+  });
+
+  it('keeps deterministic conflict handling when an external wheel descriptor shadows a bundled descriptor', () => {
+    const descriptor = createManagedPypiWheelDescriptor('conflicted-pypi-wheel-tool');
+
+    const registry = installables.resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+      externalPlugins: [{
+        owner: {
+          provenance: 'external_plugin',
+          ownerId: 'acme.installables',
+          pluginId: 'acme.installables',
+        },
+        descriptor,
+      }],
+    });
+
+    expect(registry.descriptorsByKey[descriptor.key]?.owner.ownerId).toBe('happier.antigravity');
+    expect(registry.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'installable_duplicate_key',
+        disabledOwnerId: 'acme.installables',
+        existingOwnerId: 'happier.antigravity',
+      }),
+    ]);
   });
 
   it('diagnoses same shared-group duplicates when nested descriptor fields differ', () => {

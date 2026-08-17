@@ -7,6 +7,7 @@ import {
   SessionProviderHookEventPayloadV1Schema,
   SessionProviderTranscriptEventPayloadV1Schema,
 } from './session.js';
+import { HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 } from './hostV1.js';
 
 describe('session provider host events', () => {
   it('declares canonical host session event ids and payload contracts', () => {
@@ -14,6 +15,8 @@ describe('session provider host events', () => {
     expect(SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1).toBe('@happier/session/provider-transcript');
     expect(readHostEventNamespaceV1(SESSION_PROVIDER_HOOK_EVENT_ID_V1)).toBe('session');
     expect(readHostEventNamespaceV1(SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1)).toBe('session');
+    expect(readHostEventNamespaceV1(HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1))
+      .toBe('automation');
 
     expect(SessionProviderHookEventPayloadV1Schema.parse({
       providerId: 'claude',

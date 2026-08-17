@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { ConnectedAccountPurposeIdSchema, QualifiedConnectedAccountPurposeV1Schema } from './connectedAccountPurposes.js';
@@ -12,11 +13,11 @@ import {
 export const QualifiedConnectedAccountPurposeBindingTargetV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('account'),
-    account: QualifiedConnectedAccountRefSchema,
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema),
   }).strict(),
   z.object({
     kind: z.literal('group'),
-    service: PluginContributionIdentityV1Schema,
+    service: asProtocolZod(PluginContributionIdentityV1Schema),
     groupId: ConnectedServiceAuthGroupIdSchema,
   }).strict(),
 ]);

@@ -1,7 +1,13 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
+import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { PluginIdSchema } from '../plugins/pluginId.js';
+import {
+  SessionCreationDirectoryApprovalV1Schema,
+} from '../sessions/creation/sessionCreationTargetPreparationV1.js';
 
 export const ApprovalRequestStatusSchema = z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']);
 export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
@@ -30,8 +36,10 @@ export const ApprovalRequestOriginV1Schema = z.object({
 export type ApprovalRequestOriginV1 = z.infer<typeof ApprovalRequestOriginV1Schema>;
 
 export const ApprovalRequestCreatedBySchema = z.object({
-  surface: z.enum(['voice', 'agent', 'mcp', 'cli', 'system']),
+  surface: z.enum(['voice', 'agent', 'session_agent', 'mcp', 'cli', 'system']),
   agentId: z.string().min(1).optional(),
+  pluginId: asProtocolZod(PluginIdSchema).optional(),
+  contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema).optional(),
   sessionId: z.string().min(1).optional(),
 }).strict();
 export type ApprovalRequestCreatedBy = z.infer<typeof ApprovalRequestCreatedBySchema>;
@@ -64,6 +72,12 @@ export const ApprovalRequestV1Schema = z.object({
   actionArgs: z.unknown(),
   summary: z.string().min(1),
   preview: z.unknown().optional(),
+  /**
+   * Host-stamped target evidence for a deferred `session.spawn_new` directory
+   * creation approval. It is not Action input and cannot authorize another
+   * Action family.
+   */
+  sessionCreationDirectoryApproval: SessionCreationDirectoryApprovalV1Schema.optional(),
   decision: ApprovalDecisionV1Schema.optional(),
   execution: ApprovalExecutionV1Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -152,6 +166,14 @@ export const ApprovalRequestV1Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['execution'],
       message: 'status failed requires a failed execution result',
+    });
+  }
+
+  if (value.sessionCreationDirectoryApproval !== undefined && value.actionId !== 'session.spawn_new') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sessionCreationDirectoryApproval'],
+      message: 'Directory creation approval evidence belongs only to session.spawn_new.',
     });
   }
 });

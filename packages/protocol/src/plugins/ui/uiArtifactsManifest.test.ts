@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginUiArtifactsManifestV1Schema } from './uiArtifactsManifest.js';
+import {
+  PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1,
+  PluginUiArtifactsManifestV1Schema,
+} from './uiArtifactsManifest.js';
 
 const HOSTED_DIGEST = `sha256:${'d'.repeat(64)}`;
 const NATIVE_DIGEST = `sha256:${'e'.repeat(64)}`;
@@ -11,6 +14,14 @@ function artifactFile(relativePath: string, byteSize = 12) {
 }
 
 describe('plugin UI artifacts manifest', () => {
+  it('exports the one public artifact grammar version used by generated build facts', () => {
+    expect(PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1).toBe(1);
+    expect(PluginUiArtifactsManifestV1Schema.parse({
+      version: PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1,
+      entries: [],
+    }).version).toBe(PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V1);
+  });
+
   it('binds hosted-web and RN outputs to one canonical build manifest', () => {
     const manifest = PluginUiArtifactsManifestV1Schema.parse({
       version: 1,
@@ -27,7 +38,7 @@ describe('plugin UI artifacts manifest', () => {
           digest: HOSTED_DIGEST,
           builtWith: { bundler: 'vite', version: '7.0.0' },
           hostUiApiVersion: '1.0.0',
-          compat: { react: '19.2.0' },
+          compat: {},
         },
         {
           contributionId: 'preview-native',
@@ -56,6 +67,42 @@ describe('plugin UI artifacts manifest', () => {
     expect(manifest.entries).toHaveLength(2);
   });
 
+  it('permits framework-free hosted-web artifacts while keeping React compatibility mandatory for reactNative tiers', () => {
+    const hostedWeb = {
+      contributionId: 'plain-dom-web',
+      tier: 'hostedWeb',
+      platform: 'web',
+      entry: 'hosted-web/plain-dom-web/index.html',
+      files: [artifactFile('hosted-web/plain-dom-web/index.html')],
+      digest: HOSTED_DIGEST,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '1.0.0',
+      compat: {},
+    } as const;
+    const reactNativeWithoutReact = {
+      contributionId: 'native-without-react',
+      tier: 'reactNative',
+      platform: 'web',
+      entry: 'react-native-web/native-without-react/entry.mjs',
+      files: [artifactFile('react-native-web/native-without-react/entry.mjs')],
+      digest: NATIVE_DIGEST,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '1.0.0',
+      compat: { reactNative: '0.83.4' },
+    } as const;
+
+    expect(PluginUiArtifactsManifestV1Schema.parse({ version: 1, entries: [hostedWeb] }).entries[0]?.compat)
+      .toEqual({});
+    expect(PluginUiArtifactsManifestV1Schema.safeParse({
+      version: 1,
+      entries: [{ ...hostedWeb, compat: { react: '19.2.0' } }],
+    }).success).toBe(false);
+    expect(PluginUiArtifactsManifestV1Schema.safeParse({
+      version: 1,
+      entries: [reactNativeWithoutReact],
+    }).success).toBe(false);
+  });
+
   it('rejects removed embedded-web generated artifact entries', () => {
     expect(PluginUiArtifactsManifestV1Schema.safeParse({
       version: 1,
@@ -68,7 +115,7 @@ describe('plugin UI artifacts manifest', () => {
         digest: HOSTED_DIGEST,
         builtWith: { bundler: 'vite', version: '7.0.0' },
         hostUiApiVersion: '1.0.0',
-        compat: { react: '19.2.0' },
+        compat: {},
       }],
     }).success).toBe(false);
   });
@@ -137,6 +184,36 @@ describe('plugin UI artifacts manifest', () => {
     });
 
     expect(manifest.entries).toHaveLength(1);
+  });
+
+  it('admits a web candidate migration export without inventing native federation identity', () => {
+    const base = {
+      contributionId: 'preview-native',
+      tier: 'reactNative',
+      platform: 'web',
+      entry: 'react-native-web/preview-native/entry.mjs',
+      files: [artifactFile('react-native-web/preview-native/entry.mjs')],
+      digest: NATIVE_DIGEST,
+      builtWith: { bundler: 'vite', version: '7.0.0' },
+      hostUiApiVersion: '1.0.0',
+      compat: { react: '19.2.0', reactNative: '0.83.4' },
+    } as const;
+
+    expect(PluginUiArtifactsManifestV1Schema.parse({
+      version: 1,
+      entries: [{ ...base, collectionMigrations: { exportName: 'collectionMigrations' } }],
+    }).entries[0]?.collectionMigrations).toEqual({ exportName: 'collectionMigrations' });
+    expect(PluginUiArtifactsManifestV1Schema.safeParse({
+      version: 1,
+      entries: [{
+        ...base,
+        collectionMigrations: {
+          containerName: 'fake-web-container',
+          modulePath: './fake-web-module',
+          exportName: 'collectionMigrations',
+        },
+      }],
+    }).success).toBe(false);
   });
 
   it('rejects a reactNative tier, web platform entry built with Re.Pack', () => {
@@ -231,7 +308,7 @@ describe('plugin UI artifacts manifest', () => {
         digest: HOSTED_DIGEST,
         builtWith: { bundler: 'vite', version: '7.0.0' },
         hostUiApiVersion: '1.0.0',
-        compat: { react: '19.2.0' },
+        compat: {},
       }],
     }).success).toBe(false);
   });
@@ -246,7 +323,7 @@ describe('plugin UI artifacts manifest', () => {
       digest: HOSTED_DIGEST,
       builtWith: { bundler: 'vite', version: '7.0.0' },
       hostUiApiVersion: '1.0.0',
-      compat: { react: '19.2.0' },
+      compat: {},
     } as const;
     const unsafePaths = [
       '',
@@ -307,7 +384,7 @@ describe('plugin UI artifacts manifest', () => {
         digest: HOSTED_DIGEST,
         builtWith: { bundler: 'vite', version: '7.0.0' },
         hostUiApiVersion: '1.0.0',
-        compat: { react: '19.2.0' },
+        compat: {},
       }],
     }).success).toBe(false);
 
@@ -323,7 +400,7 @@ describe('plugin UI artifacts manifest', () => {
           digest: HOSTED_DIGEST,
           builtWith: { bundler: 'vite', version: '7.0.0' },
           hostUiApiVersion: '1.0.0',
-          compat: { react: '19.2.0' },
+          compat: {},
         },
         {
           contributionId: 'preview-web-lower',
@@ -334,7 +411,7 @@ describe('plugin UI artifacts manifest', () => {
           digest: HOSTED_DIGEST,
           builtWith: { bundler: 'vite', version: '7.0.0' },
           hostUiApiVersion: '1.0.0',
-          compat: { react: '19.2.0' },
+          compat: {},
         },
       ],
     }).success).toBe(false);
@@ -349,7 +426,7 @@ describe('plugin UI artifacts manifest', () => {
       digest: HOSTED_DIGEST,
       builtWith: { bundler: 'vite', version: '7.0.0' },
       hostUiApiVersion: '1.0.0',
-      compat: { react: '19.2.0' },
+      compat: {},
     } as const;
 
     expect(PluginUiArtifactsManifestV1Schema.safeParse({

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../idsV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1 = 'external-session-status-demand-v1' as const;
 
@@ -20,7 +21,7 @@ export const ExternalSessionStatusDemandLevelV1Schema = z.enum(['loaded', 'visib
 export type ExternalSessionStatusDemandLevelV1 = z.infer<typeof ExternalSessionStatusDemandLevelV1Schema>;
 
 export const ExternalSessionStatusDemandEntryV1Schema = z.object({
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   machineId: ExternalSessionStatusDemandMachineIdV1Schema,
   linkGeneration: ExternalSessionStatusDemandLinkGenerationV1Schema,
   demand: ExternalSessionStatusDemandLevelV1Schema,

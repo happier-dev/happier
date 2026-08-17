@@ -17,6 +17,7 @@ import {
   PluginContributionLocalIdSchema,
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
+import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import {
   ConnectedAccountPurposeDeclarationsV1Schema,
   type ConnectedAccountPurposeDeclarationV1,
@@ -26,6 +27,13 @@ import {
   ConnectedAccountRequestAuthUsesV1Schema,
   type ConnectedAccountRequestAuthUseV1,
 } from '../../connect/connectedAccountRequestAuth.js';
+import {
+  QualifiedConnectedAccountPurposeBindingsV1Schema,
+  qualifiedPurposeKey,
+  type QualifiedConnectedAccountPurposeBindingsV1,
+} from '../../connect/connectedAccountPurposeBindings.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 const LegacyProfileEnvironmentNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).max(128);
 
@@ -93,7 +101,7 @@ export type ProviderModelLoadDescriptorV1 = z.infer<typeof ProviderModelLoadDesc
 
 export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
   kind: z.literal('managed'),
-  dependencies: z.array(PluginContributionLocalIdSchema).max(16).optional(),
+  dependencies: z.array(asProtocolZod(PluginContributionLocalIdSchema)).max(16).optional(),
   connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema.optional(),
   requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema.optional(),
   endpointTemplateIds: z.array(ProviderLocalIdSchema).min(1).max(4),
@@ -138,6 +146,7 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
   Readonly<{
     purpose: string;
     service: PluginContributionIdentityV1;
+    title?: PluginLocalizedStringV2;
     required?: boolean;
     materializationKinds?: PluginConnectedAccountMaterializationKind[];
   }>;
@@ -150,6 +159,31 @@ export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   requestAuthUses: ConnectedAccountRequestAuthUseV1[];
   endpointTemplateIds: string[];
 }>;
+
+function canonicalProviderManagedPurposeBindingsV1(
+  input: QualifiedConnectedAccountPurposeBindingsV1,
+): QualifiedConnectedAccountPurposeBindingsV1 {
+  const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(input);
+  return {
+    v: 1,
+    bindings: [...parsed.bindings].sort((left, right) =>
+      compareProviderCanonicalStringsV1(
+        qualifiedPurposeKey(left.purpose),
+        qualifiedPurposeKey(right.purpose),
+      )),
+  };
+}
+
+/**
+ * Stable equality representation for a managed Provider's exact qualified
+ * connected-account purpose bindings. Bindings are keyed by qualified purpose,
+ * so their declaration order carries no runtime meaning.
+ */
+export function createProviderManagedPurposeBindingsEqualityKeyV1(
+  input: QualifiedConnectedAccountPurposeBindingsV1,
+): string {
+  return JSON.stringify(canonicalProviderManagedPurposeBindingsV1(input));
+}
 
 /**
  * Canonical resolution boundary for a public managed Provider declaration.
@@ -169,7 +203,9 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
   const parsed = ProviderManagedRuntimeDeclarationV1Schema.parse(
     input.managedRuntime,
   );
-  const dependencies = [...(parsed.dependencies ?? [])];
+  const dependencies = [...(parsed.dependencies ?? [])].sort(
+    compareProviderCanonicalStringsV1,
+  );
   const endpointTemplateIds = [...parsed.endpointTemplateIds];
   const connectedAccounts:
     ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[] = (
@@ -184,12 +220,17 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
           : declaration.service,
       );
       const materializationKinds = declaration.materializationKinds
-        ? [...declaration.materializationKinds]
+        ? [...declaration.materializationKinds].sort(
+            compareProviderCanonicalStringsV1,
+          )
         : undefined;
       if (materializationKinds) Object.freeze(materializationKinds);
       return Object.freeze({
         purpose: declaration.purpose,
         service: Object.freeze(service),
+        ...(declaration.title === undefined
+          ? {}
+          : { title: declaration.title }),
         ...(declaration.required === undefined
           ? {}
           : { required: declaration.required }),
@@ -197,16 +238,20 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
           ? {}
           : { materializationKinds }),
       });
-    });
+    }).sort((left, right) =>
+      compareProviderCanonicalStringsV1(left.purpose, right.purpose));
   const requestAuthUses: ConnectedAccountRequestAuthUseV1[] = (
     parsed.requestAuthUses ?? []
   ).map((use) => Object.freeze({
     purpose: use.purpose,
     materialization: Object.freeze({
       ...use.materialization,
-      headerNames: Object.freeze([...use.materialization.headerNames]),
+      headerNames: Object.freeze([
+        ...use.materialization.headerNames,
+      ].sort(compareProviderCanonicalStringsV1)),
     }),
-  }));
+  })).sort((left, right) =>
+    compareProviderCanonicalStringsV1(left.purpose, right.purpose));
   Object.freeze(dependencies);
   Object.freeze(connectedAccounts);
   Object.freeze(requestAuthUses);
@@ -217,6 +262,58 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     connectedAccounts,
     requestAuthUses,
     endpointTemplateIds,
+  });
+}
+
+/**
+ * Stable equality representation for a managed Provider declaration.
+ * Endpoint-template order is intentionally retained: it is the declared
+ * runtime request order, unlike the purpose-keyed fields. Presentation titles
+ * are omitted because they do not change runtime behavior.
+ */
+export function createProviderManagedRuntimeDeclarationEqualityKeyV1(input: Readonly<{
+  implementationIdentity: PluginContributionIdentityV1;
+  managedRuntime:
+    | ProviderManagedRuntimeDeclarationV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
+}>): string {
+  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
+    input.implementationIdentity,
+  );
+  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    implementationIdentity,
+    managedRuntime: input.managedRuntime,
+  });
+  return JSON.stringify({
+    implementationIdentity,
+    managedRuntime: {
+      ...managedRuntime,
+      connectedAccounts: managedRuntime.connectedAccounts.map(
+        ({ title: _title, ...declaration }) => declaration,
+      ),
+    },
+  });
+}
+
+/**
+ * Stable equality representation for the managed binding facts that guard a
+ * live Provider runtime.
+ */
+export function createProviderManagedRuntimeBindingEqualityKeyV1(input: Readonly<{
+  implementationIdentity: PluginContributionIdentityV1;
+  managedRuntime:
+    | ProviderManagedRuntimeDeclarationV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
+  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
+}>): string {
+  return JSON.stringify({
+    declaration: createProviderManagedRuntimeDeclarationEqualityKeyV1({
+      implementationIdentity: input.implementationIdentity,
+      managedRuntime: input.managedRuntime,
+    }),
+    purposeBindings: createProviderManagedPurposeBindingsEqualityKeyV1(
+      input.purposeBindings,
+    ),
   });
 }
 

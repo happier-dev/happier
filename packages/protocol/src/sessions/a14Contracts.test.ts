@@ -136,22 +136,18 @@ describe('A.14 session protocol contracts', () => {
     });
   });
 
-  it('maps legacy direct-session takeover modes while failing closed on legacy stop authority', () => {
+  it('keeps takeover schemas while omitting the unreleased legacy translators', () => {
     const takeoverInput = schema('ExternalSessionTakeoverInputV1Schema');
     const takeoverResult = schema('ExternalSessionTakeoverResultV1Schema');
-    const mapLinked = (protocol as Record<string, unknown>).mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1 as
-      | ((input: { linkedSessionId: string; forceStop?: boolean }) => unknown)
-      | undefined;
-    const mapPersisted = (protocol as Record<string, unknown>).mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1 as
-      | ((input: { linkedSessionId: string; forceStop?: boolean }) => unknown)
-      | undefined;
-
-    expect(mapLinked).toBeTypeOf('function');
-    expect(mapPersisted).toBeTypeOf('function');
-    expect(takeoverInput.safeParse(
-      mapLinked!({ linkedSessionId: 'session-1', forceStop: true }),
-    ).success).toBe(false);
-    expect(takeoverInput.parse(mapPersisted!({ linkedSessionId: 'session-1' }))).toEqual({
+    expect((protocol as Record<string, unknown>)
+      .mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1).toBeUndefined();
+    expect((protocol as Record<string, unknown>)
+      .mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1).toBeUndefined();
+    expect(takeoverInput.parse({
+      linkedSessionId: 'session-1',
+      targetRuntimeMode: 'terminal',
+      storageMode: 'persisted',
+    })).toEqual({
       linkedSessionId: 'session-1',
       targetRuntimeMode: 'terminal',
       storageMode: 'persisted',

@@ -9,7 +9,6 @@ const baseContribution = Object.freeze({
   roles: ['realtime_conversation' as const],
   platforms: ['web' as const],
   capabilities: {
-    readiness: { requirements: [] },
     turn: { cancelResponse: false, bargeIn: false },
   },
   client: {
@@ -50,6 +49,7 @@ describe('Voice provider structured settings declarations', () => {
         execution: {
           kind: 'experimental_agent_session_realtime',
           agent: 'codex',
+          supportedRuntimeVersions: ['1.2.3'],
         },
         settings: {
           schemaVersion: 2,
@@ -134,7 +134,14 @@ describe('Voice provider structured settings declarations', () => {
             },
             default: { agentId: null },
             presentation: { control: 'json' },
+          }, {
+            id: 'agentId',
+            title: 'Agent ID',
+            schema: { type: 'string', maxLength: 256 },
+            default: '',
+            presentation: { control: 'text' },
           }],
+          readiness: [{ kind: 'setting_nonempty', settingId: 'agentId' }],
         },
       }],
     }).success).toBe(true);
@@ -168,7 +175,7 @@ describe('Voice provider structured settings declarations', () => {
     if (!parsed.success) {
       expect(parsed.error.issues).toContainEqual(expect.objectContaining({
         path: ['voiceProviders', 0, 'settings', 'fields', 0, 'default'],
-        message: 'Voice provider setting default must satisfy its declared JSON Schema.',
+        message: 'Voice setting defaults must satisfy their schema.',
       }));
     }
   });
@@ -201,7 +208,7 @@ describe('Voice provider structured settings declarations', () => {
     if (!parsed.success) {
       expect(parsed.error.issues).toContainEqual(expect.objectContaining({
         path: ['voiceProviders', 0, 'settings', 'fields', 0, 'schema'],
-        message: 'Voice provider setting schema must be a valid bounded JSON Schema.',
+        message: 'Voice setting schemas must be valid bounded JSON Schema.',
       }));
     }
   });

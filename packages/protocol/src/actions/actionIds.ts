@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from '../plugins/settingsAdministration.js';
+
 // B8 closure note:
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
@@ -25,7 +27,6 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.handoff.abort',
     'session.handoff.status.get',
     'session.spawn_new',
-    'session.spawn_picker',
   ],
   inventory: [
     'paths.list_recent',
@@ -125,6 +126,10 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   session_permissions: [
     'session.permission.respond',
+    'session.permission.remote.pending.list',
+    'session.permission.remote.respond',
+    'session.permission.remote.grants.list',
+    'session.permission.remote.grants.revoke',
     'session.user_action.answer',
     'session.mode.set',
   ],
@@ -325,12 +330,37 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'plugins.sessionHooks.enable',
     'plugins.sessionHooks.uninstall',
   ],
+  plugin_settings_administration: PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1,
   plugin_permission_grants: [
     'plugins.permissions.grants.list',
     'plugins.permissions.grants.request',
     'plugins.permissions.grants.grant',
     'plugins.permissions.grants.revoke',
     'plugins.permissions.grants.dismissRequest',
+  ],
+  plugin_webhooks: [
+    'plugin.webhook.endpoint.ensure',
+    'plugin.webhook.endpoint.read',
+    'plugin.webhook.endpoint.revoke',
+    'plugin.webhook.endpoint.retarget',
+    'plugin.webhook.endpoint.checkCorrespondence',
+    'plugin.webhook.delivery.movePending',
+    'plugin.webhook.endpoint.credential.configure',
+    'plugin.webhook.endpoint.credential.rotate',
+    'plugin.webhook.endpoint.credential.finishRotation',
+  ],
+  account_plugin_data: [
+    'account.plugins.data.erase',
+  ],
+  automation_events: [
+    'automation.event.sources.list',
+    'automation.event.admit',
+    'automation.event.source.status.report',
+  ],
+  automation_conversation: [
+    'automation.conversation.targets.list',
+    'automation.conversation.target.verify',
+    'automation.conversation.admit',
   ],
   scm_pull_request: [
     'scm.pullRequest.list',
@@ -386,7 +416,12 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.devices_simulator,
   ...ACTION_ID_FAMILIES_V1.approvals,
   ...ACTION_ID_FAMILIES_V1.plugin_dev_loop,
+  ...ACTION_ID_FAMILIES_V1.plugin_settings_administration,
   ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
+  ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
+  ...ACTION_ID_FAMILIES_V1.account_plugin_data,
+  ...ACTION_ID_FAMILIES_V1.automation_events,
+  ...ACTION_ID_FAMILIES_V1.automation_conversation,
   ...ACTION_ID_FAMILIES_V1.scm_pull_request,
   ...ACTION_ID_FAMILIES_V1.scm_repository,
   ...ACTION_ID_FAMILIES_V1.scm_diff_summary,

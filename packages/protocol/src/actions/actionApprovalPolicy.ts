@@ -108,6 +108,7 @@ const NON_AGENT_ACTION_SURFACE_KEY_RECORD = {
   cli: true,
   rpc: true,
   sdk: true,
+  plugin: true,
 } satisfies Record<NonAgentActionSurfaceKey, true>;
 
 const NON_AGENT_ACTION_SURFACE_KEYS: ReadonlySet<string> = new Set(

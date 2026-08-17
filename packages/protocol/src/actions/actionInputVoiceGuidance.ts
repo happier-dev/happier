@@ -117,17 +117,13 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
     ],
   },
   'session.spawn_new': {
-    agentId: [{ text: 'Use listAgentBackends to discover backends by name before choosing agentId internally', requiresActionIds: ['agents.backends.list'] }],
-    modelId: [{ text: 'Use listAgentModels after choosing agentId so you can pick a model by name internally', requiresActionIds: ['agents.models.list'] }],
-    path: [
-      { text: 'Prefer spawnSessionPicker unless the user explicitly named a path', requiresActionIds: ['session.spawn_picker'] },
+    'executionTarget.serverId': [{ text: 'Use listServers to discover the authenticated server scope before choosing an exact target internally', requiresActionIds: ['servers.list'] }],
+    'executionTarget.machineId': [{ text: 'Use listMachines to discover the exact execution machine before creating a Session', requiresActionIds: ['machines.list'] }],
+    directory: [
       { text: 'Use listRecentPaths when you need a recent path handle', requiresActionIds: ['paths.list_recent'] },
     ],
-    host: [{ text: 'Use listMachines to discover machines by label before choosing host internally', requiresActionIds: ['machines.list'] }],
-  },
-  'session.spawn_picker': {
-    agentId: [{ text: 'Use listAgentBackends to discover backends by name before choosing agentId internally', requiresActionIds: ['agents.backends.list'] }],
-    modelId: [{ text: 'Use listAgentModels after choosing agentId so you can pick a model by name internally', requiresActionIds: ['agents.models.list'] }],
+    agentTarget: [{ text: 'Use listAgentBackends to discover the exact Agent target before creating a Session', requiresActionIds: ['agents.backends.list'] }],
+    modelSelection: [{ text: 'Use listAgentModels after choosing the Agent target so you can select a compatible model', requiresActionIds: ['agents.models.list'] }],
   },
   'session.permission.respond': {
     requestId: [{ text: 'Optional when only one permission request is pending' }],
@@ -187,47 +183,40 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
   'session.open': [
     { text: 'If you already know the exact human session title, pass sessionTitle directly instead of asking for a raw session id', requiresActionIds: ['session.list'] },
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.fork': [
     { text: 'Use listSessions before choosing sessionId internally when the active target session is not already correct', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.spawn_new': [
-    { text: 'Prefer spawnSessionPicker if the user has not already chosen an exact path', requiresActionIds: ['session.spawn_picker'] },
     { text: 'Use listRecentPaths instead of guessing raw paths', requiresActionIds: ['paths.list_recent'] },
-    { text: 'Use listAgentBackends before setting agentId internally', requiresActionIds: ['agents.backends.list'] },
-    { text: 'Use listAgentModels before setting modelId internally', requiresActionIds: ['agents.models.list'] },
-  ],
-  'session.spawn_picker': [
-    { text: 'Use spawnSessionPicker when the user needs to choose a machine or directory in the UI', requiresActionIds: ['session.spawn_picker'] },
-    {
-      text: 'When the user asks to choose a machine or directory in the UI, call spawnSessionPicker instead of only saying you will open it',
-      requiresActionIds: ['session.spawn_picker'],
-    },
+    { text: 'Use listMachines and listServers before choosing the exact execution target', requiresActionIds: ['machines.list', 'servers.list'] },
+    { text: 'Use listAgentBackends before setting agentTarget internally', requiresActionIds: ['agents.backends.list'] },
+    { text: 'Use listAgentModels before setting modelSelection internally', requiresActionIds: ['agents.models.list'] },
   ],
   'session.target.primary.set': [
     { text: 'If you already know the exact human session title, pass sessionTitle directly instead of asking for a raw session id', requiresActionIds: ['session.list'] },
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.target.tracked.set': [
     { text: 'Use listSessions before choosing sessionIds internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.activity.get': [
     { text: 'Use getSessionTranscript instead when the user asks what was said, asks to read transcript/messages, or needs conversation text; keep getSessionActivity for a lightweight status or activity digest', requiresActionIds: ['session.transcript.get'] },
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.transcript.get': [
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'session.messages.recent.get': [
     { text: 'Use getSessionTranscript instead; session.messages.recent.get is a deprecated compatibility alias', requiresActionIds: ['session.transcript.get'] },
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
-    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor', requiresActionIds: ['session.list'] },
   ],
   'memory.search': [{ text: 'Use listMachines before choosing machineId internally', requiresActionIds: ['machines.list'] }],
   'memory.get_window': [{ text: 'Use memorySearch before calling memoryGetWindow so you already have machineId, sessionId, seqFrom, and seqTo', requiresActionIds: ['memory.search'] }],

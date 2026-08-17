@@ -1,15 +1,12 @@
 import { z } from 'zod';
 
+import { PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1 } from '../../data/hostedWebCollectionUiQueryBridgeV1.js';
 import { PluginUiFallbackRefV1Schema } from './actions.js';
 import { PluginUiCompatibilityV1Schema } from './compatibility.js';
 import { PluginHostedWebSecurityPolicyV1Schema } from './hostedWebSecurity.js';
 import { PluginUiDisplayV1Schema } from './tokens.js';
 
 export const PluginHostedWebServiceRefV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('managedService'),
-    serviceId: z.string().trim().min(1),
-  }).strict(),
   z.object({
     kind: z.literal('staticAssets'),
     assetRootId: z.string().trim().min(1),
@@ -28,18 +25,39 @@ export const PluginHostedWebEntryV1Schema = z.object({
 }).strict();
 export type PluginHostedWebEntryV1 = z.infer<typeof PluginHostedWebEntryV1Schema>;
 
+/**
+ * Bridge envelope kinds that carry no host API request: frame lifecycle plus the
+ * `hostApi` wrapper that transports a canonical `PluginUiHostApiWireEnvelopeV1`.
+ */
+export const PLUGIN_HOSTED_WEB_BRIDGE_LIFECYCLE_KINDS_V1 = Object.freeze([
+    'ready',
+    'error',
+    'heightChanged',
+    'hostApi',
+] as const);
+export type PluginHostedWebBridgeLifecycleKindV1 =
+  (typeof PLUGIN_HOSTED_WEB_BRIDGE_LIFECYCLE_KINDS_V1)[number];
+
+/**
+ * Strict non-host-API operation arms. Each is owned by its domain schema and
+ * remains opt-in through the existing hosted-web `allowedMessages` declaration.
+ */
+export const PLUGIN_HOSTED_WEB_BRIDGE_OPERATION_KINDS_V1 = Object.freeze([
+  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+] as const);
+export type PluginHostedWebBridgeOperationKindV1 =
+  (typeof PLUGIN_HOSTED_WEB_BRIDGE_OPERATION_KINDS_V1)[number];
+
+/**
+ * The outer bridge vocabulary (UI-D27). Host API requests are carried only in
+ * the `hostApi` lifecycle wrapper as canonical wire envelopes; an outer
+ * host-method kind would bypass negotiation, cancellation, and currentness.
+ * The narrow Data operation arm above is separately schema-owned and is not a
+ * host method.
+ */
 export const PluginHostedWebBridgeMessageKindV1Schema = z.enum([
-  'copy',
-  'error',
-  'heightChanged',
-  'logDiagnostic',
-  'openSurface',
-  'openExternal',
-  'ready',
-  'requestHostAction',
-  'requestSessionResource',
-  'subscribeResource',
-  'unsubscribeResource',
+  ...PLUGIN_HOSTED_WEB_BRIDGE_LIFECYCLE_KINDS_V1,
+  ...PLUGIN_HOSTED_WEB_BRIDGE_OPERATION_KINDS_V1,
 ]);
 export type PluginHostedWebBridgeMessageKindV1 = z.infer<typeof PluginHostedWebBridgeMessageKindV1Schema>;
 

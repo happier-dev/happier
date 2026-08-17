@@ -66,7 +66,6 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     sessionFork: async () => ({}),
     sessionRollback: async () => ({}),
     sessionSpawnNew: async () => ({}),
-    sessionSpawnPicker: async () => ({}),
     pathsListRecent: async () => ({ items: [] }),
     machinesList: async () => ({ items: [] }),
     serversList: async () => ({ items: [] }),
@@ -268,7 +267,6 @@ describe('createActionExecutor (approvals)', () => {
         },
         provenance: {
           sourceKind: 'path',
-          manifestDigest: 'sha256:manifest',
         },
         permissions: {
           required: ['network'],
@@ -305,7 +303,7 @@ describe('createActionExecutor (approvals)', () => {
               version: '1.0.0',
               title: 'Acme Dev Loop',
             },
-            provenance: expect.objectContaining({ manifestDigest: 'sha256:manifest' }),
+            provenance: expect.objectContaining({ sourceKind: 'path' }),
             permissions: {
               required: ['network'],
               optional: ['filesystem.read'],
@@ -471,6 +469,54 @@ describe('createActionExecutor (approvals)', () => {
     expect(executionRunStart).not.toHaveBeenCalled();
     expect((res as any).result?.kind).toBe('approval_request_created');
     expect((res as any).result?.artifactId).toBe('a1');
+  });
+
+  it.each([
+    {
+      name: 'approval storage is unavailable',
+      overrides: {},
+      context: { surface: 'cli' as const, actionCaller: { kind: 'host' as const } },
+    },
+    {
+      name: 'plugin approval provenance is incomplete',
+      overrides: { approvalsCreate: vi.fn(async () => ({ artifactId: 'a1' })) },
+      context: {
+        surface: 'plugin' as const,
+        actionCaller: { kind: 'plugin' as const, pluginId: 'acme.plugin' },
+      },
+    },
+  ])('classifies $name before execution.run.start dispatch as noRunCreated', async ({ overrides, context }) => {
+    const executionRunStart = vi.fn(async () => ({
+      runId: 'run-1',
+      callId: 'call-1',
+      sidechainId: 'sidechain-1',
+    }));
+    const executor = createExecutor({
+      executionRunStart,
+      isActionApprovalRequired: (actionId) => actionId === 'execution.run.start',
+      ...overrides,
+    });
+
+    await expect(executor.execute('execution.run.start' as any, {
+      sessionId: 's1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Inspect the change.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }, context)).resolves.toEqual({
+      ok: false,
+      errorCode: context.surface === 'plugin'
+        ? 'plugin_action_caller_required'
+        : 'approvals_not_supported',
+      error: context.surface === 'plugin'
+        ? 'plugin_action_caller_required'
+        : 'approvals_not_supported',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    });
+    expect(executionRunStart).not.toHaveBeenCalled();
   });
 
   it('returns unsupported after creating a blocking approval when no live approval waiter is available', async () => {
@@ -875,6 +921,38 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('host-stamps plugin provenance for approval-queue requests without publishing the raw action', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.list',
+      actionArgs: {},
+      summary: 'List sessions',
+      createdBy: { surface: 'cli', pluginId: 'forged.plugin' },
+    }, {
+      actionCaller: {
+        kind: 'plugin',
+        pluginId: 'acme.plugin',
+        contributionLocalId: 'approval-queue',
+      },
+      defaultSessionId: 'requesting-session',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: {
+          surface: 'system',
+          pluginId: 'acme.plugin',
+          contributionLocalId: 'approval-queue',
+          sessionId: 'requesting-session',
+        },
+        requestedSurface: 'plugin',
+      }),
+    }));
+  });
+
   it('links approval.request.create cross-session approvals to the requesting session', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 
@@ -996,7 +1074,11 @@ describe('createActionExecutor (approvals)', () => {
     });
 
     expect(res.ok).toBe(true);
-    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: undefined });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    }));
     expect(approvalsUpdate).toHaveBeenCalledTimes(2);
     expect(approvalsUpdate).toHaveBeenNthCalledWith(1, expect.objectContaining({
       artifactId: 'a1',
@@ -1147,7 +1229,11 @@ describe('createActionExecutor (approvals)', () => {
 
     expect(res.ok).toBe(true);
     expect(approvalsCreate).not.toHaveBeenCalled();
-    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: undefined });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    }));
   });
 
   it('uses the stored approval serverId when the decision context omits one', async () => {
@@ -1164,7 +1250,12 @@ describe('createActionExecutor (approvals)', () => {
 
     expect(res.ok).toBe(true);
     expect(approvalsGet).toHaveBeenCalledWith({ artifactId: 'a1', serverId: null });
-    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: 'server-a' });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'hello',
+      serverId: 'server-a',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    }));
     expect(approvalsUpdate).toHaveBeenNthCalledWith(1, expect.objectContaining({
       artifactId: 'a1',
       serverId: 'server-a',
@@ -1300,7 +1391,11 @@ describe('createActionExecutor (approvals)', () => {
 
     expect(res.ok).toBe(true);
     expect(sessionSendMessage).toHaveBeenCalledTimes(1);
-    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: undefined });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    }));
     expect(approvalsUpdate).toHaveBeenCalledTimes(1);
     expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: 'a1',

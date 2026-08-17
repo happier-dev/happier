@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  EncryptedStringV1Schema,
+  SecretStringV1Schema,
   type EncryptedStringV1,
   type SecretStringV1,
   decryptSecretValueWithKeysV1,
@@ -13,6 +15,14 @@ import {
   sealSecretsDeepV1,
   unsealSecretsDeepV1,
 } from './settingsSecretStringsV1.js';
+import {
+  EncryptedStringV1Schema as PortableEncryptedStringV1Schema,
+  SecretStringV1Schema as PortableSecretStringV1Schema,
+} from './settingsSecretStringSchemasV1.js';
+import {
+  EncryptedStringV1Schema as RuntimeEncryptedStringV1Schema,
+  SecretStringV1Schema as RuntimeSecretStringV1Schema,
+} from '../runtime/index.js';
 import { deriveAccountMachineKeyFromRecoverySecret } from './accountScopedCipher.js';
 
 function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
@@ -34,6 +44,13 @@ function readSecret(container: SecretContainer): SecretStringV1 {
 }
 
 describe('settingsSecretStringsV1', () => {
+  it('preserves one schema identity across portable, crypto, and runtime exports', () => {
+    expect(EncryptedStringV1Schema).toBe(PortableEncryptedStringV1Schema);
+    expect(EncryptedStringV1Schema).toBe(RuntimeEncryptedStringV1Schema);
+    expect(SecretStringV1Schema).toBe(PortableSecretStringV1Schema);
+    expect(SecretStringV1Schema).toBe(RuntimeSecretStringV1Schema);
+  });
+
   it('encrypts and decrypts secret strings', () => {
     const key = new Uint8Array(32).fill(7);
     const randomBytes = deterministicRandomBytesFactory();

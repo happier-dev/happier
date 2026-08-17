@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { ProtocolComposableSchema } from "../plugins/actions/jsonSchemaValidation.js";
 
 export const QUALIFIED_CONNECTED_ACCOUNT_V4_STRUCTURED_QUERY_MAX_LENGTH =
   16_384;
@@ -13,7 +13,7 @@ function readSingleQueryString(raw: unknown): string {
 }
 
 export function encodeQualifiedConnectedAccountV4StructuredQueryValue<T>(
-  schema: z.ZodType<T>,
+  schema: Pick<ProtocolComposableSchema<T>, "parse">,
   value: unknown,
 ): string {
   const encoded = JSON.stringify(schema.parse(value));
@@ -28,7 +28,7 @@ export function encodeQualifiedConnectedAccountV4StructuredQueryValue<T>(
 }
 
 export function parseQualifiedConnectedAccountV4StructuredQueryValue<T>(
-  schema: z.ZodType<T>,
+  schema: Pick<ProtocolComposableSchema<T>, "parse">,
   raw: unknown,
 ): T {
   const encoded = readSingleQueryString(raw);

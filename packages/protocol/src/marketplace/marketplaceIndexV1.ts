@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import semver from 'semver';
 
+import { PluginDiagnosticTextV1Schema } from '../daemon/pluginContributionIntrospection.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { NpmRegistryOriginV1Schema } from '../rpc/npmRegistryProfiles.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const BoundedText = z.string().trim().min(1).max(512);
 const Identifier = z.string().trim().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]*$/);
@@ -15,6 +17,10 @@ const ManifestDigest = z.string().trim().regex(/^sha256:[a-f0-9]{64}$/);
 const NpmIntegrity = z.string().trim().regex(/^sha512-[A-Za-z0-9+/]{86}==$/, 'Expected a complete SHA-512 SRI value');
 const ExactNpmVersion = z.string().trim().min(1).max(128)
   .refine((value) => semver.valid(value) === value, 'Expected an exact canonical npm semver version');
+const MarketplaceDiagnosticV1Schema = z.object({
+  code: Identifier,
+  message: PluginDiagnosticTextV1Schema,
+}).strict();
 
 export const MarketplaceIndexSourceKindV1Schema = z.enum(['curated', 'user', 'community-npm']);
 export type MarketplaceIndexSourceKindV1 = z.infer<typeof MarketplaceIndexSourceKindV1Schema>;
@@ -23,7 +29,7 @@ export const MarketplaceReviewStatusV1Schema = z.enum(['approved', 'withdrawn', 
 export type MarketplaceReviewStatusV1 = z.infer<typeof MarketplaceReviewStatusV1Schema>;
 
 export const MarketplaceIndexEntryV1Schema = z.object({
-  pluginId: PluginIdSchema,
+  pluginId: asProtocolZod(PluginIdSchema),
   publisher: z.object({ id: Identifier, displayName: BoundedText }).strict(),
   display: z.object({ title: BoundedText, description: z.string().trim().max(4_096).nullable() }).strict(),
   distribution: z.object({
@@ -70,7 +76,7 @@ export const MarketplaceIndexSourceSnapshotV1Schema = z.object({
     staleSinceMs: z.number().int().nonnegative().optional(),
   }).strict(),
   entries: z.array(MarketplaceIndexEntryV1Schema).max(5_000),
-  diagnostics: z.array(z.object({ code: Identifier, message: z.string().trim().min(1).max(2_048) }).strict()).max(128),
+  diagnostics: z.array(MarketplaceDiagnosticV1Schema).max(128),
 }).strict().superRefine((value, context) => {
   value.entries.forEach((entry, index) => {
     const invalid = value.source.kind === 'curated'
@@ -116,7 +122,6 @@ export const MarketplaceIndexItemV1Schema = MarketplaceIndexEntryV1Schema.extend
 }).strict();
 export type MarketplaceIndexItemV1 = z.infer<typeof MarketplaceIndexItemV1Schema>;
 
-const MarketplaceDiagnosticV1Schema = z.object({ code: Identifier, message: z.string().trim().min(1).max(2_048) }).strict();
 export const MarketplaceIndexQueryResultV1Schema = z.object({
   revision: z.number().int().nonnegative().safe(),
   items: z.array(MarketplaceIndexItemV1Schema).max(100),

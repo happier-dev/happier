@@ -40,12 +40,52 @@ describe('HostPrivatePluginInstallDecisionV1Schema', () => {
       pendingChangeId: 'pending-2',
       decision: 'cancel',
     });
+    // A development source root is a distinct authorization from installing a
+    // package: it authorizes the daemon to evaluate executable code from a
+    // local directory. The daemon change service already owns the decision
+    // (`trustSourceRoot`); without it here the remote/UI surface can observe a
+    // pending source-root review it can never decide.
+    expect(HostPrivatePluginInstallDecisionV1Schema.parse({
+      v: 1,
+      pendingChangeId: 'pending-3',
+      decision: 'trustSourceRoot',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: 'ui-interaction-3',
+        occurredAtMs: 43,
+      },
+    })).toEqual({
+      v: 1,
+      pendingChangeId: 'pending-3',
+      decision: 'trustSourceRoot',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: 'ui-interaction-3',
+        occurredAtMs: 43,
+      },
+    });
 
     for (const invalid of [
       {
         v: 1,
         pendingChangeId: 'pending-1',
         decision: 'installAndTrust',
+        optionalSelections: [],
+      },
+      {
+        v: 1,
+        pendingChangeId: 'pending-1',
+        decision: 'trustSourceRoot',
+      },
+      {
+        v: 1,
+        pendingChangeId: 'pending-1',
+        decision: 'trustSourceRoot',
+        actorEvidence: {
+          kind: 'authenticatedLocalUser',
+          interactionId: 'ui-interaction-1',
+          occurredAtMs: 42,
+        },
         optionalSelections: [],
       },
       {

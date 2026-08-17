@@ -19,6 +19,7 @@ import {
   QualifiedConnectedAccountRefSchema,
 } from './qualifiedConnectedAccountsV4.js';
 import { ConnectedServiceIdSchema } from './connectedServiceBindings.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 type ReadonlyArrayProperties<T> = T extends object
   ? {
@@ -100,14 +101,14 @@ export const ConnectedAccountDaemonCommandSchema =
   z.discriminatedUnion('operation', [
     z.object({
       operation: z.literal('beginConnect'),
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       modeId: BoundedIdentitySchema,
       expectedConfigurationRevision:
         ExpectedConfigurationRevisionSchema.optional(),
     }).strict(),
     z.object({
       operation: z.literal('beginReconnect'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
       expectedConfigurationRevision:
         ExpectedConfigurationRevisionSchema.optional(),
     }).strict(),
@@ -172,12 +173,12 @@ export const ConnectedAccountControlTargetSchema =
   z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('service'),
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       modeId: BoundedIdentitySchema,
     }).strict(),
     z.object({
       kind: z.literal('account'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     }).strict(),
     z.object({
       kind: z.literal('attempt'),
@@ -209,7 +210,7 @@ export const ConnectedAccountDaemonControlCommandSchema =
   z.discriminatedUnion('operation', [
     z.object({
       operation: z.literal('describeService'),
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       requiredOperation:
         BuiltInLegacyConnectedAccountOperationSchema.optional(),
     }).strict(),
@@ -226,7 +227,7 @@ export const ConnectedAccountDaemonControlCommandSchema =
     }).strict(),
     z.object({
       operation: z.literal('revokeAccount'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
       cleanupGroupReferences: z.boolean(),
     }).strict(),
   ]);
@@ -250,18 +251,18 @@ export const ConnectedAccountConfigurationTargetSchema =
   z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('service'),
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       modeId: BoundedIdentitySchema,
     }).strict(),
     z.object({
       kind: z.literal('account'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
       modeId: BoundedIdentitySchema,
     }).strict(),
     z.object({
       kind: z.literal('attempt'),
       attemptId: BoundedIdentitySchema,
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       modeId: BoundedIdentitySchema,
     }).strict(),
   ]);
@@ -321,7 +322,7 @@ export const ConnectedAccountAttemptResponseSchema =
     z.object({
       status: z.literal('connected'),
       attemptId: BoundedIdentitySchema,
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     }).strict(),
     z.object({
       status: z.literal('cancelled'),
@@ -368,7 +369,7 @@ export const ConnectedAccountDaemonControlResponseSchema =
   z.discriminatedUnion('status', [
     z.object({
       status: z.literal('described'),
-      service: PluginContributionIdentityV1Schema,
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
       descriptor: PluginConnectedAccountDescriptorContributionV2Schema,
       generation: BoundedIdentitySchema,
       immutableGenerationId: z.string().min(1).max(512),
@@ -402,7 +403,7 @@ export const ConnectedAccountDaemonControlResponseSchema =
     }).strict(),
     z.object({
       status: z.literal('revoked'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
       remoteStatus: z.enum([
         'remoteRevoked',
         'remoteUnsupported',
@@ -410,7 +411,7 @@ export const ConnectedAccountDaemonControlResponseSchema =
     }).strict(),
     z.object({
       status: z.literal('outcomeUnknown'),
-      account: QualifiedConnectedAccountRefSchema,
+      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     }).strict(),
   ]);
 export type ConnectedAccountDaemonControlResponse =

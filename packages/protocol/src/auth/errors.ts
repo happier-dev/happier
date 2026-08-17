@@ -4,6 +4,7 @@ export const AUTH_ERROR_CODES = [
   // Provider / policy
   'unsupported-provider',
   'signup-provider-disabled',
+  'signup-disabled',
   'provider-required',
   'not-eligible',
 

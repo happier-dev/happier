@@ -9,6 +9,7 @@ export type PluginFinalPolicyScope = Readonly<{
 }>;
 
 export type PluginFinalPolicyRequirementStatus = 'available' | 'denied' | 'unavailable';
+export type PluginFinalPolicyTargetGenerationMode = 'current' | 'retained';
 
 export type PluginFinalPolicyInput = Readonly<{
   packageTrust: Readonly<{
@@ -19,6 +20,8 @@ export type PluginFinalPolicyInput = Readonly<{
     targetGeneration: string;
     desiredGeneration: string | null;
     appliedGeneration: string | null;
+    /** Retained operations keep their target declaration while current policy narrows it. */
+    targetGenerationMode?: PluginFinalPolicyTargetGenerationMode;
   }>;
   resourceSelections: readonly Readonly<{
     id: string;
@@ -87,7 +90,10 @@ export function evaluatePluginFinalPolicy(input: PluginFinalPolicyInput): Plugin
   }
   if (
     input.generation.desiredGeneration === null
-    || input.generation.targetGeneration !== input.generation.desiredGeneration
+    || (
+      input.generation.targetGenerationMode !== 'retained'
+      && input.generation.targetGeneration !== input.generation.desiredGeneration
+    )
   ) {
     return decision(input, 'unavailable', 'plugin_final_generation_retired');
   }

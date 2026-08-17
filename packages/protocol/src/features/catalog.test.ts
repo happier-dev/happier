@@ -104,9 +104,9 @@ describe('feature catalog', () => {
     expect(isFeatureId('remoteHosts.secretMaterial')).toBe(true);
   });
 
-  it('includes channel bridge feature ids', () => {
-    expect(isFeatureId('channelBridges')).toBe(true);
-    expect(isFeatureId('channelBridges.telegram')).toBe(true);
+  it('does not include retired channel bridge feature ids', () => {
+    expect(isFeatureId('channelBridges')).toBe(false);
+    expect(isFeatureId('channelBridges.telegram')).toBe(false);
   });
 
   it('includes OTA updates feature id', () => {
@@ -286,23 +286,25 @@ describe('feature catalog', () => {
     expect(FEATURE_CATALOG['browser.automation']?.representation).toBe('server');
   });
 
-  it('includes plugin UI tier feature ids', () => {
+  it('includes the supported plugin UI tier feature ids but not deferred structured messages', () => {
     expect(isFeatureId('plugins')).toBe(true);
     expect(isFeatureId('plugins.ui')).toBe(true);
     expect(isFeatureId('plugins.ui.hostedWeb')).toBe(true);
     expect(isFeatureId('plugins.ui.reactNativeBundles')).toBe(true);
     expect(isFeatureId('plugins.ui.reactNativeBundles.devHotReload')).toBe(true);
-    expect(isFeatureId('plugins.ui.structuredMessages')).toBe(true);
+    expect(isFeatureId('plugins.ui.structuredMessages')).toBe(false);
+    expect(isFeatureId('plugins.webhooks')).toBe(true);
     // Core plugin platform + UI projection gates are server-represented + default-allow.
     expect(FEATURE_CATALOG['plugins']?.representation).toBe('server');
     expect(FEATURE_CATALOG['plugins.ui']?.representation).toBe('server');
     expect(FEATURE_CATALOG['plugins.ui']?.dependencies).toEqual(['plugins']);
+    expect(FEATURE_CATALOG['plugins.webhooks']?.dependencies).toEqual(['plugins']);
+    expect(FEATURE_CATALOG['plugins.webhooks']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['plugins.webhooks']?.defaultFailMode).toBe('fail_closed');
     expect(FEATURE_CATALOG['plugins.ui.hostedWeb']?.dependencies).toEqual(['plugins.ui']);
-    expect(FEATURE_CATALOG['plugins.ui.structuredMessages']?.dependencies).toEqual(['plugins.ui']);
-    expect(FEATURE_CATALOG['plugins.ui.structuredMessages']?.defaultFailMode).toBe('fail_closed');
+    expect(FEATURE_CATALOG['plugins.ui.structuredMessages']).toBeUndefined();
     // §4.1/§13.5.3: the plugin UI tiers are server-represented + default-ALLOW kill-switches; the
     // per-plugin install/enable/trust/runtime derivation (5.1/5.2) governs actual availability.
-    expect(FEATURE_CATALOG['plugins.ui.structuredMessages']?.representation).toBe('server');
     expect(FEATURE_CATALOG['plugins.ui.reactNativeBundles']?.dependencies).toEqual(['plugins.ui']);
     expect(FEATURE_CATALOG['plugins.ui.reactNativeBundles.devHotReload']?.dependencies).toEqual([
       'plugins.ui.reactNativeBundles',

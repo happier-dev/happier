@@ -6,6 +6,7 @@ export type PluginContributionFamilyDescriptorV2<
 > = Readonly<{
   family: TFamily;
   schema: TSchema;
+  maxItems?: number;
 }>;
 
 export function definePluginContributionFamilyV2<
@@ -32,7 +33,10 @@ export function buildPluginContributionFamilySchemaV2<
 ): z.ZodObject<PluginContributionFamilyShapeV2<TDescriptors>> {
   const shape: Record<string, z.ZodDefault<z.ZodArray<z.ZodTypeAny>>> = {};
   for (const descriptor of descriptors) {
-    shape[descriptor.family] = z.array(descriptor.schema).default([]);
+    const items = z.array(descriptor.schema);
+    shape[descriptor.family] = (
+      descriptor.maxItems === undefined ? items : items.max(descriptor.maxItems)
+    ).default([]);
   }
   return z.object(shape).strict() as unknown as z.ZodObject<
     PluginContributionFamilyShapeV2<TDescriptors>

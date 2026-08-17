@@ -8,14 +8,20 @@ describe('MCP plugin contribution schemas', () => {
   it('defaults absent MCP contributions to empty arrays', () => {
     expect(PluginMcpContributesV1Schema.parse(undefined)).toEqual({
       servers: [],
-      discoveryProviders: [],
+      discoverySources: [],
     });
+  });
+
+  it('does not retain the provider-named discovery declaration alias', () => {
+    expect(PluginMcpContributesV1Schema.safeParse({
+      discoveryProviders: [],
+    }).success).toBe(false);
   });
 
   it('rejects retired discovery ownership fields', () => {
     for (const retiredField of ['providerId', 'agentId']) {
       expect(PluginMcpContributesV1Schema.safeParse({
-        discoveryProviders: [{
+        discoverySources: [{
           id: 'discovery',
           title: 'Discovery',
           [retiredField]: 'acme',

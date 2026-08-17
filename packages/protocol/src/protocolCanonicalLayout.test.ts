@@ -211,12 +211,25 @@ describe('protocol canonical layout', () => {
         expect(Object.keys(protocolExports)).toEqual([
             '.',
             './tools/v2',
+            './tools/v2/subAgentFamilies',
             './spawnSession',
             './rpc',
+            './marketplace',
             './marketplace/internal',
+            './crypto/base64',
+            './crypto/canonicalDigest',
+            './machines/administration/pluginMachineExecutionOriginV1',
             './actions',
             './actions/permissionPrivilege',
             './actions/actionSpecs',
+            './actions/actionExecutionResult',
+            './actions/actionInputHintsRuntime',
+            './actions/actionInputJsonSchema',
+            './actions/actionInputVoiceGuidance',
+            './automations/event-setup-result',
+            './automations/event',
+            './automations/result-delivery',
+            './automations/event-history-gap-reset-action',
             './rpcErrors',
             './checklists',
             './installables',
@@ -231,15 +244,70 @@ describe('protocol canonical layout', () => {
             './updates',
             './workspaces',
             './sessions',
+            './sessions/creation/sessionSpawnNewInputV2',
+            './sessions/general',
+            './sessions/subagents',
             './runtime',
+            './bugs/reports',
             './filesystem/portablePathSegment',
             './agents/runtimeDescriptorContributionsV1',
+            './agents/claude',
             './backends',
             './pets',
             './plugins/ui',
+            './plugins/ui/client',
+            './plugins/ui/targetedContributions',
+            './plugins/actions/json-schema-validation',
             './plugins/hooks',
+            './plugins/agents',
+            './plugins/manifest',
+            './plugins/manifest/declaration',
+            './plugins/availability',
+            './providers',
+            './providers/claude/oauth-profile',
+            './providers/codex/oauth',
+            './providers/contribution-identity',
+            './providers/sensitive-value-redaction',
+            './providers/credential-headers',
+            './providers/ids',
+            './providers/contributions',
+            './providers/endpoint-url',
+            './providers/public-headers',
+            './providers/binding-compatibility',
+            './providers/model-selection',
+            './providers/active-model-selection',
+            './connect/connected-account-purposes',
+            './connect/connected-account-request-auth',
+            './connect/connected-service-bindings',
+            './connect/connected-service-schemas',
+            './connect/account-usage-primitives',
+            './connect/qualified-connected-account-projections',
+            './connect/qualified-connected-account-persistence',
+            './connect/connected-account-purpose-bindings',
+            './connect/build-connected-service-credential-record',
+            './connect/connected-service-limit-category',
+            './account/settings/connected-services',
+            './sessions/work-state',
+            './sessions/metadata/runtime-descriptor',
+            './sessions/metadata/runtime-descriptor-compat',
+            './sessions/metadata/permission-modes',
+            './sessions/metadata/overrides',
+            './sessions/external/linked-metadata',
             './plugins/contributions/browser',
+            './plugins/contributions/composer-attachments',
+            './plugins/contributions/composer-reference-candidate-id',
+            './plugins/contributions/voice',
             './plugins/contributions/ui',
+            './plugins/contributions/ui/declarative-document-authoring',
+            './plugins/contributions/ui/tokens',
+            './plugins/contributions/webhooks',
+            './plugins/webhooks/endpointV1',
+            './plugins/webhooks/deliveryV1',
+            './scm',
+            './voice/realtime',
+            './voice/providerOperations',
+            './voice/speech',
+            './voice/sessionBinding',
             './voice/modelPacks/contributionV1',
         ]);
 
@@ -255,6 +323,137 @@ describe('protocol canonical layout', () => {
             const resolved = requireFromTest.resolve(packageSpecifier);
             expect(resolved, packageSpecifier).toBe(resolve(packageDir, target.default ?? ''));
         }
+    });
+
+    it('publishes portable Session projection owners through cohesive domain subpaths', () => {
+        const protocolExports = readProtocolExports();
+
+        expect(protocolExports['./sessions/general']).toEqual({
+            types: './dist/sessions/general.d.ts',
+            default: './dist/sessions/general.js',
+        });
+        expect(protocolExports['./sessions/subagents']).toEqual({
+            types: './dist/sessions/subagents/index.d.ts',
+            default: './dist/sessions/subagents/index.js',
+        });
+    });
+
+    it('publishes the Session spawn-input owner through its narrow browser-safe subpath', () => {
+        const protocolExports = readProtocolExports();
+        const target = protocolExports['./sessions/creation/sessionSpawnNewInputV2'];
+
+        expect(target).toEqual({
+            types: './dist/sessions/creation/sessionSpawnNewInputV2.d.ts',
+            default: './dist/sessions/creation/sessionSpawnNewInputV2.js',
+        });
+        expect(existsSync(srcEntryForDistTarget(target?.default ?? ''))).toBe(true);
+        expect(requireFromTest.resolve('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2'))
+            .toBe(resolve(packageDir, target?.default ?? ''));
+    });
+
+    it('publishes the portable targeted-selection and JSON-schema owners through narrow leaves', () => {
+        const protocolExports = readProtocolExports();
+        const targetedSelection = protocolExports['./plugins/ui/targetedContributions'];
+        const jsonSchemaValidation = protocolExports['./plugins/actions/json-schema-validation'];
+
+        expect(targetedSelection).toEqual({
+            types: './dist/plugins/ui/targetedContributions.d.ts',
+            default: './dist/plugins/ui/targetedContributions.js',
+        });
+        expect(jsonSchemaValidation).toEqual({
+            types: './dist/plugins/actions/jsonSchemaValidation.d.ts',
+            default: './dist/plugins/actions/jsonSchemaValidation.js',
+        });
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/ui/targetedContributions'))
+            .toBe(resolve(packageDir, targetedSelection?.default ?? ''));
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/actions/json-schema-validation'))
+            .toBe(resolve(packageDir, jsonSchemaValidation?.default ?? ''));
+    });
+
+    it('publishes the browser-safe declarative document authoring grammar through a narrow leaf', () => {
+        const protocolExports = readProtocolExports();
+        const declarativeDocumentAuthoring = protocolExports[
+            './plugins/contributions/ui/declarative-document-authoring'
+        ];
+
+        expect(declarativeDocumentAuthoring).toEqual({
+            types: './dist/plugins/contributions/ui/declarativeDocumentAuthoringV1.d.ts',
+            default: './dist/plugins/contributions/ui/declarativeDocumentAuthoringV1.js',
+        });
+        expect(requireFromTest.resolve(
+            '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring',
+        )).toBe(resolve(packageDir, declarativeDocumentAuthoring?.default ?? ''));
+    });
+
+    it('publishes browser-safe UI tokens through their narrow leaf', () => {
+        const protocolExports = readProtocolExports();
+        const tokens = protocolExports['./plugins/contributions/ui/tokens'];
+
+        expect(tokens).toEqual({
+            types: './dist/plugins/contributions/ui/tokens.d.ts',
+            default: './dist/plugins/contributions/ui/tokens.js',
+        });
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/contributions/ui/tokens'))
+            .toBe(resolve(packageDir, tokens?.default ?? ''));
+    });
+
+    it('publishes the Webhook contribution grammar through its narrow leaf', () => {
+        const protocolExports = readProtocolExports();
+        const webhookContributions = protocolExports['./plugins/contributions/webhooks'];
+
+        expect(webhookContributions).toEqual({
+            types: './dist/plugins/contributions/webhooks.d.ts',
+            default: './dist/plugins/contributions/webhooks.js',
+        });
+        expect(existsSync(srcEntryForDistTarget(webhookContributions?.default ?? ''))).toBe(true);
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/contributions/webhooks'))
+            .toBe(resolve(packageDir, webhookContributions?.default ?? ''));
+    });
+
+    it('publishes the portable Automation Event setup-result owner through its narrow subpath', () => {
+        const protocolExports = readProtocolExports();
+
+        expect(protocolExports['./automations/event-setup-result']).toEqual({
+            types: './dist/automations/automationEventSetupResultV1.d.ts',
+            default: './dist/automations/automationEventSetupResultV1.js',
+        });
+    });
+
+    it('publishes browser-safe Automation result-delivery schemas through their narrow subpath', () => {
+        const protocolExports = readProtocolExports();
+        const resultDelivery = protocolExports['./automations/result-delivery'];
+
+        expect(resultDelivery).toEqual({
+            types: './dist/automations/automationResultDeliveryV1.d.ts',
+            default: './dist/automations/automationResultDeliveryV1.js',
+        });
+        expect(existsSync(srcEntryForDistTarget(resultDelivery?.default ?? ''))).toBe(true);
+        expect(requireFromTest.resolve('@happier-dev/protocol/automations/result-delivery'))
+            .toBe(resolve(packageDir, resultDelivery?.default ?? ''));
+    });
+
+    it('publishes Event history-gap declarations without the occurrence lifecycle owner', () => {
+        const protocolExports = readProtocolExports();
+        const historyGapResetAction = protocolExports['./automations/event-history-gap-reset-action'];
+
+        expect(historyGapResetAction).toEqual({
+            types: './dist/automations/automationEventHistoryGapResetActionV1.d.ts',
+            default: './dist/automations/automationEventHistoryGapResetActionV1.js',
+        });
+        expect(requireFromTest.resolve('@happier-dev/protocol/automations/event-history-gap-reset-action'))
+            .toBe(resolve(packageDir, historyGapResetAction?.default ?? ''));
+    });
+
+    it('publishes manifest declaration primitives without the ingestion owner', () => {
+        const protocolExports = readProtocolExports();
+        const manifestDeclaration = protocolExports['./plugins/manifest/declaration'];
+
+        expect(manifestDeclaration).toEqual({
+            types: './dist/plugins/manifest/declaration.d.ts',
+            default: './dist/plugins/manifest/declaration.js',
+        });
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/manifest/declaration'))
+            .toBe(resolve(packageDir, manifestDeclaration?.default ?? ''));
     });
 
     it('keeps live host code from importing protocol extension compatibility modules directly', () => {

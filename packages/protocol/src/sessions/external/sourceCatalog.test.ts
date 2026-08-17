@@ -2,9 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { assertBackendExternalSessionSourceReferences } from '../../plugins/backendExternalSessionSourceReferences.js';
 import {
   EXTERNAL_SESSIONS_AGENT_IDS,
   EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
+  ExternalSessionAgentIdSchema,
+  ExternalSessionRefSchema,
+  ExternalSessionSourceIdSchema,
   parseExternalSessionsSourceForDeclaration,
   resolveExternalSessionsSourceKeysForPersistedTagLookup,
   resolveExternalSessionsSourceKeyForDeclaration,
@@ -13,6 +17,52 @@ import {
 } from './sourceCatalog.js';
 
 describe('sourceCatalog', () => {
+  it('validates configured-path override target fields through the shared declaration parser', () => {
+    expect(() => assertBackendExternalSessionSourceReferences({
+      sourceKind: 'generatedConfiguredPath',
+      schema: {
+        fields: [{ name: 'kind' }],
+      },
+      key: {
+        segments: [{ kind: 'literal', value: 'generatedConfiguredPath' }],
+      },
+      instances: [{
+        kind: 'agentSettingOverride',
+        field: 'agentDir',
+      }],
+    })).toThrow('undeclared field "agentDir"');
+  });
+
+  it('rejects noncanonical singular contextual Agent ids without trimming', () => {
+    const exact = ':agent/v1?x=1'.padEnd(128, 'a');
+
+    expect(ExternalSessionAgentIdSchema.parse(exact)).toBe(exact);
+    expect(ExternalSessionAgentIdSchema.safeParse(' codex ').success).toBe(false);
+    expect(ExternalSessionAgentIdSchema.safeParse('').success).toBe(false);
+    expect(ExternalSessionAgentIdSchema.safeParse('a'.repeat(129)).success).toBe(false);
+  });
+
+  it('owns the strict singular contextual source id and logical ref', () => {
+    const sourceId = 'codexHome:user:::';
+    const remoteSessionId = ':remote/session?x=1#fragment';
+    const ref = {
+      agentId: 'codex',
+      sourceId,
+      remoteSessionId,
+    };
+
+    expect(ExternalSessionSourceIdSchema.parse(sourceId)).toBe(sourceId);
+    expect(ExternalSessionSourceIdSchema.parse(':'.repeat(2_000))).toBe(':'.repeat(2_000));
+    expect(ExternalSessionRefSchema.parse(ref)).toEqual(ref);
+
+    for (const invalidSourceId of ['', ' codexHome:user::: ', 's'.repeat(2_001)]) {
+      expect(ExternalSessionSourceIdSchema.safeParse(invalidSourceId).success).toBe(false);
+      expect(ExternalSessionRefSchema.safeParse({ ...ref, sourceId: invalidSourceId }).success).toBe(false);
+    }
+    expect(ExternalSessionRefSchema.safeParse({ ...ref, source: { kind: 'codexHome' } }).success).toBe(false);
+    expect(ExternalSessionRefSchema.safeParse({ ...ref, remoteSessionId: ' remote ' }).success).toBe(false);
+  });
+
   it('uses generated protocol-local source projections instead of provider source leaves', () => {
     const source = readFileSync(join(process.cwd(), 'src/sessions/external/sourceCatalog.ts'), 'utf8');
 
@@ -70,6 +120,14 @@ describe('sourceCatalog', () => {
     expect(parseExternalSessionsSourceForDeclaration(declaration, {
       kind: 'syntheticSource',
       scope: '',
+    })).toBeNull();
+    // A source declaration is the authority for source fields. Current source
+    // records must not carry an undeclared mutable field alongside that
+    // identity; plugin-owned opaque data belongs in bounded linkData instead.
+    expect(parseExternalSessionsSourceForDeclaration(declaration, {
+      kind: 'syntheticSource',
+      scope: 'team:one',
+      futureMutableSourceState: { revision: 1 },
     })).toBeNull();
     expect(resolveExternalSessionsSourceKeyForDeclaration(declaration, {
       kind: 'syntheticSource',

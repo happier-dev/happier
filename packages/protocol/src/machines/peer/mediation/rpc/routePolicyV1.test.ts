@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD } from '../../../../marketplace/internal.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/index.js';
 import { PeerFlowKindV1Schema } from '../flowKind.js';
+import { resolveMachineRpcGovernance } from './governanceV1.js';
 
 async function importRpcPolicy() {
   return await import('./index').catch((error: unknown) => ({ importError: error }));
@@ -56,6 +57,40 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
+  it('classifies private Session spawn lifecycle transports as internal-only', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      RPC_METHODS.SPAWN_HAPPY_SESSION,
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+    ]) {
+      expect(resolveMachineRpcGovernance(method)).toEqual({
+        rpcClassification: 'internal_only',
+      });
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        rpcClassification: 'internal_only',
+      });
+    }
+  });
+
+  it('classifies the public Session creation Action as a server-routed ActionSpec method', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(resolveMachineRpcGovernance(RPC_METHODS.SESSION_SPAWN_NEW)).toEqual({
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'session.spawn_new',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SESSION_SPAWN_NEW)).toMatchObject({
+      routeClass: 'server_required',
+      serverRequiredReason: 'durable_session_write',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'session.spawn_new',
+      commandReceiptRequired: false,
+    });
+  });
+
   it('keeps route-independent direct import abort authenticated through the server control plane', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
@@ -73,6 +108,28 @@ describe('MachineRpcRoutePolicyV1', () => {
         serverRequired: true,
       }),
     });
+  });
+
+  it('keeps Composer media capability negotiation and completed release on the server transfer-control route', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1,
+      RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'server_persistence',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          serverRequired: true,
+        }),
+      });
+    }
   });
 
   it('keeps quota recovery, connected-service auth, and terminal composer controls server-routed', async () => {
@@ -170,13 +227,15 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
-  it('classifies plugin artifact and simulator preview RPCs as direct internal daemon transports', async () => {
+  it('classifies plugin artifact, composer-input, and simulator preview RPCs as direct internal daemon transports', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
 
     for (const method of [
       RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ,
+      RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
+      RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
       RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,
       RPC_METHODS.DAEMON_BROWSER_RECORDING_START,
       RPC_METHODS.DAEMON_BROWSER_RECORDING_STOP,
@@ -201,6 +260,28 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
   });
 
+  it('routes transient connected-account form option reads directly without advertising account authority', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(resolveMachineRpcGovernance(
+      RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
+    )).toEqual({ rpcClassification: 'internal_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
+    )).toMatchObject({
+      routeClass: 'direct_ephemeral',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: false,
+      scope: {
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      },
+    });
+  });
+
   it('keeps browser context dispatch direct internal and command-receipted', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
@@ -219,12 +300,23 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
-  it('routes daemon-local plugin settings reads directly and receipts settings writes', async () => {
+  it('routes daemon-local plugin settings reads and revision watches directly and receipts settings writes', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
 
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET)).toMatchObject({
+      routeClass: 'direct_ephemeral',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: false,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH)).toMatchObject({
       routeClass: 'direct_ephemeral',
       rpcClassification: 'internal_only',
       commandReceiptRequired: false,
@@ -245,6 +337,75 @@ describe('MachineRpcRoutePolicyV1', () => {
         sessionRequired: false,
         serverRequired: false,
       }),
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_PLUGIN_COLLECTION_CANDIDATE_PREPARATION_EXECUTE,
+    )).toMatchObject({
+      routeClass: 'direct_medium_risk_receipted',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: true,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SECRET_STATUS)).toMatchObject({
+      routeClass: 'direct_ephemeral',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: false,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SECRET_SET)).toMatchObject({
+      routeClass: 'direct_medium_risk_receipted',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: true,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE)).toMatchObject({
+      routeClass: 'direct_medium_risk_receipted',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: true,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+  });
+
+  it('routes exact-machine plugin invocation log reads directly with no server persistence', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(resolveMachineRpcGovernance(
+      RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ,
+    )).toEqual({ rpcClassification: 'internal_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_PLUGIN_INVOCATION_LOGS_READ,
+    )).toMatchObject({
+      routeClass: 'direct_ephemeral',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: false,
+      scope: {
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      },
     });
   });
 
@@ -278,7 +439,6 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const method of [
       RPC_METHODS.DAEMON_MARKETPLACE_INDEX_QUERY,
       RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET,
-      RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'direct_ephemeral',
@@ -367,6 +527,31 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required',
         serverRequiredReason: 'pending_queue',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: true,
+          serverRequired: true,
+        }),
+      });
+    }
+  });
+
+  it('keeps managed-service endpoint reads on the authenticated exact-session route', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_OPEN_V1,
+      SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1,
+      SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_CANCEL_V1,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'auth',
+        rpcClassification: 'internal_only',
         commandReceiptRequired: false,
         scope: expect.objectContaining({
           accountRequired: true,
@@ -610,6 +795,32 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
+  it('keeps predecessor V2 session handoff routes on their canonical server-scoped policies', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    const canonicalCounterparts = [
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_RESUME_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_CONFIRM_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT],
+    ] as const;
+
+    for (const [compatibilityMethod, canonicalMethod] of canonicalCounterparts) {
+      const canonicalPolicy = protocol.resolveMachineRpcRoutePolicy(canonicalMethod);
+      expect(protocol.resolveMachineRpcRoutePolicy(compatibilityMethod)).toMatchObject({
+        routeClass: canonicalPolicy.routeClass,
+        serverRequiredReason: canonicalPolicy.serverRequiredReason,
+        commandReceiptRequired: canonicalPolicy.commandReceiptRequired,
+        scope: canonicalPolicy.scope,
+      });
+    }
+  });
+
   it('identifies execution-run session RPC governance from A.12 ActionSpec bindings', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
@@ -619,6 +830,13 @@ describe('MachineRpcRoutePolicyV1', () => {
       routeClass: 'server_required',
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'execution.run.start',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+    )).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'execution.run.ensure_or_start',
     });
     expect(protocol.resolveMachineRpcRoutePolicy(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ)).toMatchObject({
       routeClass: 'server_required',
@@ -695,83 +913,6 @@ describe('MachineRpcRoutePolicyV1', () => {
           lifecycleReceiptRequired: true,
           capProfile: 'machine_live_stream_relay_caps_v1',
         },
-      });
-    }
-  });
-
-  it('keeps daemon-executed OpenAI-compatible operations on their risk-appropriate direct routes', async () => {
-    const protocol = await importRpcPolicy();
-    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
-    if ('importError' in protocol) throw protocol.importError;
-
-    for (const method of [
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST,
-    ]) {
-      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
-        routeClass: 'direct_ephemeral',
-        rpcClassification: 'internal_only',
-        commandReceiptRequired: false,
-        scope: expect.objectContaining({
-          accountRequired: true,
-          machineRequired: true,
-          sessionRequired: false,
-          serverRequired: false,
-        }),
-      });
-    }
-
-    for (const method of [
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT,
-    ]) {
-      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
-        routeClass: 'direct_medium_risk_receipted',
-        rpcClassification: 'internal_only',
-        commandReceiptRequired: true,
-        scope: expect.objectContaining({
-          accountRequired: true,
-          machineRequired: true,
-          sessionRequired: false,
-          serverRequired: false,
-        }),
-      });
-    }
-  });
-
-  it('routes bounded OpenAI-compatible audio transfers like the canonical daemon voice transfer family', async () => {
-    const protocol = await importRpcPolicy();
-    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
-    if ('importError' in protocol) throw protocol.importError;
-
-    for (const method of [
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_SYNTHESIZE,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_CHUNK,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_FINALIZE,
-    ]) {
-      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
-        routeClass: 'direct_medium_risk_receipted',
-        rpcClassification: 'internal_only',
-        commandReceiptRequired: true,
-        relayFallback: expect.objectContaining({
-          flowKind: 'daemon_voice_audio',
-          defaultSharedServerMode: 'disabled',
-          relayCapsRequired: true,
-        }),
-      });
-    }
-
-    for (const method of [
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_ABORT,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_ABORT,
-      RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_REQUEST_CANCEL,
-    ]) {
-      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
-        routeClass: 'server_required',
-        rpcClassification: 'internal_only',
-        serverRequiredReason: 'destructive_or_recovery_mutation',
       });
     }
   });

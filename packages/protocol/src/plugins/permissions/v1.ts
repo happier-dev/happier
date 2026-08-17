@@ -1,30 +1,20 @@
 import { z } from 'zod';
 
 import { PluginOptionalStringSchema } from '../_shared.js';
+import { PluginPermissionCapabilityV1Schema } from './capabilityV1.js';
 
-export const PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1 = [
-  'filesystem.read',
-  'filesystem.write',
-  'env',
-  'network',
-  'network.intercept',
-  'process.spawn',
-  'events.runtime.subscribe',
-  'events.lifecycle.subscribe',
-  'events.session.subscribe',
-  'events.plugin.subscribe',
-  'reviews.comments.write.direct',
-  'session.hooks.control',
-  'terminal.host.control',
-] as const;
+export {
+  PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1,
+  PluginPermissionCapabilityV1Schema,
+  type PluginPermissionCapabilityV1,
+} from './capabilityV1.js';
 
 export const PLUGIN_DECLARED_CAPABILITIES_V1 = [
   'actions.execute',
   'ui.descriptors',
   'secrets.read',
   'secrets.write',
-  'storage.local',
-  'storage.synced',
+  'storage.account',
   'reload',
 ] as const;
 
@@ -47,9 +37,6 @@ export const PLUGIN_DE_SCOPED_CAPABILITIES_V1 = [
   'hooks.register',
   'resources.register',
 ] as const;
-
-export const PluginPermissionCapabilityV1Schema = z.enum(PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1);
-export type PluginPermissionCapabilityV1 = z.infer<typeof PluginPermissionCapabilityV1Schema>;
 
 export const PluginDeclaredCapabilityV1Schema = z.enum(PLUGIN_DECLARED_CAPABILITIES_V1);
 export type PluginDeclaredCapabilityV1 = z.infer<typeof PluginDeclaredCapabilityV1Schema>;

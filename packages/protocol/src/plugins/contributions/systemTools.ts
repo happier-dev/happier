@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const PluginSystemToolContributionV1Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   executableNames: z.array(z.string().trim().min(1)).min(1),

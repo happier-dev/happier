@@ -7,7 +7,7 @@ import {
   ExecutionRunIntentSchema,
   ExecutionRunIoModeSchema,
   ExecutionRunRetentionPolicySchema,
-} from '../../execution/runs/startRequest.js';
+} from '../../execution/runs/runPrimitives.js';
 import {
   HookCategoryV1Schema,
   type HookCategoryV1,
@@ -18,6 +18,7 @@ import {
   resolveHookExecutionKindForCategoryV1,
 } from '../../hooks/hookExecutionSemantics.js';
 import { PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
+import { ActionIdSchema } from '../../actions/actionIds.js';
 
 export const PLUGIN_HOOK_IDS_V1 = [
   'session.spawned',
@@ -31,7 +32,12 @@ export const PLUGIN_HOOK_IDS_V1 = [
   'agent.spawnEnv.augment',
   'agent.context.before',
   'agent.request.before',
+  'agent.composition.resolve',
   'agent.stream.token',
+  'action.execute.before',
+  'action.execute.after',
+  'agent.tool.execute.before',
+  'agent.tool.execute.after',
 ] as const;
 export const PluginHookIdV1Schema = z.enum(PLUGIN_HOOK_IDS_V1);
 export type PluginHookIdV1 = z.infer<typeof PluginHookIdV1Schema>;
@@ -82,6 +88,90 @@ export const PluginHookDecisionResultV1Schema = z.discriminatedUnion('decision',
   z.object({ decision: z.literal('abstain') }).strict(),
 ]);
 export type PluginHookDecisionResultV1 = z.infer<typeof PluginHookDecisionResultV1Schema>;
+
+export const PluginExecutionInterceptionCapabilitySchema = z.enum(['interceptable', 'observable']);
+export type PluginExecutionInterceptionCapability = z.infer<typeof PluginExecutionInterceptionCapabilitySchema>;
+
+export const PluginExecutionCallerSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('host') }).strict(),
+  z.object({
+    kind: z.literal('plugin'),
+    pluginId: z.string().trim().min(1).max(256),
+  }).strict(),
+]);
+export type PluginExecutionCaller = z.infer<typeof PluginExecutionCallerSchema>;
+
+export const PluginExecutionInterceptionResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('continue'),
+    input: PluginJsonValueV2Schema,
+  }).strict(),
+  z.object({
+    status: z.literal('rejected'),
+    code: z.string().trim().min(1).max(256).optional(),
+    message: z.string().trim().min(1).max(2_048).optional(),
+  }).strict(),
+]);
+export type PluginExecutionInterceptionResult = z.infer<typeof PluginExecutionInterceptionResultSchema>;
+
+const PluginExecutionOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('succeeded'), result: PluginJsonValueV2Schema.optional() }).strict(),
+  z.object({
+    status: z.literal('failed'),
+    code: z.string().trim().min(1).max(256),
+    message: z.string().trim().min(1).max(2_048).optional(),
+  }).strict(),
+  z.object({ status: z.literal('cancelled') }).strict(),
+  z.object({
+    status: z.literal('rejected'),
+    code: z.string().trim().min(1).max(256).optional(),
+    message: z.string().trim().min(1).max(2_048).optional(),
+  }).strict(),
+]);
+
+const PluginActionExecutionInvocationSchema = z.object({
+  surface: z.enum(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'sdk', 'plugin']),
+  sessionId: z.string().trim().min(1).optional(),
+  caller: PluginExecutionCallerSchema,
+}).strict();
+
+export const ActionExecuteBeforeHookPayloadSchema = z.object({
+  actionId: ActionIdSchema,
+  input: PluginJsonValueV2Schema,
+  invocation: PluginActionExecutionInvocationSchema,
+  timestampMs: z.number().int().nonnegative(),
+}).strict();
+export type ActionExecuteBeforeHookPayload = z.infer<typeof ActionExecuteBeforeHookPayloadSchema>;
+
+export const ActionExecuteAfterHookPayloadSchema = ActionExecuteBeforeHookPayloadSchema.extend({
+  outcome: PluginExecutionOutcomeSchema,
+}).strict();
+export type ActionExecuteAfterHookPayload = z.infer<typeof ActionExecuteAfterHookPayloadSchema>;
+
+const AgentToolExecutionBaseHookPayloadSchema = z.object({
+  agentId: z.string().trim().min(1).max(256),
+  runtimeFamily: PluginHookSupportedRuntimeFamilyV1Schema,
+  capability: PluginExecutionInterceptionCapabilitySchema,
+  sessionId: z.string().trim().min(1).optional(),
+  turnId: z.string().trim().min(1).optional(),
+  tool: z.object({
+    callId: z.string().trim().min(1).max(512),
+    name: z.string().trim().min(1).max(512),
+    input: PluginJsonValueV2Schema,
+  }).strict(),
+  timestampMs: z.number().int().nonnegative(),
+}).strict();
+
+export const AgentToolExecuteBeforeHookPayloadSchema = AgentToolExecutionBaseHookPayloadSchema.extend({
+  capability: z.literal('interceptable'),
+}).strict();
+export type AgentToolExecuteBeforeHookPayload = z.infer<typeof AgentToolExecuteBeforeHookPayloadSchema>;
+
+export const AgentToolExecuteAfterHookPayloadSchema = AgentToolExecutionBaseHookPayloadSchema.extend({
+  caller: PluginExecutionCallerSchema,
+  outcome: PluginExecutionOutcomeSchema,
+}).strict();
+export type AgentToolExecuteAfterHookPayload = z.infer<typeof AgentToolExecuteAfterHookPayloadSchema>;
 
 const PluginHookAugmentationResultV1Schema = z.record(z.string(), PluginJsonValueV2Schema);
 
@@ -205,6 +295,46 @@ export const AgentRequestBeforeHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
+const AgentCompositionLocalIdV1Schema = z.string().trim().min(1).max(256);
+
+/**
+ * The only per-handler input for Agent turn composition. The host creates this
+ * payload from the current manifest projection, so a plugin can make a choice
+ * without receiving another plugin's catalog or a raw Session/runtime handle.
+ */
+export const PluginAgentCompositionRequestV1Schema = z.object({
+  sessionId: NonEmptyStringSchema,
+  agentId: NonEmptyStringSchema,
+  runtimeFamily: z.enum(['hostSession', 'acpSession']),
+  declaredToolIds: z.array(AgentCompositionLocalIdV1Schema).max(128),
+  declaredPromptAssetIds: z.array(AgentCompositionLocalIdV1Schema).max(128),
+}).strict();
+export type PluginAgentCompositionRequestV1 = z.infer<typeof PluginAgentCompositionRequestV1Schema>;
+
+const MAX_PLUGIN_AGENT_COMPOSITION_INSTRUCTION_BYTES = 8 * 1024;
+
+const PluginAgentCompositionInstructionsV1Schema = z.string().trim().min(1)
+  .superRefine((value, context) => {
+    if (new TextEncoder().encode(value).byteLength > MAX_PLUGIN_AGENT_COMPOSITION_INSTRUCTION_BYTES) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'additionalInstructions must not exceed 8 KiB UTF-8',
+      });
+    }
+  });
+
+/**
+ * Bounded output for `agent.composition.resolve`. Selection authority remains
+ * host-side: this schema deliberately carries local ids only, never a tool
+ * definition, prompt replacement, runtime object, or persistence capability.
+ */
+export const PluginAgentCompositionResultV1Schema = z.object({
+  enabledToolIds: z.array(AgentCompositionLocalIdV1Schema).max(128).optional(),
+  enabledPromptAssetIds: z.array(AgentCompositionLocalIdV1Schema).max(128).optional(),
+  additionalInstructions: PluginAgentCompositionInstructionsV1Schema.optional(),
+}).strict();
+export type PluginAgentCompositionResultV1 = z.infer<typeof PluginAgentCompositionResultV1Schema>;
+
 export const AgentStreamTokenHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema,
   agentId: NonEmptyStringSchema.optional(),
@@ -227,7 +357,12 @@ export const PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1 = Object.freeze({
   'agent.spawnEnv.augment': AgentSpawnEnvAugmentHookPayloadV1Schema,
   'agent.context.before': AgentContextBeforeHookPayloadV1Schema,
   'agent.request.before': AgentRequestBeforeHookPayloadV1Schema,
+  'agent.composition.resolve': PluginAgentCompositionRequestV1Schema,
   'agent.stream.token': AgentStreamTokenHookPayloadV1Schema,
+  'action.execute.before': ActionExecuteBeforeHookPayloadSchema,
+  'action.execute.after': ActionExecuteAfterHookPayloadSchema,
+  'agent.tool.execute.before': AgentToolExecuteBeforeHookPayloadSchema,
+  'agent.tool.execute.after': AgentToolExecuteAfterHookPayloadSchema,
 } satisfies Readonly<Record<PluginHookIdV1, z.ZodType<unknown>>>);
 
 export type PluginHookPayloadSchemaMapV1 = typeof PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1;
@@ -283,6 +418,21 @@ export function validatePluginHookResultV1(params: Readonly<{
       success: false,
       message: `Unsupported plugin hook id '${params.hookId}'`,
     };
+  }
+
+  if (hookId.data === 'action.execute.before' || hookId.data === 'agent.tool.execute.before') {
+    const parsed = PluginExecutionInterceptionResultSchema.safeParse(params.result);
+    return parsed.success
+      ? { success: true, result: parsed.data }
+      : { success: false, message: `Invalid result for plugin hook '${hookId.data}': ${parsed.error.issues.map((issue) => issue.message).join('; ')}` };
+  }
+
+  if (hookId.data === 'agent.composition.resolve') {
+    if (typeof params.result === 'undefined') return { success: true, result: undefined };
+    const parsed = PluginAgentCompositionResultV1Schema.safeParse(params.result);
+    return parsed.success
+      ? { success: true, result: parsed.data }
+      : { success: false, message: `Invalid result for plugin hook '${hookId.data}': ${parsed.error.issues.map((issue) => issue.message).join('; ')}` };
   }
 
   if (definition.executionKind === 'decide') {
@@ -406,12 +556,38 @@ export const PLUGIN_HOOK_CATALOG_V1 = [
     failureMode: 'bestEffort',
     supportedRuntimes: ['acpSession'],
   }),
+  definePluginHookDefinitionV1({
+    id: 'agent.composition.resolve',
+    category: 'augmentation',
+    scope: 'agent',
+    aggregation: 'orderedList',
+    failureMode: 'bestEffort',
+    supportedRuntimes: ['hostSession', 'acpSession'],
+  }),
   lifecycle({
     id: 'agent.stream.token',
     scope: 'agent',
     purity: 'observer',
     supportedRuntimes: ['hostSession'],
   }),
+  definePluginHookDefinitionV1({
+    id: 'action.execute.before',
+    category: 'augmentation',
+    scope: 'tool',
+    aggregation: 'replace',
+    failureMode: 'failClosed',
+    purity: 'participant',
+  }),
+  lifecycle({ id: 'action.execute.after', scope: 'tool', purity: 'observer' }),
+  definePluginHookDefinitionV1({
+    id: 'agent.tool.execute.before',
+    category: 'augmentation',
+    scope: 'tool',
+    aggregation: 'replace',
+    failureMode: 'failClosed',
+    purity: 'participant',
+  }),
+  lifecycle({ id: 'agent.tool.execute.after', scope: 'tool', purity: 'observer' }),
 ] as const satisfies readonly PluginHookDefinitionV1[];
 
 const PLUGIN_HOOK_CATALOG_BY_ID_V1: ReadonlyMap<string, PluginHookDefinitionV1> = new Map(

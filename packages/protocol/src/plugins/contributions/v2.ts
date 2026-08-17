@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import {
   HookCategoryV1Schema,
@@ -56,23 +57,18 @@ import {
   PluginUiTranslationsContributionV1Schema,
 } from './ui/i18n.js';
 import {
-  PluginStructuredMessageDescriptorV1Schema,
-} from './ui/structuredMessages.js';
+  PluginUiInstanceKeyV1Schema,
+  PluginUiLaunchInputV1Schema,
+} from '../ui/semanticCommands.js';
 import {
   PluginSessionHeaderActionDescriptorV1Schema,
 } from './ui/sessionHeaderActions.js';
 import {
-  PluginSurfacePlacementDescriptorV1Schema,
-} from './ui/surfacePlacements.js';
-import {
   PluginHostedWebContributionV1Schema,
 } from './ui/hostedWeb.js';
 import {
-  PluginReactNativeBundleContributionV1Schema,
-} from './ui/reactNativeBundles.js';
-import {
-  PluginUiArtifactContributionV1Schema,
-} from './ui/artifacts.js';
+  PluginTranscriptActivityContributionV1Schema,
+} from './ui/transcriptActivities.js';
 import {
   PluginBrowserActionContributionV1Schema,
   PluginBrowserTargetContributionV1Schema,
@@ -84,7 +80,7 @@ import {
 import { ProviderContributionV1Schema } from '../../providers/contributions/v1.js';
 import { AgentProviderRequirementsV1Schema } from '../../providers/compatibility/v1.js';
 import { VoiceModelPackContributionV1Schema } from '../../voice/modelPacks/contributionV1.js';
-import { PluginVoiceProviderContributionV1Schema } from './voiceProviders.js';
+import { VoiceProviderContributionSchema } from './voiceProviders.js';
 import { PluginAgentAcpTransportSchema } from './agentAcpTransport.js';
 import { PluginAgentCliMetadataSchema } from './agentCliMetadata.js';
 import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from '../contributionLimits.js';
@@ -103,11 +99,39 @@ import { ConnectedAccountPurposeDeclarationsV1Schema } from '../../connect/conne
 import {
   PluginConnectedAccountAuthenticationV2Schema,
 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
+import {
+  PluginComposerReferenceProviderContributionV1Schema,
+} from './composerReferenceProviders.js';
+import {
+  MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1,
+  PluginComposerAttachmentContributionV1Schema,
+} from './composerAttachments.js';
+import {
+  PluginComposerControlContributionV1Schema,
+} from './composerControls.js';
+import {
+  PluginComposerRegionContributionV1Schema,
+} from './composerRegions.js';
+import {
+  PluginOpenableContentViewerContributionV1Schema,
+} from '../openableContentViewerV1.js';
+import {
+  PluginAccountCollectionContributionV1Schema,
+} from '../data/collectionContributionV1.js';
+import {
+  PluginDaemonDatabaseContributionV1Schema,
+} from './daemonDatabases.js';
+import { PluginWebhookContributionV1Schema } from './webhooks.js';
+import {
+  PluginContributionPointV1Schema,
+  PluginTargetedContributionV1Schema,
+  validateTargetedContributionEnvelopeBoundsV1,
+} from './targetedContributions.js';
 
 const LEGACY_ACTIVITY_PROVIDER_FAMILY = `activity${'Providers'}`;
 const PluginVoiceModelPackContributionV2Schema = VoiceModelPackContributionV1Schema
   .omit({ id: true })
-  .extend({ id: PluginContributionLocalIdSchema })
+  .extend({ id: asProtocolZod(PluginContributionLocalIdSchema) })
   .strict();
 
 const PluginHookRegistrationFilterV1Schema = z.object({
@@ -177,7 +201,7 @@ const PluginAgentSessionCapabilitiesV2Schema = z.object({
   catalog: activity(z.array(z.enum(['vendorPlugins', 'skills'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.')).optional(),
   usageLimitRecovery: activity(z.array(z.enum(['checkNow', 'consumeResetCredit'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.')).optional(),
   continuationVerification: z.object({ intents: z.array(z.enum(['resume', 'fork'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'), requirement: z.enum(['required', 'advisory']) }).strict().optional(),
-  workStateSources: z.array(z.object({ id: PluginContributionLocalIdSchema, itemKinds: z.array(z.enum(['goal', 'task', 'todo'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.') }).strict()).max(32).refine((values) => new Set(values.map((value) => value.id)).size === values.length, 'Work-state source ids must be unique.').optional(),
+  workStateSources: z.array(z.object({ id: asProtocolZod(PluginContributionLocalIdSchema), itemKinds: z.array(z.enum(['goal', 'task', 'todo'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.') }).strict()).max(32).refine((values) => new Set(values.map((value) => value.id)).size === values.length, 'Work-state source ids must be unique.').optional(),
   runtimeActivitySnapshots: z.literal(true).optional(),
   startupInstructions: z.object({
     versions: z.tuple([z.literal(1)]),
@@ -188,7 +212,7 @@ const PluginAgentExecutionRunCapabilitiesV2Schema = z.object({
 }).strict();
 const auxiliary = { surfaces: z.array(z.enum(['terminal', 'externalSessions'])).refine((values) => new Set(values).size === values.length, 'Entries must be unique.').optional() };
 const PluginAgentDisplayV2Shape = {
-  id: PluginContributionLocalIdSchema, title: PluginLocalizedStringV2Schema, description: PluginLocalizedStringV2Schema.optional(),
+  id: asProtocolZod(PluginContributionLocalIdSchema), title: PluginLocalizedStringV2Schema, description: PluginLocalizedStringV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
   connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema.optional(),
   providerRequirements: AgentProviderRequirementsV1Schema.optional(),
@@ -256,7 +280,7 @@ export const PluginCommandVisibilityV2Schema = z.enum(['default', 'advanced']);
 export type PluginCommandVisibilityV2 = z.infer<typeof PluginCommandVisibilityV2Schema>;
 
 export const PluginCommandContributionV2Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: z.union([z.string().trim().min(1), z.object({ key: z.string().trim().min(1), fallback: z.string().trim().min(1) }).strict()]),
   description: z.union([z.string().trim().min(1), z.object({ key: z.string().trim().min(1), fallback: z.string().trim().min(1) }).strict()]).optional(),
   path: z.array(z.string().trim().min(1)).min(1),
@@ -269,24 +293,136 @@ export const PluginCommandContributionV2Schema = z.object({
 }).strict();
 export type PluginCommandContributionV2 = z.infer<typeof PluginCommandContributionV2Schema>;
 
+/**
+ * The **content category** of a resource — what the bytes mean to their
+ * consumer. This is the oldest of the three vocabularies that the codebase
+ * loosely calls a "resource kind" and it keeps the `kind` field (§3.6.1):
+ *
+ * 1. `PluginResourceKindV2Schema` (here) — content category of a resource
+ *    contribution, and of the `ResourceDescriptor` a read returns.
+ * 2. `PluginSessionResourceTargetV1Schema.kind`
+ *    (`contributions/ui/resources.ts`) — the **declarative UI target selector**
+ *    vocabulary (`session` / `message` / `structuredMessage` /
+ *    `sessionResource` / …). It names which part of the session model a
+ *    declarative element binds to and is not a resource contribution at all;
+ *    its nested `resourceKind` string is a session-resource type name.
+ * 3. `PluginResourceSourceV2Schema` (below) — the **sourcing/lifecycle**
+ *    discriminant of a resource contribution, and the only one that decides
+ *    whether the resource can be watched.
+ *
+ * They are three separate vocabularies over three separate domains and are
+ * deliberately never unified.
+ */
 export const PluginResourceKindV2Schema = z.enum(['prompt', 'skill', 'template', 'asset', 'config']);
 export type PluginResourceKind = z.infer<typeof PluginResourceKindV2Schema>;
 export type PluginResourceKindV2 = PluginResourceKind;
 
-export const PluginResourceContributionV2Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+/**
+ * Where a resource's bytes come from, and therefore what lifecycle it has.
+ *
+ * - `packaged` — a file inside the admitted immutable package generation. Its
+ *   bytes cannot change within the generation, so watching it is never
+ *   advertised and no runtime registration exists for it.
+ * - `dynamic` — bytes produced at runtime by an exactly-registered producer.
+ *   It declares identity, content category, content type and byte bounds in the
+ *   manifest, is read through the same snapshot authority, and is the only kind
+ *   that can emit an invalidation.
+ *
+ * The discriminant is named `source` rather than `kind` because `kind` already
+ * means the content category above.
+ */
+export const PluginResourceSourceV2Schema = z.enum(['packaged', 'dynamic']);
+export type PluginResourceSourceV2 = z.infer<typeof PluginResourceSourceV2Schema>;
+
+/**
+ * Dynamic bytes are either generation-global or host-contextual. The scope is
+ * part of the immutable declaration: consumers cannot infer it from a caller
+ * or add a second resource identity at runtime.
+ */
+export const PluginDynamicResourceScopeV1Schema = z.enum(['global', 'session', 'surface']);
+export type PluginDynamicResourceScopeV1 = z.infer<typeof PluginDynamicResourceScopeV1Schema>;
+
+/**
+ * The host-stamped context carried only to a contextual dynamic Resource
+ * producer. It is deliberately not a generic caller metadata bag: the closed
+ * union makes an absent/wrong context fail through the Resource owner.
+ */
+export const PluginResourceContextV1Schema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('global') }).strict(),
+  z.object({
+    kind: z.literal('session'),
+    sessionId: z.string().trim().min(1).max(256),
+  }).strict(),
+  z.object({
+    kind: z.literal('surface'),
+    mountInstanceKey: PluginUiInstanceKeyV1Schema,
+    launchInput: PluginUiLaunchInputV1Schema,
+  }).strict(),
+]);
+export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Schema>;
+
+/**
+ * `source` is optional on the packaged arm so that every already-admitted
+ * manifest — none of which names a source — keeps parsing unchanged. Absent
+ * means packaged.
+ */
+export const PluginPackagedResourceContributionV2Schema = z.object({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  source: z.literal('packaged').optional(),
   kind: PluginResourceKindV2Schema,
   path: z.string().trim().min(1),
   digest: z.string().trim().min(1).optional(),
   contentType: z.string().trim().min(1),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict();
+export type PluginPackagedResourceContributionV2 =
+  z.infer<typeof PluginPackagedResourceContributionV2Schema>;
+
+export const MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2 = 16 * 1024 * 1024;
+
+export const PluginDynamicResourceContributionV2Schema = z.object({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  source: z.literal('dynamic'),
+  kind: PluginResourceKindV2Schema,
+  contentType: z.string().trim().min(1),
+  /** Omitted legacy dynamic declarations retain their existing global bytes. */
+  scope: PluginDynamicResourceScopeV1Schema.default('global'),
+  hostAccess: z.array(asProtocolZod(PluginContributionLocalIdSchema))
+    .min(1)
+    .refine((values) => new Set(values).size === values.length, 'Entries must be unique.')
+    .optional(),
+  maxBytes: z.number().int().positive().max(MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2).optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+}).strict();
+export type PluginDynamicResourceContributionV2 =
+  z.infer<typeof PluginDynamicResourceContributionV2Schema>;
+
+/**
+ * One discriminated resource contribution family (§3.6.1): one catalog, one
+ * qualified identity, one read authority, one lifecycle — with conditional
+ * runtime producer registration for the dynamic arm only.
+ */
+export const PluginResourceContributionV2Schema = z.union([
+  PluginDynamicResourceContributionV2Schema,
+  PluginPackagedResourceContributionV2Schema,
+]);
 export type PluginResourceContributionV2 = z.infer<typeof PluginResourceContributionV2Schema>;
+
+/**
+ * The single predicate every consumer uses to tell the two arms apart. Reading
+ * `source === 'dynamic'` inline in a consumer would be a second decision-maker
+ * for the same discrimination.
+ */
+export function isDynamicPluginResourceContributionV2(
+  value: Readonly<Record<string, unknown>> | PluginResourceContributionV2,
+): value is PluginDynamicResourceContributionV2 {
+  return (value as Readonly<Record<string, unknown>>).source === 'dynamic';
+}
 
 export { PluginHookScopeV1Schema, type PluginHookScopeV1 };
 
 export const PluginHookContributionV2Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   on: PluginHookIdV1Schema,
   hookApiVersion: z.literal(1).default(1),
   category: HookCategoryV1Schema,
@@ -294,7 +430,7 @@ export const PluginHookContributionV2Schema = z.object({
   filters: PluginHookRegistrationFilterV1Schema.optional(),
   executionKind: HookExecutionKindV1Schema,
   priority: z.number().int().optional(),
-  hostAccess: z.array(PluginContributionLocalIdSchema)
+  hostAccess: z.array(asProtocolZod(PluginContributionLocalIdSchema))
     .min(1)
     .refine((values) => new Set(values).size === values.length, 'Entries must be unique.')
     .optional(),
@@ -304,7 +440,7 @@ export const PluginHookContributionV2Schema = z.object({
 export type PluginHookContributionV2 = z.infer<typeof PluginHookContributionV2Schema>;
 
 export const PluginConnectedAccountDescriptorContributionV2Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
   authentication: PluginConnectedAccountAuthenticationV2Schema,
@@ -313,6 +449,12 @@ export const PluginConnectedAccountDescriptorContributionV2Schema = z.object({
 }).strict();
 export type PluginConnectedAccountDescriptorContributionV2 =
   z.infer<typeof PluginConnectedAccountDescriptorContributionV2Schema>;
+
+export const BackgroundServiceContributionSchema = z.object({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  title: PluginLocalizedStringV2Schema.optional(),
+}).strict();
+export type BackgroundServiceContribution = z.infer<typeof BackgroundServiceContributionSchema>;
 
 export {
   PluginConnectedAccountAuthenticationModeV2Schema,
@@ -332,7 +474,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'resources', schema: PluginResourceContributionV2Schema }),
-  definePluginContributionFamilyV2({ family: 'structuredMessages', schema: PluginStructuredMessageDescriptorV1Schema }),
+  definePluginContributionFamilyV2({ family: 'transcriptActivities', schema: PluginTranscriptActivityContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'sessionHeaderActions', schema: PluginSessionHeaderActionDescriptorV1Schema }),
   definePluginContributionFamilyV2({ family: 'browserTargets', schema: PluginBrowserTargetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'browserActions', schema: PluginBrowserActionContributionV1Schema }),
@@ -350,7 +492,22 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'hooks', schema: PluginHookContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'requestInterceptors', schema: PluginRequestInterceptorContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'voiceModelPacks', schema: PluginVoiceModelPackContributionV2Schema }),
-  definePluginContributionFamilyV2({ family: 'voiceProviders', schema: PluginVoiceProviderContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'voiceProviders', schema: VoiceProviderContributionSchema }),
+  definePluginContributionFamilyV2({ family: 'backgroundServices', schema: BackgroundServiceContributionSchema }),
+  definePluginContributionFamilyV2({ family: 'daemonDatabases', schema: PluginDaemonDatabaseContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'composerReferences', schema: PluginComposerReferenceProviderContributionV1Schema }),
+  definePluginContributionFamilyV2({
+    family: 'composerAttachments',
+    schema: PluginComposerAttachmentContributionV1Schema,
+    maxItems: MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1,
+  }),
+  definePluginContributionFamilyV2({ family: 'composerControls', schema: PluginComposerControlContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'composerRegions', schema: PluginComposerRegionContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'openableContentViewers', schema: PluginOpenableContentViewerContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'accountCollections', schema: PluginAccountCollectionContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'webhooks', schema: PluginWebhookContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'pluginContributionPoints', schema: PluginContributionPointV1Schema }),
+  definePluginContributionFamilyV2({ family: 'targetedPluginContributions', schema: PluginTargetedContributionV1Schema }),
 ] as const;
 
 const PluginContributesV2BaseSchema = buildPluginContributionFamilySchemaV2(
@@ -385,6 +542,72 @@ const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.ex
     }
     voiceProviderIds.add(provider.id);
   });
+  const backgroundServiceIds = new Set<string>();
+  value.backgroundServices.forEach((service, index) => {
+    if (backgroundServiceIds.has(service.id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['backgroundServices', index, 'id'],
+        message: 'Duplicate background service contribution id',
+      });
+    }
+    backgroundServiceIds.add(service.id);
+  });
+  const daemonDatabaseIds = new Set<string>();
+  value.daemonDatabases.forEach((database, index) => {
+    if (daemonDatabaseIds.has(database.id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['daemonDatabases', index, 'id'],
+        message: 'Duplicate daemon database contribution id',
+      });
+    }
+    daemonDatabaseIds.add(database.id);
+  });
+  if (value.accountCollections.length > 32) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['accountCollections'],
+      message: 'At most 32 account collection contributions are allowed.',
+    });
+  }
+  const accountCollectionIds = new Set<string>();
+  value.accountCollections.forEach((collection, index) => {
+    if (accountCollectionIds.has(collection.id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['accountCollections', index, 'id'],
+        message: 'Duplicate account collection contribution id',
+      });
+    }
+    accountCollectionIds.add(collection.id);
+  });
+  const webhookIds = new Set<string>();
+  value.webhooks.forEach((webhook, index) => {
+    if (webhookIds.has(webhook.id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['webhooks', index, 'id'],
+        message: 'Duplicate webhook contribution id',
+      });
+    }
+    webhookIds.add(webhook.id);
+    const action = value.actions.find((candidate) => candidate.id === webhook.handlerAction.localId);
+    if (!action) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['webhooks', index, 'handlerAction', 'localId'],
+        message: 'Webhook handlerAction must reference a declared same-plugin Action',
+      });
+    } else if (!action.surfaces.includes('plugin')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['webhooks', index, 'handlerAction', 'localId'],
+        message: 'Webhook handlerAction must declare the plugin surface',
+      });
+    }
+  });
+  validateTargetedContributionEnvelopeBoundsV1(value, ctx);
 });
 
 export const PluginContributesV2Schema = PluginContributesV2SchemaWithoutDefault.default(
@@ -393,8 +616,36 @@ export const PluginContributesV2Schema = PluginContributesV2SchemaWithoutDefault
 export type PluginContributesV2 = z.infer<typeof PluginContributesV2Schema>;
 
 export {
-  PluginVoiceProviderContributionV1Schema,
-  type PluginVoiceProviderContributionV1,
+  PluginContributionPointProtocolV1Schema,
+  PluginContributionPointV1Schema,
+  PluginTargetedContributionOperationInputV1Schema,
+  PluginTargetedContributionOperationRequirementsV1Schema,
+  PluginTargetedContributionOperationV1Schema,
+  PluginTargetedContributionSurfacePresentationV1Schema,
+  PluginTargetedContributionSurfaceV1Schema,
+  PluginTargetedContributionProtocolV1Schema,
+  PluginTargetedContributionTargetV1Schema,
+  PluginTargetedContributionV1Schema,
+  type PluginContributionPointProtocolV1,
+  type PluginContributionPointV1,
+  type PluginTargetedContributionOperationInputV1,
+  type PluginTargetedContributionOperationRequirementsV1,
+  type PluginTargetedContributionOperationV1,
+  type PluginTargetedContributionSurfacePresentationV1,
+  type PluginTargetedContributionSurfaceV1,
+  type PluginTargetedContributionProtocolV1,
+  type PluginTargetedContributionTargetV1,
+  type PluginTargetedContributionV1,
+} from './targetedContributions.js';
+export {
+  PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH,
+  PluginUiRendererChainBindingV1Schema,
+  type PluginUiRendererChainBindingV1,
+} from './ui/rendererChainBinding.js';
+
+export {
+  VoiceProviderContributionSchema,
+  type VoiceProviderContribution,
   VoiceProviderAccountOperationKindV1Schema,
   type VoiceProviderAccountOperationKindV1,
 } from './voiceProviders.js';
@@ -408,43 +659,27 @@ export {
   PluginPromptAssetContributionV1Schema,
   type PluginPromptAssetContributionV1,
 } from './promptAssets.js';
+export {
+  PluginWebhookContributionV1Schema,
+  PluginWebhookVerifierV1Schema,
+  type PluginWebhookContributionV1,
+  type PluginWebhookVerifierV1,
+} from './webhooks.js';
 
 export {
   PluginUiTranslationsContributionV1Schema,
   type PluginUiTranslationsContributionV1,
 } from './ui/i18n.js';
 export {
-  MAX_PLUGIN_STRUCTURED_MESSAGE_REFERENCES_V1,
-  PluginStructuredMessageDescriptorV1Schema,
-  type PluginStructuredMessageDescriptorV1,
-} from './ui/structuredMessages.js';
-export {
   PluginSessionHeaderActionDescriptorV1Schema,
   type PluginSessionHeaderActionDescriptorV1,
 } from './ui/sessionHeaderActions.js';
 export {
-  PluginSurfaceBrowserHostActionEffectV1Schema,
-  PluginSurfaceBrowserHostActionPolicyOwnerV1Schema,
-  PluginSurfaceHostActionDescriptorV1Schema,
-  PluginSurfacePlacementDescriptorV1Schema,
-  PluginSurfacePlacementKindV1Schema,
-  PluginSurfaceRendererRefV1Schema,
-  type PluginSurfaceBrowserHostActionEffectV1,
-  type PluginSurfaceBrowserHostActionPolicyOwnerV1,
-  type PluginSurfaceHostActionDescriptorV1,
-  type PluginSurfacePlacementDescriptorV1,
-  type PluginSurfacePlacementKindV1,
-  type PluginSurfaceRendererRefV1,
-} from './ui/surfacePlacements.js';
-export {
-  PluginBrowserPanelHostActionScopeV1Schema,
   PluginSurfaceAppTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
   PluginSurfaceProjectTargetV1Schema,
   PluginSurfaceSessionTargetV1Schema,
   PluginSurfaceTargetV1Schema,
-  PluginSurfaceWorkspaceTargetV1Schema,
-  type PluginBrowserPanelHostActionScopeV1,
   type PluginSurfaceTargetV1,
 } from './ui/surfaceTargets.js';
 export {
@@ -462,13 +697,9 @@ export {
   type PluginHostedWebSecurityPolicyV1,
 } from './ui/hostedWebSecurity.js';
 export {
-  PluginReactNativeBundleContributionV1Schema,
-  type PluginReactNativeBundleContributionV1,
-} from './ui/reactNativeBundles.js';
-export {
-  PluginUiArtifactContributionV1Schema,
-  type PluginUiArtifactContributionV1,
-} from './ui/artifacts.js';
+  PluginTranscriptActivityContributionV1Schema,
+  type PluginTranscriptActivityContributionV1,
+} from './ui/transcriptActivities.js';
 export {
   PluginBrowserActionContributionV1Schema,
   PluginBrowserTargetContributionV1Schema,

@@ -870,6 +870,11 @@ describe('connectedServiceSchemas', () => {
             generation: 4,
         });
         expect(ConnectedServiceAuthGroupErrorResponseV1Schema.parse({
+            error: 'connect_group_incarnation_conflict',
+        })).toEqual({
+            error: 'connect_group_incarnation_conflict',
+        });
+        expect(ConnectedServiceAuthGroupErrorResponseV1Schema.parse({
             error: 'connect_group_runtime_state_revision_conflict',
             runtimeStateRevision: 7,
         })).toEqual({

@@ -51,8 +51,7 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "name": "projectId",
           "nullish": true
         }
-      ],
-      "passthrough": true
+      ]
     },
     "sourceKind": "claudeConfig"
   },
@@ -150,7 +149,6 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "optional": true
         }
       ],
-      "passthrough": true,
       "refinements": [
         {
           "field": "connectedServiceId",
@@ -180,8 +178,18 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
     "agentId": "opencode",
     "instances": [
       {
-        "constants": {},
+        "constants": {
+          "managedEndpoint": true
+        },
         "kind": "default"
+      },
+      {
+        "byServerIdSettingId": "opencodeServerBaseUrlByServerIdV1",
+        "constants": {},
+        "field": "baseUrl",
+        "kind": "agentSetting",
+        "normalization": "httpOrigin",
+        "settingId": "opencodeServerBaseUrl"
       }
     ],
     "key": {
@@ -216,9 +224,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "kind": "unknown",
           "name": "directory",
           "optional": true
+        },
+        {
+          "kind": "unknown",
+          "name": "managedEndpoint",
+          "optional": true
         }
-      ],
-      "passthrough": true
+      ]
     },
     "sourceKind": "opencodeServer"
   },
@@ -255,9 +267,22 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "min": 1,
           "name": "brainDir",
           "nullish": true
+        },
+        {
+          "kind": "string",
+          "max": 2000,
+          "min": 1,
+          "name": "conversationId",
+          "nullish": true
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "sourceRevision",
+          "nullish": true
         }
-      ],
-      "passthrough": true
+      ]
     },
     "sourceKind": "antigravityCliPrint"
   },
@@ -267,6 +292,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
       {
         "constants": {},
         "kind": "default"
+      },
+      {
+        "constants": {},
+        "field": "agentDir",
+        "kind": "agentSettingOverride",
+        "normalization": "configuredPath",
+        "settingId": "ohMyPiAgentDir"
       }
     ],
     "key": {
@@ -295,8 +327,7 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "name": "agentDir",
           "nullish": true
         }
-      ],
-      "passthrough": true
+      ]
     },
     "sourceKind": "ohMyPiAgentDir"
   },
@@ -306,6 +337,13 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
       {
         "constants": {},
         "kind": "default"
+      },
+      {
+        "constants": {},
+        "field": "agentDir",
+        "kind": "agentSettingOverride",
+        "normalization": "configuredPath",
+        "settingId": "piAgentDir"
       }
     ],
     "key": {
@@ -334,8 +372,7 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
           "name": "agentDir",
           "nullish": true
         }
-      ],
-      "passthrough": true
+      ]
     },
     "sourceKind": "piAgentDir"
   },

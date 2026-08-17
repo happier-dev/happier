@@ -4,6 +4,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { VoiceSpeechInputMimeTypeSchema } from '../plugins/contributions/voiceProviders.js';
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
 import { VoiceProviderOperationErrorCodeSchema } from '../voice/providerOperations.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export const DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES = 8 * 1024 * 1024;
 export const DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
@@ -38,7 +39,7 @@ const VoiceSpeechTransferFailureSchema = z.object({
 const VoiceSpeechTransferSuccessSchema = z.object({ success: z.literal(true) }).strict();
 
 export const DaemonVoiceSpeechCatalogRequestSchema = z.object({
-  target: PluginContributionIdentityV1Schema,
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
   catalog: z.enum(['models', 'voices']),
 }).strict();
 export type DaemonVoiceSpeechCatalogRequest = z.infer<
@@ -46,7 +47,7 @@ export type DaemonVoiceSpeechCatalogRequest = z.infer<
 >;
 
 export const DaemonVoiceSpeechTranscribeUploadInitRequestSchema = z.object({
-  target: PluginContributionIdentityV1Schema,
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
   sizeBytes: z.number().int().positive().max(DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES),
   mimeType: VoiceSpeechInputMimeTypeSchema,
   fileName: z.string().trim().min(1).max(256).regex(/^[^/\\\u0000-\u001f\u007f]+$/u),
@@ -122,7 +123,7 @@ export type DaemonVoiceSpeechTranscribeUploadAbortResponse = z.infer<
 >;
 
 export const DaemonVoiceSpeechTranscribeRequestSchema = z.object({
-  target: PluginContributionIdentityV1Schema,
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
   requestId: VoiceSpeechRequestIdSchema,
   model: VoiceSpeechRequiredStringSchema(256),
   language: VoiceSpeechNullableStringSchema(64),
@@ -185,7 +186,7 @@ export type DaemonVoiceSpeechDownloadAbortResponse = z.infer<
 >;
 
 export const DaemonVoiceSpeechSynthesizeRequestSchema = z.object({
-  target: PluginContributionIdentityV1Schema,
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
   requestId: VoiceSpeechRequestIdSchema,
   input: VoiceSpeechRequiredStringSchema(200_000),
   model: VoiceSpeechNullableStringSchema(256),

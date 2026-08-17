@@ -6,6 +6,10 @@ import {
   ConnectedServiceProfileIdSchema,
 } from '../../connect/connectedServiceSchemas.js';
 import { ConnectedServiceUxDiagnosticV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
+import {
+  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
+  readSessionAgentTransitionDividerV1,
+} from '../agentTransitionDivider.js';
 import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
 import type { SessionMessageMeta } from './sessionMessageMeta.js';
 
@@ -122,6 +126,31 @@ function normalizeToToolResult(input: z.infer<typeof RawHyphenatedToolResultSche
   };
 }
 
+/**
+ * Released ACP agent envelope shape from before the `provider` -> `agentId` rename.
+ *
+ * Source release: builds prior to commit `3dfbdc4330` (2026-07-10), whose writer
+ * `apps/cli/src/api/session/acpMessageEnvelope.ts` emitted
+ * `{ type: 'acp', provider, data }`. Those transcript rows are persisted in user history and are
+ * still read back by every current reader, so this schema states the accepted legacy shape
+ * explicitly rather than relaxing the canonical envelope.
+ *
+ * `agentId: z.undefined()` keeps the canonical key authoritative: a record that already carries
+ * `agentId` is not a legacy record and is never rewritten from `provider`. Anything that does not
+ * match this exact shape stays unaccepted and still falls through to the caller's unsupported /
+ * unparsed handling.
+ *
+ * Removal condition: drop this branch once no supported release can still hold ACP transcript rows
+ * written before 2026-07-10.
+ */
+const LegacyAcpAgentEnvelopeV1Schema = z
+  .object({
+    type: z.literal('acp'),
+    agentId: z.undefined(),
+    provider: z.string().trim().min(1),
+  })
+  .passthrough();
+
 function preprocessMessageContent(data: unknown): unknown {
   if (!data || typeof data !== 'object') return data;
 
@@ -162,6 +191,15 @@ function preprocessMessageContent(data: unknown): unknown {
           // Ignore if we can't delete (e.g. frozen object); parsing will still succeed via passthrough.
         }
       }
+    }
+  }
+
+  if (record.role === 'agent' && record.content?.type === 'acp') {
+    const legacyEnvelope = LegacyAcpAgentEnvelopeV1Schema.safeParse(record.content);
+    if (legacyEnvelope.success) {
+      // Project the released legacy key onto the canonical one without mutating the caller-owned
+      // persisted record, and keep `provider` so nothing downstream loses the original bytes.
+      return { ...record, content: { ...record.content, agentId: legacyEnvelope.data.provider } };
     }
   }
 
@@ -609,7 +647,33 @@ const AgentEventSchema = z.discriminatedUnion('type', [
       message: z.string().trim().min(1).max(2_000).optional(),
     })
     .passthrough(),
-  z.object({ type: z.literal('message'), message: z.string() }).passthrough(),
+  z
+    .object({
+      type: z.literal('message'),
+      message: z.string(),
+      /**
+       * Same-Session cross-Agent transition divider. This is a strict nested
+       * sidecar on the EXISTING passthrough `message` arm, never a new
+       * `AgentEventSchema` variant: this union is closed at the discriminator,
+       * so a new variant would be dropped by every released reader. An old
+       * reader parses this row as an ordinary informational message and keeps
+       * the sidecar untouched through `.passthrough()`.
+       *
+       * Declared as `unknown` ON PURPOSE. A strict nested schema here would
+       * invalidate the whole discriminated-union member on a malformed or
+       * future-version sidecar, and this arm accepted arbitrary extra keys
+       * before the divider existed — so one write at this key name would erase
+       * an otherwise valid transcript row for every reader. Strictness lives at
+       * the two places that can act on it: writers parse
+       * {@link SessionAgentTransitionDividerV1Schema} before sealing, and the
+       * single canonical reader
+       * {@link readSessionAgentTransitionDividerV1} strict-parses and returns
+       * `null` for anything else — so a malformed sidecar is never treated as a
+       * divider, never silenced, and never a departure boundary.
+       */
+      [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: z.unknown().optional(),
+    })
+    .passthrough(),
   z
     .object({
       type: z.literal('context-compaction'),
@@ -910,6 +974,12 @@ const RawAgentRecordSchema = z
   ])
   ;
 
+/**
+ * Persisted Session-transcript record read contract. It intentionally retains
+ * supported provider-rich and historical fields, so current Agent contribution
+ * output must instead use `AgentExternalSessionTranscriptRawRecordSchema` at
+ * its first host boundary.
+ */
 export type TranscriptRawRecordV1WithMeta<Meta> =
   | (Record<string, unknown> & {
       role: 'agent';
@@ -1073,6 +1143,18 @@ function readRuntimeAuthRecoveryStatusFromLocalId(
 
 export function agentEventAttentionImpact(event: unknown): SessionMessageAttentionImpact {
   const type = readAgentEventType(event);
+  // The same-Session transition divider is a boundary marker, not news. It rides
+  // the passthrough `message` arm, whose type-keyed default is attention-bearing
+  // and must stay that way for every other passthrough event, so the exemption is
+  // conditioned on the strict `sessionAgentTransitionV1` sidecar instead. This is
+  // the single attention decision: `attentionImpact` is not a persisted column, so
+  // both re-read resolvers (server `resolveMessageAttentionImpact`, client
+  // `messageAttentionImpact` / `storedSessionMessageContentAttentionImpactOrNull`)
+  // inherit it by already delegating here. A malformed or unknown-version sidecar
+  // does not parse and therefore is NOT silenced.
+  if (readSessionAgentTransitionDividerV1(event) !== null) {
+    return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
+  }
   if (type === 'connected-service-runtime-auth-recovery') {
     const parsedStatus = ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema.safeParse(readAgentEventStatus(event));
     return parsedStatus.success && RUNTIME_AUTH_RECOVERY_STATUSES_WITHOUT_USER_ATTENTION.has(parsedStatus.data)

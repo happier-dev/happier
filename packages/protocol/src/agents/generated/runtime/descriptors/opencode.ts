@@ -91,6 +91,18 @@ function normalizeOptionalOpenCodeBackendMode(raw: unknown): OpenCodeBackendMode
   return null;
 }
 
+/**
+ * A user-declared OpenCode server address: a credential-free `https:` URL on
+ * any valid host, or an `http:` URL only on an exact loopback hostname,
+ * reduced to its origin. This performs no DNS lookup or private-network
+ * classification.
+ *
+ * Credentials stay out of the URL — the password travels in the `authorization`
+ * header the host applies. This module is copied verbatim into
+ * `@happier-dev/protocol` by the bundled-plugin generator and must stay
+ * import-free, so it is a hermetic compatibility projection of the canonical
+ * `readManagedServiceEndpointUrl` policy. Both must be changed together.
+ */
 export function normalizeOpenCodeServerBaseUrl(raw: unknown): string | null {
   const value = normalizeTrimmedString(raw);
   if (!value) return null;
@@ -98,15 +110,14 @@ export function normalizeOpenCodeServerBaseUrl(raw: unknown): string | null {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
     if (parsed.username || parsed.password) return null;
-    if (parsed.protocol === 'http:') {
-      const hostname = parsed.hostname.trim().toLowerCase();
-      const isLoopback =
-        hostname === 'localhost' ||
-        hostname === '127.0.0.1' ||
-        hostname === '::1' ||
-        hostname === '[::1]';
-      if (!isLoopback) return null;
-    }
+    if (!parsed.hostname) return null;
+    const hostname = parsed.hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+      parsed.protocol === 'http:'
+      && hostname !== 'localhost'
+      && hostname !== '127.0.0.1'
+      && hostname !== '::1'
+    ) return null;
     return parsed.origin.endsWith('/') ? parsed.origin : `${parsed.origin}/`;
   } catch {
     return null;

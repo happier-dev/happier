@@ -509,3 +509,96 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
     }
   });
 });
+
+/**
+ * §4.1 — the ratified approval posture for the Plugin surface.
+ *
+ * `surfaces.plugin` classifies as a NON-agent surface, so the danger floor
+ * (`safety === 'danger' && surfaces.agent === true`) does not apply to it. A
+ * plugin-surfaced invocation is therefore unprompted by default while remaining
+ * subject to the ActionSpec's own confirmation, target-action policy, declared
+ * surfaces and persisted overrides.
+ *
+ * These are measured from the evaluated registry, never grepped: a later change
+ * that flips whole records rather than the plugin row must fail here.
+ */
+describe('plugin-surface approval posture (§4.1)', () => {
+  const pluginSurfacedActionIds: readonly ActionId[] = ACTION_IDS.filter(
+    (id) => getActionSpec(id).surfaces.plugin === true,
+  );
+
+  function routingRequired(actionId: ActionId, surface: string): boolean {
+    return resolveActionApprovalRouting({
+      actionId,
+      spec: getActionSpec(actionId),
+      settings: EMPTY_SETTINGS,
+      context: approvalContext(surface),
+    }).required;
+  }
+
+  it('measures a non-empty plugin surface with a real danger population', () => {
+    expect(pluginSurfacedActionIds.length).toBeGreaterThan(0);
+    expect(
+      pluginSurfacedActionIds.filter((id) => getActionSpec(id).safety === 'danger').length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('routes every plugin-surfaced ActionSpec without approval under default settings', () => {
+    const promptedOnPluginSurface = pluginSurfacedActionIds
+      .filter((id) => routingRequired(id, 'plugin'));
+
+    expect(promptedOnPluginSurface).toEqual([]);
+  });
+
+  it('keeps a danger-class plugin-surfaced ActionSpec unprompted on plugin', () => {
+    const dangerPluginActionIds = pluginSurfacedActionIds
+      .filter((id) => getActionSpec(id).safety === 'danger');
+
+    for (const actionId of dangerPluginActionIds) {
+      expect(routingRequired(actionId, 'plugin')).toBe(false);
+    }
+  });
+
+  // Negative control: the SAME danger-class rows that are also agent-surfaced
+  // still prompt on `agent`. An implementation that dropped the danger floor
+  // wholesale — rather than only classifying `plugin` as a non-agent surface —
+  // fails here.
+  it('still prompts the same danger-class rows on the agent surface', () => {
+    const dangerAgentAndPluginActionIds = pluginSurfacedActionIds.filter((id) => {
+      const spec = getActionSpec(id);
+      return spec.safety === 'danger' && spec.surfaces.agent === true;
+    });
+
+    expect(dangerAgentAndPluginActionIds.length).toBeGreaterThan(0);
+    for (const actionId of dangerAgentAndPluginActionIds) {
+      expect(routingRequired(actionId, 'agent')).toBe(true);
+    }
+  });
+
+  it('honors a persisted approvalRequiredSurfaces override for the plugin surface', () => {
+    const actionId = pluginSurfacedActionIds.find(
+      (id) => getActionSpec(id).safety === 'danger',
+    );
+    expect(actionId).toBeDefined();
+    if (!actionId) return;
+
+    const settings: ActionsSettingsV1 = {
+      v: 1,
+      actions: {
+        [actionId]: {
+          enabledPlacements: [],
+          disabledSurfaces: [],
+          disabledPlacements: [],
+          approvalRequiredSurfaces: ['plugin'],
+        },
+      } as any,
+    };
+
+    expect(resolveActionApprovalRouting({
+      actionId,
+      spec: getActionSpec(actionId),
+      settings,
+      context: approvalContext('plugin'),
+    }).required).toBe(true);
+  });
+});

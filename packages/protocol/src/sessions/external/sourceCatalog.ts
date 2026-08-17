@@ -4,7 +4,10 @@ import {
   GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS,
 } from '../../agents/generated/externalSession/sources.js';
 import { assertBackendExternalSessionSourceReferences } from '../../plugins/backendExternalSessionSourceReferences.js';
-import type { PluginBackendExternalSessionSourceDeclarationV1 } from '../../plugins/backendDefinitionV1.js';
+import type {
+  PluginBackendExternalSessionSourceDeclarationV1,
+  PluginBackendExternalSessionSourceInstanceV1,
+} from '../../plugins/backendDefinitionV1.js';
 import {
   PluginAgentExternalSessionLinkDataSchema,
   type PluginAgentExternalSessionLinkData,
@@ -43,18 +46,10 @@ type ExternalSessionKeySegmentDeclaration =
     profileField: string;
     when: ExternalSessionWhenDeclaration;
   }>;
-type ExternalSessionInstanceDeclaration =
-  | Readonly<{ kind: 'default'; constants: Readonly<Record<string, string | number | boolean | null>> }>
-  | Readonly<{
-    kind: 'connectedServiceProfiles';
-    serviceId: string;
-    constants: Readonly<Record<string, string | number | boolean | null>>;
-    fields: Readonly<{ serviceId: string; profileId: string }>;
-  }>;
+type ExternalSessionInstanceDeclaration = Readonly<PluginBackendExternalSessionSourceInstanceV1>;
 type ExternalSessionSourceDeclaration = Readonly<{
   sourceKind: string;
   schema: Readonly<{
-    passthrough?: boolean;
     fields: readonly ExternalSessionSchemaFieldDeclaration[];
     refinements?: readonly ExternalSessionSchemaRefinementDeclaration[];
   }>;
@@ -151,10 +146,7 @@ function buildExternalSessionSourceSchema(
   const shape = Object.fromEntries(
     declaration.schema.fields.map((field) => [field.name, buildExternalSessionFieldSchema(field)]),
   ) as ZodRawShape;
-  let schema = z.object(shape);
-  if (declaration.schema.passthrough !== false) {
-    schema = schema.passthrough();
-  }
+  const schema = z.object(shape).strict();
   const refinements = declaration.schema.refinements ?? [];
   if (refinements.length === 0) {
     return schema as ExternalSessionSourceSchemaOption;
@@ -231,7 +223,40 @@ export const EXTERNAL_SESSIONS_AGENT_IDS = Object.freeze(
   ...GeneratedExternalSessionsAgentId[],
 ];
 
-export const ExternalSessionsAgentIdSchema = z.string().trim().min(1).max(128);
+export const ExternalSessionAgentIdSchema = z.string()
+  .min(1)
+  .max(128)
+  .refine(
+    (value) => value === value.trim(),
+    'External-session Agent id must already be trimmed.',
+  );
+export type ExternalSessionAgentId = z.infer<typeof ExternalSessionAgentIdSchema>;
+
+export const ExternalSessionSourceIdSchema = z.string()
+  .min(1)
+  .max(2_000)
+  .refine(
+    (value) => value === value.trim(),
+    'External-session source id must already be trimmed.',
+  );
+export type ExternalSessionSourceId = z.infer<typeof ExternalSessionSourceIdSchema>;
+
+const ExternalSessionRemoteSessionIdSchema = z.string()
+  .min(1)
+  .max(2_000)
+  .refine(
+    (value) => value === value.trim(),
+    'External-session remote Session id must already be trimmed.',
+  );
+
+export const ExternalSessionRefSchema = z.object({
+  agentId: ExternalSessionAgentIdSchema,
+  sourceId: ExternalSessionSourceIdSchema,
+  remoteSessionId: ExternalSessionRemoteSessionIdSchema,
+}).strict();
+export type ExternalSessionRef = z.infer<typeof ExternalSessionRefSchema>;
+
+export const ExternalSessionsAgentIdSchema = ExternalSessionAgentIdSchema;
 export type ExternalSessionsAgentId = z.infer<typeof ExternalSessionsAgentIdSchema>;
 export type ExternalSessionsSourceKindV1 = keyof typeof EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1;
 
@@ -243,7 +268,14 @@ export const ExternalSessionsSourceSchema = z.unknown().transform((value, ctx) =
     ctx.addIssue({ code: 'custom', message: 'External-session source must be a bounded JSON object.' });
     return z.NEVER;
   }
-  const kind = z.string().trim().min(1).max(128).safeParse(parsed.data.kind);
+  const kind = z.string()
+    .min(1)
+    .max(128)
+    .refine(
+      (value) => value === value.trim(),
+      'External-session source kind must already be trimmed.',
+    )
+    .safeParse(parsed.data.kind);
   if (!kind.success) {
     ctx.addIssue({ code: 'custom', path: ['kind'], message: 'External-session source kind is invalid.' });
     return z.NEVER;
@@ -306,7 +338,7 @@ const LEGACY_PERSISTED_TAG_SOURCE_KINDS = new Set<string>([
  * The legacy direction is limited to the Claude, Codex, and OpenCode tag
  * writers observed in CLI stable `cli-v0.2.1`, preview
  * `cli-v0.2.2-preview.1775586717.26498`, and dirty `remote-dev` predecessor
- * `e67f3751f1ab5dc13e40a583a28f3962111154aa`. Those writers joined segments
+ * `17bcdb9e24479ee5fa642c53ccdcfe883eb9cc81`. Those writers joined segments
  * without escaping. They did not emit an Oh My Pi source-key tag.
  *
  * Remove the legacy result only when no supported stable/preview or inspected

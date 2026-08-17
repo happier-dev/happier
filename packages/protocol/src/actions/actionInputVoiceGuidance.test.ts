@@ -34,6 +34,30 @@ describe('actionInputVoiceGuidance', () => {
     expect(agentIdNotes).toContain('listAgentBackends');
   });
 
+  it('guides canonical Session creation fields without reviving flat spawn vocabulary', () => {
+    const targetNotes = getActionInputFieldVoiceNotes(
+      { id: 'session.spawn_new' },
+      { path: 'executionTarget.machineId' } as any,
+    ).join(' ');
+    const directoryNotes = getActionInputFieldVoiceNotes(
+      { id: 'session.spawn_new' },
+      { path: 'directory' } as any,
+    ).join(' ');
+    const agentNotes = getActionInputFieldVoiceNotes(
+      { id: 'session.spawn_new' },
+      { path: 'agentTarget' } as any,
+    ).join(' ');
+    const legacyPathNotes = getActionInputFieldVoiceNotes(
+      { id: 'session.spawn_new' },
+      { path: 'path' } as any,
+    ).join(' ');
+
+    expect(targetNotes).toContain('listMachines');
+    expect(directoryNotes).toContain('listRecentPaths');
+    expect(agentNotes).toContain('listAgentBackends');
+    expect(legacyPathNotes).toBe('');
+  });
+
   it('guides transcript-reading requests to the semantic transcript action', () => {
     const activityNotes = getActionVoiceWorkflowNotes('session.activity.get').join(' ');
     const recentNotes = getActionVoiceWorkflowNotes('session.messages.recent.get').join(' ');

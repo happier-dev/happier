@@ -18,6 +18,7 @@ import {
 } from './daemonRpcV1';
 import * as daemonRpcV1 from './daemonRpcV1';
 import { AgentProviderIdV1Schema } from '../../generated/providers/agentProviderIdsV1';
+import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1';
 import { resolveExternalSessionsSourceKey } from './sourceCatalog';
 
 describe('ExternalSessionsAgentIdSchema', () => {
@@ -31,6 +32,7 @@ describe('ExternalSessionsAgentIdSchema', () => {
     expect(ExternalSessionsAgentIdSchema.parse('pi')).toBe('pi');
     expect(ExternalSessionsAgentIdSchema.parse('external-only-agent')).toBe('external-only-agent');
     expect(ExternalSessionsAgentIdSchema.safeParse('   ').success).toBe(false);
+    expect(ExternalSessionsAgentIdSchema.safeParse(' codex ').success).toBe(false);
     expect(ExternalSessionsAgentIdSchema.safeParse('a'.repeat(129)).success).toBe(false);
   });
 });
@@ -55,6 +57,67 @@ describe('external-session transcript schemas', () => {
       messageRole: 'event',
     });
     expect(ExternalSessionTranscriptRawMessageV1Schema.safeParse({ ...item, messageRole: 'not-a-role' }).success).toBe(false);
+  });
+
+  it('admits a storage-safe sidechain identity and rejects malformed values', () => {
+    const item = {
+      id: 'external-sidechain-1',
+      createdAtMs: 1_700,
+      raw: { role: 'agent', content: { type: 'output', data: { type: 'assistant' } } },
+    };
+    const sidechainId = 's'.repeat(SessionIndexedIdentifierMaxLengthV1);
+
+    expect(ExternalSessionTranscriptRawMessageV1Schema.parse({
+      ...item,
+      sidechainId,
+    })).toMatchObject({ sidechainId });
+    expect(ExternalSessionTranscriptRawMessageV1Schema.parse({
+      ...item,
+      sidechainId: ` ${sidechainId} `,
+    })).toMatchObject({ sidechainId });
+    expect(ExternalSessionTranscriptRawMessageV1Schema.safeParse({
+      ...item,
+      sidechainId: `${sidechainId}s`,
+    }).success).toBe(false);
+    expect(ExternalSessionTranscriptRawMessageV1Schema.safeParse({
+      ...item,
+      sidechainId: '',
+    }).success).toBe(false);
+  });
+
+  it('accepts only the canonical terminal user-row classifications', () => {
+    const item = {
+      id: 'external-user-1',
+      createdAtMs: 1_700,
+      raw: { role: 'user', content: { type: 'text', text: 'hello' } },
+    };
+
+    for (const userProjection of [
+      'source_fact',
+      'terminal_origin',
+      'host_prompt_echo',
+    ] as const) {
+      expect(ExternalSessionTranscriptRawMessageV1Schema.parse({
+        ...item,
+        userProjection,
+      })).toMatchObject({ userProjection });
+    }
+    expect(ExternalSessionTranscriptRawMessageV1Schema.safeParse({
+      ...item,
+      userProjection: 'guessed_echo',
+    }).success).toBe(false);
+  });
+
+  it('retains additive legacy item and raw fields without granting them canonical meaning', () => {
+    expect(ExternalSessionTranscriptRawMessageV1Schema.parse({
+      id: 'external-legacy-1',
+      createdAtMs: 1_700,
+      futureItemField: 'retained',
+      raw: { role: 'agent', futureRawField: 'retained' },
+    })).toMatchObject({
+      futureItemField: 'retained',
+      raw: { futureRawField: 'retained' },
+    });
   });
 });
 
@@ -134,6 +197,7 @@ describe('ExternalSessionsSourceSchema', () => {
       value: 'configured',
     });
     expect(ExternalSessionsSourceSchema.safeParse({ kind: '' }).success).toBe(false);
+    expect(ExternalSessionsSourceSchema.safeParse({ kind: ' codexHome ' }).success).toBe(false);
     expect(ExternalSessionsSourceSchema.safeParse({ kind: 'syntheticSource', value: Symbol('no-json') }).success).toBe(false);
   });
 
@@ -172,12 +236,73 @@ describe('ExternalSessionsSourceSchema', () => {
     }).success).toBe(false);
   });
 
-  it('rejects disagreement between canonical and released request identities', () => {
-    expect(ExternalSessionsCandidatesListRequestSchema.safeParse({
+  it('accepts only exact provider-only released request identity', () => {
+    const base = {
       machineId: 'machine-1',
+      source: { kind: 'codexHome', home: 'user' },
+    } as const;
+
+    expect(ExternalSessionsCandidatesListRequestSchema.safeParse({
+      ...base,
       agentId: 'claude',
       providerId: 'codex',
+    }).success).toBe(false);
+    expect(ExternalSessionsCandidatesListRequestSchema.safeParse({
+      ...base,
+      agentId: 'codex',
+      providerId: 'codex',
+    }).success).toBe(false);
+    expect(ExternalSessionsCandidatesListRequestSchema.safeParse({
+      ...base,
+      providerId: ' codex ',
+    }).success).toBe(false);
+  });
+
+  it('rejects undeclared authority fields on current requests', () => {
+    expect(ExternalSessionAttachRequestSchema.safeParse({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
       source: { kind: 'codexHome', home: 'user' },
+      futureAttachFlag: 'must-not-reach-an-action',
+    }).success).toBe(false);
+
+    expect(ExternalSessionStatusGetRequestSchema.safeParse({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptor: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'appServer', providerSessionId: 'thread-1' },
+      },
+    }).success).toBe(false);
+
+    expect(ExternalSessionLinkEnsureRequestSchema.safeParse({
+      machineId: 'machine-1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptor: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'appServer', providerSessionId: 'thread-1' },
+      },
+    }).success).toBe(false);
+
+    expect(ExternalSessionLinkEnsureRequestSchema.safeParse({
+      machineId: 'machine-1',
+      providerId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer', providerSessionId: 'thread-1' },
+      },
     }).success).toBe(false);
   });
 
@@ -339,7 +464,6 @@ describe('ExternalSessionsSourceSchema', () => {
       leaseId: 'lease-1',
       ttlMs: 30_000,
       acceptedTailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTA',
-      futureAttachFlag: 'keep-me',
     });
     expect(parsed).toMatchObject({
       machineId: 'machine-1',
@@ -354,7 +478,7 @@ describe('ExternalSessionsSourceSchema', () => {
       ttlMs: 30_000,
       acceptedTailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTA',
     });
-    expect((parsed as any).futureAttachFlag).toBe('keep-me');
+    expect((parsed as any).source.futureSourceFlag).toBe('keep-me');
   });
 
   it('rejects an empty accepted transcript tail cursor on attach', () => {
@@ -410,6 +534,42 @@ describe('ExternalSessionsSourceSchema', () => {
       leaseId: 'lease-1',
       expiresAtMs: 42_000,
       acceptedTailCursor: '',
+    })).toThrow();
+  });
+
+  it('type-preserves attach failure retryability across the released producer directions', () => {
+    const nonRetryable = ExternalSessionAttachResponseSchema.parse({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_follow_unavailable',
+      retryable: false,
+    });
+    expect(nonRetryable).toEqual({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_follow_unavailable',
+      retryable: false,
+    });
+    if (nonRetryable.ok) throw new Error('expected an attach failure');
+    // Typed, not an opaque passthrough bag: the consumer decides on this value.
+    const retryable: boolean | undefined = nonRetryable.retryable;
+    expect(retryable).toBe(false);
+
+    // Released producers (cli-v0.2.x, the inspected remote-dev predecessor)
+    // answer without the field; the consumer must keep retrying those.
+    const released = ExternalSessionAttachResponseSchema.parse({
+      ok: false,
+      errorCode: 'machine_offline',
+      error: 'machine_offline',
+    });
+    if (released.ok) throw new Error('expected an attach failure');
+    expect(released.retryable).toBeUndefined();
+
+    expect(() => ExternalSessionAttachResponseSchema.parse({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_follow_unavailable',
+      retryable: 'no',
     })).toThrow();
   });
 
@@ -570,8 +730,10 @@ describe('ExternalSessionsCandidatesListResponseSchema', () => {
         materializedThrough: 1_700_000_000_000,
       }],
       nextCursor: null,
+      annotationsIncomplete: true,
     });
 
+    expect(parsed.annotationsIncomplete).toBe(true);
     expect(parsed.candidates[0]).toMatchObject({
       candidateKey: 'candidate-key-1',
       linkedSessionId: 'session-1',
@@ -604,6 +766,12 @@ describe('ExternalSessionsCandidatesListResponseSchema', () => {
         materializedThrough: -1,
       }],
       nextCursor: null,
+    }).success).toBe(false);
+    expect(ExternalSessionsCandidatesListResponseSchema.safeParse({
+      ok: true,
+      candidates: [],
+      nextCursor: null,
+      annotationsIncomplete: 'unknown',
     }).success).toBe(false);
   });
 

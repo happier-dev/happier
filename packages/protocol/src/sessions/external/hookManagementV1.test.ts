@@ -219,12 +219,21 @@ describe('plugin-generic session-hook management contracts', () => {
       installationId: 'caller-chosen-installation',
     }).success).toBe(false);
     const installActionSpec = getActionSpec('plugins.sessionHooks.install');
-    expect(installActionSpec.inputSchema.safeParse({
+    expect(installActionSpec.surfaceBindings?.rpc?.inputSchema.safeParse({
       machineId: 'machine-1',
       agent,
       expectedPreviewId: previewId,
     }).success).toBe(true);
     expect(installActionSpec.inputSchema.safeParse({
+      agent,
+      expectedPreviewId: previewId,
+    }).success).toBe(true);
+    expect(installActionSpec.inputSchema.safeParse({
+      machineId: 'machine-1',
+      agent,
+      expectedPreviewId: previewId,
+    }).success).toBe(false);
+    expect(installActionSpec.surfaceBindings?.rpc?.inputSchema.safeParse({
       machineId: 'machine-1',
       agent,
     }).success).toBe(false);
@@ -688,7 +697,7 @@ describe('plugin-generic session-hook management contracts', () => {
   });
 
   it('rejects a status inventory above the canonical serialized UTF-8 ceiling', () => {
-    const createResponseWithMessageBytes = (messageBytes: number) => ({
+    const createResponseWithDetailBytes = (detailBytes: number) => ({
       ok: true as const,
       rows: [{
         agent,
@@ -697,19 +706,20 @@ describe('plugin-generic session-hook management contracts', () => {
           diagnostic: {
             code: 'hook_configuration_requires_attention',
             severity: 'warning' as const,
-            message: 'x'.repeat(messageBytes),
+            message: 'Configuration requires attention.',
+            details: 'x'.repeat(detailBytes),
           },
         },
       }],
       nextCursor: null,
       diagnostics: [],
     });
-    const oneByteResponse = createResponseWithMessageBytes(1);
+    const oneByteResponse = createResponseWithDetailBytes(1);
     const fixedBytes = new TextEncoder().encode(JSON.stringify(oneByteResponse)).byteLength - 1;
-    const exactLimitResponse = createResponseWithMessageBytes(
+    const exactLimitResponse = createResponseWithDetailBytes(
       PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES - fixedBytes,
     );
-    const aboveLimitResponse = createResponseWithMessageBytes(
+    const aboveLimitResponse = createResponseWithDetailBytes(
       PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES - fixedBytes + 1,
     );
 
@@ -789,7 +799,7 @@ describe('plugin-generic session-hook management contracts', () => {
       const spec = getActionSpec(actionId);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
       expect(spec.sideEffectClass).toBe(sideEffectClass);
-      expect(spec.surfaces).toMatchObject({ rpc: true, sdk: false });
+      expect(spec.surfaces).toMatchObject({ rpc: true, sdk: false, plugin: true });
       expect(resolveMachineRpcGovernance(rpcMethod)).toEqual({
         rpcClassification: 'action_spec_bound',
         actionSpecId: actionId,

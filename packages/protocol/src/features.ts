@@ -243,8 +243,10 @@ export {
   DEFAULT_SESSION_MESSAGES_CAPABILITIES,
   SessionCapabilitiesSchema,
   SessionMessagesCapabilitiesSchema,
+  SessionSystemRecordsCapabilitiesSchema,
   type SessionCapabilities,
   type SessionMessagesCapabilities,
+  type SessionSystemRecordsCapabilities,
 } from './features/payload/capabilities/sessionCapabilities.js';
 
 export { CapabilitiesSchema, type Capabilities } from './features/payload/capabilities/capabilitiesSchema.js';

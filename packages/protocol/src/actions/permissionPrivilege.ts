@@ -1,9 +1,19 @@
 import {
   SESSION_PERMISSION_MODES,
+  parseSessionPermissionModeAlias,
   type SessionPermissionMode,
 } from '../sessions/metadata/sessionPermissionModes.js';
+import {
+  AgentPermissionIntentV1Schema,
+  type AgentPermissionIntentV1,
+} from '../runtime/permissionIntentV1.js';
 
 export type PermissionPrivilegeOrdinal = 0 | 1 | 2 | 3;
+
+export type EffectivePermissionModeFailureReason =
+  | 'admitted_permission_ceiling_missing'
+  | 'admitted_permission_ceiling_invalid'
+  | 'current_permission_mode_invalid';
 
 export type PermissionEscalationDecision =
   | Readonly<{
@@ -32,70 +42,29 @@ export type PermissionEscalationDecision =
       callerOrdinal: PermissionPrivilegeOrdinal;
     }>;
 
-const SESSION_PERMISSION_MODE_SET = new Set<string>(SESSION_PERMISSION_MODES);
+/**
+ * The effective permission mode for one causally admitted turn. The admitted
+ * ceiling is intentionally parsed through the strict runtime schema: it is an
+ * authority fact, not display/session metadata that may fall back to default.
+ */
+export type EffectivePermissionModeResolution =
+  | Readonly<{
+      ok: true;
+      currentMode: SessionPermissionMode;
+      admittedPermissionCeiling: AgentPermissionIntentV1;
+      effectiveMode: SessionPermissionMode;
+      currentOrdinal: PermissionPrivilegeOrdinal;
+      admittedCeilingOrdinal: PermissionPrivilegeOrdinal;
+      effectiveOrdinal: PermissionPrivilegeOrdinal;
+    }>
+  | Readonly<{
+      ok: false;
+      reason: EffectivePermissionModeFailureReason;
+    }>;
 
-function normalizePermissionToken(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-');
-}
 function parsePermissionModeForPrivilege(raw: unknown): SessionPermissionMode | null {
   if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (SESSION_PERMISSION_MODE_SET.has(trimmed)) return trimmed as SessionPermissionMode;
-
-  switch (normalizePermissionToken(trimmed)) {
-    case 'plan':
-      return 'plan';
-
-    case 'read':
-    case 'read-only':
-    case 'readonly':
-    case 'no-tools':
-    case 'notools':
-    case 'ro':
-      return 'read-only';
-
-    case 'default':
-    case 'ask':
-    case 'prompt':
-    case 'normal':
-      return 'default';
-
-    case 'acceptedits':
-    case 'accept-edits':
-      return 'acceptEdits';
-
-    case 'safe':
-    case 'safe-yolo':
-    case 'safeyolo':
-    case 'workspace':
-    case 'workspace-write':
-    case 'workspacewrite':
-    case 'auto':
-    case 'auto-edit':
-      return 'safe-yolo';
-
-    case 'bypasspermissions':
-    case 'bypass-permissions':
-      return 'bypassPermissions';
-
-    case 'yolo':
-    case 'full':
-    case 'full-access':
-    case 'bypass':
-    case 'dontask':
-    case 'dont-ask':
-    case 'danger':
-    case 'danger-full-access':
-      return 'yolo';
-
-    default:
-      return null;
-  }
+  return parseSessionPermissionModeAlias(raw);
 }
 
 function ordinalForSessionPermissionMode(mode: SessionPermissionMode): PermissionPrivilegeOrdinal {
@@ -160,6 +129,72 @@ function parseCallerPermission(rawMode: unknown): Readonly<{
 export function resolvePermissionPrivilegeOrdinal(rawMode: unknown): PermissionPrivilegeOrdinal | null {
   const normalizedMode = parsePermissionModeForPrivilege(rawMode);
   return normalizedMode ? ordinalForSessionPermissionMode(normalizedMode) : null;
+}
+
+/**
+ * Intersects the mutable current Session mode with immutable authority that
+ * was admitted for this causal turn. All permission handlers use this before
+ * selecting an immediate decision or creating/reconsidering a pending request.
+ */
+export function resolveEffectivePermissionMode(params: Readonly<{
+  currentMode: unknown;
+  admittedPermissionCeiling: unknown;
+  supportedModes?: readonly string[];
+}>): EffectivePermissionModeResolution {
+  if (params.admittedPermissionCeiling === undefined || params.admittedPermissionCeiling === null) {
+    return { ok: false, reason: 'admitted_permission_ceiling_missing' };
+  }
+
+  const parsedCeiling = AgentPermissionIntentV1Schema.safeParse(params.admittedPermissionCeiling);
+  if (!parsedCeiling.success) {
+    return { ok: false, reason: 'admitted_permission_ceiling_invalid' };
+  }
+
+  const currentMode = parsePermissionModeForPrivilege(params.currentMode);
+  if (!currentMode) {
+    return { ok: false, reason: 'current_permission_mode_invalid' };
+  }
+
+  const currentOrdinal = ordinalForSessionPermissionMode(currentMode);
+  const admittedCeilingOrdinal = ordinalForSessionPermissionMode(parsedCeiling.data);
+  // Equal ordinal is not equal permission authority. A causal admission has
+  // an exact, immutable ceiling; selecting a sibling mode merely because it
+  // shares a privilege bucket would let mutable Session state reinterpret the
+  // admitted request. A strictly narrower current mode remains safe.
+  if (currentOrdinal < admittedCeilingOrdinal || currentMode === parsedCeiling.data) {
+    return {
+      ok: true,
+      currentMode,
+      admittedPermissionCeiling: parsedCeiling.data,
+      effectiveMode: currentMode,
+      currentOrdinal,
+      admittedCeilingOrdinal,
+      effectiveOrdinal: currentOrdinal,
+    };
+  }
+
+  const supportedModes = normalizeSupportedModes(params.supportedModes ?? SESSION_PERMISSION_MODES);
+  const exactCeiling = supportedModes.find((mode) => mode.normalizedMode === parsedCeiling.data);
+  const strictlyNarrower = supportedModes
+    .filter((mode) => mode.ordinal < admittedCeilingOrdinal)
+    .sort((left, right) => right.ordinal - left.ordinal)[0];
+  const selected = exactCeiling ?? strictlyNarrower;
+  // Do not substitute a same-ordinal sibling for an exact causal ceiling. If
+  // the target cannot enact the admitted mode, it may only choose a strictly
+  // narrower capability or reject the causal authority.
+  if (!selected) {
+    return { ok: false, reason: 'admitted_permission_ceiling_invalid' };
+  }
+
+  return {
+    ok: true,
+    currentMode,
+    admittedPermissionCeiling: parsedCeiling.data,
+    effectiveMode: selected.normalizedMode,
+    currentOrdinal,
+    admittedCeilingOrdinal,
+    effectiveOrdinal: selected.ordinal,
+  };
 }
 
 export function assertNonEscalatingPermissionMode(params: Readonly<{

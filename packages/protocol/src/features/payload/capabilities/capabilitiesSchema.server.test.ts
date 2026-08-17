@@ -4,6 +4,33 @@ import { z } from 'zod';
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 
 describe('CapabilitiesSchema (server capabilities)', () => {
+  it('keeps Collection deployment limits in one optional closed top-level capability family', () => {
+    const limits = {
+      maxRowEncodedBytes: 262_144,
+      maxBatchBytes: 1_048_576,
+      maxBatchRows: 64,
+      maxAccountRows: 10_000,
+      maxAccountBytes: 16_777_216,
+    };
+
+    expect(CapabilitiesSchema.parse({}).pluginDataCollections).toBeUndefined();
+    expect(CapabilitiesSchema.parse({ pluginDataCollections: limits }).pluginDataCollections)
+      .toEqual(limits);
+    expect(CapabilitiesSchema.safeParse({
+      pluginDataCollections: { ...limits, unexpected: true },
+    }).success).toBe(false);
+
+    // The prospective predecessor has a root-open reader. It must discard the
+    // new family rather than treating it as a strict child-field extension.
+    const OldCapabilitiesSchema = z.object({
+      server: z.object({
+        canonicalServerUrl: z.string().trim().min(1).optional(),
+        webappUrl: z.string().trim().min(1).optional(),
+      }).strict().optional().default({}),
+    });
+    expect(OldCapabilitiesSchema.parse({ pluginDataCollections: limits })).toEqual({ server: {} });
+  });
+
   it('parses server identity capabilities outside the strict server capability object', () => {
     const parsed = CapabilitiesSchema.parse({
       server: {
@@ -253,6 +280,24 @@ describe('CapabilitiesSchema (server capabilities)', () => {
 
     expect(parsed.session.messages.role).toBe(false);
     expect(parsed.session.state).toEqual({});
+  });
+
+  it('parses independently advertised session protocol capabilities', () => {
+    const parsed = CapabilitiesSchema.parse({
+      session: {
+        runtimeActivity: { protocolVersion: 2 },
+        pendingInput: { protocolVersion: 1 },
+        publisherAuthority: { protocolVersion: 1 },
+        externalImport: { publicationFenceVersion: 3 },
+      },
+    });
+
+    expect(parsed.session).toMatchObject({
+      runtimeActivity: { protocolVersion: 2 },
+      pendingInput: { protocolVersion: 1 },
+      publisherAuthority: { protocolVersion: 1 },
+      externalImport: { publicationFenceVersion: 3 },
+    });
   });
 
   it('keeps usage analytics capability optional so newer clients remain compatible with older servers', () => {

@@ -4,14 +4,36 @@ import { ActionUiPlacementSchema } from './actionUiPlacements.js';
 import { ActionApprovalSchema } from './actionApprovalMetadata.js';
 import {
   ActionInputHintsSchema,
-  ActionSafetySchema,
   ActionSurfaceSchema,
   ActionToolExposureSchema,
 } from './actionSpecs.js';
+import { ActionSafetySchema } from './safety.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../plugins/_shared.js';
 
 const LooseJsonObjectSchema = PluginLooseJsonObjectSchema;
 const OptionalStringSchema = PluginOptionalStringSchema;
+
+function normalizeSerializedActionSurfaces(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const raw = value as Readonly<Record<string, unknown>>;
+  return {
+    ui: raw.ui === true || raw.ui_button === true || raw.ui_slash_command === true,
+    voice: raw.voice === true || raw.voice_tool === true || raw.voice_action_block === true,
+    agent: raw.agent === true || raw.session_agent === true,
+    mcp: raw.mcp === true,
+    cli: raw.cli === true,
+    rpc: raw.rpc === true,
+    sdk: raw.sdk === true,
+    // Supported predecessor writers do not know this surface. Omission never
+    // grants plugin invocation authority.
+    plugin: raw.plugin === true,
+  };
+}
+
+export const SerializedActionSurfaceSchema = z.preprocess(
+  normalizeSerializedActionSurfaces,
+  ActionSurfaceSchema,
+);
 
 export const ActionDefinitionIdV1Schema = z.string().trim().min(1);
 export type ActionDefinitionIdV1 = z.infer<typeof ActionDefinitionIdV1Schema>;
@@ -97,7 +119,7 @@ export const ActionDefinitionSummaryV1Schema = z
     slash: ActionDefinitionSlashV1Schema,
     bindings: ActionDefinitionBindingsV1Schema,
     examples: ActionDefinitionExamplesV1Schema,
-    surfaces: ActionSurfaceSchema,
+    surfaces: SerializedActionSurfaceSchema,
     toolExposure: ActionToolExposureSchema.optional(),
     inputHints: ActionInputHintsSchema.nullable(),
     outputSchema: LooseJsonObjectSchema.optional(),

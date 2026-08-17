@@ -4,6 +4,8 @@ import {
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   SpawnSessionExecutionAuthorizationSchema,
+  isSessionCreationCorrespondenceConflictSpawnErrorDetail,
+  isSessionCreationOrganizationInvalidSpawnErrorDetail,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
   normalizeSpawnSessionErrorDetail,
@@ -45,6 +47,36 @@ describe('spawn-session execution authorization', () => {
 });
 
 describe('spawn-session error detail contract (D2 structured continuity)', () => {
+  it('carries exact terminal Session-creation refusals without widening their codes', () => {
+    const detail: SpawnSessionErrorDetail = {
+      kind: 'session_creation_organization_invalid',
+      code: 'organization_invalid',
+    };
+
+    expect(normalizeSpawnSessionErrorDetail(detail)).toEqual(detail);
+    expect(isSessionCreationOrganizationInvalidSpawnErrorDetail(detail)).toBe(true);
+    // `organization_unavailable` remains a public Action result arm for its
+    // eventual pre-dispatch owner. The session-create server does not emit it,
+    // so this terminal startup carrier must not manufacture that meaning.
+    expect(normalizeSpawnSessionErrorDetail({
+      kind: 'session_creation_organization_invalid',
+      code: 'organization_unavailable',
+    })).toBeUndefined();
+
+    const correspondenceConflict = {
+      kind: 'session_creation_correspondence_conflict',
+      code: 'creation_conflict',
+    } as const;
+    expect(normalizeSpawnSessionErrorDetail(correspondenceConflict)).toEqual(
+      correspondenceConflict,
+    );
+    expect(isSessionCreationCorrespondenceConflictSpawnErrorDetail(correspondenceConflict)).toBe(true);
+    expect(normalizeSpawnSessionErrorDetail({
+      ...correspondenceConflict,
+      code: 'organization_invalid',
+    })).toBeUndefined();
+  });
+
   it('round-trips a strict structured provider refusal without accepting extra diagnostics', () => {
     const detail = {
       kind: 'provider_error',

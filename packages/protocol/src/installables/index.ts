@@ -74,7 +74,6 @@ export {
   type InstallableKey,
 };
 export {
-  isCuratedFirstPartyInstallableOwner,
   resolveInstallablesRegistry,
   type InstallableRegistryContribution,
   type InstallablesRegistry,

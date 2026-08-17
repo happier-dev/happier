@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { PluginContributionIdentityV1Schema } from '../../../plugins/contributionIdentity.js';
 import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
+import { asProtocolZod } from "../../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const VOICE_MEDIA_VERSION_V1 = 1 as const;
 export const VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1 = {
@@ -35,7 +36,7 @@ export type VoiceMediaApplicationAuthorityV1 = z.infer<
 export const AgentRealtimeApplicationAuthorityFactsV1Schema = z.object({
   v: z.literal(VOICE_MEDIA_VERSION_V1),
   happierSessionId: z.string().min(1).max(256),
-  agentRef: PluginContributionIdentityV1Schema,
+  agentRef: asProtocolZod(PluginContributionIdentityV1Schema),
   agentGeneration: z.string().min(1).max(512),
   sessionBridgeId: z.string().min(1).max(256),
   applicationAttemptId: z.string().min(1).max(256),

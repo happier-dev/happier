@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
-import { PluginAgentExternalSessionLinkDataSchema } from '../../plugins/contributions/agentExternalSessions.js';
 import { SessionIdSchema } from '../idsV1.js';
-import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
+import { AgentExternalSessionTranscriptRawRecordSchema } from '../messages/agentExternalSessionTranscriptRawRecord.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
+import { createExternalSessionTranscriptSourceItemV1Schema } from './sourceTranscriptItemV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export const EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1 =
   'external-session-transcript-invalidated' as const;
@@ -32,7 +33,6 @@ export type ExternalSessionRefreshCursorIdentityV1 = z.infer<
 >;
 const ExternalSessionRefreshBoundaryV1Schema = z.string().trim().min(1).max(2_000);
 const ExternalSessionRefreshItemIdV1Schema = z.string().trim().min(1).max(2_000);
-const ExternalSessionRefreshTimestampV1Schema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
   code: z.string().trim().min(1).max(128),
   count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -47,14 +47,14 @@ const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
  * and the machine-encrypted authoritative read-after exchange.
  *
  * Source-native paths, cursors, linkData, and transcript content do not belong
- * here. The cursor identity is derived by the daemon from its existing
- * account/machine key material, the complete host-qualified cursor, and this
+ * here. The cursor identity is derived by the daemon through its purpose-bound
+ * device-local secret owner from the complete host-qualified cursor and this
  * authority tuple.
  */
 export const ExternalSessionTranscriptRefreshBindingV1Schema = z.object({
   v: z.literal(1),
   machineId: ExternalSessionRefreshMachineIdV1Schema,
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   link: z.object({
     generation: ExternalSessionRefreshGenerationV1Schema,
     remoteSessionId: ExternalSessionRefreshRemoteSessionIdV1Schema,
@@ -95,13 +95,11 @@ export type ExternalSessionTranscriptRefreshReadAfterRequestV1 = z.infer<
   typeof ExternalSessionTranscriptRefreshReadAfterRequestV1Schema
 >;
 
-export const ExternalSessionTranscriptRefreshItemV1Schema = z.object({
-  id: ExternalSessionRefreshItemIdV1Schema,
-  createdAtMs: ExternalSessionRefreshTimestampV1Schema,
-  localId: ExternalSessionRefreshItemIdV1Schema.nullable().optional(),
-  messageRole: SessionMessageRoleSchema.nullable().optional(),
-  raw: PluginAgentExternalSessionLinkDataSchema,
-}).strict();
+export const ExternalSessionTranscriptRefreshItemV1Schema =
+  createExternalSessionTranscriptSourceItemV1Schema({
+    identifier: ExternalSessionRefreshItemIdV1Schema,
+    raw: AgentExternalSessionTranscriptRawRecordSchema,
+  }).strict();
 export type ExternalSessionTranscriptRefreshItemV1 = z.infer<
   typeof ExternalSessionTranscriptRefreshItemV1Schema
 >;

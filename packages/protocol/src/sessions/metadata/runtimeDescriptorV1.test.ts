@@ -132,7 +132,9 @@ describe('runtimeDescriptorV1 aliases', () => {
       agent: {
         backendMode: 'server',
         providerSessionId: 'opencode-session-1',
-        serverBaseUrl: 'http://example.com:4096',
+        // A credential in the URL is the rejection; where the user runs their
+        // own server is their call.
+        serverBaseUrl: 'http://opencode:secret@example.com:4096',
         serverBaseUrlExplicit: true,
       },
     }, 'opencode')).toEqual({

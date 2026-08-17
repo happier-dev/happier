@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
-import { accountSettingsParse, isExpoPushNotificationChannelEnabled } from './accountSettings.js';
+import {
+  ACCOUNT_SETTING_DEFINITIONS,
+  ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+  accountCatalogDefinition,
+  accountSettingsParse,
+  isExpoPushNotificationChannelEnabled,
+  SessionHandoffDefaultsV1Schema,
+} from './accountSettings.js';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
 import {
   isActionEnabledByActionsSettings,
@@ -21,6 +29,145 @@ function expectActionSurfaceEnabled(
 }
 
 describe('accountSettings', () => {
+  it('owns the current schema version for a blank Account Settings document', () => {
+    expect(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION).toBe(7);
+    expect(accountSettingsParse({}).schemaVersion).toBe(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION);
+  });
+
+  it('projects the UI feature-toggle default through the canonical Protocol snapshot', () => {
+    expect(accountSettingsParse({}).featureToggles).toEqual({});
+  });
+
+  it('keeps valid machine-bound recent paths when sibling rows are malformed', () => {
+    const recentMachinePaths = [
+      { machineId: 'machine-1', path: '/workspace/project' },
+      { machineId: 'machine-2', path: '/workspace/secondary', ignoredByCurrentSchema: true },
+      { machineId: '', path: '/workspace/missing-machine' },
+      { machineId: 'machine-3', path: '' },
+      { machineId: 'machine-4', path: 'x'.repeat(16 * 1024 + 1) },
+      'legacy-path-without-machine',
+    ];
+
+    expect(accountSettingsParse({ recentMachinePaths }).recentMachinePaths).toEqual([
+      { machineId: 'machine-1', path: '/workspace/project' },
+      { machineId: 'machine-2', path: '/workspace/secondary' },
+    ]);
+    expect(accountSettingsParse({ recentMachinePaths: 'not-an-array' }).recentMachinePaths).toEqual([]);
+  });
+
+  it('drops retired Account roots while preserving a safe forward-compatible root', () => {
+    const parsed = accountSettingsParse({
+      expUsageReporting: true,
+      experimentalFeatureToggles: { automations: true },
+      sessionMruOrderV1: ['server-a:session-a'],
+      multiServerProfiles: [{ id: 'old-group' }],
+      activeServerTargetKind: 'group',
+      transcriptMessageTimestampsEnabled: true,
+      futureAccountSetting: { preserve: true },
+    }) as Record<string, unknown>;
+
+    expect(parsed).not.toHaveProperty('expUsageReporting');
+    expect(parsed).not.toHaveProperty('experimentalFeatureToggles');
+    expect(parsed).not.toHaveProperty('sessionMruOrderV1');
+    expect(parsed).not.toHaveProperty('multiServerProfiles');
+    expect(parsed).not.toHaveProperty('activeServerTargetKind');
+    expect(parsed).not.toHaveProperty('transcriptMessageTimestampsEnabled');
+    expect(parsed.futureAccountSetting).toEqual({ preserve: true });
+  });
+
+  it('retains valid keyboard and SavedSecret rows when sibling rows are malformed', () => {
+    const parsed = accountSettingsParse({
+      keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open', '', 123],
+      keyboardShortcutOverridesV1: {
+        'commandPalette.open': [
+          { binding: 'Mod+K', conflictScope: 'global', nativeConsumable: false },
+        ],
+        'bad.command': [{ binding: '' }, { nope: true }],
+      },
+      secrets: [
+        {
+          id: 'secret-1',
+          name: 'My Secret',
+          kind: 'apiKey',
+          encryptedValue: { _isSecretValue: true, value: 'abc' },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: '',
+          name: '',
+          kind: 'apiKey',
+          encryptedValue: { _isSecretValue: true, value: 'def' },
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    });
+
+    expect(parsed.keyboardShortcutDisabledCommandIdsV1).toEqual(['commandPalette.open']);
+    expect(parsed.keyboardShortcutOverridesV1).toEqual({
+      'commandPalette.open': [{ binding: 'Mod+K', conflictScope: 'global', nativeConsumable: false }],
+    });
+    expect(parsed.secrets).toEqual([
+      expect.objectContaining({ id: 'secret-1', name: 'My Secret' }),
+    ]);
+  });
+
+  it('returns a parsed catalog default without reparsing transformed output', () => {
+    const definition = accountCatalogDefinition(
+      z.number().transform((value) => value + 1),
+      1,
+      {
+        semanticDomain: 'test default semantics',
+        classification: 'preference',
+        maximumSerializedValueBytes: 1024,
+      },
+    );
+
+    expect(definition.default).toBe(2);
+    expect(definition.schema.parse(undefined)).toBe(2);
+    expect(definition.schema.parse('invalid')).toBe(2);
+  });
+
+  it('defaults sparse new-session wizard presentation overrides and retains only supported values', () => {
+    expect(ACCOUNT_SETTING_DEFINITIONS.newSessionWizardSectionPresentationV1.default).toEqual({});
+    expect(accountSettingsParse({
+      newSessionWizardSectionPresentationV1: {
+        models: 'dropdown',
+        machines: 'list',
+        unknown: 'dropdown',
+        paths: 'grid',
+      },
+    }).newSessionWizardSectionPresentationV1).toEqual({
+      models: 'dropdown',
+      machines: 'list',
+    });
+  });
+
+  it('accepts bounded relative session-handoff glob defaults and rejects private path or credential material', () => {
+    const relativeGlobs = Array.from({ length: 64 }, (_, index) => `ignored/${index}/**/*`);
+    const valid = SessionHandoffDefaultsV1Schema.safeParse({
+      ignoredIncludeGlobs: relativeGlobs,
+      directTargetMode: 'convert_to_persisted',
+    });
+    expect(valid.success).toBe(true);
+
+    const invalidPath = accountSettingsParse({
+      sessionHandoffDefaultsV1: {
+        ignoredIncludeGlobs: ['/private/worktree/**/*'],
+      },
+    });
+    expect(invalidPath.sessionHandoffDefaultsV1.ignoredIncludeGlobs).toEqual([]);
+
+    const invalidSecret = accountSettingsParse({
+      sessionHandoffDefaultsV1: {
+        ignoredIncludeGlobs: ['safe/**/*'],
+        sourcePayload: { bearerToken: 'do-not-persist' },
+      },
+    });
+    expect(invalidSecret.sessionHandoffDefaultsV1.ignoredIncludeGlobs).toEqual([]);
+  });
+
   it('defaults usage limit recovery to asking before auto-waiting', () => {
     const parsed = accountSettingsParse({});
 
@@ -568,13 +715,31 @@ describe('accountSettings', () => {
     });
 
     expect(parsed.backendEnabledByTargetKey).toEqual({
-      'agent:claude': true,
-      'acpBackend:team-review': false,
+      'backend:claude': true,
+      'backend:team-review:configured:team-review': false,
     });
     expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
-      'agent:claude': 'system-first',
-      'acpBackend:team-review': 'managed-first',
+      'backend:claude': 'system-first',
+      'backend:team-review:configured:team-review': 'managed-first',
     });
+  });
+
+  it('treats malformed current target-keyed backend maps atomically', () => {
+    const parsed = accountSettingsParse({
+      backendEnabledByTargetKey: {
+        'backend:codex': true,
+        '': false,
+        'backend:claude': 'true',
+      },
+      backendCliSourcePreferenceByTargetKey: {
+        'backend:codex': 'managed-first',
+        '': 'system-first',
+        'backend:claude': 'invalid',
+      },
+    });
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({});
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({});
   });
 
   it('backfills target-keyed backend settings from legacy id-keyed fields', () => {
@@ -590,12 +755,38 @@ describe('accountSettings', () => {
     });
 
     expect(parsed.backendEnabledByTargetKey).toEqual({
-      'agent:claude': false,
-      'agent:codex': true,
+      'backend:claude': false,
+      'backend:codex': true,
     });
     expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
-      'agent:claude': 'managed-first',
-      'agent:codex': 'system-first',
+      'backend:claude': 'managed-first',
+      'backend:codex': 'system-first',
+    });
+  });
+
+  it('filters malformed legacy backend map entries before rekeying valid siblings', () => {
+    const parsed = accountSettingsParse({
+      backendEnabledById: {
+        codex: true,
+        claude: false,
+        malformedValue: 'true',
+        '': true,
+      },
+      backendCliSourcePreferenceById: {
+        codex: 'managed-first',
+        gemini: 'system-first',
+        malformedValue: 'invalid',
+        '': 'managed-first',
+      },
+    });
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({
+      'backend:codex': true,
+      'backend:claude': false,
+    });
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
+      'backend:codex': 'managed-first',
+      'backend:gemini': 'system-first',
     });
   });
 
@@ -603,12 +794,14 @@ describe('accountSettings', () => {
     const parsed = accountSettingsParse({
       backendEnabledById: {
         claude: false,
+        codex: 'true',
       },
       backendEnabledByTargetKey: {
         'agent:claude': true,
       },
       backendCliSourcePreferenceById: {
         claude: 'managed-first',
+        codex: 'invalid',
       },
       backendCliSourcePreferenceByTargetKey: {
         'agent:claude': 'system-first',
@@ -619,10 +812,10 @@ describe('accountSettings', () => {
     });
 
     expect(parsed.backendEnabledByTargetKey).toEqual({
-      'agent:claude': true,
+      'backend:claude': true,
     });
     expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
-      'agent:claude': 'system-first',
+      'backend:claude': 'system-first',
     });
     expect(parsed.futureField).toEqual({ keep: true });
   });
@@ -807,6 +1000,21 @@ describe('accountSettings', () => {
     expect(parsed.futureAccountField).toEqual({ keep: true });
   });
 
+  it('preserves ordinary forward keys but rejects prototype-pollution keys at the Protocol boundary', () => {
+    const parsed = accountSettingsParse(JSON.parse(`{
+      "futureAccountField": { "keep": true },
+      "constructor": { "polluted": true },
+      "prototype": { "polluted": true },
+      "__proto__": { "polluted": true }
+    }`));
+
+    expect(parsed.futureAccountField).toEqual({ keep: true });
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'constructor')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'prototype')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, '__proto__')).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it('defaults workspace references and preserves forward-compatible workspace fields', () => {
     const empty = accountSettingsParse({});
     expect(empty.workspaceRefsV1).toEqual([]);
@@ -845,6 +1053,151 @@ describe('accountSettings', () => {
     });
 
     expect(parsed.workspaceRefsV1).toEqual([]);
+  });
+
+  it('fills sparse prompt-library Account roots through their shared Protocol schemas', () => {
+    const parsed = accountSettingsParse({
+      promptStacksV1: {},
+      promptFoldersV1: { v: 1 },
+      promptInvocationsV1: {},
+      promptExternalLinksV1: { v: 1 },
+      promptRegistrySourcesV1: {},
+      contextSelectionsV1: {},
+    });
+
+    expect(parsed.promptStacksV1).toEqual({
+      v: 1,
+      surfaces: { coding: [], voice: [], profilesById: {} },
+    });
+    expect(parsed.promptFoldersV1).toEqual({ v: 1, folders: [] });
+    expect(parsed.promptInvocationsV1).toEqual({ v: 1, entries: [] });
+    expect(parsed.promptExternalLinksV1).toEqual({ v: 1, links: [] });
+    expect(parsed.promptRegistrySourcesV1).toEqual({ v: 1, sources: [] });
+    expect(parsed.contextSelectionsV1).toEqual({ v: 1, selectionsByKey: {} });
+  });
+
+  it('recovers malformed prompt-library Account roots at the canonical catalog boundary', () => {
+    const parsed = accountSettingsParse({
+      promptStacksV1: { v: 2, surfaces: { coding: [], voice: [], profilesById: {} } },
+      promptFoldersV1: { v: 2, folders: [] },
+      promptInvocationsV1: { v: 2, entries: [] },
+      promptExternalLinksV1: { v: 2, links: [] },
+      promptRegistrySourcesV1: { v: 2, sources: [] },
+      contextSelectionsV1: { v: 2, selectionsByKey: {} },
+    });
+
+    expect(parsed.promptStacksV1).toEqual({
+      v: 1,
+      surfaces: { coding: [], voice: [], profilesById: {} },
+    });
+    expect(parsed.promptFoldersV1).toEqual({ v: 1, folders: [] });
+    expect(parsed.promptInvocationsV1).toEqual({ v: 1, entries: [] });
+    expect(parsed.promptExternalLinksV1).toEqual({ v: 1, links: [] });
+    expect(parsed.promptRegistrySourcesV1).toEqual({ v: 1, sources: [] });
+    expect(parsed.contextSelectionsV1).toEqual({ v: 1, selectionsByKey: {} });
+  });
+
+  it('preserves valid prompt-library Account content while applying owned defaults', () => {
+    const parsed = accountSettingsParse({
+      promptStacksV1: {
+        surfaces: {
+          coding: [{ id: 'stack-1', ref: { kind: 'doc', artifactId: 'artifact-1' } }],
+        },
+      },
+      promptFoldersV1: {
+        v: 1,
+        folders: [{ id: 'folder-1', name: 'Workspace' }],
+      },
+      promptInvocationsV1: {
+        entries: [{
+          id: 'invocation-1',
+          token: '/review',
+          title: 'Review',
+          target: { kind: 'doc', artifactId: 'artifact-1' },
+        }],
+      },
+      promptExternalLinksV1: {
+        v: 1,
+        links: [{
+          id: 'link-1',
+          artifactId: 'artifact-1',
+          assetTypeId: 'claude.command',
+          scope: 'project',
+          machineId: 'machine-1',
+          externalRef: { relativePath: 'review.md' },
+        }],
+      },
+      promptRegistrySourcesV1: {
+        sources: [{
+          id: 'source-1',
+          adapterId: 'git',
+          title: 'Repository',
+        }],
+      },
+      contextSelectionsV1: {
+        selectionsByKey: {
+          'new-session': { machineId: 'machine-1', workspacePath: '/workspace/project' },
+        },
+      },
+    });
+
+    expect(parsed.promptStacksV1).toEqual({
+      v: 1,
+      surfaces: {
+        coding: [{
+          id: 'stack-1',
+          ref: { kind: 'doc', artifactId: 'artifact-1' },
+          enabled: true,
+          placement: 'system_append',
+          editPolicy: 'user_only',
+        }],
+        voice: [],
+        profilesById: {},
+      },
+    });
+    expect(parsed.promptFoldersV1).toEqual({
+      v: 1,
+      folders: [{ id: 'folder-1', name: 'Workspace' }],
+    });
+    expect(parsed.promptInvocationsV1).toEqual({
+      v: 1,
+      entries: [{
+        id: 'invocation-1',
+        token: '/review',
+        title: 'Review',
+        target: { kind: 'doc', artifactId: 'artifact-1' },
+        behavior: 'insert',
+        allowArgs: false,
+        availableIn: 'global',
+      }],
+    });
+    expect(parsed.promptExternalLinksV1).toEqual({
+      v: 1,
+      links: [{
+        id: 'link-1',
+        artifactId: 'artifact-1',
+        assetTypeId: 'claude.command',
+        scope: 'project',
+        machineId: 'machine-1',
+        externalRef: { relativePath: 'review.md' },
+      }],
+    });
+    expect(parsed.promptRegistrySourcesV1).toEqual({
+      v: 1,
+      sources: [{
+        id: 'source-1',
+        adapterId: 'git',
+        title: 'Repository',
+        enabled: true,
+        config: {},
+      }],
+    });
+    expect(parsed.contextSelectionsV1).toEqual({
+      v: 1,
+      selectionsByKey: {
+        'new-session': { machineId: 'machine-1', workspacePath: '/workspace/project' },
+      },
+    });
   });
 });
 

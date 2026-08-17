@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { SessionIdSchema } from './idsV1.js';
 import {
@@ -8,7 +9,7 @@ import {
 } from './runtimeModeV1.js';
 
 export const SessionRuntimeModeSetInputV1Schema = z.object({
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   to: HappierManagedSessionRuntimeModeV1Schema,
   reason: RuntimeModeSwitchReasonV1Schema,
 }).passthrough();
@@ -17,7 +18,7 @@ export type SessionRuntimeModeSetInputV1 = z.infer<typeof SessionRuntimeModeSetI
 export const SessionRuntimeModeSetResultV1Schema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
-    sessionId: SessionIdSchema,
+    sessionId: asProtocolZod(SessionIdSchema),
     from: SessionRuntimeModeV1Schema,
     to: HappierManagedSessionRuntimeModeV1Schema,
     noop: z.boolean().optional(),

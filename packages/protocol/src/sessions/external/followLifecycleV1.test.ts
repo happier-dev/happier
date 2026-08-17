@@ -83,40 +83,23 @@ describe('external-session follow lifecycle contracts', () => {
           observedAtMs: 21,
         },
       },
-      directSessionV1: {
-        v: 1,
-        providerId: 'claude',
-        followPolicyV1: {
-          v: 1,
-          policy: 'background_follow',
-          updatedAtMs: 20,
-        },
-        followStatusV1: {
-          v: 1,
-          status: 'error',
-          reason: 'lease_failed',
-          updatedAtMs: 21,
-        },
-        lastFollowIssueV1: {
-          v: 1,
-          code: 'source_unavailable',
-          message: 'The external session source is unavailable.',
-          retryable: true,
-          observedAtMs: 21,
-        },
-      },
     });
 
     expect(protocol.readExternalSessionFollowStatusV1({
       v: 1,
       status: 'reacquiring',
       updatedAtMs: 30,
-      futureField: true,
     })).toEqual({
       v: 1,
       status: 'reacquiring',
       updatedAtMs: 30,
     });
+    expect(protocol.readExternalSessionFollowStatusV1({
+      v: 1,
+      status: 'reacquiring',
+      updatedAtMs: 30,
+      futureField: true,
+    })).toBeNull();
     expect(protocol.readExternalSessionFollowStatusV1({
       v: 1,
       status: 'working',
@@ -157,8 +140,7 @@ describe('external-session follow lifecycle contracts', () => {
       machineId: 'machine-legacy',
       remoteSessionId: 'remote-legacy',
     });
-    expect(cleared.directSessionV1).not.toHaveProperty('followStatusV1');
-    expect(cleared.directSessionV1).not.toHaveProperty('lastFollowIssueV1');
+    expect(cleared).not.toHaveProperty('directSessionV1');
   });
 
   it('preserves current qualified identity through policy mutation and omits it from the released row', () => {
@@ -194,18 +176,8 @@ describe('external-session follow lifecycle contracts', () => {
           updatedAtMs: 20,
         },
       },
-      directSessionV1: {
-        v: 1,
-        providerId: 'assistant',
-        followPolicyV1: {
-          v: 1,
-          policy: 'background_follow',
-          updatedAtMs: 20,
-        },
-      },
     });
-    expect(updated.directSessionV1).not.toHaveProperty('qualifiedIdentity');
-    expect(updated.directSessionV1).not.toHaveProperty('linkData');
+    expect(updated).not.toHaveProperty('directSessionV1');
   });
 
   it('does not mutate a released row when a malformed current row is present', () => {

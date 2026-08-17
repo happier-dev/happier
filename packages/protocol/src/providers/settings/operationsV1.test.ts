@@ -270,8 +270,8 @@ describe('provider settings operations', () => {
     expect(next.connectionTombstones.some((entry) => entry.id === 'pc_deleted_001')).toBe(true);
   });
 
-  it('reports a stable domain limit error when default creation would exceed the connection cap', () => {
-    const connections = Array.from({ length: PROVIDER_SETTINGS_LIMITS_V1.connections }, (_, index) => ({
+  it('creates a valid default connection beyond the retired global connection count', () => {
+    const connections = Array.from({ length: 257 }, (_, index) => ({
       v: 1 as const,
       id: `pc_existing_${String(index).padStart(3, '0')}`,
       source: { kind: 'contribution' as const, contributionKey: `plugin/p-${index}` },
@@ -284,12 +284,15 @@ describe('provider settings operations', () => {
     }));
     const settings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections });
 
-    expect(() => ensureDefaultProviderConnectionV1(settings, {
+    const result = ensureDefaultProviderConnectionV1(settings, {
       contributionKey: 'plugin/overflow',
       allocatedConnectionId: 'pc_overflow',
       providerName: 'Overflow',
       now: 2,
-    })).toThrowError(ProviderSettingsLimitError);
+    });
+    expect(result.changed).toBe(true);
+    expect(result.settings.connections).toHaveLength(258);
+    expect(result.connection.id).toBe('pc_overflow');
   });
 
   it('uses the canonical decoded-size owner for additive connection mutations', () => {

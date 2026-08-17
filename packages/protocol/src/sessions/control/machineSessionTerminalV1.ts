@@ -7,6 +7,25 @@ export const MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1 =
 
 const MachineSessionTerminalSessionIdV1Schema = z.string().trim().min(1);
 const MachineSessionTerminalFenceMsV1Schema = z.number().int().nonnegative();
+const MachineSessionTerminalPublisherGenerationV1Schema = z
+  .string()
+  .refine((value) => (
+    /^[1-9]\d{0,18}$/.test(value)
+    && BigInt(value) <= 9_223_372_036_854_775_807n
+  ));
+
+export const MachineSessionTerminalAuthorityV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('generation'),
+    publisherGeneration: MachineSessionTerminalPublisherGenerationV1Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('legacy-heartbeat'),
+    committedFenceMs: MachineSessionTerminalFenceMsV1Schema,
+  }).strict(),
+]);
+export type MachineSessionTerminalAuthorityV1 =
+  z.infer<typeof MachineSessionTerminalAuthorityV1Schema>;
 
 export const MachineSessionTerminalCaptureRequestV1Schema = z
   .object({
@@ -22,7 +41,7 @@ export const MachineSessionTerminalCaptureResponseV1Schema = z.discriminatedUnio
     v: z.literal(1),
     status: z.literal('captured'),
     sessionId: MachineSessionTerminalSessionIdV1Schema,
-    committedFenceMs: MachineSessionTerminalFenceMsV1Schema,
+    authority: MachineSessionTerminalAuthorityV1Schema,
   }).strict(),
   z.object({
     v: z.literal(1),
@@ -51,7 +70,7 @@ export const MachineSessionTerminalFinalizeRequestV1Schema = z
   .object({
     v: z.literal(1),
     sessionId: MachineSessionTerminalSessionIdV1Schema,
-    committedFenceMs: MachineSessionTerminalFenceMsV1Schema,
+    authority: MachineSessionTerminalAuthorityV1Schema,
   })
   .strict();
 export type MachineSessionTerminalFinalizeRequestV1 =

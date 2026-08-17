@@ -28,6 +28,7 @@ const restartReasons = [
   'self_update_interactive_prompt',
   'doctor_repair',
   'restart_session_runners_on_update_config',
+  'daemon_dist_generation_rollout',
 ] as const;
 
 const restartStatuses = [
@@ -63,6 +64,7 @@ const disabledReasons = [
   'approval_pending',
   'terminal_detached',
   'terminal_host_attached',
+  'non_destructive_refresh_unsupported',
   'windows_hosted_runner',
   'restart_already_running',
   'current_entrypoint_unknown',
@@ -72,12 +74,18 @@ const disabledReasons = [
 ] as const;
 
 describe('session runner control contract', () => {
-  it('exports the session runner runtime state field id and RPC methods', () => {
+  it('keeps predecessor V1 unchanged while exporting additive V2 status and recovery restart contracts', () => {
     expect(protocolExport('SESSION_RUNNER_RUNTIME_STATE_FIELD_ID')).toBe('runtime.sessionRunner');
     expect(protocolExport('SESSION_RUNNER_RUNTIME_METADATA_KEY')).toBe('sessionRunnerRuntimeV1');
     expect(protocol.RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET).toBe('daemon.sessionRunner.status.get');
+    expect(protocol.RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET).toBe('daemon.sessionRunner.status.v2.get');
     expect(protocol.RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART).toBe('daemon.sessionRunner.restart');
+    expect(protocol.RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2).toBe('daemon.sessionRunner.restart.v2');
     expect(protocol.RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL).toBe('daemon.sessionRunner.restartAll');
+    expect(protocolExport('SESSION_RUNNER_RESTART_REASONS_V1')).toEqual(restartReasons);
+    expect(protocolExport('SessionRunnerRuntimeStatusV2Schema')).toBeDefined();
+    expect(protocolExport('RestartSessionRunnerRequestV2Schema')).toBeDefined();
+    expect('SessionRunnerProcessIdentityV1Schema' in protocol).toBe(false);
   });
 
   it('accepts valid planned restart requests', () => {
@@ -104,10 +112,39 @@ describe('session runner control contract', () => {
       mode: 'force_current_cli',
     });
 
-    expect(schema.parse({
+    expect(schema.safeParse({
       sessionId: 'sess_with_provider_change',
       mode: 'force_current_cli',
       reason: 'provider_binding_change_recovery',
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      sessionId: 'sess_123',
+      mode: 'force_current_cli',
+      reason: 'doctor_repair',
+      providerBindingSecurityChangeConfirmationV1: {
+        v: 1,
+        sessionId: 'sess_123',
+        connectionId: 'pc_gateway',
+        previousBindingSecurityFingerprint: 'binding-security:v1:a',
+        nextBindingSecurityFingerprint: 'binding-security:v1:b',
+      },
+    }).success).toBe(false);
+  });
+
+  it('accepts only exact process-attested Provider recovery on additive restart V2', () => {
+    const schema = protocolSchema('RestartSessionRunnerRequestV2Schema');
+    const request = {
+      v: 2,
+      sessionId: 'sess_with_provider_change',
+      mode: 'force_current_cli',
+      reason: 'provider_binding_change_recovery',
+      expectedRunnerPid: 123,
+      expectedProcessCommandHash: 'cmd_hash_1',
+      expectedRunnerEntrypointIdentity: 'happier-cli:1.2.3',
+      expectedRunnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 1_700_000_000_000,
+      },
       providerBindingSecurityChangeConfirmationV1: {
         v: 1,
         sessionId: 'sess_with_provider_change',
@@ -115,13 +152,23 @@ describe('session runner control contract', () => {
         previousBindingSecurityFingerprint: 'binding-security:v1:a',
         nextBindingSecurityFingerprint: 'binding-security:v1:b',
       },
-    })).toMatchObject({
-      reason: 'provider_binding_change_recovery',
+    } as const;
+
+    expect(schema.parse(request)).toEqual(request);
+    expect(schema.safeParse({ ...request, expectedRunnerProcessIdentity: undefined }).success).toBe(false);
+    expect(schema.safeParse({
+      ...request,
+      expectedRunnerProcessIdentity: { ...request.expectedRunnerProcessIdentity, pid: 124 },
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...request,
       providerBindingSecurityChangeConfirmationV1: {
-        previousBindingSecurityFingerprint: 'binding-security:v1:a',
-        nextBindingSecurityFingerprint: 'binding-security:v1:b',
+        ...request.providerBindingSecurityChangeConfirmationV1,
+        sessionId: 'another_session',
       },
-    });
+    }).success).toBe(false);
+    expect(schema.safeParse({ ...request, reason: 'ui_stale_runner_banner' }).success).toBe(false);
+    expect(schema.safeParse({ ...request, extra: true }).success).toBe(false);
   });
 
   it('rejects malformed planned restart requests', () => {
@@ -141,6 +188,10 @@ describe('session runner control contract', () => {
       sessionId: 'sess_123',
       mode: 'if_stale',
       reason: 'provider_binding_change_recovery',
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      sessionId: 'sess_123',
+      reason: 'request_auth_source_cutover',
     }).success).toBe(false);
     expect(schema.safeParse({
       sessionId: 'sess_123',
@@ -308,6 +359,76 @@ describe('session runner control contract', () => {
 
     expect(schema.safeParse({
       v: 1,
+      sessionId: 'sess_predecessor',
+      observedAtMs: 123,
+      runner: {
+        pid: 123,
+        runtimeId: 'runner-runtime-1',
+        processCommandHash: 'cmd_hash_1',
+        entrypointSource: 'process_command',
+        startedBy: 'daemon',
+        startingMode: 'remote',
+      },
+      daemon: {
+        currentEntrypointVersion: 'runner-runtime-2',
+        currentEntrypointSource: 'packaged_runtime',
+      },
+      versionState: 'stale',
+      statusSource: 'process_command_inferred',
+      plannedRestart: {
+        supported: false,
+        eligible: false,
+        disabledReason: 'non_destructive_refresh_unsupported',
+      },
+    }).success).toBe(true);
+
+    expect(schema.safeParse({
+      v: 1,
+      sessionId: 'sess_123',
+      observedAtMs: 123,
+      runner: {
+        entrypointSource: 'unknown',
+        startedBy: 'unknown',
+        startingMode: 'unknown',
+      },
+      daemon: {
+        currentEntrypointSource: 'unknown',
+      },
+      versionState: 'unknown',
+      statusSource: 'unknown',
+      plannedRestart: {
+        supported: false,
+        eligible: false,
+        disabledReason: 'unsupported_daemon_version',
+      },
+      pluginRuntimeVersionState: 'unknown',
+    }).success).toBe(false);
+
+    expect(schema.safeParse({
+      v: 1,
+      sessionId: 'sess_123',
+      observedAtMs: 123,
+      runner: {
+        pid: 123,
+        processStartTimeMs: 1_000,
+        entrypointSource: 'unknown',
+        startedBy: 'unknown',
+        startingMode: 'unknown',
+      },
+      daemon: {
+        currentEntrypointSource: 'unknown',
+      },
+      versionState: 'unknown',
+      statusSource: 'unknown',
+      plannedRestart: {
+        supported: false,
+        eligible: false,
+        disabledReason: 'unsupported_daemon_version',
+      },
+    }).success).toBe(false);
+
+    expect(schema.safeParse({
+      v: 1,
       sessionId: 'sess_123',
       observedAtMs: 123,
       runner: {
@@ -327,6 +448,74 @@ describe('session runner control contract', () => {
         eligible: false,
         disabledReason: 'runner_entrypoint_unknown',
       },
+    }).success).toBe(false);
+  });
+
+  it('strictly carries only the V1 aggregate and exact runner process witness in V2', () => {
+    const v1Schema = protocolSchema('SessionRunnerRuntimeStateV1Schema');
+    const v2Schema = protocolSchema('SessionRunnerRuntimeStatusV2Schema');
+    const state = v1Schema.parse({
+      v: 1,
+      sessionId: 'sess_123',
+      machineId: 'machine_1',
+      observedAtMs: 123,
+      runner: {
+        pid: 123,
+        entrypointSource: 'unknown',
+        startedBy: 'daemon',
+        startingMode: 'remote',
+      },
+      daemon: {
+        currentEntrypointSource: 'unknown',
+      },
+      versionState: 'unknown',
+      statusSource: 'daemon_tracking',
+      plannedRestart: {
+        supported: true,
+        eligible: false,
+        disabledReason: 'runner_entrypoint_unknown',
+      },
+    });
+
+    expect(v2Schema.parse({
+      v: 2,
+      state,
+      runnerProcessIdentity: {
+        pid: 456,
+        processStartTimeMs: 1_000,
+      },
+    })).toEqual({
+      v: 2,
+      state,
+      runnerProcessIdentity: {
+        pid: 456,
+        processStartTimeMs: 1_000,
+      },
+    });
+    expect(v2Schema.safeParse({
+      v: 2,
+      state,
+      runnerProcessIdentity: null,
+    }).success).toBe(true);
+    expect(v2Schema.safeParse({
+      v: 2,
+      state,
+      runnerProcessIdentity: { pid: 456 },
+    }).success).toBe(false);
+    expect(v2Schema.safeParse({
+      v: 2,
+      state,
+      runnerProcessIdentity: {
+        pid: 456,
+        processStartTimeMs: 1_000,
+        commandHash: 'private',
+      },
+    }).success).toBe(false);
+    expect(v2Schema.safeParse({
+      v: 2,
+      state,
+      runnerProcessIdentity: null,
+      components: [],
     }).success).toBe(false);
   });
 

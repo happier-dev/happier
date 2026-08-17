@@ -1,32 +1,19 @@
-import { z } from 'zod';
+import semver from 'semver';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from './hostApiDefinition.js';
 
-export const PLUGIN_UI_HOST_API_VERSION_V1 = '1.0.0' as const;
+export * from './hostApiDefinition.js';
 
-export const PluginUiHostApiMethodV1Schema = z.enum([
-  'getSurfaceContext',
-  'requestSessionResource',
-  'subscribeResource',
-  'unsubscribeResource',
-  'dispatchAction',
-  'openSurface',
-  'logDiagnostic',
-  'copy',
-  'openExternal',
-]);
-export type PluginUiHostApiMethodV1 = z.infer<typeof PluginUiHostApiMethodV1Schema>;
-
-export const PluginUiHostApiRequirementV1Schema = z.object({
-  minVersion: z.string().trim().min(1),
-  methods: z.array(PluginUiHostApiMethodV1Schema).default([]),
-}).strict();
-export type PluginUiHostApiRequirementV1 =
-  z.infer<typeof PluginUiHostApiRequirementV1Schema>;
-
-export const PluginUiHostApiAvailabilityV1Schema = z.object({
-  version: z.string().trim().min(1),
-  methods: z.array(PluginUiHostApiMethodV1Schema).default([]),
-  state: z.enum(['available', 'unavailable', 'denied']),
-  diagnostics: z.array(z.string().trim().min(1)).default([]),
-}).strict();
-export type PluginUiHostApiAvailabilityV1 =
-  z.infer<typeof PluginUiHostApiAvailabilityV1Schema>;
+/**
+ * The sole range-satisfaction decision for Host API negotiation.
+ *
+ * The wire carries a semver range, not one spelling of the current range. A
+ * host with this initial API therefore accepts every valid range containing
+ * the canonical version and refuses malformed or incompatible ranges before
+ * advertising any methods.
+ */
+export function isPluginUiHostApiVersionCompatibleV1(range: unknown): boolean {
+  if (typeof range !== 'string') return false;
+  const normalized = range.trim();
+  if (normalized.length === 0 || semver.validRange(normalized) === null) return false;
+  return semver.satisfies(PLUGIN_UI_HOST_API_VERSION_V1, normalized);
+}

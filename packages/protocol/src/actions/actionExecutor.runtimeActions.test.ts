@@ -16,7 +16,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
@@ -160,5 +159,80 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       executor.execute('daemon.browser.recording.start' as ActionId, {}, undefined),
     ).rejects.toThrow('Unknown action spec: daemon.browser.recording.start');
     expect(runtimeActionExecute).not.toHaveBeenCalled();
+  });
+
+  it('re-enters the public Action boundary for an SCM-owned execution run', async () => {
+    const executionRunStart = vi.fn(async () => ({
+      runId: 'run-1',
+      callId: 'call-1',
+      sidechainId: 'sidechain-1',
+    }));
+    const executionRunWait = vi.fn(async () => ({
+      ok: true as const,
+      status: 'succeeded' as const,
+      result: { run: { runId: 'run-1', status: 'succeeded' as const } },
+    }));
+    const interceptActionExecution = vi.fn(async ({ input }: Readonly<{ input: unknown }>) => ({
+      status: 'continue' as const,
+      input,
+    }));
+    const scmActionExecute: NonNullable<ActionExecutorDeps['scmActionExecute']> = vi.fn(async (args) => {
+      const started = await args.executeCanonicalAction('execution.run.start', {
+        intent: 'task',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'Summarize the current worktree.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        waitForCompletion: true,
+      });
+      expect(started).toMatchObject({
+        ok: true,
+        result: {
+          runId: 'run-1',
+          wait: { ok: true, status: 'succeeded' },
+        },
+      });
+      return {
+        success: false,
+        error: 'test result',
+        errorCode: 'SUMMARY_FAILED',
+        sourceKey: 'workingTree:/workspace',
+      };
+    });
+    const executor = createActionExecutor(createDeps({
+      executionRunStart,
+      executionRunWait,
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      interceptActionExecution,
+      scmActionExecute,
+    }));
+
+    const result = await executor.execute('scm.diffSummary.generate', {
+      cwd: '/workspace',
+      source: { kind: 'workingTree' },
+    }, {
+      surface: 'rpc',
+      defaultSessionId: 'session-1',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: { errorCode: 'SUMMARY_FAILED' },
+    });
+    expect(executionRunStart).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ intent: 'task' }),
+      undefined,
+    );
+    expect(executionRunWait).toHaveBeenCalledWith(
+      'session-1',
+      { runId: 'run-1' },
+      undefined,
+    );
+    expect(interceptActionExecution.mock.calls.map(([request]) => request.actionId)).toEqual([
+      'scm.diffSummary.generate',
+      'execution.run.start',
+    ]);
   });
 });

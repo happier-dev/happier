@@ -14,6 +14,10 @@
       "types": "./dist/tools/v2/index.d.ts",
       "default": "./dist/tools/v2/index.js"
     },
+    "./tools/v2/subAgentFamilies": {
+      "types": "./dist/tools/v2/subAgentFamilies.d.ts",
+      "default": "./dist/tools/v2/subAgentFamilies.js"
+    },
     "./spawnSession": {
       "types": "./dist/sessions/spawnSession.d.ts",
       "default": "./dist/sessions/spawnSession.js"
@@ -30,6 +34,18 @@
       "types": "./dist/marketplace/internal.d.ts",
       "default": "./dist/marketplace/internal.js"
     },
+    "./crypto/base64": {
+      "types": "./dist/crypto/base64.d.ts",
+      "default": "./dist/crypto/base64.js"
+    },
+    "./crypto/canonicalDigest": {
+      "types": "./dist/crypto/canonicalDigest.d.ts",
+      "default": "./dist/crypto/canonicalDigest.js"
+    },
+    "./machines/administration/pluginMachineExecutionOriginV1": {
+      "types": "./dist/machines/administration/pluginMachineExecutionOriginV1.d.ts",
+      "default": "./dist/machines/administration/pluginMachineExecutionOriginV1.js"
+    },
     "./actions": {
       "types": "./dist/actions/index.d.ts",
       "default": "./dist/actions/index.js"
@@ -41,6 +57,38 @@
     "./actions/actionSpecs": {
       "types": "./dist/actions/actionSpecs.d.ts",
       "default": "./dist/actions/actionSpecs.js"
+    },
+    "./actions/actionExecutionResult": {
+      "types": "./dist/actions/actionExecutionResult.d.ts",
+      "default": "./dist/actions/actionExecutionResult.js"
+    },
+    "./actions/actionInputHintsRuntime": {
+      "types": "./dist/actions/actionInputHintsRuntime.d.ts",
+      "default": "./dist/actions/actionInputHintsRuntime.js"
+    },
+    "./actions/actionInputJsonSchema": {
+      "types": "./dist/actions/actionInputJsonSchema.d.ts",
+      "default": "./dist/actions/actionInputJsonSchema.js"
+    },
+    "./actions/actionInputVoiceGuidance": {
+      "types": "./dist/actions/actionInputVoiceGuidance.d.ts",
+      "default": "./dist/actions/actionInputVoiceGuidance.js"
+    },
+    "./automations/event-setup-result": {
+      "types": "./dist/automations/automationEventSetupResultV1.d.ts",
+      "default": "./dist/automations/automationEventSetupResultV1.js"
+    },
+    "./automations/event": {
+      "types": "./dist/automations/automationEventV1.d.ts",
+      "default": "./dist/automations/automationEventV1.js"
+    },
+    "./automations/result-delivery": {
+      "types": "./dist/automations/automationResultDeliveryV1.d.ts",
+      "default": "./dist/automations/automationResultDeliveryV1.js"
+    },
+    "./automations/event-history-gap-reset-action": {
+      "types": "./dist/automations/automationEventHistoryGapResetActionV1.d.ts",
+      "default": "./dist/automations/automationEventHistoryGapResetActionV1.js"
     },
     "./rpcErrors": {
       "types": "./dist/rpc/errors.d.ts",
@@ -99,9 +147,25 @@
       "types": "./dist/sessions/index.d.ts",
       "default": "./dist/sessions/index.js"
     },
+    "./sessions/creation/sessionSpawnNewInputV2": {
+      "types": "./dist/sessions/creation/sessionSpawnNewInputV2.d.ts",
+      "default": "./dist/sessions/creation/sessionSpawnNewInputV2.js"
+    },
+    "./sessions/general": {
+      "types": "./dist/sessions/general.d.ts",
+      "default": "./dist/sessions/general.js"
+    },
+    "./sessions/subagents": {
+      "types": "./dist/sessions/subagents/index.d.ts",
+      "default": "./dist/sessions/subagents/index.js"
+    },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
+    },
+    "./bugs/reports": {
+      "types": "./dist/bugs/reports/index.d.ts",
+      "default": "./dist/bugs/reports/index.js"
     },
     "./filesystem/portablePathSegment": {
       "types": "./dist/filesystem/portablePathSegment.d.ts",
@@ -110,6 +174,10 @@
     "./agents/runtimeDescriptorContributionsV1": {
       "types": "./dist/agents/runtimeDescriptorContributionsV1.d.ts",
       "default": "./dist/agents/runtimeDescriptorContributionsV1.js"
+    },
+    "./agents/claude": {
+      "types": "./dist/agents/claude/index.d.ts",
+      "default": "./dist/agents/claude/index.js"
     },
     "./backends": {
       "types": "./dist/backends/index.d.ts",
@@ -123,17 +191,217 @@
       "types": "./dist/plugins/ui/index.d.ts",
       "default": "./dist/plugins/ui/index.js"
     },
+    "./plugins/ui/client": {
+      "types": "./dist/plugins/ui/client.d.ts",
+      "default": "./dist/plugins/ui/client.js"
+    },
+    "./plugins/ui/targetedContributions": {
+      "types": "./dist/plugins/ui/targetedContributions.d.ts",
+      "default": "./dist/plugins/ui/targetedContributions.js"
+    },
+    "./plugins/actions/json-schema-validation": {
+      "types": "./dist/plugins/actions/jsonSchemaValidation.d.ts",
+      "default": "./dist/plugins/actions/jsonSchemaValidation.js"
+    },
     "./plugins/hooks": {
       "types": "./dist/plugins/hooks/catalog.d.ts",
       "default": "./dist/plugins/hooks/catalog.js"
+    },
+    "./plugins/agents": {
+      "types": "./dist/plugins/agents.d.ts",
+      "default": "./dist/plugins/agents.js"
+    },
+    "./plugins/manifest": {
+      "types": "./dist/plugins/manifest/index.d.ts",
+      "default": "./dist/plugins/manifest/index.js"
+    },
+    "./plugins/manifest/declaration": {
+      "types": "./dist/plugins/manifest/declaration.d.ts",
+      "default": "./dist/plugins/manifest/declaration.js"
+    },
+    "./plugins/availability": {
+      "types": "./dist/plugins/availability/index.d.ts",
+      "default": "./dist/plugins/availability/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "default": "./dist/providers/index.js"
+    },
+    "./providers/claude/oauth-profile": {
+      "types": "./dist/providers/claude/oauthProfile.d.ts",
+      "default": "./dist/providers/claude/oauthProfile.js"
+    },
+    "./providers/codex/oauth": {
+      "types": "./dist/providers/codex/oauth.d.ts",
+      "default": "./dist/providers/codex/oauth.js"
+    },
+    "./providers/contribution-identity": {
+      "types": "./dist/providers/contributionIdentityV1.d.ts",
+      "default": "./dist/providers/contributionIdentityV1.js"
+    },
+    "./providers/sensitive-value-redaction": {
+      "types": "./dist/providers/safety/redaction.d.ts",
+      "default": "./dist/providers/safety/redaction.js"
+    },
+    "./providers/credential-headers": {
+      "types": "./dist/providers/safety/headers.d.ts",
+      "default": "./dist/providers/safety/headers.js"
+    },
+    "./providers/ids": {
+      "types": "./dist/providers/ids.d.ts",
+      "default": "./dist/providers/ids.js"
+    },
+    "./providers/contributions": {
+      "types": "./dist/providers/contributions/v1.d.ts",
+      "default": "./dist/providers/contributions/v1.js"
+    },
+    "./providers/endpoint-url": {
+      "types": "./dist/providers/endpointUrlSchema.d.ts",
+      "default": "./dist/providers/endpointUrlSchema.js"
+    },
+    "./providers/public-headers": {
+      "types": "./dist/providers/publicHeadersSchema.d.ts",
+      "default": "./dist/providers/publicHeadersSchema.js"
+    },
+    "./providers/binding-compatibility": {
+      "types": "./dist/providers/compatibility/resolve.d.ts",
+      "default": "./dist/providers/compatibility/resolve.js"
+    },
+    "./providers/model-selection": {
+      "types": "./dist/providers/selection/v1.d.ts",
+      "default": "./dist/providers/selection/v1.js"
+    },
+    "./providers/active-model-selection": {
+      "types": "./dist/providers/selection/activeSelectionValidationV1.d.ts",
+      "default": "./dist/providers/selection/activeSelectionValidationV1.js"
+    },
+    "./connect/connected-account-purposes": {
+      "types": "./dist/connect/connectedAccountPurposes.d.ts",
+      "default": "./dist/connect/connectedAccountPurposes.js"
+    },
+    "./connect/connected-account-request-auth": {
+      "types": "./dist/connect/connectedAccountRequestAuth.d.ts",
+      "default": "./dist/connect/connectedAccountRequestAuth.js"
+    },
+    "./connect/connected-service-bindings": {
+      "types": "./dist/connect/connectedServiceBindings.d.ts",
+      "default": "./dist/connect/connectedServiceBindings.js"
+    },
+    "./connect/connected-service-schemas": {
+      "types": "./dist/connect/connectedServiceSchemas.d.ts",
+      "default": "./dist/connect/connectedServiceSchemas.js"
+    },
+    "./connect/account-usage-primitives": {
+      "types": "./dist/connect/providerAccountUsagePrimitives.d.ts",
+      "default": "./dist/connect/providerAccountUsagePrimitives.js"
+    },
+    "./connect/qualified-connected-account-projections": {
+      "types": "./dist/connect/qualifiedConnectedAccountProjectionsV4.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountProjectionsV4.js"
+    },
+    "./connect/qualified-connected-account-persistence": {
+      "types": "./dist/connect/qualifiedConnectedAccountPersistence.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountPersistence.js"
+    },
+    "./connect/connected-account-purpose-bindings": {
+      "types": "./dist/connect/connectedAccountPurposeBindings.d.ts",
+      "default": "./dist/connect/connectedAccountPurposeBindings.js"
+    },
+    "./connect/build-connected-service-credential-record": {
+      "types": "./dist/connect/buildConnectedServiceCredentialRecord.d.ts",
+      "default": "./dist/connect/buildConnectedServiceCredentialRecord.js"
+    },
+    "./connect/connected-service-limit-category": {
+      "types": "./dist/connect/connectedServiceLimitCategory.d.ts",
+      "default": "./dist/connect/connectedServiceLimitCategory.js"
+    },
+    "./account/settings/connected-services": {
+      "types": "./dist/account/settings/connectedServicesSettings.d.ts",
+      "default": "./dist/account/settings/connectedServicesSettings.js"
+    },
+    "./sessions/work-state": {
+      "types": "./dist/sessions/work/state/index.d.ts",
+      "default": "./dist/sessions/work/state/index.js"
+    },
+    "./sessions/metadata/runtime-descriptor": {
+      "types": "./dist/sessions/metadata/runtimeDescriptorV1.d.ts",
+      "default": "./dist/sessions/metadata/runtimeDescriptorV1.js"
+    },
+    "./sessions/metadata/runtime-descriptor-compat": {
+      "types": "./dist/sessions/metadata/compat/runtimeDescriptorMetadata.d.ts",
+      "default": "./dist/sessions/metadata/compat/runtimeDescriptorMetadata.js"
+    },
+    "./sessions/metadata/permission-modes": {
+      "types": "./dist/sessions/metadata/sessionPermissionModes.d.ts",
+      "default": "./dist/sessions/metadata/sessionPermissionModes.js"
+    },
+    "./sessions/metadata/overrides": {
+      "types": "./dist/sessions/metadata/metadataOverridesV1.d.ts",
+      "default": "./dist/sessions/metadata/metadataOverridesV1.js"
+    },
+    "./sessions/external/linked-metadata": {
+      "types": "./dist/sessions/external/linkedSessionMetadata.d.ts",
+      "default": "./dist/sessions/external/linkedSessionMetadata.js"
     },
     "./plugins/contributions/browser": {
       "types": "./dist/plugins/contributions/browser/index.d.ts",
       "default": "./dist/plugins/contributions/browser/index.js"
     },
+    "./plugins/contributions/composer-attachments": {
+      "types": "./dist/plugins/contributions/composerAttachments.d.ts",
+      "default": "./dist/plugins/contributions/composerAttachments.js"
+    },
+    "./plugins/contributions/composer-reference-candidate-id": {
+      "types": "./dist/plugins/contributions/composerReferenceCandidateIdV1.d.ts",
+      "default": "./dist/plugins/contributions/composerReferenceCandidateIdV1.js"
+    },
+    "./plugins/contributions/voice": {
+      "types": "./dist/plugins/contributions/voiceProviders.d.ts",
+      "default": "./dist/plugins/contributions/voiceProviders.js"
+    },
     "./plugins/contributions/ui": {
       "types": "./dist/plugins/contributions/ui/index.d.ts",
       "default": "./dist/plugins/contributions/ui/index.js"
+    },
+    "./plugins/contributions/ui/declarative-document-authoring": {
+      "types": "./dist/plugins/contributions/ui/declarativeDocumentAuthoringV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeDocumentAuthoringV1.js"
+    },
+    "./plugins/contributions/ui/tokens": {
+      "types": "./dist/plugins/contributions/ui/tokens.d.ts",
+      "default": "./dist/plugins/contributions/ui/tokens.js"
+    },
+    "./plugins/contributions/webhooks": {
+      "types": "./dist/plugins/contributions/webhooks.d.ts",
+      "default": "./dist/plugins/contributions/webhooks.js"
+    },
+    "./plugins/webhooks/endpointV1": {
+      "types": "./dist/plugins/webhooks/endpointV1.d.ts",
+      "default": "./dist/plugins/webhooks/endpointV1.js"
+    },
+    "./plugins/webhooks/deliveryV1": {
+      "types": "./dist/plugins/webhooks/deliveryV1.d.ts",
+      "default": "./dist/plugins/webhooks/deliveryV1.js"
+    },
+    "./scm": {
+      "types": "./dist/scm/index.d.ts",
+      "default": "./dist/scm/index.js"
+    },
+    "./voice/realtime": {
+      "types": "./dist/voice/realtime/index.d.ts",
+      "default": "./dist/voice/realtime/index.js"
+    },
+    "./voice/providerOperations": {
+      "types": "./dist/voice/providerOperations.d.ts",
+      "default": "./dist/voice/providerOperations.js"
+    },
+    "./voice/speech": {
+      "types": "./dist/voice/speech.d.ts",
+      "default": "./dist/voice/speech.js"
+    },
+    "./voice/sessionBinding": {
+      "types": "./dist/voice/sessionBinding.d.ts",
+      "default": "./dist/voice/sessionBinding.js"
     },
     "./voice/modelPacks/contributionV1": {
       "types": "./dist/voice/modelPacks/contributionV1.d.ts",
@@ -148,15 +416,19 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
-    "pretypecheck": "node scripts/generate-embedded-feature-policies.mjs",
+    "generate:plugin-action-reference": "node --import tsx scripts/generate-plugin-action-reference.ts --write",
+    "check:plugin-action-reference": "node --import tsx scripts/generate-plugin-action-reference.ts --check",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'protocol',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}const has=(p)=>{try{return fs.existsSync(p)}catch{return false}};if(!has('tsconfig.json')||!has('../agents/tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node scripts/generate-embedded-feature-policies.mjs --check && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
     "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "base64-js": "^1.5.1",
     "tweetnacl": "^1.0.3",
     "zod": "4.3.6",

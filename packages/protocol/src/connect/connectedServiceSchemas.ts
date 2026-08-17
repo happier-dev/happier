@@ -800,6 +800,7 @@ export const ConnectedServiceAuthGroupErrorCodeV1Schema = z.enum([
     'connect_group_active_profile_not_member',
     'connect_group_profile_runtime_cooldown',
     'connect_group_generation_conflict',
+    'connect_group_incarnation_conflict',
     'connect_group_generation_required',
     'connect_group_runtime_state_revision_conflict',
     'connect_group_runtime_state_revision_required',

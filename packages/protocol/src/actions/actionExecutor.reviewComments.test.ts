@@ -15,7 +15,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
@@ -75,5 +74,67 @@ describe('createActionExecutor (review comments)', () => {
       actionId: 'reviews.comments.create',
       reviewCommentPrincipal,
     }));
+  });
+
+  it('derives the review principal from the host-stamped plugin caller', async () => {
+    const reviewCommentAction = vi.fn(async () => ({ items: [], cursor: null }));
+    const executor = createActionExecutor(createDeps({ reviewCommentAction }));
+    const signal = new AbortController().signal;
+
+    await expect(executor.execute(
+      'reviews.comments.list',
+      { projectId: 'project-1' },
+      {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.review' },
+        signal,
+      },
+    )).resolves.toEqual({ ok: true, result: { items: [], cursor: null } });
+
+    expect(reviewCommentAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'reviews.comments.list',
+      reviewCommentPrincipal: {
+        actor: { kind: 'plugin', pluginId: 'acme.review' },
+      },
+      signal,
+    }));
+  });
+
+  it('rejects a plugin-surface review action without a host-stamped caller', async () => {
+    const reviewCommentAction = vi.fn();
+    const executor = createActionExecutor(createDeps({ reviewCommentAction }));
+
+    await expect(executor.execute(
+      'reviews.comments.list',
+      { projectId: 'project-1' },
+      { surface: 'plugin' },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_action_caller_required',
+      error: 'plugin_action_caller_required',
+    });
+    expect(reviewCommentAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a caller-supplied or cross-plugin review principal', async () => {
+    const reviewCommentAction = vi.fn();
+    const executor = createActionExecutor(createDeps({ reviewCommentAction }));
+
+    await expect(executor.execute(
+      'reviews.comments.list',
+      { projectId: 'project-1' },
+      {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.review' },
+        reviewCommentPrincipal: {
+          actor: { kind: 'plugin', pluginId: 'other.review' },
+        },
+      },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'review_comment_permission_denied',
+      error: 'review_comment_permission_denied',
+    });
+    expect(reviewCommentAction).not.toHaveBeenCalled();
   });
 });

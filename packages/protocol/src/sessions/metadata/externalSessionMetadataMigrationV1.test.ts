@@ -93,7 +93,22 @@ describe('External Sessions layout-0 classification', () => {
       ownerMetadata: {
         v: 1,
         nativeSession: {
-          directSessionV1: metadata.directSessionV1,
+          externalSessionV1: {
+            v: 1,
+            agentId: 'claude',
+            machineId: 'machine-private-predecessor',
+            remoteSessionId: 'native-private-predecessor',
+            source: {
+              kind: 'claudeConfig',
+              configDir: '/private/claude-config',
+            },
+            linkedAtMs: 3,
+            followPolicyV1: {
+              v: 1,
+              policy: 'attached_only',
+              updatedAtMs: 4,
+            },
+          },
         },
       },
     });

@@ -5,7 +5,7 @@ import { ConnectedAccountUiProjectionEntryV1Schema } from './connectedAccountUiP
 describe('ConnectedAccountUiProjectionEntryV1', () => {
   it('preserves every serializable authentication mode and configuration form fact', () => {
     const input = {
-      id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.hosting.bitbucket', provenance: 'external', sourceKind: 'bundled',
+      id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket', provenance: 'external', sourceKind: 'bundled',
       title: 'Bitbucket account',
       authentication: {
         defaultModeId: 'manual',

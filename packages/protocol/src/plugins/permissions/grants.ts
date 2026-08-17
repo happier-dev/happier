@@ -1,6 +1,112 @@
 import { z } from 'zod';
 
-import { PluginPermissionCapabilityV1Schema } from './v1.js';
+import { canonicalBoundedRecordKeySchema } from '../../common/canonicalRecordKey.js';
+import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';
+import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
+import { PluginPermissionCapabilityV1Schema } from './capabilityV1.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+
+const LowercaseSha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+export const PluginCredentialAccessSlotIdSchema = canonicalBoundedRecordKeySchema(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+  .brand<'PluginCredentialAccessSlotId'>();
+export type PluginCredentialAccessSlotId = z.infer<typeof PluginCredentialAccessSlotIdSchema>;
+
+export const CredentialAccessDeclarationDigestSchema = LowercaseSha256DigestSchema
+  .brand<'CredentialAccessDeclarationDigest'>();
+export type CredentialAccessDeclarationDigest = z.infer<typeof CredentialAccessDeclarationDigestSchema>;
+
+/**
+ * Domain-separated digest of the Account Settings authority selected for one
+ * raw credential disclosure. It never carries secret or token material.
+ */
+export const CredentialAccessSelectedAuthorityDigestSchema = LowercaseSha256DigestSchema
+  .brand<'CredentialAccessSelectedAuthorityDigest'>();
+export type CredentialAccessSelectedAuthorityDigest = z.infer<
+  typeof CredentialAccessSelectedAuthorityDigestSchema
+>;
+
+/**
+ * Domain-separated digest of the selected source's declared raw realm/phase/
+ * request tuple set. This keeps one disclosure-set approval rather than
+ * manufacturing independently approved individual tuples.
+ */
+export const CredentialAccessSelectedRawAccessDigestSchema = LowercaseSha256DigestSchema
+  .brand<'CredentialAccessSelectedRawAccessDigest'>();
+export type CredentialAccessSelectedRawAccessDigest = z.infer<
+  typeof CredentialAccessSelectedRawAccessDigestSchema
+>;
+
+/** Exact immutable runtime generation that admitted this raw-credential authority. */
+export const PluginPermissionInstalledGenerationIdSchema = z.string().trim().min(1).max(512)
+  .brand<'PluginPermissionInstalledGenerationId'>();
+export type PluginPermissionInstalledGenerationId = z.infer<
+  typeof PluginPermissionInstalledGenerationIdSchema
+>;
+
+export const PluginInstallReviewPrincipalDigestSchema = LowercaseSha256DigestSchema
+  .brand<'PluginInstallReviewPrincipalDigest'>();
+export type PluginInstallReviewPrincipalDigest = z.infer<typeof PluginInstallReviewPrincipalDigestSchema>;
+
+export const PluginInstallReviewPrincipalPresentationV1Schema = z.object({
+  v: z.literal(1),
+  packageIdentity: z.object({
+    pluginId: z.string().trim().min(1).max(256),
+    packageName: z.string().trim().min(1).max(512).nullable(),
+  }).strict(),
+  distributionIdentity: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('path'),
+      development: z.boolean(),
+    }).strict(),
+    z.object({ kind: z.literal('archive') }).strict(),
+    z.object({
+      kind: z.literal('npm'),
+      packageName: z.string().trim().min(1).max(512),
+      registryOrigin: z.string().url().max(2_048),
+      registryProfileId: z.string().trim().min(1).max(256).optional(),
+    }).strict(),
+  ]),
+  publisherIdentity: z.union([
+    z.object({ status: z.literal('unavailable') }).strict(),
+    z.object({
+      status: z.literal('unverified'),
+      id: z.string().trim().min(1).max(512),
+      displayName: z.string().trim().min(1).max(512),
+    }).strict(),
+  ]),
+  packageSignature: z.union([
+    z.object({ status: z.literal('unavailable') }).strict(),
+    z.object({
+      status: z.literal('verified'),
+      keyId: z.string().trim().min(1).max(512),
+    }).strict(),
+  ]),
+}).strict();
+export type PluginInstallReviewPrincipalPresentationV1 = z.infer<
+  typeof PluginInstallReviewPrincipalPresentationV1Schema
+>;
+
+export const PluginPermissionSubjectV1Schema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('general') }).strict(),
+  z.object({
+    kind: z.literal('credential_access_disclosure'),
+    contribution: asProtocolZod(PluginContributionIdentityV1Schema),
+    credentialSlotId: PluginCredentialAccessSlotIdSchema,
+    purpose: ConnectedAccountPurposeIdSchema,
+    accessDeclarationDigest: CredentialAccessDeclarationDigestSchema,
+    selectedAuthorityDigest: CredentialAccessSelectedAuthorityDigestSchema,
+    selectedRawAccessDigest: CredentialAccessSelectedRawAccessDigestSchema,
+    installedGenerationId: PluginPermissionInstalledGenerationIdSchema,
+    installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema,
+  }).strict(),
+]);
+export type PluginPermissionSubjectV1 = z.infer<typeof PluginPermissionSubjectV1Schema>;
+
+export const GENERAL_PLUGIN_PERMISSION_SUBJECT_V1 = Object.freeze({
+  kind: 'general',
+} satisfies PluginPermissionSubjectV1);
 
 export const PluginPermissionGrantPluginIdV1Schema = z.string().trim().min(1);
 export type PluginPermissionGrantPluginIdV1 = z.infer<typeof PluginPermissionGrantPluginIdV1Schema>;
@@ -66,6 +172,7 @@ export const PluginPermissionGrantV1Schema = z.object({
   pluginId: PluginPermissionGrantPluginIdV1Schema,
   capability: PluginPermissionCapabilityV1Schema,
   targetScope: PluginPermissionGrantTargetScopeV1Schema,
+  subject: PluginPermissionSubjectV1Schema,
   authoritySource: PluginPermissionGrantAuthoritySourceWithDefaultV1Schema,
   status: PluginPermissionGrantStatusV1Schema,
   requestId: z.string().trim().min(1).optional(),
@@ -85,6 +192,7 @@ export const PluginPermissionGrantRequestV1Schema = z.object({
   pluginId: PluginPermissionGrantPluginIdV1Schema,
   capability: PluginPermissionCapabilityV1Schema,
   targetScope: PluginPermissionGrantTargetScopeV1Schema,
+  subject: PluginPermissionSubjectV1Schema,
   authoritySource: PluginPermissionGrantAuthoritySourceWithDefaultV1Schema,
   requester: PluginPermissionGrantActorV1Schema,
   reason: z.string().trim().min(1),
@@ -113,6 +221,7 @@ export const PluginPermissionGrantAuditEventV1Schema = z.object({
   pluginId: PluginPermissionGrantPluginIdV1Schema,
   capability: PluginPermissionCapabilityV1Schema,
   targetScope: PluginPermissionGrantTargetScopeV1Schema,
+  subject: PluginPermissionSubjectV1Schema,
   authoritySource: PluginPermissionGrantAuthoritySourceWithDefaultV1Schema,
   eventKind: PluginPermissionGrantAuditEventKindV1Schema,
   actor: PluginPermissionGrantActorV1Schema,
@@ -127,8 +236,10 @@ export type PluginPermissionGrantAuditEventV1 = z.infer<typeof PluginPermissionG
 
 export const PluginPermissionGrantListActionInputV1Schema = z.object({
   pluginId: PluginPermissionGrantPluginIdV1Schema.optional(),
+  grantId: z.string().trim().min(1).optional(),
   capability: PluginPermissionCapabilityV1Schema.optional(),
   targetScope: PluginPermissionGrantTargetScopeV1Schema.optional(),
+  subject: PluginPermissionSubjectV1Schema.optional(),
   includeRevoked: z.boolean().default(false),
   includeResolvedRequests: z.boolean().default(false),
   limit: z.number().int().positive().max(200).default(50),
@@ -139,6 +250,7 @@ export const PluginPermissionGrantRequestActionInputV1Schema = z.object({
   pluginId: PluginPermissionGrantPluginIdV1Schema,
   capability: PluginPermissionCapabilityV1Schema,
   targetScope: PluginPermissionGrantTargetScopeV1Schema,
+  subject: PluginPermissionSubjectV1Schema,
   requester: PluginPermissionGrantActorV1Schema,
   reason: z.string().trim().min(1),
 }).strict();

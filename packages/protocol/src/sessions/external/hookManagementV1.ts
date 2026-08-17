@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { PluginDiagnosticDataV1Schema } from '../../daemon/pluginContributionIntrospection.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 /**
  * `sessions.direct` is the deployed, fail-closed wire id retained by A12. Consumers must check
@@ -151,7 +152,7 @@ export type PluginSessionHookInstallPreviewV1 = z.infer<
 >;
 
 const BoundedPluginContributionIdentityV1Schema =
-  PluginContributionIdentityV1Schema.superRefine((identity, context) => {
+  asProtocolZod(PluginContributionIdentityV1Schema).superRefine((identity, context) => {
     for (const [field, value] of [
       ['pluginId', identity.pluginId],
       ['localId', identity.localId],
@@ -221,6 +222,58 @@ export const PluginSessionHookInstallationMutationInputV1Schema = z.object({
 }).strict();
 export type PluginSessionHookInstallationMutationInputV1 = z.infer<
   typeof PluginSessionHookInstallationMutationInputV1Schema
+>;
+
+const PluginSessionHookSemanticTargetFieldsV1 = {
+  agent: BoundedPluginContributionIdentityV1Schema,
+} as const;
+
+/**
+ * Canonical Action input. Machine routing is host authority and is present only
+ * on the released daemon RPC carrier above.
+ */
+export const PluginSessionHookStatusActionInputV1Schema = z.discriminatedUnion(
+  'intent',
+  [
+    z.object({
+      intent: z.literal('passive_inventory'),
+      agent: BoundedPluginContributionIdentityV1Schema.optional(),
+      cursor: z.string().min(1).max(4_096).optional(),
+      limit: z.number()
+        .int()
+        .min(1)
+        .max(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS)
+        .default(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT),
+    }).strict(),
+    z.object({
+      ...PluginSessionHookSemanticTargetFieldsV1,
+      intent: z.literal('install_preview'),
+    }).strict(),
+    z.object({
+      ...PluginSessionHookSemanticTargetFieldsV1,
+      intent: z.literal('installation_recheck'),
+      installationId: BoundedIdSchema,
+    }).strict(),
+  ],
+);
+export type PluginSessionHookStatusActionInputV1 = z.input<
+  typeof PluginSessionHookStatusActionInputV1Schema
+>;
+
+export const PluginSessionHookInstallActionInputV1Schema = z.object({
+  ...PluginSessionHookSemanticTargetFieldsV1,
+  expectedPreviewId: PreviewIdSchema,
+}).strict();
+export type PluginSessionHookInstallActionInputV1 = z.infer<
+  typeof PluginSessionHookInstallActionInputV1Schema
+>;
+
+export const PluginSessionHookInstallationMutationActionInputV1Schema = z.object({
+  ...PluginSessionHookSemanticTargetFieldsV1,
+  installationId: BoundedIdSchema,
+}).strict();
+export type PluginSessionHookInstallationMutationActionInputV1 = z.infer<
+  typeof PluginSessionHookInstallationMutationActionInputV1Schema
 >;
 
 const PluginSessionHookNotInstalledStatusV1Schema = z.object({

@@ -20,7 +20,7 @@ describe('qualified connected-account identity', () => {
     });
   });
 
-  it('keeps direct identity parsing structural while strict JSON boundaries own hostile-object rejection', () => {
+  it('rejects hostile identity objects before the canonical parser reads accessors', () => {
     expect(QualifiedConnectedAccountRefSchema.safeParse({
       service: { pluginId: 'acme.accounts', localId: 'git' },
       accountId: 'work',
@@ -39,14 +39,8 @@ describe('qualified connected-account identity', () => {
       service,
       accountId: 'work',
     });
-    expect(parsed).toEqual({
-      success: true,
-      data: {
-        service: { pluginId: 'acme.accounts', localId: 'git' },
-        accountId: 'work',
-      },
-    });
-    expect(reads).toBeGreaterThan(0);
+    expect(parsed.success).toBe(false);
+    expect(reads).toBe(0);
   });
 
   it('keeps the Account ID boundary at Unicode code points without a callback parser', () => {

@@ -1,8 +1,43 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as protocol from './index.js';
+import {
+    ComposerReferenceCandidateIdV1Schema as canonicalComposerReferenceCandidateIdV1Schema,
+} from './plugins/contributions/composerReferenceProviders.js';
+import {
+    COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1 as canonicalComposerControlStateContentType,
+    ComposerControlStateContentTypeV1Schema as canonicalComposerControlStateContentTypeSchema,
+} from './plugins/ui/composer.js';
+import {
+    buildComposerReferenceMentionPayloadV1 as canonicalBuildComposerReferenceMentionPayloadV1,
+    readComposerReferenceMentionV1 as canonicalReadComposerReferenceMentionV1,
+} from './runtime/input/composerReferenceProviderV1.js';
+import {
+    measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1 as canonicalMeasurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1,
+    PluginCollectionCandidatePreparationRetireRequestV1Schema as canonicalPluginCollectionCandidatePreparationRetireRequestV1Schema,
+    PluginCollectionCandidatePreparationStageRequestV1Schema as canonicalPluginCollectionCandidatePreparationStageRequestV1Schema,
+    PluginCollectionContractReadResultV1Schema as canonicalPluginCollectionContractReadResultV1Schema,
+} from './plugins/data/collectionsV1.js';
+import {
+    PluginUiDestinationReferenceV1Schema as canonicalPluginUiDestinationReferenceV1Schema,
+} from './plugins/ui/hostApiRequests.js';
+import type {
+    PluginUiDestinationRuntimeFormFactorV1 as CanonicalPluginUiDestinationRuntimeFormFactorV1,
+} from './plugins/contributions/ui/surfaceRegistry.js';
+import {
+    PluginDeclarativeTargetedSurfaceNodeV2Schema as canonicalPluginDeclarativeTargetedSurfaceNodeV2Schema,
+} from './plugins/contributions/ui/v2.js';
+import {
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS as canonicalRetiredAccountSettingsSessionOnlyKeys,
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS as canonicalRetiredAccountSettingsSessionOrganizationKeys,
+    SessionTmuxMachineOverrideSchema as canonicalSessionTmuxMachineOverrideSchema,
+} from './account/settings/accountSettings.js';
+import type {
+    TranscriptMessageTimestampDisplayMode as CanonicalTranscriptMessageTimestampDisplayMode,
+} from './account/settings/accountSettings.js';
 import type { PluginConnectedAccountConfigurationFieldV2 } from './index.js';
 import type { PluginConfigurationSettingFieldV2 } from './index.js';
+import type { PluginUiViewV2Input } from './plugins/contributions/ui/v2.js';
 
 // @ts-expect-error — retired author identity has no stable type export.
 type RetiredExtensionId = import('./index.js').ExtensionId;
@@ -14,13 +49,167 @@ type RetiredExtensionContribution = import('./index.js').ExtensionContributionV2
 type RetiredExtensionReload = import('./index.js').ExtensionReloadRequestV1;
 // @ts-expect-error — static hook/export-name binding is retired from the public protocol ABI.
 type RetiredHookRegistration = import('./index.js').HookRegistrationV1;
+// @ts-expect-error — legacy Voice provider ids are parsed only at the compatibility ingress.
+type LegacyVoiceProviderId = import('./index.js').VoiceProviderId;
 void (null as unknown as RetiredExtensionId);
 void (null as unknown as RetiredExtensionManifest);
 void (null as unknown as RetiredExtensionContribution);
 void (null as unknown as RetiredExtensionReload);
 void (null as unknown as RetiredHookRegistration);
+void (null as unknown as LegacyVoiceProviderId);
+
+if (false) {
+    const retainedAppPageInput = {
+        id: 'retained-app-page',
+        container: 'appPage',
+        target: { kind: 'app' },
+        renderer: 'retained-renderer',
+    } satisfies PluginUiViewV2Input;
+    const retainedAppRightSidebarInput = {
+        id: 'retained-app-right-sidebar',
+        container: 'rightSidebarTab',
+        target: { kind: 'app' },
+        renderer: 'retained-renderer',
+    } satisfies PluginUiViewV2Input;
+    const retainedSessionRightPaneInput = {
+        id: 'retained-session-right-pane',
+        container: 'rightPane',
+        target: { kind: 'session' },
+        renderer: 'retained-renderer',
+    } satisfies PluginUiViewV2Input;
+    const retainedProjectDetailsPaneInput = {
+        id: 'retained-project-details-pane',
+        container: 'detailsPane',
+        target: { kind: 'project' },
+        renderer: 'retained-renderer',
+    } satisfies PluginUiViewV2Input;
+
+    // @ts-expect-error rightPane has no App target binding.
+    const rejectedAppRightPaneInput: PluginUiViewV2Input = {
+        id: 'rejected-app-right-pane',
+        container: 'rightPane',
+        target: { kind: 'app' },
+        renderer: 'retained-renderer',
+    };
+    // @ts-expect-error detailsPane has no App target binding.
+    const rejectedAppDetailsPaneInput: PluginUiViewV2Input = {
+        id: 'rejected-app-details-pane',
+        container: 'detailsPane',
+        target: { kind: 'app' },
+        renderer: 'retained-renderer',
+    };
+    // @ts-expect-error bottomPane has no App target binding.
+    const rejectedAppBottomPaneInput: PluginUiViewV2Input = {
+        id: 'rejected-app-bottom-pane',
+        container: 'bottomPane',
+        target: { kind: 'app' },
+        renderer: 'retained-renderer',
+    };
+
+    void [
+        retainedAppPageInput,
+        retainedAppRightSidebarInput,
+        retainedSessionRightPaneInput,
+        retainedProjectDetailsPaneInput,
+        rejectedAppRightPaneInput,
+        rejectedAppDetailsPaneInput,
+        rejectedAppBottomPaneInput,
+    ];
+}
 
 describe('protocol package root exports', () => {
+    it('exports the canonical Account Settings retirement lists through the package root', () => {
+        expect(protocol.RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS)
+            .toBe(canonicalRetiredAccountSettingsSessionOnlyKeys);
+        expect(protocol.RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS)
+            .toBe(canonicalRetiredAccountSettingsSessionOrganizationKeys);
+        expect(protocol.RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS)
+            .toContain('sessionFoldersV1');
+    });
+
+    it('exports the canonical Session tmux machine-override schema through the package root', () => {
+        expect(protocol.SessionTmuxMachineOverrideSchema)
+            .toBe(canonicalSessionTmuxMachineOverrideSchema);
+    });
+
+    it('exports the canonical plugin Collection contract reader through the package root', () => {
+        expect(protocol.PluginCollectionContractReadResultV1Schema)
+            .toBe(canonicalPluginCollectionContractReadResultV1Schema);
+        expectTypeOf<protocol.PluginCollectionContractReadResultV1>().not.toBeNever();
+    });
+
+    it('exports the canonical host-owned Collection candidate-preparation stage and retire wires', () => {
+        expect(protocol.PluginCollectionCandidatePreparationStageRequestV1Schema)
+            .toBe(canonicalPluginCollectionCandidatePreparationStageRequestV1Schema);
+        expectTypeOf<protocol.PluginCollectionCandidatePreparationStageRequestV1>().not.toBeNever();
+        expect(protocol.measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1)
+            .toBe(canonicalMeasurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1);
+        expect(protocol.PluginCollectionCandidatePreparationRetireRequestV1Schema)
+            .toBe(canonicalPluginCollectionCandidatePreparationRetireRequestV1Schema);
+        expectTypeOf<protocol.PluginCollectionCandidatePreparationRetireRequestV1>().not.toBeNever();
+    });
+
+    it('exports the canonical plugin UI destination reference through the package root', () => {
+        expect(protocol.PluginUiDestinationReferenceV1Schema)
+            .toBe(canonicalPluginUiDestinationReferenceV1Schema);
+        expectTypeOf<protocol.PluginUiDestinationReferenceV1>().not.toBeNever();
+    });
+
+    it('exports the canonical UI form-factor and transcript timestamp types through the package root', () => {
+        expectTypeOf<protocol.PluginUiDestinationRuntimeFormFactorV1>()
+            .toEqualTypeOf<CanonicalPluginUiDestinationRuntimeFormFactorV1>();
+        expectTypeOf<protocol.TranscriptMessageTimestampDisplayMode>()
+            .toEqualTypeOf<CanonicalTranscriptMessageTimestampDisplayMode>();
+    });
+
+    it('exports the canonical symbolic targeted Surface node schema through the package root', () => {
+        expect(protocol.PluginDeclarativeTargetedSurfaceNodeV2Schema)
+            .toBe(canonicalPluginDeclarativeTargetedSurfaceNodeV2Schema);
+        expectTypeOf<protocol.PluginDeclarativeTargetedSurfaceNodeV2>().not.toBeNever();
+    });
+
+    it('exports the canonical composer reference candidate-id schema', () => {
+        expect(protocol.ComposerReferenceCandidateIdV1Schema)
+            .toBe(canonicalComposerReferenceCandidateIdV1Schema);
+        expect(protocol.ComposerReferenceCandidateIdV1Schema.safeParse('candidate-1').success)
+            .toBe(true);
+    });
+
+    it('exports the exact Composer control-state Resource media type', () => {
+        expect(protocol.COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1)
+            .toBe(canonicalComposerControlStateContentType);
+        expect(protocol.ComposerControlStateContentTypeV1Schema)
+            .toBe(canonicalComposerControlStateContentTypeSchema);
+    });
+
+    it('exports only the direct-cut composer-reference mention helpers', () => {
+        expect(protocol.buildComposerReferenceMentionPayloadV1)
+            .toBe(canonicalBuildComposerReferenceMentionPayloadV1);
+        expect(protocol.readComposerReferenceMentionV1)
+            .toBe(canonicalReadComposerReferenceMentionV1);
+        expect(protocol).not.toHaveProperty('buildComposerReferenceProviderMentionPayloadV1');
+        expect(protocol).not.toHaveProperty('readComposerReferenceProviderMentionV1');
+    });
+
+    it('keeps the legacy Voice provider-id parser out of the public root', () => {
+        expect(protocol).not.toHaveProperty('VoiceProviderIdSchema');
+    });
+
+    it('exports the canonical Voice speech endpoint-policy owner', () => {
+        expect(protocol.resolveVoiceSpeechEndpointPolicy({
+            settings: {
+                baseUrl: 'http://localhost:11434/v1',
+                insecureLocalOriginConsent: 'http://localhost:11434',
+                insecureLocalConsentMachineId: 'machine-a',
+            },
+            machineId: 'machine-a',
+        })).toEqual({
+            normalizedBaseUrl: 'http://localhost:11434/v1',
+            origin: 'http://localhost:11434',
+            insecureHttpConfirmed: true,
+        });
+    });
+
     it('does not expose the retired Extension author/runtime vocabulary', () => {
         const retired = Object.keys(protocol).filter((name) => (
             name.startsWith('Extension')
@@ -37,7 +226,73 @@ describe('protocol package root exports', () => {
             .toEqual({ v: 1, kind: 'send_now' });
     });
 
+    it('exports the canonical Automation template envelope contract', () => {
+        expect(protocol.AutomationTemplateEnvelopeSchema.parse({
+            kind: protocol.AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
+            payload: { directory: '/repo' },
+        })).toEqual({
+            kind: 'happier_automation_template_plain_v1',
+            payload: { directory: '/repo' },
+        });
+    });
+
+    it('exports canonical Automation event admission and occurrence contracts', () => {
+        expect(typeof protocol.deriveAutomationOccurrenceKeyV1).toBe('function');
+        expect(typeof protocol.AutomationEventAdmitInputV1Schema.safeParse).toBe('function');
+        expect(typeof protocol.AutomationEventSourcesListInputV1Schema.safeParse).toBe('function');
+        expect(typeof protocol.AutomationEventSourceStatusReportV1Schema.safeParse).toBe('function');
+        expect(typeof protocol.PluginEventAutomationDeclarationV1Schema.safeParse).toBe('function');
+    });
+
+    it('exports the canonical Action confirmation-presentation owner', () => {
+        const requiresConfirmationPresentation = (
+            protocol as {
+                pluginActionRequiresConfirmationPresentation?: (
+                    surfaces: readonly ('cli' | 'mcp' | 'plugin' | 'ui')[],
+                    dangerLevel: 'safe' | 'writesLocal' | 'writesRemote' | 'externalSideEffect' | 'destructive',
+                ) => boolean;
+            }
+        ).pluginActionRequiresConfirmationPresentation;
+
+        expect(requiresConfirmationPresentation).toBeTypeOf('function');
+        expect(requiresConfirmationPresentation?.(['plugin'], 'writesRemote')).toBe(false);
+        expect(requiresConfirmationPresentation?.(['cli'], 'writesRemote')).toBe(true);
+    });
+
+    it('initializes the portable materialization-ref owner through the package root', () => {
+        expect(protocol.PluginMachineMaterializationRefV1Schema.parse({
+            machineId: 'machine-a',
+            materializationId: 'install-epoch-a',
+            pluginId: 'com.acme.fixture',
+        })).toEqual({
+            machineId: 'machine-a',
+            materializationId: 'install-epoch-a',
+            pluginId: 'com.acme.fixture',
+        });
+    });
+
     it('exports the strict Session metadata privacy contracts', () => {
+        expectTypeOf<protocol.SessionOwnerMetadataEnvelopeV1>().not.toBeNever();
+        expectTypeOf<
+            Extract<
+                protocol.SessionOwnerMetadataEnvelopeV1,
+                { t: 'plain' }
+            >['v']
+        >().toEqualTypeOf<protocol.SessionOwnerMetadataV1>();
+        expect(typeof protocol.SessionOwnerMetadataEnvelopeV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.createPlainSessionOwnerMetadataEnvelopeV1)
+            .toBe('function');
+        expect(typeof protocol.encodeSessionOwnerMetadataEnvelopeV1)
+            .toBe('function');
+        expect(typeof protocol.parseSessionOwnerMetadataEnvelopeV1)
+            .toBe('function');
+        expect(typeof protocol.sealSessionOwnerMetadataEnvelopeV1)
+            .toBe('function');
+        expect(typeof protocol.openSessionOwnerMetadataEnvelopeV1)
+            .toBe('function');
+        expect(typeof protocol.validateSessionOwnerMetadataEnvelopeForAccountModeV1)
+            .toBe('function');
         expect(typeof protocol.SessionMetadataEnvelopeTupleV1Schema.safeParse)
             .toBe('function');
         expect(typeof protocol.SessionMetadataTuplePatchV1Schema.safeParse)
@@ -76,6 +331,18 @@ describe('protocol package root exports', () => {
             .toBe('function');
         expect(typeof protocol.projectSessionOwnerCompatibilityViewV1)
             .toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateTransitionPrepareRequestSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateCollectionStageBatchRequestSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateTransitionActivateRequestSchema
+                .safeParse,
+        ).toBe('function');
         expect(protocol).not.toHaveProperty(
             'AccountEncryptionMigratePrepareBatchRequestSchema',
         );
@@ -402,9 +669,8 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).AcpBackendDefinitionV1Schema?.safeParse).toBe('function');
     });
 
-    it('exports plugin UI executable artifact integrity helpers', () => {
-        expect(typeof (protocol as any).PluginUiExecutableArtifactManifestV1Schema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).hasPluginUiExecutableArtifactIntegrityV1).toBe('function');
+    it('exports the generated plugin UI artifact manifest owner', () => {
+        expect(typeof (protocol as any).PluginUiArtifactsManifestV1Schema?.safeParse).toBe('function');
     });
 
     it('exports Live Activity remote update schemas', () => {

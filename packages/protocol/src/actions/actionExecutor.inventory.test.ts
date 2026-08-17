@@ -17,7 +17,6 @@ function createDeps(): ActionExecutorDeps {
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
@@ -47,6 +46,16 @@ function createDeps(): ActionExecutorDeps {
     teleportVoiceAgentToSessionRoot: vi.fn(async () => ({ ok: true })),
   };
 }
+
+const canonicalSessionSpawnInput = {
+  creationKey: 'inventory:session-create-1',
+  executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+  directory: '/repo/project',
+  agentTarget: {
+    kind: 'agent',
+    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+  },
+} as const;
 
 describe('createActionExecutor (inventory/discovery)', () => {
   it('rejects agent subagents.delegate.start default workspace_write above a default caller', async () => {
@@ -293,100 +302,6 @@ describe('createActionExecutor (inventory/discovery)', () => {
     );
   });
 
-  it('forwards path and host to session.spawn_new', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-
-    const res = await executor.execute('session.spawn_new', {
-      path: '/repo/project',
-      host: 'leeroy-mbp',
-      tag: 't',
-    });
-    expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnNew).toHaveBeenCalledWith({
-      path: '/repo/project',
-      host: 'leeroy-mbp',
-      tag: 't',
-    });
-  });
-
-  it('forwards agentId + modelId to session.spawn_new', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-
-    const res = await executor.execute('session.spawn_new', { agentId: 'codex', modelId: 'gpt-5' });
-    expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnNew).toHaveBeenCalledWith({ agentId: 'codex', modelId: 'gpt-5' });
-  });
-
-  it('forwards rich dev spawn fields to session.spawn_new', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-    const runtimeDescriptorV1 = {
-      v: 1,
-      agentId: 'codex',
-      agent: {
-        agentExtra: {
-          owner: 'happier',
-          schemaId: 'codex-runtime',
-          v: 1,
-        },
-        backendMode: 'appServer',
-      },
-    } as const;
-    const mcpSelection = {
-      forceIncludeServerIds: ['server-a'],
-      forceExcludeServerIds: ['server-b'],
-    } as const;
-    const sessionConfigOptionOverrides = {
-      v: 1,
-      updatedAt: 1710000000000,
-      overrides: {
-        reasoning_effort: { updatedAt: 1710000000000, value: 'xhigh' },
-      },
-    } as const;
-    const configOptions = { ultracode: true } as const;
-
-    const res = await executor.execute('session.spawn_new', {
-      directory: '/repo/project',
-      backendTargetKey: 'backend:codex',
-      initialPrompt: 'Inspect this workspace.',
-      permissionMode: 'safe-yolo',
-      agentModeId: 'plan',
-      sessionConfigOptionOverrides,
-      configOptions,
-      profileId: 'codex-profile',
-      environmentVariables: { FEATURE_FLAG: 'enabled' },
-      mcpSelection,
-      transcriptStorage: 'persisted',
-      runtimeDescriptorV1,
-      terminal: { mode: 'tmux' },
-      windowsTerminalWindowName: 'Happier Test',
-    });
-
-    expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
-      path: '/repo/project',
-      backendTargetKey: 'backend:codex',
-      initialMessage: 'Inspect this workspace.',
-      permissionMode: 'safe-yolo',
-      agentModeId: 'plan',
-      sessionConfigOptionOverrides,
-      configOptions,
-      profileId: 'codex-profile',
-      environmentVariables: { FEATURE_FLAG: 'enabled' },
-      mcpSelection: {
-        v: 1,
-        managedServersEnabled: true,
-        ...mcpSelection,
-      },
-      transcriptStorage: 'persisted',
-      runtimeDescriptorV1,
-      terminal: { mode: 'tmux' },
-      windowsTerminalWindowName: 'Happier Test',
-    }));
-  });
-
   it('preserves protocol-owned spawn error codes thrown by action dependencies', async () => {
     const deps = createDeps();
     deps.sessionSpawnNew = vi.fn(async () => {
@@ -396,10 +311,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', {
-      backendTargetKey: 'agent:ohMyPi',
-      path: '/repo/project',
-    });
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
 
     expect(res).toEqual({
       ok: false,
@@ -418,10 +330,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', {
-      backendTargetKey: 'agent:ohMyPi',
-      path: '/repo/project',
-    });
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
 
     expect(res).toEqual({
       ok: false,
@@ -439,10 +348,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }));
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', {
-      backendTargetKey: 'agent:ohMyPi',
-      path: '/repo/project',
-    });
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
 
     expect(res).toEqual({
       ok: false,
@@ -461,33 +367,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }));
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', {
-      host: 'other-host',
-      initialMessage: 'Hello',
-    });
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
 
     expect(res).toEqual({
       ok: false,
       errorCode: 'host_not_found',
       error: 'host_not_found',
     });
-  });
-
-  it('requires an explicit runtime carrier when spawning a canonical plugin backend session', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-
-    const res = await executor.execute('session.spawn_new', {
-      backendTargetKey: 'backend:plugin-review-bot',
-      path: '/repo/project',
-    });
-
-    expect(res).toEqual({
-      ok: false,
-      errorCode: 'invalid_parameters',
-      error: 'invalid_parameters',
-    });
-    expect(deps.sessionSpawnNew).not.toHaveBeenCalled();
   });
 
   it('routes paths.list_recent to deps.pathsListRecent', async () => {
@@ -526,7 +412,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: 's1', includeDisabled: true });
   });
 
-  it('forwards parsed request fields to execution.run.list deps', async () => {
+  it('keeps execution-run list scope out of the transport request', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
@@ -540,12 +426,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.executionRunList).toHaveBeenCalledWith(
       'session_1',
       expect.objectContaining({
-        sessionId: 'session_1',
         status: 'running',
         limit: 5,
       }),
       undefined,
     );
+    expect((deps.executionRunList as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).not.toHaveProperty('sessionId');
   });
 
   it('routes voice_agent.start to deps.executionRunStart', async () => {
@@ -761,24 +647,6 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
-  it('routes configured ACP backendTargetKey through session.spawn_new without synthesizing customAcp', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-
-    const res = await executor.execute('session.spawn_new', {
-      backendTargetKey: 'acpBackend:review-bot',
-      path: '/repo/project',
-      tag: 'review',
-    });
-
-    expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnNew).toHaveBeenCalledWith({
-      backendTargetKey: 'acpBackend:review-bot',
-      path: '/repo/project',
-      tag: 'review',
-    });
-  });
-
   it('routes canonical plugin backendTargetKey plus runtime carrier through agents.models.list', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -825,23 +693,6 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
-  it('routes session.spawn_picker to deps.sessionSpawnPicker', async () => {
-    const deps = createDeps();
-    const executor = createActionExecutor(deps);
-
-    const res = await executor.execute('session.spawn_picker', {
-      tag: 'x',
-      initialMessage: 'hello',
-      backendTargetKey: 'acpBackend:review-bot',
-    });
-    expect(res.ok).toBe(true);
-    expect(deps.sessionSpawnPicker).toHaveBeenCalledWith({
-      tag: 'x',
-      initialMessage: 'hello',
-      backendTargetKey: 'acpBackend:review-bot',
-    });
-  });
-
   it('opens a session by exact title when sessionId is omitted', async () => {
     const deps = createDeps();
     deps.sessionList = vi
@@ -867,15 +718,21 @@ describe('createActionExecutor (inventory/discovery)', () => {
     deps.resolveServerIdForSessionId = vi.fn(() => 'server-b');
     const executor = createActionExecutor(deps);
 
+    const signal = new AbortController().signal;
     const res = await executor.execute(
       'session.open',
       { sessionId: 's2' },
-      { serverId: 'server-a' },
+      { serverId: 'server-a', signal, actionRequestId: 'plugin-call-1' },
     );
 
     expect(res.ok).toBe(true);
     expect(deps.resolveServerIdForSessionId).not.toHaveBeenCalled();
-    expect(deps.sessionOpen).toHaveBeenCalledWith({ sessionId: 's2', serverId: 'server-a' });
+    expect(deps.sessionOpen).toHaveBeenCalledWith({
+      sessionId: 's2',
+      serverId: 'server-a',
+      signal,
+      actionRequestId: 'plugin-call-1',
+    });
   });
 
   it('does not open a session when the requested title is ambiguous', async () => {
@@ -1054,13 +911,24 @@ describe('createActionExecutor (inventory/discovery)', () => {
   });
 
   it('resolves spawn dynamic option sources through the same deps as their list actions', async () => {
-    const deps = createDeps() as ActionExecutorDeps & {
+    const resolveSessionSpawnAgentInventorySelection = vi.fn(() => ({
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+    }));
+    const deps = {
+      ...createDeps(),
+      resolveSessionSpawnAgentInventorySelection,
+    } as ActionExecutorDeps & {
+      resolveSessionSpawnAgentInventorySelection: ReturnType<typeof vi.fn>;
       agentsConfigOptionsList: ReturnType<typeof vi.fn>;
       agentsSessionModesList: ReturnType<typeof vi.fn>;
       spawnProfilesList: ReturnType<typeof vi.fn>;
       spawnConnectedServicesList: ReturnType<typeof vi.fn>;
       spawnMcpServersPreview: ReturnType<typeof vi.fn>;
     };
+    deps.agentsBackendsList.mockResolvedValueOnce({
+      items: [{ id: 'claude', label: 'Claude' }],
+    });
     deps.agentsModelsList.mockResolvedValueOnce({
       items: [{ id: 'claude-opus-4-8', label: 'Claude Opus' }],
     });
@@ -1090,13 +958,33 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     const executor = createActionExecutor(deps);
 
+    const sessionSpawnOptionContext = {
+      executionTarget: { serverId: 'local', machineId: 'm1' },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      },
+      modelSelection: {
+        v: 1,
+        updatedAt: 1,
+        ref: { agentTargetKey: 'backend:claude', modelId: 'claude-opus-4-8' },
+      },
+      mcpSelection: {
+        managedServersEnabled: true,
+        forceIncludeServerIds: [],
+        forceExcludeServerIds: [],
+      },
+    } as const;
+
     const cases = [
-      ['agents.models.available', 'modelId', [{ value: 'claude-opus-4-8', label: 'Claude Opus' }]],
+      ['agents.backends.enabled', 'agentTarget', [{ value: 'agent:claude', label: 'Claude' }]],
+      ['agents.models.available', 'modelSelection', [{ value: 'claude-opus-4-8', label: 'Claude Opus' }]],
       ['agents.session_modes.available', 'agentModeId', [{ value: 'plan', label: 'Plan' }]],
-      ['agents.config_options.available', 'sessionConfigOptionOverrides', [{ value: 'reasoning_effort', label: 'Thinking' }]],
-      ['sessions.spawn.paths.recent', 'path', [{ value: '/repo', label: 'Repo' }]],
-      ['sessions.spawn.machines.available', 'machineId', [{ value: 'm1', label: 'Laptop' }]],
-      ['sessions.spawn.servers.available', 'serverId', [{ value: 'local', label: 'Local' }]],
+      ['agents.config_options.available', 'configuration', [{ value: 'reasoning_effort', label: 'Thinking' }]],
+      ['sessions.spawn.paths.recent', 'directory', [{ value: '/repo', label: 'Repo' }]],
+      ['sessions.spawn.machines.available', 'executionTarget.machineId', [{ value: 'm1', label: 'Laptop' }]],
+      ['sessions.spawn.servers.available', 'executionTarget.serverId', [{ value: 'local', label: 'Local' }]],
       ['sessions.spawn.profiles.available', 'profileId', [{ value: 'profile-default', label: 'Default profile' }]],
       ['sessions.spawn.connected_services.available', 'connectedServices', [{ value: 'openai:work', label: 'OpenAI work' }]],
       ['sessions.spawn.mcp_servers.preview', 'mcpSelection', [{ value: 'managed:repo', label: 'Repo MCP' }]],
@@ -1107,10 +995,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         actionId: 'session.spawn_new',
         fieldPath,
         optionsSourceId,
-        agentId: 'claude',
-        backendTargetKey: 'backend:claude',
-        machineId: 'm1',
-        directory: '/repo',
+        ...sessionSpawnOptionContext,
         limit: 10,
       });
       expect(res).toEqual({
@@ -1123,6 +1008,75 @@ describe('createActionExecutor (inventory/discovery)', () => {
         },
       });
     }
+
+    expect(deps.resolveSessionSpawnAgentInventorySelection).toHaveBeenCalledWith({
+      agentTarget: sessionSpawnOptionContext.agentTarget,
+    });
+    expect(deps.agentsBackendsList).toHaveBeenCalledWith({
+      includeDisabled: false,
+      limit: 10,
+      machineId: 'm1',
+    });
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+      machineId: 'm1',
+      limit: 10,
+    });
+    expect(deps.agentsConfigOptionsList).toHaveBeenCalledWith({
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+      machineId: 'm1',
+      modelId: 'claude-opus-4-8',
+      limit: 10,
+    });
+    expect(deps.pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 10 });
+    expect(deps.spawnMcpServersPreview).toHaveBeenCalledWith({
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+      machineId: 'm1',
+      directory: '/repo',
+      selection: sessionSpawnOptionContext.mcpSelection,
+      limit: 10,
+    });
+  });
+
+  it('fails closed when a V2 session spawn target cannot be resolved, even if retired flat selection fields are supplied', async () => {
+    const resolveSessionSpawnAgentInventorySelection = vi.fn(() => null);
+    const deps = {
+      ...createDeps(),
+      resolveSessionSpawnAgentInventorySelection,
+    } as ActionExecutorDeps & {
+      resolveSessionSpawnAgentInventorySelection: ReturnType<typeof vi.fn>;
+    };
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new',
+      fieldPath: 'modelSelection',
+      executionTarget: { serverId: 'local', machineId: 'm1' },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.unavailable', localId: 'unavailable' },
+      },
+      // These retired fields must not become an authority bypass for V2 inputs.
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(deps.resolveSessionSpawnAgentInventorySelection).toHaveBeenCalledWith({
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.unavailable', localId: 'unavailable' },
+      },
+    });
+    expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
   it('filters resolved dynamic action options by query and limit', async () => {

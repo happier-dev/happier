@@ -1,11 +1,22 @@
 import { z } from 'zod';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
+import { AgentNativeContinuityProofV1Schema } from '../agents/nativeResumeIdentityV1.js';
 import {
   AgentSessionProviderBindingV1Schema,
   type AgentSessionProviderBindingV1,
-} from '../providers/sessions/bindingMetadataV1.js';
+} from '../providers/sessions/agentSessionProviderBindingV1.js';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
+import {
+  AgentPermissionIntentV1Schema,
+  type AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1,
+} from './permissionIntentV1.js';
 import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
+import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
+import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+
+export { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 
 const HOST_ID_MAX = LIMITS.hostIndexedIdMaxCodeUnits;
 const PROVIDER_ID_MAX = LIMITS.providerIdMaxCodeUnits;
@@ -41,98 +52,7 @@ const ProviderIdSchema = exactString(PROVIDER_ID_MAX);
 const InputIdSchema = opaqueNonBlankString(HOST_ID_MAX);
 const SafeIntegerSchema = z.number().int().nonnegative().max(LIMITS.safeIntegerMax);
 
-type StrictJsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly StrictJsonValue[]
-  | { readonly [key: string]: StrictJsonValue };
-
-function normalizeStrictJsonValue(input: unknown): StrictJsonValue {
-  const seen = new WeakSet<object>();
-  let nodes = 0;
-  const textEncoder = new TextEncoder();
-
-  const visit = (value: unknown, depth: number): StrictJsonValue => {
-    nodes += 1;
-    if (nodes > LIMITS.json.maxNodes) throw new Error('JSON node limit exceeded');
-    if (depth > LIMITS.json.maxDepth) throw new Error('JSON depth limit exceeded');
-    if (value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'number') {
-      if (!Number.isFinite(value)) throw new Error('JSON numbers must be finite');
-      return value;
-    }
-    if (typeof value === 'string') {
-      if (textEncoder.encode(value).byteLength > LIMITS.json.maxStringUtf8Bytes) {
-        throw new Error('JSON string limit exceeded');
-      }
-      return value;
-    }
-    if (typeof value !== 'object') throw new Error('Value is not strict JSON');
-    if (seen.has(value)) throw new Error('Cyclic JSON is not supported');
-    seen.add(value);
-    try {
-      if (Array.isArray(value)) {
-        const ownKeys = Reflect.ownKeys(value);
-        for (const key of ownKeys) {
-          if (typeof key !== 'string') throw new Error('JSON symbols are not supported');
-          if (key === 'length') continue;
-          if (!/^(0|[1-9]\d*)$/.test(key)) throw new Error('JSON arrays cannot have named properties');
-        }
-        const output: StrictJsonValue[] = [];
-        for (let index = 0; index < value.length; index += 1) {
-          if (!Object.hasOwn(value, index)) throw new Error('Sparse JSON arrays are not supported');
-          const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-          if (!descriptor || !('value' in descriptor)) throw new Error('JSON accessors are not supported');
-          output.push(visit(descriptor.value, depth + 1));
-        }
-        return output;
-      }
-
-      const prototype = Object.getPrototypeOf(value);
-      if (prototype !== Object.prototype && prototype !== null) {
-        throw new Error('JSON objects must use a plain or null prototype');
-      }
-      const output = Object.create(null) as Record<string, StrictJsonValue>;
-      for (const key of Reflect.ownKeys(value)) {
-        if (typeof key !== 'string') throw new Error('JSON symbols are not supported');
-        if (textEncoder.encode(key).byteLength > LIMITS.json.maxKeyUtf8Bytes) {
-          throw new Error('JSON key limit exceeded');
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor || !('value' in descriptor)) throw new Error('JSON accessors are not supported');
-        Object.defineProperty(output, key, {
-          value: visit(descriptor.value, depth + 1),
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      return output;
-    } finally {
-      seen.delete(value);
-    }
-  };
-
-  const normalized = visit(input, 0);
-  if (jsonByteLength(normalized) > LIMITS.p0MeasuredCandidates.jsonValueMaxJsonBytes) {
-    throw new Error('JSON aggregate byte limit exceeded');
-  }
-  return normalized;
-}
-
-export const AgentRuntimeJsonValueV1Schema = z.unknown().transform((value, context): StrictJsonValue => {
-  try {
-    return normalizeStrictJsonValue(value);
-  } catch (error) {
-    context.addIssue({
-      code: 'custom',
-      message: error instanceof Error ? error.message : 'Invalid strict JSON value',
-    });
-    return z.NEVER;
-  }
-});
+export const AgentRuntimeJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = StrictJsonValueSchema;
 export const AgentRuntimeJsonValueSchema = AgentRuntimeJsonValueV1Schema;
 
 const JsonValueSchema = AgentRuntimeJsonValueV1Schema;
@@ -144,8 +64,11 @@ export const AgentSessionProviderCheckpointV1Schema = AgentRuntimeJsonValueV1Sch
   ),
   'Provider checkpoint exceeds the Agent session byte bound',
 );
+export type AgentSessionProviderCheckpointV1 = z.infer<
+  typeof AgentSessionProviderCheckpointV1Schema
+>;
 
-const TimestampedAgentValueV1Schema = <ValueSchema extends z.ZodType>(
+const TimestampedAgentValueV1Schema = <ValueSchema extends z.core.SomeType>(
   value: ValueSchema,
 ) => z.object({
   value,
@@ -178,21 +101,27 @@ const AgentConfigurationScalarV1Schema = z.union([
   z.boolean(),
   z.null(),
 ]);
-const AgentPermissionIntentV1Schema = z.enum([
-  'default',
-  'read-only',
-  'safe-yolo',
-  'yolo',
-  'plan',
-]);
+export {
+  AGENT_PERMISSION_INTENTS_V1,
+  AgentPermissionIntentV1Schema,
+  parseAgentPermissionIntentV1Alias,
+} from './permissionIntentV1.js';
+export const AgentSessionProviderResumeV1Schema = z.object({
+  kind: z.literal('provider_session.v1'),
+  providerSessionId: ProviderIdSchema,
+}).strict();
+export type AgentSessionProviderResumeV1 = z.infer<typeof AgentSessionProviderResumeV1Schema>;
+
 const AgentSessionConfigurationSnapshotCoreV1Schema = z.object({
   mode: TimestampedAgentValueV1Schema(exactString(MODEL_ID_MAX).nullable()),
   model: TimestampedAgentValueV1Schema(exactString(MODEL_ID_MAX).nullable()),
-  permissionIntent: TimestampedAgentValueV1Schema(AgentPermissionIntentV1Schema.nullable()),
+  permissionIntent: TimestampedAgentValueV1Schema(asProtocolZod(AgentPermissionIntentV1Schema).nullable()),
   options: z.record(
     exactString(HOST_ID_MAX),
     TimestampedAgentValueV1Schema(AgentConfigurationScalarV1Schema),
   ),
+  /** Stable provider-owned continuation identity; never an opaque credential payload. */
+  providerSessionResume: AgentSessionProviderResumeV1Schema.optional(),
 }).strict();
 
 export const AgentSessionConfigurationSnapshotV1Schema = AgentRuntimeJsonValueV1Schema.pipe(
@@ -368,7 +297,18 @@ const InputCustodySchemas = [
 ] as const;
 
 const LifecycleSchemas = [
-  EventBaseSchema.extend({ kind: z.literal('provider-session-id'), providerSessionId: ProviderIdSchema }).strict(),
+  EventBaseSchema.extend({
+    kind: z.literal('provider-session-id'),
+    providerSessionId: ProviderIdSchema,
+    /**
+     * Matched continuity proof for THIS id, when the runtime produced one in the
+     * same generation. It rides the same event as the id because `REQ-STATE-01`
+     * requires the pair to be atomic: a proof published on its own could be
+     * matched to a later, different id and would then authorize resuming the
+     * wrong native conversation. Omitted means "no proof", never "unchanged".
+     */
+    continuityProof: AgentNativeContinuityProofV1Schema.optional(),
+  }).strict(),
   z.object({
     ...TurnEventBaseShape,
     kind: z.literal('turn-start'),
@@ -562,6 +502,8 @@ export const AgentSessionSendRequestV1Schema = z.object({
   inputIds: InputIdsSchema,
   input: AgentSessionInputV1Schema,
   delivery: AgentSessionDeliveryV1Schema,
+  /** Immutable authority for the exact admitted input; absent for legacy/host sends. */
+  causalPermissionAuthority: SessionInputCausalPermissionAuthorityV1Schema.optional(),
 }).strict().superRefine((value, context) => {
   if (jsonByteLength(value) > SEND_JSON_BYTES_CANDIDATE_MAX) {
     context.addIssue({ code: 'custom', message: 'Agent runtime send request exceeds the CORE-A candidate byte bound' });
@@ -626,36 +568,13 @@ export const AgentSessionConversationRollbackReconciliationResultV1Schema = z.un
 
 export type AgentSessionRuntimeEvent = z.infer<typeof AgentSessionRuntimeEventV1Schema>;
 export type AgentSessionRuntimeEventV1 = AgentSessionRuntimeEvent;
+AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 satisfies readonly AgentSessionRuntimeEventV1['kind'][];
 export type AgentLaunchEnvironmentV1 = z.infer<typeof AgentLaunchEnvironmentV1Schema>;
 export type AgentConfigurationScalarV1 = z.infer<typeof AgentConfigurationScalarV1Schema>;
-export type AgentPermissionIntentV1 = z.infer<typeof AgentPermissionIntentV1Schema>;
+export type AgentPermissionIntentV1 = CanonicalAgentPermissionIntentV1;
 export type AgentSessionConfigurationSnapshotV1 = z.infer<
   typeof AgentSessionConfigurationSnapshotV1Schema
 >;
-export const AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 = Object.freeze([
-  'input-accepted',
-  'input-rejected',
-  'input-custody-unknown',
-  'input-delivery-failed',
-  'provider-session-id',
-  'turn-start',
-  'turn-progress',
-  'turn-agent-id-observed',
-  'turn-complete',
-  'turn-failed',
-  'turn-cancelled',
-  'runtime-ended',
-  'runtime-activity-snapshot',
-  'message-delta',
-  'tool-call',
-  'tool-progress',
-  'tool-result',
-  'transcript-message-committed',
-  'file-edit',
-  'usage-observed',
-  'turn-rollback-boundary',
-  'context-compaction',
-] as const satisfies readonly AgentSessionRuntimeEventV1['kind'][]);
 export type AgentSessionSendRequest = z.infer<typeof AgentSessionSendRequestV1Schema>;
 export type AgentSessionSendRequestV1 = AgentSessionSendRequest;
 export type AgentSessionCompactRequest = z.infer<typeof AgentSessionCompactRequestV1Schema>;

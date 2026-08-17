@@ -33,6 +33,7 @@ export const ACTION_SURFACE_POLICIES = [
   { surface: 'cli', settingsConfigurable: true, classification: 'settings_configurable' },
   { surface: 'rpc', settingsConfigurable: false, classification: 'internal' },
   { surface: 'sdk', settingsConfigurable: false, classification: 'internal' },
+  { surface: 'plugin', settingsConfigurable: false, classification: 'internal' },
 ] as const satisfies readonly ActionSurfacePolicy[];
 
 export type ActionSurfaceAvailabilityReason =

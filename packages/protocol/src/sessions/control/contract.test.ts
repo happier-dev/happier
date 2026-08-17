@@ -4,9 +4,36 @@ import * as protocol from '../../index.js';
 import {
   SessionLookupByTagsRequestV2Schema,
   SessionLookupByTagsResponseV2Schema,
+  V2SessionResourceAccessResponseSchema,
 } from './contract.js';
 
 describe('sessionControl contract exports', () => {
+  it('validates the strict exact Session Resource access proof', () => {
+    expect(protocol.V2SessionResourceAccessResponseSchema).toBe(V2SessionResourceAccessResponseSchema);
+
+    expect(V2SessionResourceAccessResponseSchema.safeParse({
+      accountId: 'account-a',
+      throughCursor: 12,
+      status: 'available',
+    }).success).toBe(true);
+    expect(V2SessionResourceAccessResponseSchema.safeParse({
+      accountId: 'account-a',
+      throughCursor: 12,
+      status: 'unavailable',
+    }).success).toBe(true);
+    expect(V2SessionResourceAccessResponseSchema.safeParse({
+      accountId: 'account-a',
+      throughCursor: -1,
+      status: 'available',
+    }).success).toBe(false);
+    expect(V2SessionResourceAccessResponseSchema.safeParse({
+      accountId: 'account-a',
+      throughCursor: 12,
+      status: 'available',
+      sessionId: 'not-a-wire-field',
+    }).success).toBe(false);
+  });
+
   it('validates the strict bounded session lookup-by-tags wire contract', () => {
     expect(protocol.SessionLookupByTagsRequestV2Schema).toBe(SessionLookupByTagsRequestV2Schema);
     expect(protocol.SessionLookupByTagsResponseV2Schema).toBe(SessionLookupByTagsResponseV2Schema);
@@ -63,18 +90,24 @@ describe('sessionControl contract exports', () => {
       acceptedThroughServerSeq: null,
       materializedThroughSourceAt: 1_700_000_000_000,
       publishedThroughServerSeq: 12,
+      transcriptShareable: true,
     });
 
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       currentStorageState: 'snapshot_complete',
       publishedThroughServerSeq: 12,
+      transcriptShareable: true,
     });
     expect(result.data).not.toHaveProperty('sourceWatermark');
 
     expect((protocol as any).V2SessionRecordSchema.safeParse({
       ...result.data,
       currentStorageState: 'snapshot_completish',
+    }).success).toBe(false);
+    expect((protocol as any).V2SessionRecordSchema.safeParse({
+      ...result.data,
+      transcriptShareable: 'yes',
     }).success).toBe(false);
   });
 
@@ -89,13 +122,24 @@ describe('sessionControl contract exports', () => {
       metadata: 'shared-envelope',
       metadataVersion: 3,
       metadataLayoutVersion: 1,
-      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      ownerMetadata: {
+        t: 'encrypted',
+        c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      },
       agentState: 'full-owner-state',
       agentStateVersion: 4,
       dataEncryptionKey: null,
+      share: null,
     };
 
     expect(protocol.V2SessionRecordSchema.safeParse(base).success).toBe(true);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      ownerMetadata: {
+        t: 'plain',
+        v: { v: 1 },
+      },
+    }).success).toBe(true);
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...base,
       ownerMetadata: null,
@@ -103,14 +147,19 @@ describe('sessionControl contract exports', () => {
     const {
       ownerMetadata: _ownerMetadata,
       agentState: _agentState,
+      share: _share,
       ...sharedOnly
     } = base;
-    expect(protocol.V2SessionRecordSchema.safeParse(sharedOnly).success)
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...sharedOnly,
+      share: { accessLevel: 'view', canApprovePermissions: false },
+    }).success)
       .toBe(false);
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...sharedOnly,
       agentState: null,
       agentStateVersion: 4,
+      share: { accessLevel: 'view', canApprovePermissions: false },
     }).success).toBe(true);
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...base,
@@ -124,6 +173,75 @@ describe('sessionControl contract exports', () => {
       ...base,
       ownerMetadata: 42,
     }).success).toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      ownerMetadata:
+        'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+    }).success).toBe(false);
+  });
+
+  it('binds layout-one recipient metadata to the session share role', () => {
+    const shared = {
+      id: 'shared-session',
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      metadata: 'shared-envelope',
+      metadataVersion: 3,
+      metadataLayoutVersion: 1,
+      agentState: null,
+      agentStateVersion: 4,
+      dataEncryptionKey: null,
+      share: {
+        accessLevel: 'edit',
+        canApprovePermissions: true,
+      },
+    } as const;
+    const ownerMetadata = {
+      t: 'plain',
+      v: { v: 1 },
+    } as const;
+
+    expect(protocol.V2SessionRecordSchema.safeParse(shared).success).toBe(true);
+    const {
+      share: _share,
+      ...ambiguousRecipient
+    } = shared;
+    expect(protocol.V2SessionRecordSchema.safeParse(ambiguousRecipient).success)
+      .toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...shared,
+      ownerMetadata,
+    }).success).toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...shared,
+      ownerMetadata,
+      agentState: 'owner-agent-state',
+    }).success).toBe(false);
+
+    const owner = {
+      ...shared,
+      share: null,
+      ownerMetadata,
+      agentState: 'owner-agent-state',
+    } as const;
+    expect(protocol.V2SessionRecordSchema.safeParse(owner).success).toBe(true);
+    const {
+      ownerMetadata: _ownerMetadata,
+      ...ownerWithSharedProjection
+    } = owner;
+    expect(protocol.V2SessionRecordSchema.safeParse(ownerWithSharedProjection).success)
+      .toBe(false);
+
+    const layoutZeroSharedCompatibility = {
+      ...shared,
+      metadataLayoutVersion: 0,
+      agentState: 'released-layout-zero-agent-state',
+    } as const;
+    expect(protocol.V2SessionRecordSchema.safeParse(layoutZeroSharedCompatibility).success)
+      .toBe(true);
   });
 
   it('keeps layout-zero Agent state required for released compatibility records', () => {
@@ -205,6 +323,8 @@ describe('sessionControl contract exports', () => {
   });
 
   it('validates a session_list envelope shape', () => {
+    // Immutable cli-v0.2.0/cli-v0.1.0 preview and the current remote-dev
+    // predecessor all emit this non-null E2EE shape.
     const schema = (protocol as any).SessionListEnvelopeSchema;
     const parsed = schema.safeParse({
       v: 1,
@@ -227,6 +347,95 @@ describe('sessionControl contract exports', () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it('accepts current and legacy session_stop result shapes while rejecting mismatched outcomes', () => {
+    const schema = (protocol as any).SessionStopEnvelopeSchema;
+    const envelope = (data: unknown) => ({
+      v: 1,
+      ok: true,
+      kind: 'session_stop',
+      data,
+    });
+
+    expect(schema.safeParse(envelope({ sessionId: 'sess_123', stopped: true })).success).toBe(true);
+    expect(schema.safeParse(envelope({ sessionId: 'sess_123', stopped: false })).success).toBe(true);
+    expect(schema.safeParse(envelope({
+      sessionId: 'sess_123',
+      stopped: false,
+      stopOutcome: {
+        status: 'stopped_projection_unconfirmed',
+        reason: 'relay_inactive_not_observed',
+      },
+    })).success).toBe(true);
+    for (const reason of ['target_daemon_unavailable', 'target_session_not_found']) {
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason },
+      })).success).toBe(true);
+    }
+
+    for (const reason of [
+      'terminal_control_serviceability_retirement_failed',
+      'terminal_attachment_descriptor_retirement_failed',
+    ]) {
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'stopped_cleanup_incomplete', reason },
+      })).success).toBe(true);
+      expect(schema.safeParse(envelope({
+        sessionId: 'sess_123',
+        stopped: false,
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason },
+      })).success).toBe(false);
+    }
+  });
+
+  it('represents unavailable Session encryption material explicitly without fabricating a key type', () => {
+    const plainSummary = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_plain',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryptionMode: 'plain',
+      encryption: null,
+    });
+    expect(plainSummary.success).toBe(true);
+
+    const retainedE2eeSummary = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_locked',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryptionMode: 'e2ee',
+      encryption: null,
+    });
+    expect(retainedE2eeSummary.success).toBe(true);
+
+    const missingEncryption = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_ambiguous',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryptionMode: 'plain',
+    });
+    expect(missingEncryption.success).toBe(false);
+
+    const fabricatedPlainEncryptionType = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_fabricated',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryptionMode: 'plain',
+      encryption: { type: 'plain' },
+    });
+    expect(fabricatedPlainEncryptionType.success).toBe(false);
   });
 
   it('validates primary turn status and sanitized runtime issue fields on session summaries', () => {
@@ -772,6 +981,7 @@ describe('sessionControl contract exports', () => {
               cli: true,
               rpc: false,
               sdk: false,
+              plugin: false,
             },
             inputHints: null,
           },
@@ -807,6 +1017,7 @@ describe('sessionControl contract exports', () => {
             cli: true,
             rpc: false,
             sdk: false,
+            plugin: false,
           },
           outputSchema: {},
           inputHints: null,

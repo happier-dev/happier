@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginAvailabilityDescriptorV2Schema, PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
+import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 const PluginRequestInterceptorOriginV1Schema = z.string().superRefine((value, ctx) => {
   try {
@@ -12,7 +13,7 @@ const PluginRequestInterceptorOriginV1Schema = z.string().superRefine((value, ct
 });
 
 export const PluginRequestInterceptorContributionV1Schema = z.object({
-  id: PluginContributionLocalIdSchema,
+  id: asProtocolZod(PluginContributionLocalIdSchema),
   origins: z.array(PluginRequestInterceptorOriginV1Schema).min(1),
   methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])).optional(),
   priority: z.number().int().optional(),

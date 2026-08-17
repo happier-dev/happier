@@ -8,6 +8,7 @@ import {
   ExternalSessionsSourceSchema,
 } from './sourceCatalog.js';
 import type { ExternalSessionTranscriptRawMessageV1 } from './daemonRpcV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 export type ExternalSessionFollowPolicy = 'attached_only' | 'background_follow';
 
@@ -16,6 +17,48 @@ export type ExternalSessionFollowPolicyV1 = Readonly<{
   policy: ExternalSessionFollowPolicy;
   updatedAtMs?: number;
 }>;
+
+const ExternalSessionFollowPolicyV1Schema = z.object({
+  v: z.literal(1),
+  policy: z.enum(['attached_only', 'background_follow']),
+  updatedAtMs: z.number().finite().nonnegative()
+    .transform((value) => Math.trunc(value)).optional(),
+}).strict();
+
+export const ExternalSessionFollowStatusValueV1Schema = z.enum([
+  'disabled',
+  'paused',
+  'reacquiring',
+  'active',
+  'error',
+]);
+
+export type ExternalSessionFollowStatusValueV1 = z.infer<
+  typeof ExternalSessionFollowStatusValueV1Schema
+>;
+
+export const ExternalSessionFollowStatusV1Schema = z.object({
+  v: z.literal(1),
+  status: ExternalSessionFollowStatusValueV1Schema,
+  reason: z.string().trim().min(1).max(256).optional(),
+  updatedAtMs: z.number().int().min(0),
+}).strict();
+
+export type ExternalSessionFollowStatusV1 = z.infer<
+  typeof ExternalSessionFollowStatusV1Schema
+>;
+
+export const ExternalSessionFollowIssueV1Schema = z.object({
+  v: z.literal(1),
+  code: z.string().trim().min(1).max(256),
+  message: z.string().trim().min(1).max(2_000).optional(),
+  retryable: z.boolean().optional(),
+  observedAtMs: z.number().int().min(0),
+}).strict();
+
+export type ExternalSessionFollowIssueV1 = z.infer<
+  typeof ExternalSessionFollowIssueV1Schema
+>;
 
 export type ExternalSessionAttentionV1 = Readonly<{
   observedProgressToken?: string;
@@ -31,7 +74,7 @@ export type ExternalSessionObservedProgress = Readonly<{
 
 export const LinkedExternalSessionQualifiedIdentityV1Schema = z.object({
   v: z.literal(1),
-  agent: PluginContributionIdentityV1Schema,
+  agent: asProtocolZod(PluginContributionIdentityV1Schema),
   source: z.object({
     kind: z.string().trim().min(1).max(256),
     contractVersion: z.literal(1),
@@ -70,17 +113,15 @@ function normalizeLegacyLinkedExternalSessionIdentity(value: unknown): unknown {
   ) {
     return undefined;
   }
-  const legacyAgentId = typeof record.providerId === 'string' && record.providerId.trim()
-    ? record.providerId.trim()
-    : null;
-  if (!legacyAgentId) return undefined;
+  const legacyAgentId = ExternalSessionsAgentIdSchema.safeParse(record.providerId);
+  if (!legacyAgentId.success) return undefined;
   const { providerId: _legacyProviderId, agentRuntimeDescriptorV1, ...rest } = record;
   const runtimeDescriptor = RuntimeDescriptorV1Schema.safeParse(
     agentRuntimeDescriptorV1,
   );
   return {
     ...rest,
-    agentId: legacyAgentId,
+    agentId: legacyAgentId.data,
     ...(runtimeDescriptor.success ? { runtimeDescriptorV1: runtimeDescriptor.data } : {}),
   };
 }
@@ -96,11 +137,15 @@ const LinkedExternalSessionV1Schema = z
     linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
     linkedAtMs: z.number().int().min(0).optional(),
     lastKnownActivityAtMs: z.number().int().min(0).optional(),
-    // Shared persisted parsing stays forward-compatible; the Codex plugin validates this in resolveLinkIdentity.
+    followPolicyV1: ExternalSessionFollowPolicyV1Schema.optional(),
+    followStatusV1: ExternalSessionFollowStatusV1Schema.optional(),
+    lastFollowIssueV1: ExternalSessionFollowIssueV1Schema.optional(),
+    // This explicitly declared Codex leaf remains extensible; the Codex plugin
+    // validates its value in resolveLinkIdentity.
     codexBackendMode: z.string().optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   })
-  .passthrough()
+  .strict()
   .superRefine((link, ctx) => {
     if (Object.hasOwn(link, 'providerId') || Object.hasOwn(link, 'agentRuntimeDescriptorV1')) {
       ctx.addIssue({
@@ -135,6 +180,38 @@ export const ExternalHistoryImportV1Schema = z.object({
 
 export type ExternalHistoryImportV1 = z.infer<typeof ExternalHistoryImportV1Schema>;
 
+export type ExternalHistoryImportMetadataResolutionV1 =
+  | Readonly<{ state: 'absent' }>
+  | Readonly<{
+      state: 'valid';
+      historyImport: ExternalHistoryImportV1;
+    }>
+  | Readonly<{
+      state: 'invalid';
+      error: 'external_history_import_invalid';
+    }>;
+
+// Stable cli-v0.2.1, preview cli-v0.2.2-preview.1775586717.26498, and the
+// inspected predecessor remote-dev@17bcdb9e24479ee5fa642c53ccdcfe883eb9cc81
+// persisted this tombstone with `providerId`. Keep this read adapter until
+// those writers are unsupported and their persisted layout-0 rows are
+// migrated or proven absent. Canonical writes remain agentId-only through
+// ExternalHistoryImportV1Schema.
+function normalizeReleasedExternalHistoryImportIdentity(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record || !Object.hasOwn(record, 'providerId')) return value;
+  if (Object.hasOwn(record, 'agentId') || Object.hasOwn(record, 'linkData')) {
+    return undefined;
+  }
+  const legacyAgentId = ExternalSessionsAgentIdSchema.safeParse(record.providerId);
+  if (!legacyAgentId.success) return undefined;
+  const { providerId: _legacyProviderId, ...rest } = record;
+  return {
+    ...rest,
+    agentId: legacyAgentId.data,
+  };
+}
+
 const LEGACY_LINKED_SESSION_METADATA_KEY = 'direct' + 'SessionV1';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -142,22 +219,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+export function resolveExternalHistoryImportV1FromMetadata(
+  metadata: unknown,
+): ExternalHistoryImportMetadataResolutionV1 {
+  const record = asRecord(metadata);
+  if (!record || !Object.hasOwn(record, 'externalHistoryImportV1')) {
+    return { state: 'absent' };
+  }
+  const parsed = ExternalHistoryImportV1Schema.safeParse(
+    normalizeReleasedExternalHistoryImportIdentity(record.externalHistoryImportV1),
+  );
+  return parsed.success
+    ? { state: 'valid', historyImport: parsed.data }
+    : { state: 'invalid', error: 'external_history_import_invalid' };
+}
+
 export function readExternalHistoryImportV1FromMetadata(
   metadata: unknown,
 ): ExternalHistoryImportV1 | null {
-  const record = asRecord(metadata);
-  if (!record) return null;
-  const parsed = ExternalHistoryImportV1Schema.safeParse(record.externalHistoryImportV1);
-  return parsed.success ? parsed.data : null;
+  const resolution = resolveExternalHistoryImportV1FromMetadata(metadata);
+  return resolution.state === 'valid' ? resolution.historyImport : null;
 }
 
-function projectReleasedClaudeProjectIdLinkData(
+function projectReleasedProjectIdLinkData(
   link: LinkedExternalSessionV1,
 ): LinkedExternalSessionV1 {
   if (
     link.qualifiedIdentity !== undefined
     || link.linkData !== undefined
-    || link.agentId !== 'claude'
     || link.source.kind !== 'claudeConfig'
   ) {
     return link;
@@ -171,7 +260,7 @@ function projectReleasedClaudeProjectIdLinkData(
 
   // Read-forward support for cli-v0.2.1 (b1d15a8),
   // cli-v0.2.2-preview.1775586717.26498 (4913c1e), and the inspected
-  // remote-dev predecessor at e67f3751: those writers persisted Claude's
+  // remote-dev predecessor at 17bcdb9e: those writers persisted Claude's
   // project identity only in source.projectId. The public Claude contribution
   // owns strict current linkData writes, so this projection is intentionally
   // limited to unqualified persisted rows. Remove it only after those writers
@@ -189,22 +278,7 @@ function readCanonicalLinkedExternalSessionV1(value: unknown): LinkedExternalSes
 
 function readReleasedLinkedExternalSessionV1(value: unknown): LinkedExternalSessionV1 | null {
   const parsed = ReleasedLinkedExternalSessionV1Schema.safeParse(value);
-  return parsed.success ? projectReleasedClaudeProjectIdLinkData(parsed.data) : null;
-}
-
-function buildReleasedRuntimeDescriptorV1(value: unknown): unknown {
-  const parsed = RuntimeDescriptorV1Schema.safeParse(value);
-  if (!parsed.success) return undefined;
-  const { agentId, agent, ...descriptorRest } = parsed.data;
-  const { agentExtra, ...agentRest } = agent;
-  return {
-    ...descriptorRest,
-    providerId: agentId,
-    provider: {
-      ...agentRest,
-      ...(agentExtra === undefined ? {} : { providerExtra: agentExtra }),
-    },
-  };
+  return parsed.success ? projectReleasedProjectIdLinkData(parsed.data) : null;
 }
 
 export function buildLinkedExternalSessionMetadataV1(
@@ -213,30 +287,11 @@ export function buildLinkedExternalSessionMetadataV1(
 ): Record<string, unknown> {
   const parsed = LinkedExternalSessionV1Schema.parse(link);
   const record = asRecord(metadata) ?? {};
-  const {
-    agentId,
-    runtimeDescriptorV1,
-    qualifiedIdentity: _qualifiedIdentity,
-    linkData: _linkData,
-    ...shared
-  } = parsed;
-  const releasedRuntimeDescriptor = buildReleasedRuntimeDescriptorV1(runtimeDescriptorV1);
+  const { [LEGACY_LINKED_SESSION_METADATA_KEY]: _released, ...currentRecord } = record;
 
   return {
-    ...record,
+    ...currentRecord,
     externalSessionV1: parsed,
-    // Rollback/coexistence support for cli-v0.2.1 (b1d15a8),
-    // cli-v0.2.2-preview.1775586717.26498 (4913c1e), and the inspected
-    // remote-dev predecessor at e67f3751. Remove this write only when
-    // independent UI/daemon rollout and rollback can no longer expose those
-    // readers to sessions written by the current version.
-    directSessionV1: {
-      ...shared,
-      providerId: agentId,
-      ...(releasedRuntimeDescriptor === undefined
-        ? {}
-        : { agentRuntimeDescriptorV1: releasedRuntimeDescriptor }),
-    },
   };
 }
 
@@ -296,9 +351,9 @@ function reconciliationRequired(
 
 /**
  * Canonical persisted-link admission for current and provenance-supported
- * rollback rows. The current writer deliberately emits both envelopes for
- * released/predecessor readers. If a predecessor later mutates only its row,
- * this owner must not silently select stale canonical data.
+ * historical dual-envelope rows. Current writes emit only the canonical
+ * envelope. If a predecessor mutated only its historical row, this owner must
+ * not silently select stale canonical data.
  *
  * Only follow policy has a provenance-proven timestamped merge contract.
  * Identity, source, runtime, and every other mutable-field divergence requires
@@ -400,14 +455,20 @@ export function resolveLinkedExternalSessionMetadataV1(
     }
   }
 
-  for (const field of [
-    'followStatusV1',
-    'lastFollowIssueV1',
-    'lastKnownActivityAtMs',
-  ] as const) {
-    if (!areSemanticallyEqual(canonical[field], legacy[field])) {
-      return reconciliationRequired('unsupported_mutable_field_conflict');
-    }
+  const {
+    qualifiedIdentity: _canonicalQualifiedIdentity,
+    linkData: _canonicalLinkData,
+    followPolicyV1: _canonicalFollowPolicy,
+    ...canonicalShared
+  } = canonical;
+  const {
+    qualifiedIdentity: _legacyQualifiedIdentity,
+    linkData: _legacyLinkData,
+    followPolicyV1: _legacyFollowPolicy,
+    ...legacyShared
+  } = legacy;
+  if (!areSemanticallyEqual(canonicalShared, legacyShared)) {
+    return reconciliationRequired('unsupported_mutable_field_conflict');
   }
 
   return { ok: true, source, linkedSession };
@@ -456,17 +517,41 @@ function compareProgressTokens(left: string, right: string): number {
 }
 
 export function readExternalSessionFollowPolicyV1(value: unknown): ExternalSessionFollowPolicyV1 | null {
-  const candidate = asRecord(value);
-  if (!candidate || candidate.v !== 1) return null;
-
-  const policy = candidate.policy;
-  if (policy !== 'attached_only' && policy !== 'background_follow') return null;
-
-  const updatedAtMs = normalizeOptionalTimestamp(candidate.updatedAtMs);
+  const parsed = ExternalSessionFollowPolicyV1Schema.safeParse(value);
+  if (!parsed.success) return null;
   return {
     v: 1,
-    policy,
-    ...(updatedAtMs !== undefined ? { updatedAtMs } : {}),
+    policy: parsed.data.policy,
+    ...(parsed.data.updatedAtMs !== undefined
+      ? { updatedAtMs: parsed.data.updatedAtMs }
+      : {}),
+  };
+}
+
+export function readExternalSessionFollowStatusV1(
+  value: unknown,
+): ExternalSessionFollowStatusV1 | null {
+  const parsed = ExternalSessionFollowStatusV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  return {
+    v: 1,
+    status: parsed.data.status,
+    ...(parsed.data.reason === undefined ? {} : { reason: parsed.data.reason }),
+    updatedAtMs: parsed.data.updatedAtMs,
+  };
+}
+
+export function readExternalSessionFollowIssueV1(
+  value: unknown,
+): ExternalSessionFollowIssueV1 | null {
+  const parsed = ExternalSessionFollowIssueV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  return {
+    v: 1,
+    code: parsed.data.code,
+    ...(parsed.data.message === undefined ? {} : { message: parsed.data.message }),
+    ...(parsed.data.retryable === undefined ? {} : { retryable: parsed.data.retryable }),
+    observedAtMs: parsed.data.observedAtMs,
   };
 }
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { MarketplaceIndexQueryV1Schema, MarketplaceIndexSourceSnapshotV1Schema } from './marketplaceIndexV1.js';
+import {
+  MarketplaceIndexQueryResultV1Schema,
+  MarketplaceIndexQueryV1Schema,
+  MarketplaceIndexSourceSnapshotV1Schema,
+} from './marketplaceIndexV1.js';
 
 describe('MarketplaceIndexV1', () => {
   it('bounds query pagination and source documents', () => {
@@ -10,6 +14,35 @@ describe('MarketplaceIndexV1', () => {
       freshness: { state: 'fresh', fetchedAtMs: 1 },
       entries: Array.from({ length: 5_001 }, () => ({})),
       diagnostics: [],
+    }).success).toBe(false);
+  });
+
+  it('applies the lifecycle projector UTF-8 byte ceiling to every outward diagnostic schema', () => {
+    const source = { id: 'user', title: 'User', kind: 'user' as const, sourceUrl: 'https://catalog.example/index.json' };
+    const freshness = { state: 'fresh' as const, fetchedAtMs: 1 };
+    const exact = { code: 'source_failed', message: 'é'.repeat(1_024) };
+    const oversized = { code: 'source_failed', message: 'é'.repeat(1_025) };
+
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
+      source, freshness, entries: [], diagnostics: [exact],
+    }).success).toBe(true);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
+      source, freshness, entries: [], diagnostics: [oversized],
+    }).success).toBe(false);
+
+    expect(MarketplaceIndexQueryResultV1Schema.safeParse({
+      revision: 1,
+      items: [],
+      nextCursor: null,
+      sources: [{ source, freshness, diagnostics: [exact] }],
+      diagnostics: [exact],
+    }).success).toBe(true);
+    expect(MarketplaceIndexQueryResultV1Schema.safeParse({
+      revision: 1,
+      items: [],
+      nextCursor: null,
+      sources: [{ source, freshness, diagnostics: [oversized] }],
+      diagnostics: [oversized],
     }).success).toBe(false);
   });
 

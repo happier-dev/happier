@@ -159,8 +159,6 @@ describe('review comment operation contracts', () => {
       projectId: 'project-1',
       workspaceId: 'workspace-1',
       immutableGenerationId: 'generation-1',
-      packageDigest: `sha256:${'c'.repeat(64)}`,
-      manifestDigest: `sha256:${'d'.repeat(64)}`,
     };
     const parsed = ReviewCommentPrincipalHeaderV1Schema.parse({
       actor: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
@@ -206,9 +204,11 @@ describe('review comment operation contracts', () => {
     })).toThrow();
 
     const parsed = ReviewCommentBulkTransitionRequestV1Schema.parse({
+      projectId: 'project-1',
       commentIds: ['comment-1'],
       toState: 'resolved',
       expectedState: 'open',
+      expectedServerRevisions: { 'comment-1': 1 },
       evidence: [{ kind: 'reasoning', message: 'Fixed by follow-up commit.' }],
       bulkActionId: 'bulk-1',
       clientMutationId: 'mutation-1',

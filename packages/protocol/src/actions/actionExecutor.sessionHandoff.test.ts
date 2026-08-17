@@ -16,7 +16,6 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionFork: vi.fn(async () => ({})),
     sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
-    sessionSpawnPicker: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
@@ -68,10 +67,11 @@ describe('createActionExecutor (session.handoff)', () => {
     });
     const executor = createActionExecutor(deps);
 
+    const signal = new AbortController().signal;
     const result = await executor.execute(
       'session.handoff',
       { targetMachineId: 'machine_2' },
-      { defaultSessionId: 'sess_1' },
+      { defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
@@ -79,6 +79,7 @@ describe('createActionExecutor (session.handoff)', () => {
       sessionId: 'sess_1',
       targetMachineId: 'machine_2',
       serverId: 'server_a',
+      signal,
     });
   });
 

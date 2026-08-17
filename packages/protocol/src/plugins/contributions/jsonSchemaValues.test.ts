@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { pluginJsonValuesEqual } from './jsonSchemaValues';
 
 describe('pluginJsonValuesEqual', () => {
+  it('compares 12,000-level strict JSON without recursive stack failure', () => {
+    const createDeepValue = (terminal: string): unknown => {
+      let value: unknown = terminal;
+      for (let index = 0; index < 12_000; index += 1) {
+        value = { next: value };
+      }
+      return value;
+    };
+
+    const left = createDeepValue('same');
+
+    expect(pluginJsonValuesEqual(left, createDeepValue('same'))).toBe(true);
+    expect(pluginJsonValuesEqual(left, createDeepValue('different'))).toBe(false);
+  });
+
   it('compares nested null-prototype JSON independently of object key order', () => {
     const left = Object.assign(Object.create(null) as Record<string, unknown>, {
       second: [Object.assign(Object.create(null) as Record<string, unknown>, { enabled: true })],
@@ -14,6 +29,15 @@ describe('pluginJsonValuesEqual', () => {
     expect(pluginJsonValuesEqual(right, left)).toBe(true);
   });
 
+  it('accepts shared acyclic values as structural JSON', () => {
+    const shared = { enabled: true };
+
+    expect(pluginJsonValuesEqual(
+      { first: shared, second: shared },
+      { first: { enabled: true }, second: { enabled: true } },
+    )).toBe(true);
+  });
+
   it('uses finite JSON number semantics and keeps arrays ordered', () => {
     expect(pluginJsonValuesEqual(-0, 0)).toBe(true);
     expect(pluginJsonValuesEqual(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(false);
@@ -22,9 +46,13 @@ describe('pluginJsonValuesEqual', () => {
   });
 
   it('does not equate values outside the strict JSON data model', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
     expect(pluginJsonValuesEqual(undefined, undefined)).toBe(false);
     expect(pluginJsonValuesEqual(new Date(0), {})).toBe(false);
     expect(pluginJsonValuesEqual([, 1], [undefined, 1])).toBe(false);
+    expect(pluginJsonValuesEqual(cyclic, cyclic)).toBe(false);
   });
 
   it('rejects accessor-backed values without invoking their accessors', () => {

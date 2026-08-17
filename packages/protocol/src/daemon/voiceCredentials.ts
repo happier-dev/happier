@@ -15,6 +15,7 @@ import {
 } from '../plugins/contributionIdentity.js';
 import { PluginPermissionCapabilityV1Schema } from '../plugins/permissions/capabilityV1.js';
 import { DaemonPluginReactNativeBundleCacheIdentityV1Schema } from './contributionRegistryProjection.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export const DaemonVoiceClientCredentialSelectionV1Schema = z.object({
   cacheIdentity: DaemonPluginReactNativeBundleCacheIdentityV1Schema,
@@ -60,10 +61,10 @@ export type DaemonVoiceClientRawCredentialMaterializeResponseV1 = z.infer<
 >;
 
 export const DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema = z.object({
-  contribution: PluginContributionIdentityV1Schema,
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   platform: z.enum(['web', 'ios', 'android']),
   phase: z.enum(['settings', 'prepare', 'connection']),
-  operationId: PluginContributionLocalIdSchema,
+  operationId: asProtocolZod(PluginContributionLocalIdSchema),
 }).strict();
 export type DaemonVoiceClientMediatedCredentialMaterializeRequestV1 = z.infer<
   typeof DaemonVoiceClientMediatedCredentialMaterializeRequestV1Schema
@@ -84,7 +85,7 @@ export type DaemonVoiceClientMediatedCredentialMaterializeResponseV1 = z.infer<
 >;
 
 export const DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema = z.object({
-  contribution: PluginContributionIdentityV1Schema,
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema),
 }).strict();
 export type DaemonVoiceClientRawCredentialAuthorizationRequestV1 = z.infer<
   typeof DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema
@@ -97,7 +98,7 @@ const DaemonVoiceClientRawCredentialDisclosureSourceV1Schema = z.discriminatedUn
   }).strict(),
   z.object({
     kind: z.literal('connectedAccount'),
-    service: PluginContributionIdentityV1Schema,
+    service: asProtocolZod(PluginContributionIdentityV1Schema),
   }).strict(),
 ]);
 
@@ -161,7 +162,7 @@ export const DaemonVoiceClientRawCredentialReviewV1Schema = z.object({
     z.object({ status: z.literal('unavailable') }).strict(),
   ]),
   contribution: z.object({
-    identity: PluginContributionIdentityV1Schema,
+    identity: asProtocolZod(PluginContributionIdentityV1Schema),
     name: z.string().trim().min(1),
   }).strict(),
   credentialSlot: z.object({

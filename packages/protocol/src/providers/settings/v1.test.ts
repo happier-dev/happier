@@ -106,12 +106,12 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics.map((entry) => entry.path)).toContain('connections[1]');
   });
 
-  it('enforces per-field limits and the decoded 4 MiB subtree budget atomically', () => {
+  it('accepts valid connection records beyond the retired global count and retains the decoded 4 MiB subtree budget', () => {
     const oversized = structuredClone(validSettings()) as any;
     oversized.connections = Array.from({ length: 257 }, (_, index) => ({
       ...connection(`pc_${index}`, `plugin/provider-${index}`), id: `pc_${index}`,
     }));
-    expect(() => assertProviderSettingsV1WithinLimits(oversized)).toThrow(ProviderSettingsLimitError);
+    expect(() => assertProviderSettingsV1WithinLimits(oversized)).not.toThrow();
 
     const overBytes = structuredClone(validSettings()) as any;
     overBytes.connections[0].displayName = 'x'.repeat(4 * 1024 * 1024);
@@ -146,7 +146,6 @@ describe('ProviderSettingsV1Schema', () => {
     const overCases = [
       (() => { const value = structuredClone(atBounds); value.manualModelsByConnectionId.pc_1.push({ id: 'over', addedAt: 1 }); return value; })(),
       (() => { const value = structuredClone(atBounds); value.secretBindingsByConnectionId.pc_1.account['slot-over'] = 'secret-over'; return value; })(),
-      (() => { const value = structuredClone(atBounds); value.secretBindingsByConnectionId.pc_1.byMachineId['machine-over'] = { apiKey: 'secret-over' }; return value; })(),
       (() => { const value = structuredClone(atBounds); value.defaultsByAgentTargetKey['agent:over'] = { v: 1, ref: { agentTargetKey: 'agent:over', providerConnectionId: null, modelId: 'native' }, updatedAt: 1 }; return value; })(),
       (() => { const value = structuredClone(atBounds); value.migration.completedSources.push({ sourceProfileId: 'completed-over', kind: 'default_environment' }); return value; })(),
       (() => { const value = structuredClone(atBounds); value.migration.pendingCustomProfileIds.push('pending-over'); return value; })(),
@@ -176,15 +175,41 @@ describe('ProviderSettingsV1Schema', () => {
     }
   });
 
-  it('maps endpoint-override machine-branch overflow to the shared limit and narrow-read diagnostic', () => {
+  it('accepts endpoint-override machine branches beyond the retired global count', () => {
     const over = structuredClone(validSettings()) as any;
     over.connections[0].endpointOverridesByMachineId = Object.fromEntries(
       Array.from({ length: 2_049 }, (_, index) => [`machine-${index}`, []]),
     );
-    expect(() => assertProviderSettingsV1WithinLimits(over)).toThrowError(ProviderSettingsLimitError);
+    expect(() => assertProviderSettingsV1WithinLimits(over)).not.toThrow();
     const recovered = parseProviderSettingsV1Narrow(over);
-    expect(recovered.settings.connections).toEqual([]);
-    expect(recovered.diagnostics).toContainEqual({ path: 'connections[0]', reason: 'invalid_record' });
+    expect(recovered.settings.connections).toHaveLength(1);
+    expect(Object.keys(recovered.settings.connections[0]?.endpointOverridesByMachineId ?? {})).toHaveLength(2_049);
+    expect(recovered.diagnostics).toEqual([]);
+  });
+
+  it('accepts valid account and machine grants beyond the retired global counts', () => {
+    const connections = Array.from({ length: 257 }, (_, index) => connection(`pc-${index}`, `plugin/provider-${index}`));
+    const value = {
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections,
+      accountGrants: connections.map((entry) => ({
+        v: 1 as const,
+        connectionId: entry.id,
+        connectionSecurityFingerprint: `connection-security:v1:${entry.id}`,
+        confirmedAt: 1,
+      })),
+      machineGrants: Array.from({ length: 2_049 }, (_, index) => ({
+        v: 1 as const,
+        machineId: `machine-${index}`,
+        connectionId: 'pc-0',
+        endpointSetFingerprint: `endpoint-set:v1:${index}`,
+        connectionSecurityFingerprint: 'connection-security:v1:pc-0',
+        confirmedAt: 1,
+      })),
+    };
+    expect(() => assertProviderSettingsV1WithinLimits(value)).not.toThrow();
+    expect(ProviderSettingsV1Schema.parse(value).accountGrants).toHaveLength(257);
+    expect(ProviderSettingsV1Schema.parse(value).machineGrants).toHaveLength(2_049);
   });
 
   it('keeps account and per-machine secret binding precedence explicit', () => {
@@ -221,12 +246,12 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics.filter((entry) => entry.reason === 'duplicate_identity')).toHaveLength(5);
   });
 
-  it('diagnoses read-recovery truncation at hard caps while retaining the first valid records', () => {
+  it('retains all valid connection records during narrow read recovery', () => {
     const raw = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
     raw.connections = Array.from({ length: 257 }, (_, index) => connection(`pc_${index}`, `plugin/p-${index}`));
     const parsed = parseProviderSettingsV1Narrow(raw);
-    expect(parsed.settings.connections).toHaveLength(256);
-    expect(parsed.diagnostics).toContainEqual({ path: 'connections', reason: 'limit_exceeded' });
+    expect(parsed.settings.connections).toHaveLength(257);
+    expect(parsed.diagnostics).toEqual([]);
   });
 
   it('bounds default-selection recovery instead of throwing on an oversized sibling map', () => {

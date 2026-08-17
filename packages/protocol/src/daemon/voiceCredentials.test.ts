@@ -82,6 +82,9 @@ describe('daemon Voice raw credential authorization wire', () => {
           credentialSlotId: 'api_key',
           purpose: 'voice.browser',
           accessDeclarationDigest: 'b'.repeat(64),
+          selectedAuthorityDigest: 'c'.repeat(64),
+          selectedRawAccessDigest: 'd'.repeat(64),
+          installedGenerationId: 'generation-1',
           installReviewPrincipalDigest: PluginInstallReviewPrincipalDigestSchema.parse('a'.repeat(64)),
         },
         disclosures: [{

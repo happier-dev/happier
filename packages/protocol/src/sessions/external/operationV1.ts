@@ -1,8 +1,15 @@
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../idsV1.js';
+import { AbsoluteWorkspacePathSchema } from '../../workspaces/locationSchema.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
+import {
+  ExternalSessionAgentIdSchema,
+  ExternalSessionRefSchema,
+  ExternalSessionSourceIdSchema,
+} from './sourceCatalog.js';
 import { ExternalSessionTakeoverStorageModeV1Schema } from './takeoverV1.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 const OperationIdSchema = z.string().trim().min(1).max(256);
 const OperationReferenceIdSchema = z.string().trim().min(1).max(512);
@@ -12,6 +19,41 @@ const OperationTimestampSchema = z.number().int().nonnegative().max(Number.MAX_S
 const OperationRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const OperationCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const OperationServerSequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
+/**
+ * The local working directory selected on the linked owner machine before a
+ * takeover is admitted. It is retained in semantic operation state and the
+ * owner-only operation progress, never in the shared recipient presentation.
+ */
+export const ExternalSessionTakeoverTargetDirectoryV1Schema = z.string()
+  .min(1)
+  .max(10_000)
+  .refine(
+    (value) => AbsoluteWorkspacePathSchema.safeParse(value).success,
+    'takeover target directory must be an absolute workspace path',
+  );
+
+export const ExternalSessionOperationAuthorIntentV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    v: z.literal(1),
+    surface: z.literal('plugin'),
+    kind: z.literal('takeover'),
+    agentId: ExternalSessionAgentIdSchema,
+    sourceId: ExternalSessionSourceIdSchema,
+    remoteSessionId: ExternalSessionRefSchema.shape.remoteSessionId,
+    targetStorageMode: ExternalSessionTakeoverStorageModeV1Schema,
+  }).strict(),
+  z.object({
+    v: z.literal(1),
+    surface: z.literal('plugin'),
+    kind: z.literal('materialize'),
+    sessionId: asProtocolZod(SessionIdSchema),
+    targetStorageMode: z.literal('external-linked'),
+  }).strict(),
+]);
+export type ExternalSessionOperationAuthorIntentV1 = z.infer<
+  typeof ExternalSessionOperationAuthorIntentV1Schema
+>;
 
 export const ExternalSessionOperationPlanV1Schema = z.enum(['materialize', 'takeover']);
 export type ExternalSessionOperationPlanV1 = z.infer<
@@ -70,7 +112,7 @@ const ExternalSessionOperationSourceBindingV1Schema = z.object({
 const ExternalSessionMaterializeRequestV1Schema = z.object({
   v: z.literal(1),
   idempotencyKey: OperationIdSchema,
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   source: ExternalSessionOperationSourceBindingV1Schema,
   plan: z.literal('materialize'),
   targetStorageMode: z.literal('external-linked'),
@@ -80,10 +122,11 @@ const ExternalSessionMaterializeRequestV1Schema = z.object({
 const ExternalSessionTakeoverRequestV1Schema = z.object({
   v: z.literal(1),
   idempotencyKey: OperationIdSchema,
-  sessionId: SessionIdSchema,
+  sessionId: asProtocolZod(SessionIdSchema),
   source: ExternalSessionOperationSourceBindingV1Schema,
   plan: z.literal('takeover'),
   targetStorageMode: ExternalSessionTakeoverStorageModeV1Schema,
+  targetDirectory: ExternalSessionTakeoverTargetDirectoryV1Schema,
   // Remote takeover is explicitly outside ES-EXTERNAL-SESSIONS-v1.
   targetRuntimeMode: z.literal('terminal'),
 }).strict();
@@ -694,11 +737,44 @@ function validateOperationOutcome(
   }
 }
 
+function isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(
+  operation: Readonly<{
+    request: ExternalSessionOperationPlanTargetV1;
+    status: ExternalSessionOperationStatusV1;
+    phase: ExternalSessionOperationPhaseV1;
+    retryTargetPhase?: ExternalSessionOperationPhaseV1;
+    error?: ExternalSessionOperationErrorV1;
+    priorStableStorage: ExternalSessionPriorStableStorageV1;
+    currentStorageState: ExternalSessionStorageStateV1;
+    checkpoint: ExternalSessionOperationCheckpointV1;
+    bindings: ExternalSessionOperationBindingsV1;
+    canonicalOwnerEvidence: ExternalSessionCanonicalOwnerEvidenceV1;
+    fence: ExternalSessionOperationFenceV1;
+  }>,
+): boolean {
+  return operation.request.plan === 'takeover'
+    && operation.request.targetStorageMode === 'external-linked'
+    && operation.status === 'reconciliation_required'
+    && operation.phase === 'admitting'
+    && operation.retryTargetPhase === 'admitting'
+    && operation.error?.code === 'reconciliation_required'
+    && operation.error.retryable
+    && operation.currentStorageState === operation.priorStableStorage.state
+    && operation.checkpoint.acceptedThroughServerSeq === undefined
+    && operation.checkpoint.acknowledgedBatchId === undefined
+    && operation.checkpoint.requiredItemFailures.total === 0
+    && operation.bindings.historicalImportJobId === undefined
+    && operation.bindings.targetRuntimeAttemptId !== undefined
+    && operation.fence.kind === 'none'
+    && operation.canonicalOwnerEvidence.disagreement === undefined;
+}
+
 export const ExternalSessionOperationRecordV1Schema = z.object({
   v: z.literal(1),
   operationId: OperationIdSchema,
   revision: OperationRevisionSchema,
   request: ExternalSessionOperationSemanticRequestV1Schema,
+  authorIntent: ExternalSessionOperationAuthorIntentV1Schema.optional(),
   status: ExternalSessionOperationStatusV1Schema,
   phase: ExternalSessionOperationPhaseV1Schema,
   timeline: ExternalSessionOperationTimelineV1Schema,
@@ -747,6 +823,39 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
     );
   }
 
+  if (operation.authorIntent?.kind === 'takeover') {
+    if (
+      operation.request.plan !== 'takeover'
+      || operation.authorIntent.agentId
+        !== operation.request.source.qualifiedIdentity.agent.localId
+      || operation.authorIntent.remoteSessionId
+        !== operation.request.source.remoteSessionId
+      || operation.authorIntent.targetStorageMode
+        !== operation.request.targetStorageMode
+    ) {
+      addOperationIssue(
+        context,
+        ['authorIntent'],
+        'Plugin takeover author intent must match the retained semantic request.',
+      );
+    }
+  }
+  if (
+    operation.authorIntent?.kind === 'materialize'
+    && (
+      operation.request.plan !== 'materialize'
+      || operation.authorIntent.sessionId !== operation.request.sessionId
+      || operation.authorIntent.targetStorageMode
+        !== operation.request.targetStorageMode
+    )
+  ) {
+    addOperationIssue(
+      context,
+      ['authorIntent'],
+      'Plugin materialize author intent must match the retained semantic request.',
+    );
+  }
+
   const terminalResultByStatus = {
     completed: 'completed',
     cancelled: 'cancelled',
@@ -779,11 +888,12 @@ export const ExternalSessionOperationRecordV1Schema = z.object({
   if (
     operation.status === 'reconciliation_required'
     && !operation.canonicalOwnerEvidence.disagreement
+    && !isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(operation)
   ) {
     addOperationIssue(
       context,
       ['canonicalOwnerEvidence', 'disagreement'],
-      'Reconciliation requires typed canonical-owner disagreement evidence.',
+      'Reconciliation requires typed canonical-owner disagreement evidence or an exact retryable external-linked admission acknowledgement.',
     );
   }
   if (
@@ -873,6 +983,9 @@ const ExternalSessionOperationProgressRequestV1Schema = z.discriminatedUnion('pl
   z.object({
     plan: z.literal('takeover'),
     targetStorageMode: ExternalSessionTakeoverStorageModeV1Schema,
+    // Read old owner-only progress emitted before this projection carried the
+    // already-required semantic target. Canonical projection always writes it.
+    targetDirectory: ExternalSessionTakeoverTargetDirectoryV1Schema.optional(),
     targetRuntimeMode: z.literal('terminal'),
   }).strict(),
 ]);
@@ -920,9 +1033,11 @@ const ExternalSessionOperationPublicErrorV1Schema = z.object({
 }).strict();
 
 /**
- * Content-free cross-device projection. Private source evidence, staging ids,
- * owner references, transcript items, native cursors, and watermarks are
- * intentionally absent and rejected by strict parsing.
+ * Owner-only operation progress. Private source evidence, staging ids, owner
+ * references, transcript items, native cursors, and watermarks are
+ * intentionally absent and rejected by strict parsing. Takeover's bounded
+ * host-selected target directory remains visible here; the separate shared
+ * presentation intentionally omits it.
  */
 export const ExternalSessionOperationProgressV1Schema = z.object({
   v: z.literal(1),
@@ -988,6 +1103,8 @@ export function projectExternalSessionOperationProgressV1(
   operationInput: ExternalSessionOperationRecordV1,
 ): ExternalSessionOperationProgressV1 {
   const operation = ExternalSessionOperationRecordV1Schema.parse(operationInput);
+  const retryableAdmissionAcknowledgement =
+    isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(operation);
   return ExternalSessionOperationProgressV1Schema.parse({
     v: 1,
     operationId: operation.operationId,
@@ -995,6 +1112,9 @@ export function projectExternalSessionOperationProgressV1(
     request: {
       plan: operation.request.plan,
       targetStorageMode: operation.request.targetStorageMode,
+      ...(operation.request.plan === 'takeover'
+        ? { targetDirectory: operation.request.targetDirectory }
+        : {}),
       targetRuntimeMode: operation.request.targetRuntimeMode,
     },
     status: operation.status,
@@ -1032,7 +1152,12 @@ export function projectExternalSessionOperationProgressV1(
       ? {
           error: {
             code: operation.error.code,
-            retryable: operation.error.retryable,
+            retryable:
+              operation.error.code === 'reconciliation_required'
+                && operation.request.plan === 'takeover'
+                && operation.request.targetStorageMode === 'external-linked'
+                ? retryableAdmissionAcknowledgement
+                : operation.error.retryable,
             occurredAtMs: operation.error.occurredAtMs,
           },
         }
@@ -1093,6 +1218,47 @@ const TERMINAL_OPERATION_STATUSES: readonly ExternalSessionOperationStatusV1[] =
   'discarded',
 ];
 
+function isCancelledDiscardTransition(
+  previous: ExternalSessionOperationRecordV1,
+  next: ExternalSessionOperationRecordV1,
+): boolean {
+  const isDiscardingPrivateMaterialization = previous.request.plan === 'materialize'
+    || previous.request.targetStorageMode === 'persisted';
+  const isPrivateMachineOnlyDiscard = next.status === 'discarded'
+    && next.priorStableStorage.state === 'machine_only'
+    && next.currentStorageState === 'machine_only'
+    && next.checkpoint.sourcePagesRead === 0
+    && next.checkpoint.stagedItemCount === 0
+    && next.checkpoint.importedItemCount === 0
+    && next.checkpoint.acceptedThroughServerSeq === undefined
+    && next.checkpoint.acknowledgedBatchId === undefined
+    && next.bindings.operationClaimId === previous.bindings.operationClaimId
+    && next.bindings.historicalImportJobId === undefined
+    && next.fence.kind === 'none'
+    && next.cancellation === undefined
+    && next.terminalResult?.kind === 'discarded';
+  if (
+    previous.status !== 'cancelled'
+    || !isDiscardingPrivateMaterialization
+    || !isPrivateMachineOnlyDiscard
+  ) {
+    return false;
+  }
+  const isCancelledLocalPrivateCapture = previous.priorStableStorage.state === 'machine_only'
+    && previous.currentStorageState === 'machine_only'
+    && previous.fence.kind === 'none'
+    && previous.checkpoint.acceptedThroughServerSeq === undefined
+    && previous.checkpoint.acknowledgedBatchId === undefined
+    && previous.bindings.historicalImportJobId === undefined;
+  const isCancelledInitialPartial = previous.priorStableStorage.state === 'machine_only'
+    && previous.currentStorageState === 'server_partial'
+    && previous.fence.kind === 'initial_server_partial'
+    && previous.checkpoint.acceptedThroughServerSeq
+      === previous.fence.acceptedThroughServerSeq
+    && previous.bindings.historicalImportJobId !== undefined;
+  return isCancelledLocalPrivateCapture || isCancelledInitialPartial;
+}
+
 export function decideExternalSessionOperationUpdateV1(
   previousInput: ExternalSessionOperationRecordV1,
   nextInput: ExternalSessionOperationRecordV1,
@@ -1106,6 +1272,8 @@ export function decideExternalSessionOperationUpdateV1(
   if (
     classifyExternalSessionOperationIdempotencyV1(previous.request, next.request).kind
     !== 'same_operation'
+    || JSON.stringify(previous.authorIntent)
+      !== JSON.stringify(next.authorIntent)
   ) {
     return Object.freeze({ kind: 'semantic_mismatch' });
   }
@@ -1120,7 +1288,10 @@ export function decideExternalSessionOperationUpdateV1(
   if (next.revision !== previous.revision + 1) {
     return Object.freeze({ kind: 'revision_gap' });
   }
-  if (TERMINAL_OPERATION_STATUSES.includes(previous.status)) {
+  if (
+    TERMINAL_OPERATION_STATUSES.includes(previous.status)
+    && !isCancelledDiscardTransition(previous, next)
+  ) {
     return Object.freeze({ kind: 'terminal_operation' });
   }
   if (next.updatedAtMs < previous.updatedAtMs) {

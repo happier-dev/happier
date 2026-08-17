@@ -66,4 +66,18 @@ describe('cloneStrictPluginJsonValue', () => {
     expect(Object.isFrozen(cloned)).toBe(true);
     expect(Object.isFrozen(cloned.nested)).toBe(true);
   });
+
+  it('rejects symbol and non-enumerable own properties instead of silently dropping them', () => {
+    const withSymbol = Object.defineProperty({}, Symbol('hidden'), {
+      enumerable: true,
+      value: 'must-not-be-dropped',
+    });
+    const withNonEnumerable = Object.defineProperty({}, 'hidden', {
+      enumerable: false,
+      value: 'must-not-be-dropped',
+    });
+
+    expect(() => cloneStrictPluginJsonValue(withSymbol, 'value')).toThrow();
+    expect(() => cloneStrictPluginJsonValue(withNonEnumerable, 'value')).toThrow();
+  });
 });

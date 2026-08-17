@@ -4,20 +4,20 @@ import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 
 export const SESSION_MEDIA_MESSAGE_META_KIND_V1 = 'session_media.v1' as const;
 
-const INLINE_SESSION_MEDIA_IMAGE_MIME_TYPES = [
+export const SESSION_MEDIA_IMAGE_MIME_TYPES_V1 = [
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
 ] as const;
 
-const REFERENCE_SESSION_MEDIA_VIDEO_MIME_TYPES = [
+export const SESSION_MEDIA_VIDEO_MIME_TYPES_V1 = [
   'video/webm',
 ] as const;
 
-const SESSION_MEDIA_MIME_TYPES = [
-  ...INLINE_SESSION_MEDIA_IMAGE_MIME_TYPES,
-  ...REFERENCE_SESSION_MEDIA_VIDEO_MIME_TYPES,
+export const SESSION_MEDIA_MIME_TYPES_V1 = [
+  ...SESSION_MEDIA_IMAGE_MIME_TYPES_V1,
+  ...SESSION_MEDIA_VIDEO_MIME_TYPES_V1,
 ] as const;
 
 const FORBIDDEN_SESSION_MEDIA_ITEM_KEYS = new Set([
@@ -276,11 +276,11 @@ function createSessionMediaPathSchema(zod: typeof z) {
 }
 
 function isInlineSessionMediaImageMimeType(value: string): boolean {
-  return (INLINE_SESSION_MEDIA_IMAGE_MIME_TYPES as readonly string[]).includes(value);
+  return (SESSION_MEDIA_IMAGE_MIME_TYPES_V1 as readonly string[]).includes(value);
 }
 
 function isReferenceSessionMediaVideoMimeType(value: string): boolean {
-  return (REFERENCE_SESSION_MEDIA_VIDEO_MIME_TYPES as readonly string[]).includes(value);
+  return (SESSION_MEDIA_VIDEO_MIME_TYPES_V1 as readonly string[]).includes(value);
 }
 
 export function createSessionMediaFailureV1Schema(zod: typeof z) {
@@ -293,7 +293,7 @@ export function createSessionMediaFailureV1Schema(zod: typeof z) {
       category: zod.enum(['attachment', 'generated', 'tool-artifact']),
       mediaKind: zod.literal('image'),
       name: createSessionMediaFailureNameSchema(zod),
-      mimeType: zod.enum(INLINE_SESSION_MEDIA_IMAGE_MIME_TYPES).optional(),
+      mimeType: zod.enum(SESSION_MEDIA_IMAGE_MIME_TYPES_V1).optional(),
       origin: createSessionMediaOriginV1Schema(zod),
       createdAtMs: zod.number().int().nonnegative().optional(),
     })
@@ -330,7 +330,7 @@ export function createSessionMediaItemV1Schema(zod: typeof z) {
       role: zod.enum(['input', 'output']),
       category: zod.enum(['attachment', 'generated', 'tool-artifact']),
       mediaKind: zod.enum(['image', 'video']),
-      mimeType: zod.enum(SESSION_MEDIA_MIME_TYPES),
+      mimeType: zod.enum(SESSION_MEDIA_MIME_TYPES_V1),
       name: safeTrustedString,
       path: createSessionMediaPathSchema(zod),
       sizeBytes: zod.number().int().positive(),

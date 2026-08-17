@@ -290,7 +290,7 @@ describe('built-in legacy Connected Services compatibility', () => {
             serviceId: 'github',
             ref: {
                 service: {
-                    pluginId: 'happier.scm.hosting.github',
+                    pluginId: 'happier.scm.forge.github',
                     localId: 'github-account',
                 },
                 accountId: 'github-work',
@@ -302,7 +302,7 @@ describe('built-in legacy Connected Services compatibility', () => {
             serviceId: 'bitbucket',
             ref: {
                 service: {
-                    pluginId: 'happier.scm.hosting.bitbucket',
+                    pluginId: 'happier.scm.forge.bitbucket',
                     localId: 'bitbucket-account',
                 },
                 accountId: 'bitbucket-work',

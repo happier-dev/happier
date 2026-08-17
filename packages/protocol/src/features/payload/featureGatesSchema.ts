@@ -68,13 +68,6 @@ export const FeatureGatesSchema = z.object({
       accountGroups: DEFAULT_GATE_DISABLED,
       accountFallback: DEFAULT_GATE_DISABLED,
     }),
-  channelBridges: z
-    .object({
-      enabled: z.boolean(),
-      telegram: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
-    })
-    .optional()
-    .default({ enabled: false, telegram: DEFAULT_GATE_DISABLED }),
   updates: z
     .object({
       ota: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -106,6 +99,7 @@ export const FeatureGatesSchema = z.object({
         })
         .optional()
         .default({ enabled: false }),
+      agentSwitching: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       folders: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       usageLimitRecovery: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
@@ -113,6 +107,7 @@ export const FeatureGatesSchema = z.object({
     .default({
       enabled: false,
       handoff: { enabled: false },
+      agentSwitching: DEFAULT_GATE_DISABLED,
       folders: DEFAULT_GATE_DISABLED,
       usageLimitRecovery: DEFAULT_GATE_DISABLED,
     }),
@@ -246,11 +241,11 @@ export const FeatureGatesSchema = z.object({
   plugins: z
     .object({
       enabled: z.boolean(),
+      webhooks: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       ui: z
         .object({
           enabled: z.boolean(),
           hostedWeb: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
-          structuredMessages: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
           reactNativeBundles: z
             .object({
               enabled: z.boolean(),
@@ -263,17 +258,16 @@ export const FeatureGatesSchema = z.object({
         .default({
           enabled: false,
           hostedWeb: DEFAULT_GATE_DISABLED,
-          structuredMessages: DEFAULT_GATE_DISABLED,
           reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
         }),
     })
     .optional()
     .default({
       enabled: false,
+      webhooks: DEFAULT_GATE_DISABLED,
       ui: {
         enabled: false,
         hostedWeb: DEFAULT_GATE_DISABLED,
-        structuredMessages: DEFAULT_GATE_DISABLED,
         reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
       },
     }),

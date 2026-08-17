@@ -5,10 +5,13 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../../execution/runs/index.js';
+import { ExecutionRunTerminalStatusSchema } from '../../execution/runs/waitForTerminal.js';
 import { TurnIdSchema } from '../idsV1.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
+import { SessionOrganizationPlacementV1Schema } from '../creation/sessionSpawnNewResultV1.js';
 import { ExternalSessionStorageStateV1Schema } from '../external/operationV1.js';
 import { SubAgentRunResultV2Schema } from '../../tools/v2/index.js';
+import { StopSessionIncompleteReasonSchema } from '../../sessionStop.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../../actions/actionDefinitionV1.js';
 import {
@@ -38,8 +41,13 @@ import {
   ProviderAccountUsageRefsV1Schema,
 } from '../metadata/providerAccountUsageRefsV1.js';
 import {
+  SESSION_WORKSPACE_LOCATION_METADATA_KEY,
+  createSessionWorkspaceLocationV1Schema,
+} from '../metadata/sessionWorkspaceLocationV1.js';
+import {
   SessionMetadataRecipientProjectionV1Schema,
-  isSessionOwnerMetadataCiphertextV1,
+  SessionOwnerMetadataEnvelopeV1Schema,
+  type SessionOwnerMetadataEnvelopeV1,
 } from '../metadata/sessionMetadataEnvelopesV1.js';
 import {
   SESSION_RUNNER_RUNTIME_METADATA_KEY,
@@ -219,9 +227,12 @@ export const SessionSummarySchema = z.object({
   isSystem: z.boolean().optional(),
   systemPurpose: z.string().nullable().optional(),
   encryptionMode: AccountEncryptionModeSchema.optional(),
+  // Reports the caller's available E2EE material without conflating it with the
+  // persisted Session mode. Token-only callers use null, including when listing a
+  // retained E2EE Session whose private metadata remains locked.
   encryption: z.object({
     type: z.enum(['legacy', 'dataKey']),
-  }).passthrough(),
+  }).passthrough().nullable(),
   latestTurnId: TurnIdSchema.nullable().optional(),
   latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
   latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
@@ -265,6 +276,8 @@ export function createSessionMetadataSchema(zod: typeof z) {
       [PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY]: ProviderAccountUsageRefsV1Schema.optional(),
       [CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY]:
         createConnectedServiceMaterializationIdentityV1Schema(zod).optional(),
+      [SESSION_WORKSPACE_LOCATION_METADATA_KEY]:
+        createSessionWorkspaceLocationV1Schema(zod).optional(),
     })
     .passthrough();
 }
@@ -321,9 +334,10 @@ function refineV2SessionMetadataRecipientFields(
     metadata: string;
     metadataVersion: number;
     metadataLayoutVersion?: number;
-    ownerMetadata?: string | null;
+    ownerMetadata?: SessionOwnerMetadataEnvelopeV1 | null;
     agentState?: string | null;
     agentStateVersion?: number;
+    share?: SessionShare | null;
   }>,
   context: z.RefinementCtx,
 ): void {
@@ -364,6 +378,29 @@ function refineV2SessionMetadataRecipientFields(
     return;
   }
 
+  const hasOwnerMetadata = Object.hasOwn(value, 'ownerMetadata');
+  if (value.share === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['share'],
+      message: 'Layout-one records require an explicit recipient share role',
+    });
+  }
+  if (value.share !== undefined && value.share !== null && hasOwnerMetadata) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ownerMetadata'],
+      message: 'Shared-recipient records cannot carry owner metadata',
+    });
+  }
+  if (value.share === null && !hasOwnerMetadata) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ownerMetadata'],
+      message: 'Owner-recipient records require owner metadata',
+    });
+  }
+
   const projection = {
     metadata: value.metadata,
     metadataVersion: value.metadataVersion,
@@ -402,7 +439,8 @@ export const V2SessionRecordSchema = z
     metadata: z.string(),
     metadataVersion: z.number().int().nonnegative(),
     metadataLayoutVersion: z.number().int().nonnegative().optional(),
-    ownerMetadata: z.string().refine(isSessionOwnerMetadataCiphertextV1).nullable().optional(),
+    ownerMetadata:
+      SessionOwnerMetadataEnvelopeV1Schema.nullable().optional(),
     agentState: z.string().nullable().optional(),
     agentStateVersion: z.number().int().nonnegative().optional(),
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
@@ -431,6 +469,7 @@ export const V2SessionRecordSchema = z
     acceptedThroughServerSeq: z.number().int().nonnegative().nullable().optional(),
     materializedThroughSourceAt: z.number().int().nonnegative().nullable().optional(),
     publishedThroughServerSeq: z.number().int().nonnegative().nullable().optional(),
+    transcriptShareable: z.boolean().optional(),
   })
   .passthrough()
   .superRefine(refineV2SessionMetadataRecipientFields)
@@ -464,6 +503,21 @@ export const SessionLookupByTagsResponseV2Schema = z
   })
   .strict();
 export type SessionLookupByTagsResponseV2 = z.infer<typeof SessionLookupByTagsResponseV2Schema>;
+
+/**
+ * The canonical server-owned proof used only to admit one new
+ * session-scoped dynamic Resource context. It deliberately carries no Session
+ * record, no Resource identity, and no inventory: authorization belongs to
+ * the Session-access owner, while Resource lifetime stays local to its owner.
+ */
+export const V2SessionResourceAccessResponseSchema = z
+  .object({
+    accountId: z.string().trim().min(1).max(256),
+    throughCursor: z.number().int().nonnegative(),
+    status: z.enum(['available', 'unavailable']),
+  })
+  .strict();
+export type V2SessionResourceAccessResponse = z.infer<typeof V2SessionResourceAccessResponseSchema>;
 
 function refineRuntimeActivityProjectionFields(
   value: unknown,
@@ -539,6 +593,7 @@ export const V2SessionByIdResponseSchema = z
   .object({
     session: V2SessionRecordSchema,
     created: z.boolean().optional(),
+    organizationPlacement: SessionOrganizationPlacementV1Schema.optional(),
   })
   .passthrough();
 export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
@@ -592,10 +647,59 @@ export const SessionWaitResultSchema = z.object({
 }).passthrough();
 export type SessionWaitResult = z.infer<typeof SessionWaitResultSchema>;
 
-export const SessionStopResultSchema = z.object({
+export const SessionStopCleanupIncompleteReasonSchema = StopSessionIncompleteReasonSchema.extract([
+  'terminal_control_serviceability_retirement_failed',
+  'terminal_attachment_descriptor_retirement_failed',
+]);
+export type SessionStopCleanupIncompleteReason = z.infer<typeof SessionStopCleanupIncompleteReasonSchema>;
+
+const SessionStopPhysicalUnconfirmedReasonSchema = z.union([
+  StopSessionIncompleteReasonSchema.exclude([
+    'terminal_control_serviceability_retirement_failed',
+    'terminal_attachment_descriptor_retirement_failed',
+  ]),
+  z.enum([
+    'transport_ambiguous',
+    'marker_fallback_failed',
+    'local_session_not_found',
+    'target_daemon_unavailable',
+    'target_session_not_found',
+    'daemon_stop_requested',
+    'unexpected_error',
+  ]),
+]);
+
+export const SessionStopOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('stopped_projection_unconfirmed'),
+    reason: z.literal('relay_inactive_not_observed'),
+  }).strict(),
+  z.object({
+    status: z.literal('stopped_cleanup_incomplete'),
+    reason: SessionStopCleanupIncompleteReasonSchema,
+  }).strict(),
+  z.object({
+    status: z.literal('physical_stop_unconfirmed'),
+    reason: SessionStopPhysicalUnconfirmedReasonSchema,
+  }).strict(),
+]);
+export type SessionStopOutcome = z.infer<typeof SessionStopOutcomeSchema>;
+
+const SessionStopResultBaseSchema = z.object({
   sessionId: z.string().min(1),
-  stopped: z.literal(true),
-}).passthrough();
+});
+
+export const SessionStopResultSchema = z.discriminatedUnion('stopped', [
+  SessionStopResultBaseSchema.extend({
+    stopped: z.literal(true),
+  }).passthrough(),
+  SessionStopResultBaseSchema.extend({
+    stopped: z.literal(false),
+    // cli-v0.2.0 and cli-v0.2.1 emitted `{ stopped: false }`; keep reading that
+    // released shape while current writers add the structured reason.
+    stopOutcome: SessionStopOutcomeSchema.optional(),
+  }).passthrough(),
+]);
 export type SessionStopResult = z.infer<typeof SessionStopResultSchema>;
 
 export const SessionArchiveResultSchema = z.object({
@@ -710,7 +814,7 @@ export type SessionRunActionResult = z.infer<typeof SessionRunActionResultSchema
 export const SessionRunWaitResultSchema = z.object({
   sessionId: z.string().min(1),
   runId: z.string().min(1),
-  status: z.enum(['succeeded', 'failed', 'cancelled', 'timeout']),
+  status: ExecutionRunTerminalStatusSchema,
 }).passthrough();
 export type SessionRunWaitResult = z.infer<typeof SessionRunWaitResultSchema>;
 

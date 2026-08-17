@@ -6,6 +6,7 @@ import {
   normalizePendingDeliveryStatusV1,
   parsePendingDeliveryStatusV1,
   pendingDeliveryStatusV1ToPersistedFields,
+  shouldExposePendingDeliveryInDiscardedHistoryV1,
   type PendingDeliveryStatusV1,
 } from './pendingDeliveryStatusV1.js';
 
@@ -116,6 +117,19 @@ describe('PendingDeliveryStatusV1', () => {
       )).toBe(false);
     }
   });
+
+  it.each([
+    [{ status: 'discarded', reason: 'resent_as_new' }, false],
+    [{ status: 'discarded', reason: 'dismissed_uncertain' }, true],
+    [{ status: 'discarded', reason: 'manual' }, true],
+    [{ status: 'discarded', reason: null }, true],
+    [{ status: 'queued' }, false],
+  ] satisfies readonly (readonly [PendingDeliveryStatusV1, boolean])[])(
+    'classifies %# discarded-history visibility',
+    (status, visible) => {
+      expect(shouldExposePendingDeliveryInDiscardedHistoryV1(status)).toBe(visible);
+    },
+  );
 
   it.each([
     [{ status: 'queued' }, false],

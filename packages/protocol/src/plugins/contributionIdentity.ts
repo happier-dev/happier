@@ -1,17 +1,81 @@
 import { z } from 'zod';
 
-import { PluginIdSchema } from './pluginId.js';
+import {
+  defineProtocolObject,
+  defineProtocolString,
+  type ProtocolComposableSchema,
+} from './actions/jsonSchemaValidation.js';
+import type { PluginJsonSchemaV2 } from './contributions/publicTypes.js';
+import {
+  MAX_PLUGIN_IDENTIFIER_BYTES,
+  PluginIdJsonSchema,
+  PluginIdSchema,
+} from './pluginId.js';
 
-export const PluginContributionLocalIdSchema = z.string().regex(
-  /^[a-z0-9]+(?:[-/][a-z0-9]+)*$/,
-  'Contribution local ids must contain lowercase alphanumeric segments separated by hyphens or slashes.',
-);
+const PLUGIN_CONTRIBUTION_LOCAL_ID_PATTERN = '^[a-z0-9]+(?:[-/][a-z0-9]+)*$';
+const PLUGIN_CONTRIBUTION_PROTOCOL_ID_V1_PATTERN = '^(?:[a-z0-9]+(?:[-/][a-z0-9]+)*|(?!(?:[a-z0-9-]+\\.)*(?:__proto__|constructor|prototype)(?:\\.|/))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/[a-z0-9]+(?:[-/][a-z0-9]+)*)$';
+const PluginContributionOperationRoleV1Pattern = /^[a-z0-9][A-Za-z0-9]*(?:[-/][a-z0-9][A-Za-z0-9]*)*$/u;
 
-export const PluginContributionIdentityV1Schema = z.object({
+export const PluginContributionLocalIdSchema = defineProtocolString({
+  minLength: 1,
+  maxLength: MAX_PLUGIN_IDENTIFIER_BYTES,
+  pattern: PLUGIN_CONTRIBUTION_LOCAL_ID_PATTERN,
+});
+export type PluginContributionLocalId = ReturnType<typeof PluginContributionLocalIdSchema.parse>;
+
+/**
+ * Operation roles are protocol-owned keys, not contributor-local ids. They
+ * retain the established local separators while allowing lower-camel protocol
+ * roles such as `connectionTest`.
+ */
+export const PluginContributionOperationRoleV1Schema = z.string()
+  .max(MAX_PLUGIN_IDENTIFIER_BYTES)
+  .regex(
+    PluginContributionOperationRoleV1Pattern,
+    'Contribution operation roles must contain lower-camel alphanumeric segments separated by hyphens or slashes.',
+  );
+export type PluginContributionOperationRoleV1 = z.infer<typeof PluginContributionOperationRoleV1Schema>;
+
+/**
+ * Targeted protocol identifiers retain the existing local-id dialect while
+ * admitting an explicitly namespaced Plugin id followed by one local id.
+ */
+export const PluginContributionProtocolIdV1Schema = defineProtocolString({
+  minLength: 1,
+  maxLength: MAX_PLUGIN_IDENTIFIER_BYTES,
+  pattern: PLUGIN_CONTRIBUTION_PROTOCOL_ID_V1_PATTERN,
+});
+export type PluginContributionProtocolIdV1 = ReturnType<typeof PluginContributionProtocolIdV1Schema.parse>;
+
+export const ManagedServiceLocalIdSchema = PluginContributionLocalIdSchema;
+export type ManagedServiceLocalId = ReturnType<typeof ManagedServiceLocalIdSchema.parse>;
+
+const PluginContributionLocalIdJsonSchema = {
+  type: 'string',
+  minLength: 1,
+  maxLength: MAX_PLUGIN_IDENTIFIER_BYTES,
+  pattern: PLUGIN_CONTRIBUTION_LOCAL_ID_PATTERN,
+} satisfies PluginJsonSchemaV2;
+
+/** Canonical portable JSON-schema fragment for one fully qualified contribution. */
+export const PluginContributionIdentityV1JsonSchema = {
+  type: 'object',
+  properties: {
+    pluginId: PluginIdJsonSchema,
+    localId: PluginContributionLocalIdJsonSchema,
+  },
+  required: ['pluginId', 'localId'],
+  additionalProperties: false,
+} satisfies PluginJsonSchemaV2;
+
+export const PluginContributionIdentityV1Schema: ProtocolComposableSchema<{
+  pluginId: string;
+  localId: string;
+}> = defineProtocolObject({
   pluginId: PluginIdSchema,
   localId: PluginContributionLocalIdSchema,
-}).strict();
-export type PluginContributionIdentityV1 = z.infer<typeof PluginContributionIdentityV1Schema>;
+}, { policy: 'closed' });
+export type PluginContributionIdentityV1 = ReturnType<typeof PluginContributionIdentityV1Schema.parse>;
 
 const LEGACY_OH_MY_PI_AGENT_ID = 'ohMyPi';
 const OH_MY_PI_AGENT_IDENTITY = Object.freeze({

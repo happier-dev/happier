@@ -44,6 +44,7 @@ describe('plugin permission grant actions', () => {
       pluginId: 'review-coderabbit',
       capability: 'reviews.comments.write.direct',
       targetScope: { kind: 'project', projectId: 'project-1' },
+      subject: { kind: 'general' },
       reason: 'Publish approved review comments directly.',
       requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 'session-1' },
     })).toMatchObject({
@@ -71,6 +72,7 @@ describe('plugin permission grant actions', () => {
       pluginId: 'review-coderabbit',
       capability: 'reviews.comments.write.direct',
       targetScope: { kind: 'account' },
+      subject: { kind: 'general' },
       reason: 'Publish approved review comments directly.',
       requester: { kind: 'plugin', pluginId: 'review-coderabbit' },
     }).targetScope).toEqual({ kind: 'account' });
@@ -87,6 +89,7 @@ describe('plugin permission grant actions', () => {
       pluginId: 'review-coderabbit',
       capability: 'reviews.comments.write.direct',
       targetScope: { kind: 'project', projectId: 'project-1' },
+      subject: { kind: 'general' },
       status: 'active',
       grantedByUserId: 'user-1',
       grantedAt: 1,
@@ -101,6 +104,7 @@ describe('plugin permission grant actions', () => {
       pluginId: 'review-coderabbit',
       capability: 'reviews.comments.write.direct',
       targetScope: { kind: 'project', projectId: 'project-1' },
+      subject: { kind: 'general' },
       requester: { kind: 'plugin', pluginId: 'review-coderabbit' },
       reason: 'Publish approved review comments directly.',
       status: 'pending',

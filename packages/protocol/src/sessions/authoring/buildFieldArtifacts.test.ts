@@ -120,7 +120,7 @@ describe('sessionAuthoring field artifacts', () => {
     expectTypeOf<typeof parsed>().toMatchTypeOf<SessionAuthoringValueV1>();
   });
 
-  it('preserves additive fields from newer authored payloads', () => {
+  it('preserves additive authored envelopes without persisting opaque Session-create leaves', () => {
     const parsed = SessionAuthoringValueV1Schema.parse({
       targetType: 'new_session',
       directory: '/tmp/project',
@@ -145,16 +145,11 @@ describe('sessionAuthoring field artifacts', () => {
         kind: 'git_worktree',
         displayName: 'feature/auth',
         baseRef: 'main',
-        futureDraftField: 'keep-me',
       },
       terminal: {
         mode: 'tmux',
         tmux: {
           sessionName: 'dev',
-          futureTerminalField: true,
-        },
-        futureTerminalEnvelope: {
-        kind: 'session_authoring_terminal.v2',
         },
       },
       windowsRemoteSessionLaunchMode: null,
@@ -187,12 +182,105 @@ describe('sessionAuthoring field artifacts', () => {
       kind: 'session_authoring.v2',
       extra: true,
     });
-    expect((parsed.checkoutCreationDraft as any)?.futureDraftField).toBe('keep-me');
-    expect((parsed.terminal?.tmux as any)?.futureTerminalField).toBe(true);
-    expect((parsed.terminal as any)?.futureTerminalEnvelope).toEqual({
-      kind: 'session_authoring_terminal.v2',
-    });
     expect((parsed.automation as any)?.futureAutomationField).toBe(123);
+
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...parsed,
+      terminal: {
+        mode: 'tmux',
+        unrecognizedTerminalSecret: 'must-not-persist',
+      },
+    }).success).toBe(false);
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...parsed,
+      terminal: {
+        mode: 'tmux',
+        tmux: {
+          sessionName: 'dev',
+          unrecognizedTmuxSecret: 'must-not-persist',
+        },
+      },
+    }).success).toBe(false);
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...parsed,
+      terminal: {
+        mode: 'tmux',
+        tmux: {
+          sessionName: 'dev',
+          target: 'existing-session:window',
+        },
+      },
+    }).success).toBe(false);
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...parsed,
+      checkoutCreationDraft: {
+        kind: 'git_worktree',
+        displayName: 'feature/auth',
+        baseRef: 'main',
+        unrecognizedCheckoutSecret: 'must-not-persist',
+      },
+    }).success).toBe(false);
+  });
+
+  it('normalizes Windows launch semantics through the existing terminal owner', () => {
+    const baseAuthoringValue = {
+      targetType: 'new_session',
+      directory: '/tmp/project',
+      checkoutCreationDraft: null,
+      prompt: '',
+      displayText: '',
+      agentId: null,
+      backendTarget: null,
+      transcriptStorage: null,
+      profileId: null,
+      environmentVariables: null,
+      resumeSessionId: null,
+      permissionMode: null,
+      permissionModeUpdatedAt: null,
+      modelSelection: null,
+      mcpSelection: null,
+      connectedServices: null,
+      windowsRemoteSessionLaunchMode: null,
+      windowsRemoteSessionConsole: null,
+      windowsTerminalWindowName: null,
+      codexBackendMode: null,
+      acpSessionModeId: null,
+      sessionConfigOptionOverrides: null,
+      existingSessionId: null,
+      sessionEncryptionMode: null,
+      sessionEncryptionKeyBase64: null,
+      sessionEncryptionVariant: null,
+      automation: null,
+    } as const;
+    const parsed = SessionAuthoringValueV1Schema.parse({
+      ...baseAuthoringValue,
+      terminal: {
+        mode: 'windows_terminal',
+        windows: {
+          launchMode: 'windows_terminal',
+          console: 'visible',
+          windowName: 'Happier QA',
+        },
+      },
+    });
+
+    expect(parsed.terminal).toEqual({
+      mode: 'windows_terminal',
+      windows: {
+        launchMode: 'windows_terminal',
+        console: 'visible',
+        windowName: 'Happier QA',
+      },
+    });
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...baseAuthoringValue,
+      terminal: {
+        windows: {
+          launchMode: 'windows_terminal',
+          leakedPrivateField: true,
+        },
+      },
+    }).success).toBe(false);
   });
 
   it('rejects invalid authored values', () => {

@@ -13,6 +13,9 @@ export type PendingDeliveryStatusV1 =
 export type PendingDeliveryResolvedReasonV1 = 'provider_accepted' | 'materialized' | 'manual_handled';
 export type PendingDeliveryArchivedUncertaintyReasonV1 = 'dismissed_uncertain' | 'resent_as_new';
 
+export const PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1 = ['resent_as_new'] as const satisfies readonly PendingDeliveryArchivedUncertaintyReasonV1[];
+const pendingDeliveryHiddenDiscardedReasonsV1 = new Set<string>(PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1);
+
 export type PendingDeliveryStatusTransitionTargetV1 =
   | PendingDeliveryStatusV1
   | Readonly<{
@@ -131,6 +134,11 @@ export function isPendingDeliveryArchivedUncertaintyReasonV1(
   value: unknown,
 ): value is PendingDeliveryArchivedUncertaintyReasonV1 {
   return value === 'dismissed_uncertain' || value === 'resent_as_new';
+}
+
+export function shouldExposePendingDeliveryInDiscardedHistoryV1(status: PendingDeliveryStatusV1): boolean {
+  return status.status === 'discarded'
+    && !pendingDeliveryHiddenDiscardedReasonsV1.has(status.reason ?? '');
 }
 
 export function isPendingDeliveryStatusTransitionAllowedV1(

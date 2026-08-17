@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import type { ConversationTurnOriginV1 } from '../messages/structured/conversationTurnOriginV1.js';
+import type { ActionCaller } from './executor/types.js';
+import { ActionSafetySchema } from './safety.js';
+import {
+  ConversationTurnOriginV1Schema,
+  type ConversationTurnOriginV1,
+} from '../messages/structured/conversationTurnOriginV1.js';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
@@ -16,8 +21,54 @@ import {
   PluginPermissionGrantActionOutputSchemasV1,
   type PluginPermissionGrantActionIdV1,
 } from '../plugins/permissions/actions.js';
-import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
-import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
+import { PluginPermissionSubjectV1Schema } from '../plugins/permissions/grants.js';
+import {
+  PLUGIN_WEBHOOK_ACTION_IDS_V1,
+  PluginWebhookActionInputSchemasV1,
+  PluginWebhookActionOutputSchemasV1,
+  type PluginWebhookActionIdV1,
+  type PluginWebhookPresentUserActionIdV1,
+} from '../plugins/webhooks/endpointV1.js';
+import {
+  PluginAccountDataEraseActionInputV1Schema,
+  PluginAccountDataEraseActionOutputV1Schema,
+} from '../plugins/data/accountEraseV1.js';
+import {
+  PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1,
+  PluginSettingsAdministrationActionInputSchemasV1,
+  PluginSettingsAdministrationActionOutputV1Schema,
+  type PluginSettingsAdministrationActionIdV1,
+} from '../plugins/settingsAdministration.js';
+import {
+  AUTOMATION_CONVERSATION_ACTION_IDS_V1,
+  AutomationConversationActionInputSchemasV1,
+  AutomationConversationActionOutputSchemasV1,
+  type AutomationConversationActionIdV1,
+  AUTOMATION_EVENT_ACTION_IDS_V1,
+  AutomationEventActionInputSchemasV1,
+  AutomationEventActionOutputSchemasV1,
+  type AutomationEventActionIdV1,
+} from '../automations/automationActionSpecsV1.js';
+import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { PluginIdSchema } from '../plugins/pluginId.js';
+import {
+  ActionInputFieldHintSchema,
+  ActionInputHintsSchema,
+  ActionInputOptionSchema,
+  ActionInputOptionValueSchema,
+  ActionInputWidgetSchema,
+  readActionInputOptionValue,
+  type ActionInputFieldHint,
+  type ActionInputHints,
+  type ActionInputOption,
+  type ActionInputOptionValue,
+  type ActionInputWidget,
+} from './actionInputHints.js';
+import {
+  MemorySearchQueryV1Schema,
+  MemorySearchResultV1Schema,
+} from '../memory/memorySearch.js';
+import { MemoryWindowV1Schema } from '../memory/memoryWindow.js';
 import {
   ApprovalRequestCreatedBySchema,
   ApprovalRequestOriginV1Schema,
@@ -42,15 +93,54 @@ import { BackendTargetKeyV2Schema, BackendTargetRefV2Schema } from '../backends/
 import { ConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
 import { normalizeConnectedServiceSelectionInput } from '../connect/normalizeConnectedServiceSelectionInput.js';
 import { ExecutionRunListRequestSchema } from '../execution/runs/listRequest.js';
-import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.js';
+import {
+  ExecutionRunGetResponseSchema,
+  ExecutionRunListResponseSchema,
+  ExecutionRunSendResponseSchema,
+  ExecutionRunStartResponseSchema,
+  ExecutionRunStopResponseSchema,
+  ExecutionRunWaitResultSchema,
+} from '../execution/runs/responseSchemas.js';
+import {
+  ExecutionRunStartRequestBaseSchema,
+  ExecutionRunStartRequestSchema,
+  refineExecutionRunStartRequest,
+} from '../execution/runs/startRequest.js';
 import { SessionMcpSelectionV1Schema } from '../mcp/servers/sessionSelectionV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessions/metadata/metadataOverridesV1.js';
 import { RuntimeDescriptorV1Schema } from '../sessions/metadata/runtimeDescriptorV1.js';
+import {
+  SessionSpawnNewInputV2Schema,
+} from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewResultV1Schema } from '../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionCreationKeyV1Schema } from '../sessions/creation/sessionCreationIdentityV1.js';
+import {
+  PluginSessionInputIdempotencyKeyV1Schema,
+  PluginSessionInputSourceV1Schema,
+  SessionInputAdmissionResultV1Schema,
+} from '../sessions/messages/sessionInputAdmission.js';
+import { ExternalShareableTranscriptPageV1Schema } from '../sessions/messages/sessionExternalShareableTranscriptV1.js';
+import { PendingRequestedActionV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
+import {
+  SessionPermissionRemoteGrantRevokeInputV1Schema,
+  SessionPermissionRemoteGrantRevokeOutputV1Schema,
+  SessionPermissionRemoteGrantsListInputV1Schema,
+  SessionPermissionRemoteGrantsListOutputV1Schema,
+  SessionPermissionRemotePendingListInputV1Schema,
+  SessionPermissionRemotePendingListOutputV1Schema,
+  SessionPermissionRemoteRespondInputV1Schema,
+  SessionPermissionRemoteRespondOutputV1Schema,
+} from '../sessions/permissions/v1.js';
 import { ProviderConnectionIdSchema } from '../providers/ids.js';
 import {
   SpawnConfigOptionValueSchema,
   findSpawnConfigOptionAliasConflicts,
 } from './sessionSpawnConfigOptions.js';
+import {
+  EXECUTION_RUN_ACTION_PERMISSION_MODES,
+  EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION,
+  ExecutionRunActionPermissionModeSchema,
+} from './executionRunActionPermissionMode.js';
 import { SessionWorkStateStatusV1Schema } from '../sessions/work/state/sessionWorkStateV1.js';
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import {
@@ -62,6 +152,8 @@ import {
 import {
   ExternalSessionAttachRequestSchema,
   ExternalSessionAttachResponseSchema,
+  ExternalSessionBackgroundFollowActionInputV1Schema,
+  ExternalSessionBackgroundFollowActionResultV1Schema,
   ExternalSessionDetachRequestSchema,
   ExternalSessionDetachResponseSchema,
   ExternalSessionFollowPolicySetRequestSchema,
@@ -72,10 +164,16 @@ import {
   ExternalSessionsCandidatesListResponseSchema,
   ExternalSessionStatusGetRequestSchema,
   ExternalSessionStatusGetResponseSchema,
+  ExternalSessionStatusActionInputV1Schema,
+  ExternalSessionStatusActionResultV1Schema,
   ExternalSessionTranscriptPageRequestSchema,
   ExternalSessionTranscriptPageResponseSchema,
   ExternalSessionTranscriptReadAfterRequestSchema,
   ExternalSessionTranscriptReadAfterResponseSchema,
+  ExternalSessionViewerFollowActionInputV1Schema,
+  ExternalSessionViewerFollowActionResultV1Schema,
+  ExternalSessionViewerUnfollowActionInputV1Schema,
+  ExternalSessionViewerUnfollowActionResultV1Schema,
 } from '../sessions/external/daemonRpcV1.js';
 import {
   ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
@@ -129,18 +227,29 @@ import {
 } from '../sessions/external/takeoverV1.js';
 import {
   ExternalSessionMaterializeStartInputV1Schema,
+  ExternalSessionMaterializeActionInputV1Schema,
+  ExternalSessionMaterializeActionResultV1Schema,
+  ExternalSessionOperationActionResultV1Schema,
   ExternalSessionOperationActionResponseV1Schema,
   ExternalSessionOperationCancelInputV1Schema,
   ExternalSessionOperationDiscardInputV1Schema,
   ExternalSessionOperationResumeInputV1Schema,
   ExternalSessionOperationRetryInputV1Schema,
   ExternalSessionOperationStatusInputV1Schema,
+  ExternalSessionOperationTransportReferenceV1Schema,
   ExternalSessionTakeoverStartInputV1Schema,
-} from '../sessions/external/operationActionsV1.js';
+  projectExternalSessionMaterializeActionResultV1,
+  projectExternalSessionOperationActionResultV1,
+} from '../sessions/external/operationActionSchemasV1.js';
 import {
+  PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT,
+  PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS,
+  PluginSessionHookInstallActionInputV1Schema,
   PluginSessionHookInstallInputV1Schema,
   PluginSessionHookInstallResponseV1Schema,
+  PluginSessionHookInstallationMutationActionInputV1Schema,
   PluginSessionHookInstallationMutationInputV1Schema,
+  PluginSessionHookStatusActionInputV1Schema,
   PluginSessionHookStatusInputV1Schema,
   PluginSessionHookStatusResponseV1Schema,
   PluginSessionHookToggleResponseV1Schema,
@@ -184,12 +293,18 @@ import {
   SessionHandoffWorkspaceTransferSchema,
 } from '../sessions/control/handoff/handoffSchemas.js';
 import { SessionContinueWithReplayRpcParamsSchema } from '../sessions/continueWithReplay.js';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/index.js';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/methods.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 import { RUNTIME_ACTION_SPECS } from './specs/index.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
-export { resolveRuntimeActionHostEffectClass } from './safety.js';
+export {
+  RuntimeActionHostEffectClassSchema,
+  resolveRuntimeActionHostEffectClass,
+  type RuntimeActionHostEffectClass,
+} from './safety.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -207,6 +322,44 @@ const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   return typeof v.safeParse === 'function' && typeof v.parse === 'function';
 }, { message: 'Expected a Zod schema' });
 
+export type ActionSurfaceBindingCaller = ActionCaller;
+
+export type ActionSurfaceBindingContext = Readonly<{
+  actionId: ActionId;
+  surface: 'rpc' | 'plugin';
+  caller: ActionSurfaceBindingCaller;
+  defaultSessionId?: string | null;
+  serverId?: string | null;
+  signal?: AbortSignal;
+  input?: unknown;
+}>;
+
+export type ActionSurfaceBindingTransform = (
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+) => unknown | Promise<unknown>;
+
+const ActionSurfaceBindingTransformSchema = z.custom<ActionSurfaceBindingTransform>(
+  (value) => typeof value === 'function',
+  { message: 'Expected an Action surface binding transform' },
+);
+
+export const ActionSpecSurfaceBindingsSchema = z.object({
+  rpc: z.object({
+    inputSchema: ZodSchemaLike,
+    decodeInput: ActionSurfaceBindingTransformSchema,
+    outputSchema: ZodSchemaLike,
+    encodeOutput: ActionSurfaceBindingTransformSchema,
+  }).strict().optional(),
+  plugin: z.object({
+    inputSchema: ZodSchemaLike.optional(),
+    bindInput: ActionSurfaceBindingTransformSchema.optional(),
+    outputSchema: ZodSchemaLike.optional(),
+    projectOutput: ActionSurfaceBindingTransformSchema.optional(),
+  }).strict().optional(),
+}).strict();
+export type ActionSpecSurfaceBindings = z.infer<typeof ActionSpecSurfaceBindingsSchema>;
+
 export const ActionSurfaceSchema = z.object({
   ui: z.boolean(),
   voice: z.boolean(),
@@ -215,8 +368,35 @@ export const ActionSurfaceSchema = z.object({
   cli: z.boolean(),
   rpc: z.boolean(),
   sdk: z.boolean(),
+  plugin: z.boolean(),
 }).strict();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
+
+const ActionPluginCallerAdministrativeSelectorSchema = z.object({
+  pluginId: asProtocolZod(PluginIdSchema),
+  contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
+}).strict();
+
+/**
+ * A host Action's explicit authority contract when it is callable by a
+ * plugin. `caller` requires a current host-stamped plugin caller at the
+ * canonical executor. Further identity projection occurs only where an
+ * incumbent domain owner has caller-dependent authorization; it never grants
+ * authority over another plugin. `self_or_inspector_admin` is reserved for
+ * the one plugin-targeted host Action and makes its exceptional Inspector
+ * administration visible at the Action declaration owner.
+ */
+export const ActionPluginCallerPolicySchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('caller'),
+  }).strict(),
+  z.object({
+    kind: z.literal('self_or_inspector_admin'),
+    targetPluginIdField: z.literal('pluginId'),
+    administrativeCallers: z.array(ActionPluginCallerAdministrativeSelectorSchema).min(1),
+  }).strict(),
+]);
+export type ActionPluginCallerPolicy = z.infer<typeof ActionPluginCallerPolicySchema>;
 
 export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
 export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
@@ -233,114 +413,20 @@ export const ActionToolExposureSchema = z
   .strict();
 export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
 
-export const ActionSafetySchema = z.enum(['safe', 'danger']);
-export type ActionSafety = z.infer<typeof ActionSafetySchema>;
-
-export const RuntimeActionHostEffectClassSchema = z.enum([
-  'readOnly',
-  'mutating',
-  'destructive',
-  'recording',
-  'externalNavigation',
-  'diagnostic',
-]);
-export type RuntimeActionHostEffectClass = z.infer<typeof RuntimeActionHostEffectClassSchema>;
-
-export const ActionInputWidgetSchema = z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox', 'json']);
-export type ActionInputWidget = z.infer<typeof ActionInputWidgetSchema>;
-
-export const ActionInputOptionSchema = z
-  .object({
-    value: z.string().min(1),
-    label: z.string().min(1),
-    description: z.string().min(1).optional(),
-    disabled: z.boolean().optional(),
-  })
-  .passthrough();
-export type ActionInputOption = z.infer<typeof ActionInputOptionSchema>;
-
-export const ActionInputFieldHintSchema = z
-  .object({
-    /**
-     * Dot-path in the action input object, e.g. `engineIds` or `base.kind`.
-     *
-     * This is UI/elicitation metadata only; the canonical validation remains the action `inputSchema`.
-     */
-    path: z.string().min(1),
-    title: z.string().min(1),
-    description: z.string().min(1).optional(),
-    widget: ActionInputWidgetSchema,
-    /**
-     * Only used for `widget='text_list'`.
-     *
-     * This is UI/elicitation metadata only; canonical validation remains the action `inputSchema`.
-     */
-    listSeparator: z.enum(['comma', 'newline']).optional(),
-    required: z.boolean().optional(),
-    /**
-     * When true, draft/launcher UIs should keep this field empty until the user
-     * explicitly picks a value instead of auto-seeding or auto-selecting one.
-     */
-    requireExplicitSelection: z.boolean().optional(),
-    /**
-     * Only used for `widget='multiselect'`.
-     *
-     * This is UI/elicitation metadata only; canonical validation remains the action `inputSchema`.
-     */
-    maxSelections: z.number().int().positive().optional(),
-    options: z.array(ActionInputOptionSchema).optional(),
-    optionsSourceId: z.string().min(1).optional(),
-    visibleWhen: ActionInputPredicateSchema.optional(),
-    requiredWhen: ActionInputPredicateSchema.optional(),
-    disabledWhen: ActionInputPredicateSchema.optional(),
-  })
-  .passthrough()
-  .superRefine((value, ctx) => {
-    const widget = (value as any).widget as string;
-    const options = Array.isArray((value as any).options) ? (value as any).options : null;
-    const optionsSourceId = typeof (value as any).optionsSourceId === 'string' ? (value as any).optionsSourceId.trim() : '';
-
-    if (widget === 'select' || widget === 'multiselect') {
-      const hasOptions = Array.isArray(options) && options.length > 0;
-      const hasSource = Boolean(optionsSourceId);
-      if (!hasOptions && !hasSource) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${widget} requires options or optionsSourceId`,
-          path: ['options'],
-        });
-      }
-    }
-
-    if (widget === 'text_list') {
-      const listSeparator = (value as any).listSeparator;
-      if (listSeparator !== 'comma' && listSeparator !== 'newline') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'text_list requires listSeparator',
-          path: ['listSeparator'],
-        });
-      }
-    }
-
-    if (typeof (value as any).maxSelections !== 'undefined' && widget !== 'multiselect') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'maxSelections is only valid for multiselect fields',
-        path: ['maxSelections'],
-      });
-    }
-  });
-export type ActionInputFieldHint = z.infer<typeof ActionInputFieldHintSchema>;
-
-export const ActionInputHintsSchema = z
-  .object({
-    title: z.string().min(1).optional(),
-    description: z.string().min(1).optional(),
-    fields: z.array(ActionInputFieldHintSchema).default([]),
-  })
-  .passthrough();
-export type ActionInputHints = z.infer<typeof ActionInputHintsSchema>;
+export { ActionSafetySchema, type ActionSafety } from './safety.js';
+export {
+  ActionInputFieldHintSchema,
+  ActionInputHintsSchema,
+  ActionInputOptionSchema,
+  ActionInputOptionValueSchema,
+  ActionInputWidgetSchema,
+  readActionInputOptionValue,
+  type ActionInputFieldHint,
+  type ActionInputHints,
+  type ActionInputOption,
+  type ActionInputOptionValue,
+  type ActionInputWidget,
+} from './actionInputHints.js';
 
 export const ActionPromptingSchema = z
   .object({
@@ -370,9 +456,10 @@ export const ActionSpecSchema = z.object({
     sdkMethod: z.string().min(1).optional(),
     // RPC method exposed when surface.rpc is true.
     rpcMethod: z.string().min(1).optional(),
-    // Legacy wire aliases still accepted until their owning retirement packet removes them.
+    // Wire aliases accepted alongside the canonical method until their owning compatibility packet removes them.
     rpcMethodAliases: z.array(z.string().min(1)).optional(),
   }).passthrough().optional(),
+  surfaceBindings: ActionSpecSurfaceBindingsSchema.optional(),
   outputSchema: ZodSchemaLike.optional(),
   execution: z
     .object({
@@ -407,6 +494,8 @@ export const ActionSpecSchema = z.object({
     .optional(),
   prompting: ActionPromptingSchema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
+  /** Explicit host-stamped caller authority required by a non-safe Plugin Action. */
+  pluginCallerPolicy: ActionPluginCallerPolicySchema.optional(),
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
   inputHints: ActionInputHintsSchema.optional(),
@@ -453,11 +542,93 @@ export const ActionSpecSchema = z.object({
       path: ['outputSchema'],
     });
   }
+  if (value.surfaces.plugin && !value.outputSchema) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.plugin requires outputSchema',
+      path: ['outputSchema'],
+    });
+  }
+  if (value.surfaces.plugin && value.inputSchema instanceof z.ZodUnknown) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.plugin requires a representable input schema',
+      path: ['inputSchema'],
+    });
+  }
+  if (value.surfaces.plugin && value.outputSchema instanceof z.ZodUnknown) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surface.plugin requires a representable output schema',
+      path: ['outputSchema'],
+    });
+  }
+  const nonSafePluginAction = value.surfaces.plugin && value.safety !== 'safe';
+  if (nonSafePluginAction && !value.pluginCallerPolicy) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'non-safe surface.plugin requires pluginCallerPolicy',
+      path: ['pluginCallerPolicy'],
+    });
+  }
+  if (!nonSafePluginAction && value.pluginCallerPolicy) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'pluginCallerPolicy requires a non-safe surface.plugin Action',
+      path: ['pluginCallerPolicy'],
+    });
+  }
+  if (value.surfaceBindings?.rpc && !value.surfaces.rpc) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surfaceBindings.rpc requires surface.rpc',
+      path: ['surfaceBindings', 'rpc'],
+    });
+  }
+  if (value.surfaceBindings?.plugin && !value.surfaces.plugin) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surfaceBindings.plugin requires surface.plugin',
+      path: ['surfaceBindings', 'plugin'],
+    });
+  }
+  if (value.surfaceBindings?.plugin?.bindInput && !value.surfaceBindings.plugin.inputSchema) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'surfaceBindings.plugin.bindInput requires a caller input schema',
+      path: ['surfaceBindings', 'plugin', 'inputSchema'],
+    });
+  }
 });
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: ActionUiPlacement[];
 }>;
+
+/**
+ * Evaluates the declaration-owned policy against only host-stamped caller
+ * provenance and already-validated canonical Action input. No Action input is
+ * allowed to manufacture caller identity.
+ */
+export function isPluginActionCallerPolicySatisfied(
+  policy: ActionPluginCallerPolicy | undefined,
+  input: unknown,
+  caller: ActionCaller | undefined,
+): boolean {
+  if (!policy || caller?.kind !== 'plugin') return false;
+  if (policy.kind === 'caller') return true;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+
+  const targetPluginId = (input as Readonly<Record<string, unknown>>)[policy.targetPluginIdField];
+  if (typeof targetPluginId !== 'string') return false;
+  if (targetPluginId === caller.pluginId) return true;
+
+  return policy.administrativeCallers.some((administrator) => (
+    administrator.pluginId === caller.pluginId
+    && administrator.contributionLocalId === caller.contributionLocalId
+  ));
+}
+
 type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;
 export type ActionSpecWithoutApproval = Readonly<{
   id: ParsedActionSpec['id'];
@@ -467,16 +638,29 @@ export type ActionSpecWithoutApproval = Readonly<{
   placements: readonly ActionUiPlacement[];
   slash?: ParsedActionSpec['slash'];
   bindings?: ParsedActionSpec['bindings'];
+  surfaceBindings?: ParsedActionSpec['surfaceBindings'];
   outputSchema?: ParsedActionSpec['outputSchema'];
   execution?: ParsedActionSpec['execution'];
   sideEffectClass?: ParsedActionSpec['sideEffectClass'];
   examples?: ParsedActionSpec['examples'];
   prompting?: ParsedActionSpec['prompting'];
   toolExposure?: ParsedActionSpec['toolExposure'];
+  pluginCallerPolicy?: ParsedActionSpec['pluginCallerPolicy'];
   surfaces: ParsedActionSpec['surfaces'];
   inputSchema: ParsedActionSpec['inputSchema'];
   inputHints?: ParsedActionSpec['inputHints'];
 }>;
+
+/**
+ * Keeps each registry row's literal id and concrete Zod schema types intact.
+ * Runtime validation still goes through ActionSpecSchema; this helper exists so
+ * generated author projections do not widen back to ActionId/ZodTypeAny.
+ */
+export function defineActionSpecs<const TSpecs extends readonly ActionSpecWithoutApproval[]>(
+  specs: TSpecs,
+): TSpecs {
+  return specs;
+}
 
 const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
   ui: false,
@@ -486,7 +670,13 @@ const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
   cli: false,
   rpc: true,
   sdk: false,
+  plugin: false,
 } satisfies ActionSurfaces);
+
+const DAEMON_PROMPT_PLUGIN_SURFACES = Object.freeze({
+  ...DAEMON_ADMIN_RPC_SURFACES,
+  plugin: true,
+} as const satisfies ActionSurfaces);
 
 const DAEMON_ADMIN_INPUT_HINTS = Object.freeze({
   fields: [],
@@ -556,8 +746,10 @@ const SessionHistoryGetInputSchema = z.object({
 const SessionTranscriptRoleSchema = z.enum(['user', 'assistant']);
 const SessionStoredTranscriptRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
 
-export const SessionTranscriptGetInputSchema = z.object({
+const SessionTranscriptGetExternalShareableProjectionSchema = z.literal('externalShareableV1');
+const SessionTranscriptGetInputShape = {
   sessionId: z.string().min(1),
+  projection: SessionTranscriptGetExternalShareableProjectionSchema.optional(),
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).nullable().optional(),
   direction: z.enum(['before', 'after']).optional(),
@@ -572,42 +764,99 @@ export const SessionTranscriptGetInputSchema = z.object({
   includeRaw: z.boolean().optional(),
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
   maxRawPayloadChars: z.number().int().min(1).max(32768).nullable().optional(),
-}).passthrough();
+};
+
+/** Exact public input for the closed external-shareable transcript projection. */
+export const SessionTranscriptGetExternalShareableInputV1Schema = z.object({
+  sessionId: SessionTranscriptGetInputShape.sessionId,
+  projection: SessionTranscriptGetExternalShareableProjectionSchema,
+  limit: SessionTranscriptGetInputShape.limit,
+  cursor: SessionTranscriptGetInputShape.cursor,
+}).strict();
+export type SessionTranscriptGetExternalShareableInputV1 = z.infer<
+  typeof SessionTranscriptGetExternalShareableInputV1Schema
+>;
+
+export const SessionTranscriptGetInputSchema = z.object(SessionTranscriptGetInputShape).passthrough().superRefine((value, context) => {
+  if (value.projection !== 'externalShareableV1') return;
+  const allowedKeys = new Set(['sessionId', 'projection', 'cursor', 'limit']);
+  for (const key of Object.keys(value)) {
+    if (allowedKeys.has(key)) continue;
+    context.addIssue({
+      code: 'custom',
+      path: [key],
+      message: `${key} is not accepted by the externalShareableV1 projection`,
+    });
+  }
+});
 export type SessionTranscriptGetInput = z.infer<typeof SessionTranscriptGetInputSchema>;
-export type SessionTranscriptGetItem = Readonly<{
-  id: string;
-  seq?: number;
-  createdAt: number;
-  role: 'user' | 'assistant' | 'tool' | 'event' | 'reasoning' | 'unknown';
-  kind: string;
-  origin?: ConversationTurnOriginV1;
-  text?: string;
-  summary?: string;
-  toolName?: string;
-  callId?: string;
-  raw?: unknown;
-  truncated?: boolean;
-  rawTruncated?: boolean;
-}>;
-export type SessionTranscriptGetOutput =
-  | Readonly<{
-      ok: true;
-      sessionId: string;
-      items: readonly SessionTranscriptGetItem[];
-      nextCursor: string | null;
-      hasMore: boolean;
-      diagnostics?: Readonly<{
-        rawRowsScanned: number;
-        pagesFetched: number;
-        scanLimitReached: boolean;
-      }>;
-    }>
-  | Readonly<{
-      ok: false;
-      errorCode: string;
-      errorMessage: string;
-      candidates?: readonly string[];
-    }>;
+const SessionTranscriptSemanticRoleSchema = z.enum([
+  'user',
+  'assistant',
+  'tool',
+  'event',
+  'reasoning',
+  'unknown',
+]);
+const SessionTranscriptStoredMessageRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
+const SessionTranscriptGetItemSchema = z.object({
+  id: z.string(),
+  seq: z.number().int().nonnegative().optional(),
+  createdAt: z.number().int().nonnegative(),
+  storedMessageRole: SessionTranscriptStoredMessageRoleSchema.optional(),
+  semanticRole: SessionTranscriptSemanticRoleSchema,
+  role: SessionTranscriptSemanticRoleSchema,
+  kind: z.string(),
+  origin: ConversationTurnOriginV1Schema.optional(),
+  provider: z.string().optional(),
+  text: z.string().optional(),
+  summary: z.string().optional(),
+  toolName: z.string().optional(),
+  callId: z.string().optional(),
+  raw: z.unknown().optional(),
+  truncated: z.boolean().optional(),
+  rawTruncated: z.boolean().optional(),
+}).strict();
+export type SessionTranscriptGetItem = z.infer<typeof SessionTranscriptGetItemSchema>;
+
+const SessionTranscriptGetSemanticSuccessSchema = z.object({
+  ok: z.literal(true),
+  sessionId: z.string().min(1),
+  items: z.array(SessionTranscriptGetItemSchema).readonly(),
+  nextCursor: z.string().min(1).nullable(),
+  hasMore: z.boolean(),
+  diagnostics: z.object({
+    rawRowsScanned: z.number().int().nonnegative(),
+    pagesFetched: z.number().int().nonnegative(),
+    scanLimitReached: z.boolean(),
+    payloadTruncations: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+export const SessionTranscriptGetExternalShareableResultV1Schema = ExternalShareableTranscriptPageV1Schema.extend({
+  ok: z.literal(true),
+  sessionId: z.string().min(1),
+  projection: z.literal('externalShareableV1'),
+}).strict();
+
+const SessionTranscriptGetErrorSchema = z.object({
+  ok: z.literal(false),
+  errorCode: z.string().min(1),
+  errorMessage: z.string().min(1),
+  candidates: z.array(z.string().min(1)).readonly().optional(),
+}).strict();
+
+/** Canonical strict result envelope for every session.transcript.get Action path. */
+export const SessionTranscriptGetResultSchema = z.union([
+  SessionTranscriptGetSemanticSuccessSchema,
+  SessionTranscriptGetExternalShareableResultV1Schema,
+  SessionTranscriptGetErrorSchema,
+]);
+export type SessionTranscriptGetResult = z.infer<typeof SessionTranscriptGetResultSchema>;
+export type SessionTranscriptGetExternalShareableResultV1 = z.infer<
+  typeof SessionTranscriptGetExternalShareableResultV1Schema
+>;
+export type SessionTranscriptGetOutput = SessionTranscriptGetResult;
 
 export const SessionEventsGetInputSchema = z.object({
   sessionId: z.string().min(1),
@@ -707,7 +956,7 @@ const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
   backendTargetKeys: z.array(BackendTargetKeyInputSchema).min(1),
   instructions: z.string().trim().min(1),
-  permissionMode: z.string().min(1).optional(),
+  permissionMode: ExecutionRunActionPermissionModeSchema.optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
   runClass: z.enum(['bounded', 'long_lived']).optional(),
   ioMode: z.enum(['request_response', 'streaming']).optional(),
@@ -736,33 +985,44 @@ const IntentStartCommonSchema = z.object({
    * closed at run start.
    */
   connectedServicesByBackendTargetKey: z
-    .record(z.string(), z.unknown())
+    .record(z.string(), StrictJsonValueSchema)
     .optional(),
 }).passthrough();
 
 const PlanStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('read_only'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
 }).passthrough();
 
 const DelegateStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('workspace_write'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('workspace_write'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
 }).passthrough();
 
 const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: z.string().min(1).default('read_only'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('long_lived'),
   ioMode: z.enum(['request_response', 'streaming']).default('streaming'),
 }).passthrough();
 
+/**
+ * Scope is intentionally tri-state: an omitted field resolves to the caller's
+ * current Session when one exists; explicit `null` means detached; and a string
+ * identifies one exact Session. Keep the property optional so the action owner
+ * can distinguish omission from explicit `null` by property presence.
+ */
+const ExecutionRunScopeSessionIdSchema = z.string().min(1).refine(
+  (sessionId) => sessionId.trim().length > 0,
+  { message: 'sessionId must not be whitespace only' },
+).nullable().optional();
+
 const ExecutionRunIdInputSchema = z.object({
-  sessionId: z.string().min(1).optional(),
+  sessionId: ExecutionRunScopeSessionIdSchema,
   runId: z.string().min(1),
 }).passthrough();
 
@@ -783,16 +1043,52 @@ function preprocessRunStartConnectedServicesInput(raw: unknown): unknown {
   return { ...record, connectedServices: normalized.bindings };
 }
 
-const ExecutionRunStartInputSchema = z.preprocess(
+const ExecutionRunStartActionRequestSchema = ExecutionRunStartRequestBaseSchema.extend({
+  sessionId: ExecutionRunScopeSessionIdSchema,
+  waitForCompletion: z.boolean().optional(),
+  waitTimeoutSeconds: z.number().int().min(1).optional(),
+  /**
+   * Ergonomic shorthand for `sessionConfigOptionOverrides` (id → value). Merged into the canonical
+   * overrides at the action boundary; conflicting values fail with `invalid_parameters`.
+   */
+  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
+}).superRefine(refineExecutionRunStartRequest).superRefine((value, ctx) => {
+  if (value.waitTimeoutSeconds !== undefined && value.waitForCompletion !== true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'waitTimeoutSeconds requires waitForCompletion=true',
+      path: ['waitTimeoutSeconds'],
+    });
+  }
+});
+
+const ExecutionRunStartPluginInputSchema = ExecutionRunStartRequestBaseSchema.extend({
+  sessionId: ExecutionRunScopeSessionIdSchema,
+  waitForCompletion: z.boolean().optional(),
+  waitTimeoutSeconds: z.number().int().min(1).optional(),
+  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
+  connectedServices: z.union([
+    ConnectedServiceBindingsV1Schema,
+    z.string(),
+    z.array(z.string()),
+  ]).optional(),
+}).superRefine(refineExecutionRunStartRequest).superRefine((value, ctx) => {
+  if (value.waitTimeoutSeconds !== undefined && value.waitForCompletion !== true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'waitTimeoutSeconds requires waitForCompletion=true',
+      path: ['waitTimeoutSeconds'],
+    });
+  }
+});
+
+const ExecutionRunStartInputSchema = z.preprocess<
+  unknown,
+  typeof ExecutionRunStartActionRequestSchema,
+  z.input<typeof ExecutionRunStartPluginInputSchema>
+>(
   preprocessRunStartConnectedServicesInput,
-  ExecutionRunStartRequestSchema.extend({
-    sessionId: z.string().min(1).optional(),
-    /**
-     * Ergonomic shorthand for `sessionConfigOptionOverrides` (id → value). Merged into the canonical
-     * overrides at the action boundary; conflicting values fail with `invalid_parameters`.
-     */
-    configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
-  }).passthrough(),
+  ExecutionRunStartActionRequestSchema,
 );
 
 const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
@@ -809,7 +1105,7 @@ const ExecutionRunEnsureInputSchema = ExecutionRunIdInputSchema.extend({
 }).passthrough();
 
 const ExecutionRunEnsureOrStartInputSchema = z.object({
-  sessionId: z.string().min(1).optional(),
+  sessionId: ExecutionRunScopeSessionIdSchema,
   runId: z.string().min(1).nullable().optional(),
   start: ExecutionRunStartRequestSchema.optional(),
   resume: z.boolean().optional(),
@@ -838,7 +1134,7 @@ const ExecutionRunStreamCancelInputSchema = ExecutionRunIdInputSchema.extend({
 
 const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
   actionId: z.string().min(1),
-  input: z.unknown().optional(),
+  input: StrictJsonValueSchema.optional(),
 }).passthrough();
 
 const ExecutionRunWaitInputSchema = ExecutionRunIdInputSchema.extend({
@@ -875,84 +1171,12 @@ const SessionHandoffInputSchema = z.object({
   workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
 }).passthrough();
 
-const SessionSpawnNewInputSchema = z.object({
-  tag: z.string().min(1).optional(),
-  agentId: z.string().min(1).optional(),
-  modelId: z.string().min(1).optional(),
-  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
-  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
-  backendTarget: BackendTargetRefV2Schema.optional(),
-  title: z.string().min(1).optional(),
-  path: z.string().min(1).optional(),
-  directory: z.string().min(1).optional(),
-  host: z.string().min(1).optional(),
-  machineId: z.string().min(1).optional(),
-  serverId: z.string().min(1).optional(),
-  initialMessage: z.string().min(1).optional(),
-  initialPrompt: z.string().min(1).optional(),
-  permissionMode: z.string().min(1).optional(),
-  permissionModeUpdatedAt: z.number().finite().optional(),
-  agentModeId: z.string().min(1).optional(),
-  agentModeUpdatedAt: z.number().finite().optional(),
-  modelUpdatedAt: z.number().finite().optional(),
-  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
-  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
-  profileId: z.string().optional(),
-  environmentVariables: z.record(z.string(), z.string()).optional(),
-  connectedServices: ConnectedServiceBindingsV1Schema.optional(),
-  connectedServicesUpdatedAt: z.number().finite().optional(),
-  mcpSelection: SessionMcpSelectionV1Schema.optional(),
-  transcriptStorage: z.enum(['persisted', 'direct']).optional(),
-  terminal: z.unknown().optional(),
-  windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
-  windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
-  windowsTerminalWindowName: z.string().min(1).optional(),
-  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-}).passthrough().superRefine((value, ctx) => {
-  validateAgentIdAndBackendTargetKeySelection(value, ctx);
-  if (value.providerConnectionId !== undefined && !value.modelId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['providerConnectionId'],
-      message: 'providerConnectionId requires an explicit modelId',
-    });
-  }
-  validateStringAliasPair(value, ctx, {
-    primary: 'path',
-    alias: 'directory',
-  });
-  validateStringAliasPair(value, ctx, {
-    primary: 'initialMessage',
-    alias: 'initialPrompt',
-  });
-  for (const conflict of findSpawnConfigOptionAliasConflicts({
-    sessionConfigOptionOverrides: value.sessionConfigOptionOverrides,
-    configOptions: value.configOptions,
-  })) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `configOptions.${conflict.id} conflicts with sessionConfigOptionOverrides.${conflict.id}`,
-      path: ['configOptions', conflict.id],
-    });
-  }
-});
-
-const SessionSpawnPickerInputSchema = z.object({
-  tag: z.string().min(1).optional(),
-  agentId: z.string().min(1).optional(),
-  modelId: z.string().min(1).optional(),
-  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
-  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
-  initialMessage: z.string().min(1).optional(),
-}).passthrough().superRefine((value, ctx) => {
-  validateAgentIdAndBackendTargetKeySelection(value, ctx);
-  if (value.providerConnectionId !== undefined && !value.modelId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['providerConnectionId'],
-      message: 'providerConnectionId requires an explicit modelId',
-    });
-  }
+const SessionSpawnNewInputSchema = SessionSpawnNewInputV2Schema;
+// Action invocations may derive a key from their durable request identity, but
+// RPC retries have no such identity. The transport therefore requires the
+// caller's one logical creation key rather than synthesizing one per attempt.
+const SessionSpawnNewRpcInputSchema = SessionSpawnNewInputV2Schema.extend({
+  creationKey: SessionCreationKeyV1Schema,
 });
 
 function validateAgentIdAndBackendTargetKeySelection(
@@ -1124,6 +1348,9 @@ const ActionOptionsResolveInputSchema = z.object({
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   message: z.string().min(1),
+  requestedAction: PendingRequestedActionV1Schema.optional(),
+  idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema.optional(),
+  source: PluginSessionInputSourceV1Schema.optional(),
   permissionModeOverride: z.string().trim().min(1).optional(),
   modelOverride: z.union([z.string().trim().min(1), z.null()]).optional(),
   providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
@@ -1140,6 +1367,14 @@ const SessionSendMessageInputSchema = z.object({
     });
   }
 });
+
+/** Plugin Session messages carry only host-attributed admission intent. */
+const SessionSendMessagePluginInputV1Schema = z.object({
+  sessionId: z.string().min(1),
+  message: z.string().min(1),
+  idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
+  source: PluginSessionInputSourceV1Schema.optional(),
+}).strict();
 
 const SessionPermissionRespondInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -1164,14 +1399,18 @@ const SessionUserActionAnswerItemSchema = z.object({
   }
 });
 
-const SessionUserActionAnswerInputSchema = z.object({
-  sessionId: z.string().min(1).optional(),
-  requestId: z.string().min(1).optional(),
-  decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
-  reason: z.string().trim().min(1).optional(),
-  answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
-  updatedPermissions: z.unknown().optional(),
-}).passthrough().superRefine((value, ctx) => {
+function validateSessionUserActionAnswer(
+  value: Readonly<{
+    decision?: 'approve' | 'reject' | 'request_changes';
+    reason?: string;
+    answers?: readonly Readonly<{
+      question: string;
+      values?: readonly string[];
+      answer?: string;
+    }>[];
+  }>,
+  ctx: z.RefinementCtx,
+): void {
   const hasAnswers = Array.isArray(value.answers) && value.answers.length > 0;
   const structuredAnswers = Object.create(null) as Record<string, readonly string[]>;
   for (const [index, entry] of (value.answers ?? []).entries()) {
@@ -1192,22 +1431,42 @@ const SessionUserActionAnswerInputSchema = z.object({
       path: ['answers'],
     });
   }
-  const decision = typeof value.decision === 'string' ? value.decision : null;
-  if (!hasAnswers && !decision) {
+  if (!hasAnswers && value.decision === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'decision or answers is required',
       path: ['decision'],
     });
   }
-  if (decision === 'request_changes' && !(typeof value.reason === 'string' && value.reason.trim().length > 0)) {
+  if (value.decision === 'request_changes'
+    && !(typeof value.reason === 'string' && value.reason.trim().length > 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'reason is required when decision=request_changes',
       path: ['reason'],
     });
   }
-});
+}
+
+const SessionUserActionAnswerInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  requestId: z.string().min(1).optional(),
+  decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
+  reason: z.string().trim().min(1).optional(),
+  answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
+  updatedPermissions: StrictJsonValueSchema.optional(),
+}).passthrough().superRefine(validateSessionUserActionAnswer);
+
+const SessionUserActionAnswerPluginInputSchema = z.object({
+  requestId: z.string().min(1),
+  decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
+  reason: z.string().trim().min(1).optional(),
+  answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
+}).strict().superRefine(validateSessionUserActionAnswer);
+
+const SessionInteractionResponseSuccessSchema = z.object({
+  ok: z.literal(true),
+}).strict();
 
 const SessionModeSetInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -1286,7 +1545,7 @@ const TranscriptFollowInputSchema = TranscriptReadAfterInputSchema.extend({
 const TranscriptImportInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   importId: z.string().trim().min(1).optional(),
-  items: z.array(z.unknown()).min(1).max(500),
+  items: z.array(StrictJsonValueSchema).min(1).max(500),
   maxItems: z.number().int().min(1).max(500).optional(),
 }).passthrough();
 
@@ -1301,7 +1560,7 @@ const TranscriptSearchInputSchema = z.object({
 
 const TranscriptPageOutputSchema = z.object({
   ok: z.boolean().optional(),
-  items: z.array(z.unknown()),
+  items: z.array(StrictJsonValueSchema),
   nextCursor: z.string().nullable(),
   hasMore: z.boolean().optional(),
   tailCursor: z.string().nullable().optional(),
@@ -1310,7 +1569,7 @@ const TranscriptPageOutputSchema = z.object({
 
 const TranscriptReadAfterOutputSchema = z.object({
   ok: z.boolean().optional(),
-  items: z.array(z.unknown()),
+  items: z.array(StrictJsonValueSchema),
   nextCursor: z.string().nullable(),
   truncated: z.boolean(),
 }).passthrough();
@@ -1392,13 +1651,17 @@ const MemoryEnsureUpToDateInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
 }).passthrough();
 
+const MemoryEnsureUpToDateOutputSchema = z.object({
+  ok: z.boolean(),
+}).passthrough();
+
 const ApprovalRequestCreateInputSchema = z.object({
   actionId: ActionIdSchema,
-  actionArgs: z.unknown(),
+  actionArgs: StrictJsonValueSchema,
   summary: z.string().min(1),
   createdBy: ApprovalRequestCreatedBySchema,
   origin: ApprovalRequestOriginV1Schema.optional(),
-  preview: z.unknown().optional(),
+  preview: StrictJsonValueSchema.optional(),
 }).passthrough();
 
 const ApprovalRequestListInputSchema = z.object({
@@ -1482,6 +1745,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',
   'action.options.resolve',
+  'account.plugins.data.erase',
   'sessions.subagents.list',
   'sessions.subagents.get',
   'sessions.subagents.watch',
@@ -1533,6 +1797,11 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'approval.request.list',
   'approval.request.get',
   'plugins.list',
+  'plugins.settings.list',
+  'plugins.settings.get',
+  'plugins.settings.secret.status',
+  'plugin.webhook.endpoint.read',
+  'plugin.webhook.endpoint.checkCorrespondence',
   'plugins.sessionHooks.status.get',
   'plugins.permissions.grants.list',
   'session.log.tail',
@@ -1677,6 +1946,28 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'plugins.permissions.grants.grant',
   'plugins.permissions.grants.revoke',
   'plugins.permissions.grants.dismissRequest',
+  'plugins.settings.set',
+  'plugins.settings.reset',
+  'plugins.settings.secret.bind',
+  'plugins.settings.secret.unbind',
+  'plugins.settings.secret.delete',
+  'plugin.webhook.endpoint.ensure',
+  'plugin.webhook.endpoint.revoke',
+  'plugin.webhook.endpoint.retarget',
+  'plugin.webhook.delivery.movePending',
+  'plugin.webhook.endpoint.credential.configure',
+  'plugin.webhook.endpoint.credential.rotate',
+  'plugin.webhook.endpoint.credential.finishRotation',
+  'automation.event.sources.list',
+  'automation.event.admit',
+  'automation.event.source.status.report',
+  'automation.conversation.targets.list',
+  'automation.conversation.target.verify',
+  'automation.conversation.admit',
+  'session.permission.remote.pending.list',
+  'session.permission.remote.respond',
+  'session.permission.remote.grants.list',
+  'session.permission.remote.grants.revoke',
   ...REVIEW_COMMENT_ACTION_IDS_V1,
 ] as const satisfies readonly ActionId[];
 
@@ -1709,7 +2000,6 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'session.handoff.commit',
   'session.handoff.abort',
   'session.spawn_new',
-  'session.spawn_picker',
   'session.message.send',
   'session.permission.respond',
   'session.user_action.answer',
@@ -1806,6 +2096,76 @@ const REVIEW_COMMENT_ACTION_RPC_METHODS: Readonly<Record<ReviewCommentActionIdV1
   'reviews.comments.bulkTransition': RPC_METHODS.REVIEW_COMMENTS_BULK_TRANSITION,
 });
 
+const PluginSessionHookAgentPluginInputSchema = z.object({
+  localId: asProtocolZod(PluginContributionLocalIdSchema),
+}).strict();
+const PluginSessionHookStatusPluginInputV1Schema = z.discriminatedUnion('intent', [
+  z.object({
+    intent: z.literal('passive_inventory'),
+    agent: PluginSessionHookAgentPluginInputSchema.optional(),
+    cursor: z.string().min(1).max(4_096).optional(),
+    limit: z.number()
+      .int()
+      .min(1)
+      .max(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS)
+      .default(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT),
+  }).strict(),
+  z.object({
+    intent: z.literal('install_preview'),
+    agent: PluginSessionHookAgentPluginInputSchema,
+  }).strict(),
+  z.object({
+    intent: z.literal('installation_recheck'),
+    agent: PluginSessionHookAgentPluginInputSchema,
+    installationId: z.string().trim().min(1).max(512),
+  }).strict(),
+]);
+const PluginSessionHookInstallPluginInputV1Schema = z.object({
+  agent: PluginSessionHookAgentPluginInputSchema,
+  expectedPreviewId: z.string().regex(/^hook-install-preview:v1:[0-9a-f]{64}$/u),
+}).strict();
+const PluginSessionHookMutationPluginInputV1Schema = z.object({
+  agent: PluginSessionHookAgentPluginInputSchema,
+  installationId: z.string().trim().min(1).max(512),
+}).strict();
+
+function bindPluginSessionHookAgent(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  const caller = requirePluginBindingCaller(context);
+  const input = z.object({
+    agent: PluginSessionHookAgentPluginInputSchema.optional(),
+  }).passthrough().parse(value);
+  return {
+    ...input,
+    ...(input.agent
+      ? { agent: { pluginId: caller.pluginId, localId: input.agent.localId } }
+      : {}),
+  };
+}
+
+function projectPluginSessionHookStatus(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  const caller = requirePluginBindingCaller(context);
+  const response = PluginSessionHookStatusResponseV1Schema.parse(value);
+  return response.ok
+    ? {
+        ...response,
+        rows: response.rows.filter((row) => row.agent.pluginId === caller.pluginId),
+      }
+    : response;
+}
+
+const PluginSessionHookRpcSurfaceBinding = {
+  inputSchema: PluginSessionHookStatusInputV1Schema,
+  decodeInput: (value: unknown) => value,
+  outputSchema: PluginSessionHookStatusResponseV1Schema,
+  encodeOutput: (value: unknown) => value,
+} as const;
+
 const PLUGIN_PERMISSION_GRANT_ACTION_TITLES: Readonly<Record<PluginPermissionGrantActionIdV1, string>> = Object.freeze({
   'plugins.permissions.grants.list': 'List plugin permission grants',
   'plugins.permissions.grants.request': 'Request plugin permission grant',
@@ -1822,6 +2182,75 @@ const PLUGIN_PERMISSION_GRANT_ACTION_RPC_METHODS: Readonly<Record<PluginPermissi
   'plugins.permissions.grants.dismissRequest': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_DISMISS_REQUEST,
 });
 
+const PluginPermissionSubjectPluginInputSchema = z.discriminatedUnion('kind', [
+  PluginPermissionSubjectV1Schema.options[0],
+  PluginPermissionSubjectV1Schema.options[1].omit({ contribution: true }).extend({
+    contribution: z.object({ localId: asProtocolZod(PluginContributionLocalIdSchema) }).strict(),
+  }).strict(),
+]);
+const PluginPermissionGrantListPluginInputSchema =
+  PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.list']
+    .omit({ pluginId: true, grantId: true, subject: true })
+    .extend({ subject: PluginPermissionSubjectPluginInputSchema.optional() })
+    .strict();
+const PluginPermissionGrantRequestPluginInputSchema =
+  PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.request'].omit({
+    pluginId: true,
+    requester: true,
+    subject: true,
+  }).extend({ subject: PluginPermissionSubjectPluginInputSchema }).strict();
+const PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS = Object.freeze({
+  'plugins.permissions.grants.list': PluginPermissionGrantListPluginInputSchema,
+  'plugins.permissions.grants.request': PluginPermissionGrantRequestPluginInputSchema,
+  'plugins.permissions.grants.revoke': PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.revoke'],
+});
+
+function requirePluginBindingCaller(context: ActionSurfaceBindingContext): Readonly<{
+  kind: 'plugin';
+  pluginId: string;
+}> {
+  if (context.caller.kind !== 'plugin') {
+    throw new Error('plugin_surface_caller_required');
+  }
+  return context.caller;
+}
+
+function bindPluginCurrentSessionInput(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  requirePluginBindingCaller(context);
+  const sessionId = typeof context.defaultSessionId === 'string'
+    ? context.defaultSessionId.trim()
+    : '';
+  if (!sessionId) throw new Error('plugin_current_session_required');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('plugin_session_interaction_input_invalid');
+  }
+  return { ...value, sessionId };
+}
+
+function projectPluginSessionInteractionResponse(value: unknown): unknown {
+  if (value === undefined || value === null) return { ok: true };
+  const parsed = SessionInteractionResponseSuccessSchema.safeParse(value);
+  if (!parsed.success) throw new Error('plugin_session_interaction_result_invalid');
+  return parsed.data;
+}
+
+function bindPluginPermissionSubject(
+  subject: z.infer<typeof PluginPermissionSubjectPluginInputSchema> | undefined,
+  pluginId: string,
+): unknown {
+  if (!subject || subject.kind === 'general') return subject;
+  return {
+    ...subject,
+    contribution: {
+      pluginId,
+      localId: subject.contribution.localId,
+    },
+  };
+}
+
 const PLUGIN_DEV_LOOP_ACTION_IDS = [
   'plugins.scaffold',
   'plugins.install',
@@ -1831,11 +2260,19 @@ const PLUGIN_DEV_LOOP_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 type PluginDevLoopActionId = typeof PLUGIN_DEV_LOOP_ACTION_IDS[number];
 
+/**
+ * The single vocabulary for the plugin scaffold's UI mode. Every surface that
+ * accepts `--ui` (CLI parser, `plugins.scaffold` action input, scaffold engine)
+ * resolves the mode through this schema.
+ */
+export const PluginScaffoldUiModeSchema = z.enum(['hostedWeb', 'reactNative']);
+export type PluginScaffoldUiMode = z.infer<typeof PluginScaffoldUiModeSchema>;
+
 const PluginScaffoldActionInputSchema = z.object({
   targetDir: z.string().trim().min(1),
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
-  ui: z.enum(['hostedWeb']).optional(),
+  ui: PluginScaffoldUiModeSchema.optional(),
 }).strict();
 
 const PluginInstallActionInputSchema = z.object({
@@ -1854,6 +2291,14 @@ const PluginReloadActionInputSchema = z.object({
 }).strict();
 
 const PluginListActionInputSchema = z.object({}).strict();
+
+const PluginDevLoopActionInputSchemas = {
+  'plugins.scaffold': PluginScaffoldActionInputSchema,
+  'plugins.install': PluginInstallActionInputSchema,
+  'plugins.uninstall': PluginUninstallActionInputSchema,
+  'plugins.reload': PluginReloadActionInputSchema,
+  'plugins.list': PluginListActionInputSchema,
+} as const satisfies Readonly<Record<PluginDevLoopActionId, z.ZodTypeAny>>;
 
 const PluginDevLoopActionOutputSchema = z.object({
   ok: z.boolean().optional(),
@@ -1878,15 +2323,8 @@ const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId
 function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionId): ActionSpecWithoutApproval {
   const isRead = actionId === 'plugins.list';
   const isInspectorUiAction = actionId === 'plugins.list' || actionId === 'plugins.reload';
-  const inputSchema = actionId === 'plugins.scaffold'
-    ? PluginScaffoldActionInputSchema
-    : actionId === 'plugins.install'
-      ? PluginInstallActionInputSchema
-      : actionId === 'plugins.uninstall'
-        ? PluginUninstallActionInputSchema
-        : actionId === 'plugins.reload'
-          ? PluginReloadActionInputSchema
-          : PluginListActionInputSchema;
+  const isPluginCallable = actionId === 'plugins.list' || actionId === 'plugins.reload';
+  const inputSchema = PluginDevLoopActionInputSchemas[actionId];
 
   return {
     id: actionId,
@@ -1905,6 +2343,7 @@ function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionId): ActionS
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: isPluginCallable,
     },
     sideEffectClass: actionId === 'plugins.uninstall' ? 'danger' : isRead ? 'read' : 'write',
     outputSchema: PluginDevLoopActionOutputSchema,
@@ -1913,8 +2352,107 @@ function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionId): ActionS
   };
 }
 
+const PLUGIN_SETTINGS_ADMINISTRATION_ACTION_TITLES: Readonly<Record<
+  PluginSettingsAdministrationActionIdV1,
+  string
+>> = Object.freeze({
+  'plugins.settings.list': 'List plugin settings',
+  'plugins.settings.get': 'Get plugin setting',
+  'plugins.settings.set': 'Set plugin setting',
+  'plugins.settings.reset': 'Reset plugin setting',
+  'plugins.settings.secret.status': 'Get plugin secret status',
+  'plugins.settings.secret.bind': 'Bind existing saved secret',
+  'plugins.settings.secret.unbind': 'Unbind plugin secret',
+  'plugins.settings.secret.delete': 'Delete plugin secret',
+});
+
+const PLUGIN_SETTINGS_ADMINISTRATION_ACTION_DESCRIPTIONS: Readonly<Record<
+  PluginSettingsAdministrationActionIdV1,
+  string
+>> = Object.freeze({
+  'plugins.settings.list': 'List declared plugin Settings for one exact Account or daemon scope.',
+  'plugins.settings.get': 'Read one declared non-secret plugin Setting from one exact scope.',
+  'plugins.settings.set': 'Compare-and-set one declared non-secret plugin Setting.',
+  'plugins.settings.reset': 'Reset one declared non-secret plugin Setting to its owner default.',
+  'plugins.settings.secret.status': 'Read safe configured status for one declared plugin secret.',
+  'plugins.settings.secret.bind': 'Bind one plugin secret to an existing SavedSecret identity without exposing its value.',
+  'plugins.settings.secret.unbind': 'Remove the binding for one plugin secret without exposing its value.',
+  'plugins.settings.secret.delete': 'Delete one plugin secret through its declared custody owner without exposing its value.',
+});
+
+function createPluginSettingsAdministrationActionSpec(
+  actionId: PluginSettingsAdministrationActionIdV1,
+): ActionSpecWithoutApproval {
+  const isRead = actionId === 'plugins.settings.list'
+    || actionId === 'plugins.settings.get'
+    || actionId === 'plugins.settings.secret.status';
+
+  return {
+    id: actionId,
+    title: PLUGIN_SETTINGS_ADMINISTRATION_ACTION_TITLES[actionId],
+    description: PLUGIN_SETTINGS_ADMINISTRATION_ACTION_DESCRIPTIONS[actionId],
+    safety: isRead ? 'safe' : 'danger',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    },
+    sideEffectClass: isRead ? 'read' : 'write',
+    outputSchema: PluginSettingsAdministrationActionOutputV1Schema,
+    inputSchema: PluginSettingsAdministrationActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
+
 function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantActionIdV1): ActionSpecWithoutApproval {
   const isRead = actionId === 'plugins.permissions.grants.list';
+  const pluginSurface = actionId === 'plugins.permissions.grants.list'
+    || actionId === 'plugins.permissions.grants.request'
+    || actionId === 'plugins.permissions.grants.revoke';
+  const pluginBinding = actionId === 'plugins.permissions.grants.list'
+    ? {
+        inputSchema: PluginPermissionGrantListPluginInputSchema,
+        bindInput(value: unknown, context: ActionSurfaceBindingContext) {
+          const caller = requirePluginBindingCaller(context);
+          const input = value as z.infer<typeof PluginPermissionGrantListPluginInputSchema>;
+          return {
+            ...input,
+            pluginId: caller.pluginId,
+            ...(input.subject
+              ? { subject: bindPluginPermissionSubject(input.subject, caller.pluginId) }
+              : {}),
+          };
+        },
+      }
+    : actionId === 'plugins.permissions.grants.request'
+      ? {
+          inputSchema: PluginPermissionGrantRequestPluginInputSchema,
+          bindInput(value: unknown, context: ActionSurfaceBindingContext) {
+            const caller = requirePluginBindingCaller(context);
+            const input = value as z.infer<typeof PluginPermissionGrantRequestPluginInputSchema>;
+            return {
+              ...input,
+              pluginId: caller.pluginId,
+              subject: bindPluginPermissionSubject(input.subject, caller.pluginId),
+              requester: {
+                kind: 'plugin' as const,
+                pluginId: caller.pluginId,
+                ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
+              },
+            };
+          },
+        }
+      : actionId === 'plugins.permissions.grants.revoke'
+        ? {
+            inputSchema: PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS[actionId],
+          }
+        : undefined;
   return {
     id: actionId,
     title: PLUGIN_PERMISSION_GRANT_ACTION_TITLES[actionId],
@@ -1925,6 +2463,7 @@ function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantAc
       rpcMethod: PLUGIN_PERMISSION_GRANT_ACTION_RPC_METHODS[actionId],
       sdkMethod: actionId,
     },
+    ...(pluginBinding ? { surfaceBindings: { plugin: pluginBinding } } : {}),
     surfaces: {
       ui: true,
       voice: false,
@@ -1933,10 +2472,121 @@ function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantAc
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: pluginSurface,
     },
     sideEffectClass: isRead ? 'read' : 'write',
     outputSchema: PluginPermissionGrantActionOutputSchemasV1[actionId],
     inputSchema: PluginPermissionGrantActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
+
+const PLUGIN_WEBHOOK_ACTION_TITLES: Readonly<Record<PluginWebhookActionIdV1, string>> = Object.freeze({
+  'plugin.webhook.endpoint.ensure': 'Ensure webhook endpoint',
+  'plugin.webhook.endpoint.read': 'Read webhook endpoint',
+  'plugin.webhook.endpoint.revoke': 'Revoke webhook endpoint',
+  'plugin.webhook.endpoint.retarget': 'Retarget webhook endpoint',
+  'plugin.webhook.endpoint.checkCorrespondence': 'Check webhook endpoint correspondence',
+  'plugin.webhook.delivery.movePending': 'Move pending webhook deliveries',
+  'plugin.webhook.endpoint.credential.configure': 'Configure webhook credential',
+  'plugin.webhook.endpoint.credential.rotate': 'Rotate webhook credential',
+  'plugin.webhook.endpoint.credential.finishRotation': 'Finish webhook credential rotation',
+});
+
+function createPluginWebhookActionSpec(actionId: PluginWebhookActionIdV1): ActionSpecWithoutApproval {
+  const pluginSurface = actionId === 'plugin.webhook.endpoint.checkCorrespondence';
+  const readOnly = actionId === 'plugin.webhook.endpoint.read' || pluginSurface;
+  return {
+    id: actionId,
+    title: PLUGIN_WEBHOOK_ACTION_TITLES[actionId],
+    description: 'Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.',
+    safety: readOnly ? 'safe' : 'danger',
+    placements: [],
+    surfaces: {
+      ui: !pluginSurface,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: !pluginSurface,
+      rpc: false,
+      sdk: false,
+      plugin: pluginSurface,
+    },
+    sideEffectClass: readOnly ? 'read' : 'write',
+    outputSchema: PluginWebhookActionOutputSchemasV1[actionId],
+    inputSchema: PluginWebhookActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
+
+const AUTOMATION_EVENT_ACTION_TITLES: Readonly<Record<AutomationEventActionIdV1, string>> = Object.freeze({
+  'automation.event.sources.list': 'List Automation Event sources',
+  'automation.event.admit': 'Admit Automation Event occurrence',
+  'automation.event.source.status.report': 'Report Automation Event source status',
+});
+
+function createAutomationEventActionSpec(actionId: AutomationEventActionIdV1): ActionSpecWithoutApproval {
+  const readOnly = actionId === 'automation.event.sources.list';
+  return {
+    id: actionId,
+    title: AUTOMATION_EVENT_ACTION_TITLES[actionId],
+    description: 'Read or update Event Automation state through the canonical Automation owner.',
+    safety: readOnly ? 'safe' : 'danger',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: true,
+    },
+    sideEffectClass: readOnly ? 'read' : 'write',
+    outputSchema: AutomationEventActionOutputSchemasV1[actionId],
+    inputSchema: AutomationEventActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
+
+const AUTOMATION_CONVERSATION_ACTION_TITLES: Readonly<
+  Record<AutomationConversationActionIdV1, string>
+> = Object.freeze({
+  'automation.conversation.targets.list': 'List Automation conversation targets',
+  'automation.conversation.target.verify': 'Verify Automation conversation target',
+  'automation.conversation.admit': 'Admit Automation conversation occurrence',
+});
+
+function createAutomationConversationActionSpec(
+  actionId: AutomationConversationActionIdV1,
+): ActionSpecWithoutApproval {
+  const readOnly = actionId === 'automation.conversation.targets.list'
+    || actionId === 'automation.conversation.target.verify';
+  const description = actionId === 'automation.conversation.targets.list'
+    ? 'List current Channel-selectable Automation conversation targets through the canonical Automation owner.'
+    : readOnly
+      ? 'Verify a Channel-owned conversation target through the canonical Automation owner.'
+      : 'Admit a Channel conversation occurrence through the canonical Automation owner.';
+  return {
+    id: actionId,
+    title: AUTOMATION_CONVERSATION_ACTION_TITLES[actionId],
+    description,
+    safety: readOnly ? 'safe' : 'danger',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: true,
+    },
+    sideEffectClass: readOnly ? 'read' : 'write',
+    outputSchema: AutomationConversationActionOutputSchemasV1[actionId],
+    inputSchema: AutomationConversationActionInputSchemasV1[actionId],
     inputHints: { fields: [] },
   };
 }
@@ -1961,6 +2611,7 @@ function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): Actio
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: isRead ? 'read' : 'write',
     outputSchema: ReviewCommentActionOutputSchemasV1[actionId],
@@ -1978,6 +2629,14 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_STATUS_GET },
+    surfaceBindings: {
+      rpc: PluginSessionHookRpcSurfaceBinding,
+      plugin: {
+        inputSchema: PluginSessionHookStatusPluginInputV1Schema,
+        bindInput: bindPluginSessionHookAgent,
+        projectOutput: projectPluginSessionHookStatus,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -1986,10 +2645,11 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: PluginSessionHookStatusResponseV1Schema,
-    inputSchema: PluginSessionHookStatusInputV1Schema,
+    inputSchema: PluginSessionHookStatusActionInputV1Schema,
     inputHints: { fields: [] },
   },
   {
@@ -1999,6 +2659,18 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: PluginSessionHookInstallInputV1Schema,
+        decodeInput: (value: unknown) => value,
+        outputSchema: PluginSessionHookInstallResponseV1Schema,
+        encodeOutput: (value: unknown) => value,
+      },
+      plugin: {
+        inputSchema: PluginSessionHookInstallPluginInputV1Schema,
+        bindInput: bindPluginSessionHookAgent,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2007,10 +2679,11 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookInstallResponseV1Schema,
-    inputSchema: PluginSessionHookInstallInputV1Schema,
+    inputSchema: PluginSessionHookInstallActionInputV1Schema,
     inputHints: { fields: [] },
   },
   {
@@ -2020,6 +2693,18 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+        decodeInput: (value: unknown) => value,
+        outputSchema: PluginSessionHookToggleResponseV1Schema,
+        encodeOutput: (value: unknown) => value,
+      },
+      plugin: {
+        inputSchema: PluginSessionHookMutationPluginInputV1Schema,
+        bindInput: bindPluginSessionHookAgent,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2028,10 +2713,11 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookToggleResponseV1Schema,
-    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationActionInputV1Schema,
     inputHints: { fields: [] },
   },
   {
@@ -2041,6 +2727,18 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+        decodeInput: (value: unknown) => value,
+        outputSchema: PluginSessionHookToggleResponseV1Schema,
+        encodeOutput: (value: unknown) => value,
+      },
+      plugin: {
+        inputSchema: PluginSessionHookMutationPluginInputV1Schema,
+        bindInput: bindPluginSessionHookAgent,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2049,10 +2747,11 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: PluginSessionHookToggleResponseV1Schema,
-    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationActionInputV1Schema,
     inputHints: { fields: [] },
   },
   {
@@ -2062,6 +2761,18 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+        decodeInput: (value: unknown) => value,
+        outputSchema: PluginSessionHookUninstallResponseV1Schema,
+        encodeOutput: (value: unknown) => value,
+      },
+      plugin: {
+        inputSchema: PluginSessionHookMutationPluginInputV1Schema,
+        bindInput: bindPluginSessionHookAgent,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2070,10 +2781,11 @@ const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: PluginSessionHookUninstallResponseV1Schema,
-    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationActionInputV1Schema,
     inputHints: { fields: [] },
   },
 ] as const satisfies readonly ActionSpecWithoutApproval[];
@@ -2084,6 +2796,123 @@ const EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS: ActionInputHints['
   { path: 'revision', title: 'Revision', widget: 'text', required: true },
 ];
 
+function identityActionSurfaceValue(value: unknown): unknown {
+  return value;
+}
+
+function projectExternalSessionOperationResult(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  const semantic = ExternalSessionOperationActionResultV1Schema.safeParse(value);
+  const materialize = ExternalSessionMaterializeActionInputV1Schema.safeParse(
+    context.input,
+  );
+  const reference = ExternalSessionOperationStatusInputV1Schema.safeParse(
+    context.input,
+  );
+  const sessionId = materialize.success
+    ? materialize.data.request.sessionId
+    : reference.success
+      ? reference.data.sessionId
+      : null;
+  if (!sessionId) throw new Error('external_session_operation_input_required');
+  if (semantic.success) {
+    if (
+      semantic.data.ok
+      && semantic.data.operation.sessionId !== sessionId
+    ) {
+      throw new Error('external_session_operation_session_mismatch');
+    }
+    return semantic.data;
+  }
+  return projectExternalSessionOperationActionResultV1(value, sessionId);
+}
+
+function projectExternalSessionMaterializeResult(
+  value: unknown,
+  context: ActionSurfaceBindingContext,
+): unknown {
+  const materialize = ExternalSessionMaterializeActionInputV1Schema.parse(
+    context.input,
+  );
+  return projectExternalSessionMaterializeActionResultV1(
+    value,
+    materialize.request.sessionId,
+  );
+}
+
+function projectExternalSessionStatusResult(value: unknown): unknown {
+  const response = ExternalSessionStatusGetResponseSchema.parse(value);
+  return response.ok
+    ? ExternalSessionStatusActionResultV1Schema.parse({
+        ok: true,
+        machineOnline: response.machineOnline,
+        runnerActive: response.runnerActive,
+        activity: response.activity,
+        canTakeOverDirect: response.canTakeOverDirect,
+        canTakeOverPersist: response.canTakeOverPersist,
+        canForceStop: response.canForceStop,
+        ...(response.lastKnownActivityAtMs === undefined
+          ? {}
+          : { lastKnownActivityAtMs: response.lastKnownActivityAtMs }),
+      })
+    : ExternalSessionStatusActionResultV1Schema.parse({
+        ok: false,
+        errorCode: response.errorCode,
+        error: response.error,
+      });
+}
+
+function projectExternalSessionViewerFollowResult(value: unknown): unknown {
+  const response = ExternalSessionAttachResponseSchema.parse(value);
+  return response.ok
+    ? ExternalSessionViewerFollowActionResultV1Schema.parse({
+        ok: true,
+        leaseId: response.leaseId,
+        expiresAtMs: response.expiresAtMs,
+        renewed: response.renewed ?? false,
+        ...(response.acceptedTailCursor === undefined
+          ? {}
+          : { acceptedTailCursor: response.acceptedTailCursor }),
+      })
+    : ExternalSessionViewerFollowActionResultV1Schema.parse({
+        ok: false,
+        errorCode: response.errorCode,
+        error: response.error,
+        ...(response.retryable === undefined
+          ? {}
+          : { retryable: response.retryable }),
+      });
+}
+
+function projectExternalSessionViewerUnfollowResult(value: unknown): unknown {
+  const response = ExternalSessionDetachResponseSchema.parse(value);
+  return ExternalSessionViewerUnfollowActionResultV1Schema.parse(response.ok
+    ? { ok: true, detached: response.detached }
+    : {
+        ok: false,
+        errorCode: response.errorCode,
+        error: response.error,
+      });
+}
+
+function projectExternalSessionBackgroundFollowResult(value: unknown): unknown {
+  const response = ExternalSessionFollowPolicySetResponseSchema.parse(value);
+  return ExternalSessionBackgroundFollowActionResultV1Schema.parse(response.ok
+    ? {
+        ok: true,
+        enabled: response.enabled,
+        leaseActive: response.leaseActive,
+        updatedAtMs: response.updatedAtMs,
+      }
+    : {
+        ok: false,
+        errorCode: response.errorCode,
+        error: response.error,
+      });
+}
+
 const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
   {
     id: 'sessions.external.materialize.start',
@@ -2092,6 +2921,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionMaterializeStartInputV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionMaterializeActionInputV1Schema,
+        projectOutput: projectExternalSessionMaterializeResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2100,10 +2941,11 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
-    inputSchema: ExternalSessionMaterializeStartInputV1Schema,
+    outputSchema: ExternalSessionMaterializeActionResultV1Schema,
+    inputSchema: ExternalSessionMaterializeActionInputV1Schema,
     inputHints: {
       title: 'Materialize external session',
       fields: [{ path: 'request', title: 'Operation request', widget: 'textarea', required: true }],
@@ -2116,6 +2958,14 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionTakeoverStartInputV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2124,6 +2974,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'danger',
     outputSchema: ExternalSessionOperationActionResponseV1Schema,
@@ -2140,6 +2991,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionOperationStatusInputV1Schema,
+        projectOutput: projectExternalSessionOperationResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2148,9 +3011,10 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationStatusInputV1Schema,
     inputHints: {
       title: 'Get external session operation status',
@@ -2164,6 +3028,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionOperationCancelInputV1Schema,
+        projectOutput: projectExternalSessionOperationResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2172,9 +3048,10 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationCancelInputV1Schema,
     inputHints: {
       title: 'Cancel external session operation',
@@ -2188,6 +3065,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionOperationResumeInputV1Schema,
+        projectOutput: projectExternalSessionOperationResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2196,9 +3085,10 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationResumeInputV1Schema,
     inputHints: {
       title: 'Resume external session operation',
@@ -2212,6 +3102,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionOperationRetryInputV1Schema,
+        projectOutput: projectExternalSessionOperationResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2220,9 +3122,10 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationRetryInputV1Schema,
     inputHints: {
       title: 'Retry external session operation',
@@ -2236,6 +3139,18 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionOperationDiscardInputV1Schema,
+        projectOutput: projectExternalSessionOperationResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -2244,9 +3159,10 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'danger',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationDiscardInputV1Schema,
     inputHints: {
       title: 'Discard external session operation',
@@ -2263,13 +3179,57 @@ function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval 
   throw new Error(`Missing action approval metadata for ${actionId}`);
 }
 
-const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Object.freeze([
+const EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION =
+  'A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.';
+
+const EXECUTION_RUN_SESSION_SCOPE_HINT = {
+  path: 'sessionId',
+  title: 'Session id',
+  description: 'Use a nonempty value for an exact authorized Session. Omit it to inherit the current Action Session, or to select detached scope when no current Session exists. Set null to select detached scope even inside a current Session.',
+  widget: 'text',
+} satisfies ActionInputFieldHint;
+
+const EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION =
+  'Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait.';
+
+const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   ...PLUGIN_DEV_LOOP_ACTION_IDS.map(createPluginDevLoopActionSpec),
+  ...PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1.map(createPluginSettingsAdministrationActionSpec),
   ...PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec),
+  ...PLUGIN_WEBHOOK_ACTION_IDS_V1.map(createPluginWebhookActionSpec),
+  ...AUTOMATION_EVENT_ACTION_IDS_V1.map(createAutomationEventActionSpec),
+  ...AUTOMATION_CONVERSATION_ACTION_IDS_V1.map(createAutomationConversationActionSpec),
   ...REVIEW_COMMENT_ACTION_IDS_V1.map(createReviewCommentActionSpec),
   ...RUNTIME_ACTION_SPECS,
   ...PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1,
   ...EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1,
+  {
+    id: 'account.plugins.data.erase',
+    title: 'Erase Account plugin data',
+    description: 'Erase the current Account’s retained data for one plugin without uninstalling local plugin code.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: PluginAccountDataEraseActionOutputV1Schema,
+    inputSchema: PluginAccountDataEraseActionInputV1Schema,
+    inputHints: {
+      title: 'Erase Account plugin data',
+      description: 'This permanently removes the current Account’s retained data for the selected plugin.',
+      fields: [
+        { path: 'pluginId', title: 'Plugin id', widget: 'text', required: true },
+      ],
+    },
+  },
   {
     id: 'action.spec.search',
     title: 'Search action specs',
@@ -2290,6 +3250,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      // Directional exclusion: the only real executor opens the in-app picker and
+      // waits for a present UI user. No daemon/plugin host interaction outcome exists.
+      plugin: false,
       },
     inputHints: {
       title: 'Search action specs',
@@ -2299,7 +3262,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return.', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ActionSpecSearchInputSchema,
   },
   {
@@ -2322,6 +3285,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Get action spec',
@@ -2329,7 +3293,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'id', title: 'Action id', description: 'The exact Happier action id.', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ActionSpecGetInputSchema,
   },
   {
@@ -2352,6 +3316,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Resolve action options',
@@ -2365,7 +3330,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Limit', description: 'Maximum number of options to return.', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ActionOptionsResolveInputSchema,
   },
   {
@@ -2450,8 +3415,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ReviewStartInputSchema,
   },
   {
@@ -2517,8 +3483,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	      cli: true,
 	      rpc: false,
 	      sdk: false,
+	      plugin: true,
 	      },
-	    outputSchema: z.unknown(),
+	    outputSchema: StrictJsonValueSchema,
 	    inputSchema: PlanStartInputSchema,
 	  },
   {
@@ -2549,6 +3516,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           description: 'What you want the delegate(s) to do.',
           widget: 'textarea',
           required: true,
+        },
+        {
+          path: 'permissionMode',
+          title: 'Permission mode',
+          description: EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION,
+          widget: 'select',
+          options: EXECUTION_RUN_ACTION_PERMISSION_MODES.map((value) => ({ value, label: value })),
         },
         {
           path: 'modelId',
@@ -2584,8 +3558,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	      cli: true,
 	      rpc: false,
 	      sdk: false,
+	      plugin: true,
 	      },
-	    outputSchema: z.unknown(),
+	    outputSchema: StrictJsonValueSchema,
 	    inputSchema: DelegateStartInputSchema,
 	  },
   {
@@ -2629,8 +3604,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: VoiceAgentStartInputSchema,
   },
   {
@@ -2649,6 +3625,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: z.array(SubagentRefV1Schema),
     inputSchema: SubagentListInputSchema,
@@ -2678,6 +3655,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: SubagentRefV1Schema.nullable(),
     inputSchema: SubagentGetInputSchema,
@@ -2705,6 +3683,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: SubagentWatchSnapshotOutputSchema,
     inputSchema: SubagentWatchInputSchema,
@@ -2733,6 +3712,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentRefInputV1Schema,
@@ -2763,6 +3743,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentStatusUpdateInputSchema,
@@ -2792,6 +3773,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     outputSchema: SubagentRefV1Schema,
     inputSchema: SubagentCompleteInputSchema,
@@ -2808,29 +3790,42 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'execution.run.start',
     title: 'Start execution run',
-    description: 'Start a new execution run within a session.',
+    description: `Start a new execution run. Set waitForCompletion=true to wait for a terminal run result. waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_START, mcpToolName: 'execution_run_start' },
+    bindings: {
+      rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+      voiceClientToolName: 'startExecutionRun',
+      mcpToolName: 'execution_run_start',
+    },
     sideEffectClass: 'write',
     examples: {
       mcp: {
-        argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"backend","backendId":"codex","sourceKind":"built_in"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
+        argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"backend","backendId":"codex","sourceKind":"built_in"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response","waitForCompletion":true,"waitTimeoutSeconds":60}',
+      },
+      voice: {
+        argsExample: '{"intent":"voice_agent","backendTarget":{"kind":"backend","backendId":"codex","sourceKind":"built_in"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
       },
     },
     surfaces: {
       ui: true,
-      voice: false,
+      voice: true,
       agent: true,
       mcp: true,
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
+    surfaceBindings: {
+      plugin: {
+        inputSchema: ExecutionRunStartPluginInputSchema,
+      },
+    },
     inputHints: {
       title: 'Start a run',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'intent', title: 'Intent', widget: 'text', required: true },
         { path: 'backendTarget', title: 'Backend target (json)', widget: 'textarea', required: true },
         { path: 'instructions', title: 'Instructions', widget: 'textarea' },
@@ -2838,6 +3833,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'retentionPolicy', title: 'Retention policy', widget: 'text', required: true },
         { path: 'runClass', title: 'Run class', widget: 'text', required: true },
         { path: 'ioMode', title: 'IO mode', widget: 'text', required: true },
+        {
+          path: 'waitForCompletion',
+          title: 'Wait for completion',
+          description: 'Return the terminal run disposition under wait instead of returning immediately after start.',
+          widget: 'boolean',
+        },
+        {
+          path: 'waitTimeoutSeconds',
+          title: 'Wait timeout seconds',
+          description: 'Optional observation deadline; requires waitForCompletion=true and never stops the run.',
+          widget: 'text',
+        },
         { path: 'initialContextMode', title: 'Initial context mode', widget: 'text' },
         {
           path: 'modelId',
@@ -2862,12 +3869,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: ExecutionRunStartResponseSchema,
     inputSchema: ExecutionRunStartInputSchema,
   },
   {
     id: 'execution.run.list',
     title: 'List execution runs',
+    description: `List execution runs in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: ['run_list', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
@@ -2877,7 +3885,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     inputHints: {
       title: 'List execution runs',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'backendTarget', title: 'Backend target', widget: 'text' },
         {
           path: 'status',
@@ -2895,7 +3903,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","status":"running","limit":10}' },
+      voice: { argsExample: '{"status":"running","limit":10}' },
     },
 	    surfaces: {
 	      ui: true,
@@ -2905,22 +3913,24 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	      cli: true,
 	      rpc: true,
 	      sdk: false,
+	      plugin: true,
 	      },
-	    outputSchema: z.unknown(),
-	    inputSchema: ExecutionRunListRequestSchema.extend({
-	      sessionId: z.string().min(1).optional(),
-	    }),
+	    outputSchema: ExecutionRunListResponseSchema,
+    inputSchema: ExecutionRunListRequestSchema.extend({
+      sessionId: ExecutionRunScopeSessionIdSchema,
+    }),
 	  },
   {
     id: 'execution.run.get',
     title: 'Get execution run',
+    description: `Get one execution run from the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: ['run_list', 'run_card', 'command_palette'],
     prompting: { voiceHotPath: true },
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_GET, voiceClientToolName: 'getExecutionRun', mcpToolName: 'execution_run_get' },
     sideEffectClass: 'read',
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","includeStructured":false}' },
+      voice: { argsExample: '{"sessionId":null,"runId":"run_123","includeStructured":false}' },
     },
     surfaces: {
       ui: true,
@@ -2930,20 +3940,23 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Get a run',
       fields: [
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
-        { path: 'includeStructured', title: 'Include structured output', widget: 'toggle' },
+        { path: 'includeStructured', title: 'Include structured output', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: ExecutionRunGetResponseSchema,
     inputSchema: ExecutionRunGetInputSchema,
   },
   {
     id: 'execution.run.send',
     title: 'Send to execution run',
+    description: `Send a message to one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: ['run_card'],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_SEND, voiceClientToolName: 'sendExecutionRunMessage', mcpToolName: 'execution_run_send' },
@@ -2959,22 +3972,24 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Send to run',
       fields: [
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'message', title: 'Message', widget: 'textarea', required: true },
-        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+        { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: ExecutionRunSendResponseSchema,
     inputSchema: ExecutionRunSendInputSchema,
   },
   {
     id: 'execution.run.ensure',
     title: 'Ensure execution run',
-    description: 'Ensure an existing execution run is active or resumable.',
+    description: `Ensure an existing execution run is active or resumable. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE },
@@ -2987,25 +4002,29 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Ensure a run',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
-        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+        { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunEnsureInputSchema,
   },
   {
     id: 'execution.run.ensure_or_start',
     title: 'Ensure or start execution run',
-    description: 'Ensure an existing execution run, or start a new one when no run id is supplied.',
+    description: `Ensure an existing execution run, or start a new one when no run id is supplied. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START },
+    bindings: {
+      rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+      rpcMethodAliases: [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1],
+    },
     sideEffectClass: 'write',
     surfaces: {
       ui: false,
@@ -3015,23 +4034,24 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Ensure or start a run',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text' },
         { path: 'start', title: 'Start request (json)', widget: 'textarea' },
-        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+        { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunEnsureOrStartInputSchema,
   },
   {
     id: 'execution.run.stream.start',
     title: 'Start execution run stream',
-    description: 'Start a bounded streaming turn for an execution run.',
+    description: `Start a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START },
@@ -3044,24 +4064,25 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Start a run stream',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'message', title: 'Message', widget: 'textarea', required: true },
         { path: 'displayMessage', title: 'Display message', widget: 'textarea' },
-        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+        { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunStreamStartInputSchema,
   },
   {
     id: 'execution.run.stream.read',
     title: 'Read execution run stream',
-    description: 'Read bounded deltas from an execution-run stream cursor.',
+    description: `Read bounded deltas from an execution-run stream cursor. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ },
@@ -3074,24 +4095,25 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Read a run stream',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
         { path: 'maxEvents', title: 'Max events', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunStreamReadInputSchema,
   },
   {
     id: 'execution.run.stream.cancel',
     title: 'Cancel execution run stream',
-    description: 'Cancel a bounded streaming turn for an execution run.',
+    description: `Cancel a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL },
@@ -3104,21 +4126,23 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Cancel a run stream',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunStreamCancelInputSchema,
   },
   {
     id: 'execution.run.stop',
     title: 'Stop execution run',
+    description: `Stop one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: ['run_card', 'run_list'],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STOP, voiceClientToolName: 'stopExecutionRun', mcpToolName: 'execution_run_stop' },
@@ -3134,17 +4158,22 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	      cli: true,
 	      rpc: true,
 	      sdk: false,
+	      plugin: true,
 	      },
 	    inputHints: {
 	      title: 'Stop a run',
-	      fields: [{ path: 'runId', title: 'Run id', widget: 'text', required: true }],
+	      fields: [
+          EXECUTION_RUN_SESSION_SCOPE_HINT,
+          { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        ],
 	    },
-	    outputSchema: z.unknown(),
+	    outputSchema: ExecutionRunStopResponseSchema,
 	    inputSchema: ExecutionRunIdInputSchema,
 	  },
   {
     id: 'execution.run.action',
     title: 'Apply execution run action',
+    description: `Apply an action to one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: ['run_card'],
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, voiceClientToolName: 'actionExecutionRun', mcpToolName: 'execution_run_action' },
@@ -3160,27 +4189,29 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Run action',
       fields: [
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'actionId', title: 'Action id', widget: 'text', required: true },
         { path: 'input', title: 'Input (JSON)', widget: 'textarea' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ExecutionRunActionInputSchema,
   },
   {
     id: 'execution.run.wait',
     title: 'Wait for execution run',
-    description: 'Wait until an execution run reaches a terminal status. Pass timeoutSeconds to bound the wait; omit it for no Happier-side deadline.',
+    description: `Wait until an execution run reaches a terminal status. Pass timeoutSeconds to bound the wait; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'execution_run_wait' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123"}' },
+      mcp: { argsExample: '{"sessionId":null,"runId":"run_123"}' },
     },
     surfaces: {
       ui: true,
@@ -3190,17 +4221,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Wait for a run',
       fields: [
-        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        EXECUTION_RUN_SESSION_SCOPE_HINT,
         { path: 'runId', title: 'Run id', widget: 'text', required: true },
         { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
         { path: 'pollIntervalMs', title: 'Poll interval (ms)', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: ExecutionRunWaitResultSchema,
     inputSchema: ExecutionRunWaitInputSchema,
   },
   {
@@ -3221,6 +4253,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Open a session',
@@ -3229,7 +4262,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'sessionTitle', title: 'Session title', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionOpenInputSchema,
   },
   {
@@ -3256,13 +4289,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Fork a session',
       description: 'Forks from the latest message in the session.',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionForkInputSchema,
   },
   {
@@ -3280,6 +4314,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Continue with replay',
@@ -3289,7 +4324,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'replay', title: 'Replay seed', widget: 'textarea', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionContinueWithReplayRpcParamsSchema,
   },
   {
@@ -3307,13 +4342,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Rollback a session conversation',
       description: 'Rewinds conversation state for the selected session.',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionRollbackInputSchema,
   },
   {
@@ -3331,6 +4367,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Rollback session code to a checkpoint',
@@ -3359,6 +4396,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Create a session checkpoint',
@@ -3386,6 +4424,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Restore a session checkpoint',
@@ -3417,6 +4456,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Hand off a session',
@@ -3426,7 +4466,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'targetMachineId', title: 'Target machine id', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHandoffInputSchema,
   },
   {
@@ -3444,6 +4484,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Prepare handoff target',
@@ -3453,7 +4494,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'sourceMachineId', title: 'Source machine id', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHandoffPrepareTargetRequestSchema,
   },
   {
@@ -3471,6 +4512,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Get handoff prepare-target result',
@@ -3494,6 +4536,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     inputHints: {
       title: 'Resume interrupted handoff preparation',
@@ -3522,12 +4565,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Commit handoff',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHandoffCommitRequestSchema,
   },
   {
@@ -3545,6 +4589,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Abort handoff',
@@ -3553,7 +4598,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'reason', title: 'Reason', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHandoffAbortRequestSchema,
   },
   {
@@ -3571,12 +4616,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Get handoff status',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHandoffStatusGetRequestSchema,
   },
   {
@@ -3587,13 +4633,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     placements: ['command_palette', 'session_info', 'voice_panel'],
     prompting: { voiceHotPath: true },
     bindings: {
+      rpcMethod: RPC_METHODS.SESSION_SPAWN_NEW,
       voiceClientToolName: 'spawnSession',
       mcpToolName: 'session_spawn_new',
-      rpcMethod: 'spawn-happy-session',
-      rpcMethodAliases: [RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE],
+    },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: SessionSpawnNewRpcInputSchema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: SessionSpawnNewResultV1Schema,
+        encodeOutput: identityActionSurfaceValue,
+      },
     },
     examples: {
-      voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
+      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":"/workspace/project","agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialMessage":"Help me inspect this workspace."}' },
     },
     surfaces: {
       ui: true,
@@ -3603,69 +4656,34 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Create a new session',
       fields: [
-        { path: 'tag', title: 'Tag', widget: 'text' },
-        { path: 'agentId', title: 'Agent id', widget: 'text' },
-        { path: 'modelId', title: 'Model id', widget: 'text', optionsSourceId: 'agents.models.available' },
-        { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
-        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text', optionsSourceId: 'agents.backends.enabled' },
+        { path: 'creationKey', title: 'Creation key', widget: 'text' },
+        { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
+        { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
+        { path: 'directory', title: 'Directory', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
+        { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
+        { path: 'agentTarget', title: 'Agent target', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
+        { path: 'modelSelection', title: 'Model selection', widget: 'json', optionsSourceId: 'agents.models.available' },
         { path: 'title', title: 'Title', widget: 'text' },
-        { path: 'path', title: 'Path', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
-        { path: 'directory', title: 'Directory', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
-        { path: 'host', title: 'Host', widget: 'text' },
-        { path: 'machineId', title: 'Machine id', widget: 'text', optionsSourceId: 'sessions.spawn.machines.available' },
-        { path: 'serverId', title: 'Server id', widget: 'text', optionsSourceId: 'sessions.spawn.servers.available' },
         { path: 'permissionMode', title: 'Permission mode', widget: 'text' },
         { path: 'agentModeId', title: 'Agent mode', widget: 'text', optionsSourceId: 'agents.session_modes.available' },
-        { path: 'sessionConfigOptionOverrides', title: 'Config option overrides', widget: 'json', optionsSourceId: 'agents.config_options.available' },
-        { path: 'configOptions', title: 'Config options', widget: 'json', optionsSourceId: 'agents.config_options.available' },
+        { path: 'configuration', title: 'Configuration', widget: 'json', optionsSourceId: 'agents.config_options.available' },
         { path: 'profileId', title: 'Profile id', widget: 'text', optionsSourceId: 'sessions.spawn.profiles.available' },
         { path: 'connectedServices', title: 'Connected services', widget: 'json', optionsSourceId: 'sessions.spawn.connected_services.available' },
         { path: 'mcpSelection', title: 'MCP selection', widget: 'json', optionsSourceId: 'sessions.spawn.mcp_servers.preview' },
+        { path: 'transcriptStorage', title: 'Transcript storage', widget: 'text' },
+        { path: 'terminal', title: 'Terminal', widget: 'json' },
+        { path: 'checkoutCreationDraft', title: 'Checkout creation', widget: 'json' },
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
-        { path: 'initialPrompt', title: 'Initial prompt', widget: 'textarea' },
+        { path: 'agentSessionStartupInstructionsV1', title: 'Startup instructions', widget: 'json' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: SessionSpawnNewResultV1Schema,
     inputSchema: SessionSpawnNewInputSchema,
-  },
-  {
-    id: 'session.spawn_picker',
-    title: 'Create session (picker)',
-    sideEffectClass: 'write',
-    description: 'Open the in-app machine + directory picker and create a new session from the user selection.',
-    safety: 'safe',
-    placements: ['voice_panel'],
-    prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'spawnSessionPicker', mcpToolName: 'session_spawn_picker' },
-    examples: {
-      voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
-    },
-    surfaces: {
-      ui: true,
-      voice: true,
-      agent: false,
-      mcp: true,
-      cli: true,
-      rpc: false,
-      sdk: false,
-      },
-    inputHints: {
-      title: 'Create a new session (picker)',
-      fields: [
-        { path: 'tag', title: 'Tag', widget: 'text' },
-        { path: 'agentId', title: 'Agent id', widget: 'text' },
-        { path: 'modelId', title: 'Model id', widget: 'text' },
-        { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
-        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
-        { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
-      ],
-    },
-    outputSchema: z.unknown(),
-    inputSchema: SessionSpawnPickerInputSchema,
   },
   {
     id: 'paths.list_recent',
@@ -3686,6 +4704,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List recent paths',
@@ -3694,7 +4713,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Limit', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PathsListRecentInputSchema,
   },
   {
@@ -3716,12 +4735,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List machines',
       fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: MachinesListInputSchema,
   },
   {
@@ -3743,12 +4763,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List servers',
       fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ServersListInputSchema,
   },
   {
@@ -3770,15 +4791,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List review engines',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
-        { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
+        { path: 'includeDisabled', title: 'Include disabled', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ReviewEnginesListInputSchema,
   },
   {
@@ -3801,16 +4823,17 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List agent backends',
       fields: [
-        { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
+        { path: 'includeDisabled', title: 'Include disabled', widget: 'boolean' },
         { path: 'limit', title: 'Max results', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentsBackendsListInputSchema,
   },
   {
@@ -3833,6 +4856,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List agent models',
@@ -3843,7 +4867,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentsModelsListInputSchema,
   },
   {
@@ -3866,6 +4890,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List agent config options',
@@ -3877,7 +4902,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentsConfigOptionsListInputSchema,
   },
   {
@@ -3900,6 +4925,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List agent session modes',
@@ -3910,7 +4936,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentSpawnOptionsListInputSchema,
   },
   {
@@ -3933,6 +4959,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List spawn profiles',
@@ -3942,7 +4969,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentSpawnOptionsListInputSchema,
   },
   {
@@ -3965,16 +4992,17 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List spawn connected services',
       fields: [
         { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
-        { path: 'includeUnavailable', title: 'Include unavailable', widget: 'toggle' },
+        { path: 'includeUnavailable', title: 'Include unavailable', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SpawnConnectedServicesListInputSchema,
   },
   {
@@ -3997,6 +5025,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Preview spawn MCP servers',
@@ -4010,7 +5039,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SpawnMcpServersPreviewInputSchema,
   },
   {
@@ -4033,6 +5062,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Send a message',
@@ -4042,12 +5072,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'permissionModeOverride', title: 'Permission mode override (optional)', widget: 'text' },
         { path: 'modelOverride', title: 'Model override (optional)', widget: 'text' },
         { path: 'providerConnectionId', title: 'Provider connection id (optional)', widget: 'text' },
-        { path: 'wait', title: 'Wait for idle (optional)', widget: 'toggle' },
+        { path: 'wait', title: 'Wait for idle (optional)', widget: 'boolean' },
         { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionSendMessageInputSchema,
+    surfaceBindings: {
+      plugin: {
+        inputSchema: SessionSendMessagePluginInputV1Schema,
+        outputSchema: SessionInputAdmissionResultV1Schema,
+      },
+    } satisfies ActionSpecSurfaceBindings,
   },
   {
     id: 'session.stop',
@@ -4067,12 +5103,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Stop a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4097,6 +5134,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Clear terminal composer',
@@ -4126,6 +5164,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Interrupt and run now',
@@ -4156,6 +5195,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Set title',
@@ -4164,7 +5204,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'title', title: 'Title', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionTitleSetInputSchema,
   },
   {
@@ -4185,6 +5225,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Set permission mode',
@@ -4193,7 +5234,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'permissionMode', title: 'Permission mode', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionPermissionModeSetInputSchema,
   },
   {
@@ -4214,6 +5255,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Set session model',
@@ -4223,7 +5265,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionModelSetInputSchema,
   },
   {
@@ -4244,12 +5286,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Archive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4270,12 +5313,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Unarchive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4296,15 +5340,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Get session status',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
-        { path: 'live', title: 'Live', widget: 'toggle' },
+        { path: 'live', title: 'Live', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionStatusGetInputSchema,
   },
   {
@@ -4325,12 +5370,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Get session work state',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4351,12 +5397,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Get session goal',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4377,6 +5424,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Set session goal',
@@ -4387,7 +5435,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'tokenBudget', title: 'Token budget', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionGoalSetInputSchema,
   },
   {
@@ -4408,12 +5456,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Clear session goal',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionIdRequiredInputSchema,
   },
   {
@@ -4434,13 +5483,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Enable usage-limit wait resume',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'issueFingerprint', title: 'Issue fingerprint', widget: 'text' },
-        { path: 'remember', title: 'Remember', widget: 'toggle' },
+        { path: 'remember', title: 'Remember', widget: 'boolean' },
         {
           path: 'resumePromptMode',
           title: 'Resume prompt mode',
@@ -4453,7 +5503,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionUsageLimitWaitResumeEnableRequestV1Schema,
   },
   {
@@ -4464,7 +5514,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     placements: [],
     bindings: { mcpToolName: 'session_usage_limit_wait_resume_cancel' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+      mcp: {
+        argsExample: '{"sessionId":"{{sessionId}}","issueFingerprint":"usage-limit:provider:turn:1:no-reset","armedAtMs":1000,"runtimeAuthRecoveryAttemptId":"runtime-auth-attempt-1"}',
+      },
     },
     surfaces: {
       ui: true,
@@ -4474,15 +5526,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Cancel usage-limit wait resume',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'issueFingerprint', title: 'Issue fingerprint', widget: 'text' },
+        { path: 'armedAtMs', title: 'Armed at (ms)', widget: 'number' },
+        { path: 'runtimeAuthRecoveryAttemptId', title: 'Runtime auth recovery attempt id', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionUsageLimitWaitResumeCancelRequestV1Schema,
   },
   {
@@ -4503,6 +5558,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Check usage-limit recovery now',
@@ -4535,7 +5591,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionUsageLimitCheckNowRequestV1Schema,
   },
   {
@@ -4556,6 +5612,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'Apply reset credit',
@@ -4579,7 +5636,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionUsageLimitConsumeResetCreditRequestV1Schema,
   },
   {
@@ -4600,6 +5657,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'List vendor plugins',
@@ -4629,6 +5687,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
     },
     inputHints: {
       title: 'List skills',
@@ -4658,6 +5717,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Get session history',
@@ -4673,11 +5733,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
             { value: 'raw', label: 'Raw' },
           ],
         },
-        { path: 'includeMeta', title: 'Include meta', widget: 'toggle' },
-        { path: 'includeStructuredPayload', title: 'Include structured payload', widget: 'toggle' },
+        { path: 'includeMeta', title: 'Include meta', widget: 'boolean' },
+        { path: 'includeStructuredPayload', title: 'Include structured payload', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionHistoryGetInputSchema,
   },
   {
@@ -4700,6 +5760,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Get session transcript',
@@ -4715,8 +5776,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: SessionTranscriptGetResultSchema,
     inputSchema: SessionTranscriptGetInputSchema,
+    surfaceBindings: {
+      plugin: {
+        inputSchema: SessionTranscriptGetExternalShareableInputV1Schema,
+        outputSchema: SessionTranscriptGetExternalShareableResultV1Schema,
+      },
+    } satisfies ActionSpecSurfaceBindings,
   },
   {
     id: 'session.events.get',
@@ -4736,6 +5803,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Get session events',
@@ -4745,7 +5813,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'cursor', title: 'Cursor', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionEventsGetInputSchema,
   },
   {
@@ -4766,6 +5834,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Wait for idle',
@@ -4774,7 +5843,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'timeoutSeconds', title: 'Timeout seconds', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionWaitIdleInputSchema,
   },
   {
@@ -4784,15 +5853,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     description: 'Approve or deny an active permission request in a session.',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'session_permission_respond', rpcMethod: 'session.permission.respond' },
+    bindings: { rpcMethod: 'session.permission.respond' },
     surfaces: {
       ui: true,
       voice: false,
-      agent: true,
-      mcp: true,
+      agent: false,
+      mcp: false,
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Respond to permission request',
@@ -4811,8 +5881,148 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'requestId', title: 'Request id', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: SessionInteractionResponseSuccessSchema,
     inputSchema: SessionPermissionRespondInputSchema,
+  },
+  {
+    id: 'session.permission.remote.pending.list',
+    title: 'List remotely mediated permission requests',
+    sideEffectClass: 'read',
+    description: 'List the caller mediator’s current permission requests for one exact source authority.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: true,
+    },
+    inputHints: {
+      title: 'List remotely mediated permission requests',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'sourceRef', title: 'Source reference', widget: 'text', required: true },
+        { path: 'sourceRevisionOrEpoch', title: 'Source revision', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: SessionPermissionRemotePendingListOutputV1Schema,
+    inputSchema: SessionPermissionRemotePendingListInputV1Schema,
+  },
+  {
+    id: 'session.permission.remote.respond',
+    title: 'Respond to a remotely mediated permission request',
+    sideEffectClass: 'write',
+    description: 'Submit an attributed external-human decision for one current permission request.',
+    safety: 'safe',
+    placements: [],
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+      plugin: true,
+    },
+    inputHints: {
+      title: 'Respond to a remotely mediated permission request',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'turnId', title: 'Turn id', widget: 'text', required: true },
+        { path: 'requestId', title: 'Request id', widget: 'text', required: true },
+        { path: 'sourceRef', title: 'Source reference', widget: 'text', required: true },
+        { path: 'sourceRevisionOrEpoch', title: 'Source revision', widget: 'text', required: true },
+        { path: 'idempotencyKey', title: 'Idempotency key', widget: 'text', required: true },
+        { path: 'actor.namespace', title: 'External principal namespace', widget: 'text', required: true },
+        { path: 'actor.principalId', title: 'External principal id', widget: 'text', required: true },
+        {
+          path: 'decision',
+          title: 'Decision',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'allow', label: 'Allow' },
+            { value: 'deny', label: 'Deny' },
+          ],
+        },
+        {
+          path: 'scope',
+          title: 'Scope',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'request', label: 'This request' },
+            { value: 'session', label: 'This session' },
+          ],
+        },
+      ],
+    },
+    outputSchema: SessionPermissionRemoteRespondOutputV1Schema,
+    inputSchema: SessionPermissionRemoteRespondInputV1Schema,
+  },
+  {
+    id: 'session.permission.remote.grants.list',
+    title: 'List remotely mediated permission grants',
+    sideEffectClass: 'read',
+    description: 'List source-scoped remote permission grants visible to the authenticated caller.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'session.permission.remote.grants.list' },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: true,
+      rpc: true,
+      sdk: false,
+      plugin: true,
+    },
+    inputHints: {
+      title: 'List remotely mediated permission grants',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'limit', title: 'Maximum grants', widget: 'text' },
+        { path: 'cursor', title: 'Continuation cursor', widget: 'text' },
+      ],
+    },
+    outputSchema: SessionPermissionRemoteGrantsListOutputV1Schema,
+    inputSchema: SessionPermissionRemoteGrantsListInputV1Schema,
+  },
+  {
+    id: 'session.permission.remote.grants.revoke',
+    title: 'Revoke a remotely mediated permission grant',
+    sideEffectClass: 'write',
+    description: 'Revoke one source-scoped remote permission grant.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'session.permission.remote.grants.revoke' },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: true,
+      rpc: true,
+      sdk: false,
+      plugin: true,
+    },
+    inputHints: {
+      title: 'Revoke a remotely mediated permission grant',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'turnId', title: 'Turn id', widget: 'text', required: true },
+        { path: 'requestId', title: 'Request id', widget: 'text', required: true },
+        { path: 'grantId', title: 'Grant id', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: SessionPermissionRemoteGrantRevokeOutputV1Schema,
+    inputSchema: SessionPermissionRemoteGrantRevokeInputV1Schema,
   },
   {
     id: 'session.user_action.answer',
@@ -4829,6 +6039,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","values":["Yes"]}]}',
       },
     },
+    surfaceBindings: {
+      plugin: {
+        inputSchema: SessionUserActionAnswerPluginInputSchema,
+        bindInput: bindPluginCurrentSessionInput,
+        projectOutput: projectPluginSessionInteractionResponse,
+      },
+    },
     surfaces: {
       ui: true,
       voice: true,
@@ -4837,6 +6054,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Respond to user-action request',
@@ -4864,31 +6082,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           path: 'answers',
           title: 'Answers',
           description: 'Structured answers for question-style user-action requests such as AskUserQuestion.',
-          widget: 'textarea',
-        },
-        {
-          path: 'answers.[]',
-          title: 'Answer entry',
-          description: 'One question and its ordered answer values for the pending request.',
-          widget: 'textarea',
-        },
-        {
-          path: 'answers.[].question',
-          title: 'Question',
-          description: 'The exact question text to answer.',
-          widget: 'text',
-          required: true,
-        },
-        {
-          path: 'answers.[].values',
-          title: 'Answer values',
-          description: 'The exact ordered answer values to send back for that question.',
-          widget: 'text',
-          required: true,
+          widget: 'json',
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: SessionInteractionResponseSuccessSchema,
     inputSchema: SessionUserActionAnswerInputSchema,
   },
   {
@@ -4911,6 +6109,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Set session mode',
@@ -4926,7 +6125,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionModeSetInputSchema,
   },
   {
@@ -4949,6 +6148,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Set primary action session',
@@ -4957,7 +6157,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'sessionTitle', title: 'Session title', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionPrimaryTargetInputSchema,
   },
   {
@@ -4979,12 +6179,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Set tracked sessions',
       fields: [{ path: 'sessionIds', title: 'Session ids', widget: 'text_list', listSeparator: 'comma', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionTrackedTargetsInputSchema,
   },
   {
@@ -5007,16 +6208,17 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'List sessions',
       fields: [
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
-        { path: 'includeLastMessagePreview', title: 'Include last message preview', widget: 'toggle' },
+        { path: 'includeLastMessagePreview', title: 'Include last message preview', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionListInputSchema,
   },
   {
@@ -5038,6 +6240,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     inputHints: {
       title: 'Get session activity',
@@ -5046,7 +6249,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'windowSeconds', title: 'Window seconds', widget: 'text' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionActivityInputSchema,
   },
   {
@@ -5067,6 +6270,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
     inputHints: {
       title: 'Get recent messages',
@@ -5074,11 +6278,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
-        { path: 'includeUser', title: 'Include user', widget: 'toggle' },
-        { path: 'includeAssistant', title: 'Include assistant', widget: 'toggle' },
+        { path: 'includeUser', title: 'Include user', widget: 'boolean' },
+        { path: 'includeAssistant', title: 'Include assistant', widget: 'boolean' },
       ],
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: SessionRecentMessagesInputSchema,
   },
   {
@@ -5105,8 +6309,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
   },
   {
@@ -5129,8 +6334,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: false,
     },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
   },
   {
@@ -5157,8 +6363,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: false,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: OptionalSessionIdInputSchema,
   },
   {
@@ -5214,8 +6421,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: MemorySearchResultV1Schema,
     inputSchema: MemorySearchInputSchema,
   },
   {
@@ -5244,12 +6452,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
     },
-    outputSchema: z.unknown(),
+    outputSchema: MemoryWindowV1Schema,
     inputSchema: MemoryGetWindowInputSchema,
   },
   {
@@ -5276,12 +6485,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
     },
-    outputSchema: z.unknown(),
+    outputSchema: MemoryEnsureUpToDateOutputSchema,
     inputSchema: MemoryEnsureUpToDateInputSchema,
   },
   {
@@ -5299,8 +6509,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptDocUpdateInputSchema,
     inputHints: {
       title: 'Update prompt document',
@@ -5327,8 +6538,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptBundleUpdateInputSchema,
     inputHints: {
       title: 'Update prompt bundle',
@@ -5355,8 +6567,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetExportInputSchema,
     inputHints: {
       title: 'Export prompt asset',
@@ -5403,8 +6616,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: false,
       sdk: false,
+      plugin: true,
       },
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryInstallInputSchema,
     inputHints: {
       title: 'Install prompt registry skill',
@@ -5444,9 +6658,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptAssets.discover' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetDiscoverRequestSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5457,9 +6671,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptAssets.delete' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
     sideEffectClass: 'danger',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptAssetDeleteRequestSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5470,9 +6684,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptRegistry.scanSource' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryScanSourceRequestV1Schema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5483,9 +6697,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     safety: 'danger',
     placements: [],
     bindings: { rpcMethod: 'daemon.promptRegistry.install' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    surfaces: DAEMON_PROMPT_PLUGIN_SURFACES,
     sideEffectClass: 'danger',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PromptRegistryInstallRequestV1Schema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5498,7 +6712,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'readFile' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemReadFileInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5511,7 +6725,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'writeFile' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'danger',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemWriteFileInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5524,7 +6738,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'listDirectory' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemListDirectoryInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5537,7 +6751,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'getDirectoryTree' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemGetDirectoryTreeInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5550,7 +6764,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'daemon.filesystem.listRoots' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5563,7 +6777,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'daemon.filesystem.listDirectory' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemListDirectoryRequestSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5576,7 +6790,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'bugreport.collectDiagnostics' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: PassthroughEmptyObjectSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5589,7 +6803,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'bugreport.getLogTail' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: BugReportGetLogTailInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5602,7 +6816,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { rpcMethod: 'bugreport.uploadArtifact' },
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'none',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: BugReportUploadArtifactInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   },
@@ -5621,9 +6835,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ApprovalRequestListInputSchema,
     inputHints: {
       title: 'List approval requests',
@@ -5661,9 +6876,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     sideEffectClass: 'read',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ApprovalRequestGetInputSchema,
     inputHints: {
       title: 'Get approval request',
@@ -5687,9 +6903,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     sideEffectClass: 'write',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ApprovalRequestCreateInputSchema,
     inputHints: {
       title: 'Request approval',
@@ -5716,9 +6933,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: true,
       rpc: true,
       sdk: false,
+      plugin: false,
       },
     sideEffectClass: 'write',
-    outputSchema: z.unknown(),
+    outputSchema: StrictJsonValueSchema,
     inputSchema: ApprovalRequestDecideInputSchema,
     inputHints: {
       title: 'Approve or reject',
@@ -5752,6 +6970,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: SessionLogTailOutputSchema,
@@ -5780,6 +6999,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptPageOutputSchema,
@@ -5809,6 +7029,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptReadAfterOutputSchema,
@@ -5838,6 +7059,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptFollowOutputSchema,
@@ -5869,6 +7091,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: TranscriptImportOutputSchema,
@@ -5898,6 +7121,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: TranscriptReadAfterOutputSchema,
@@ -5932,7 +7156,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
+      sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionsCandidatesListResponseSchema,
@@ -5967,6 +7192,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'write',
     outputSchema: ExternalSessionLinkEnsureResponseSchema,
@@ -5993,6 +7219,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
       rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY],
     },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionAttachRequestSchema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionAttachResponseSchema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionViewerFollowActionInputV1Schema,
+        projectOutput: projectExternalSessionViewerFollowResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -6001,18 +7239,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionAttachResponseSchema,
-    inputSchema: ExternalSessionAttachRequestSchema,
+    outputSchema: ExternalSessionViewerFollowActionResultV1Schema,
+    inputSchema: ExternalSessionViewerFollowActionInputV1Schema,
     inputHints: {
       title: 'Follow external session lease',
       fields: [
-        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
-        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
-        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
-        { path: 'source', title: 'External source', widget: 'textarea', required: true },
         { path: 'leaseId', title: 'Lease id', widget: 'text' },
         { path: 'ttlMs', title: 'Lease TTL milliseconds', widget: 'text' },
       ],
@@ -6028,6 +7263,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH,
       rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY],
     },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionDetachRequestSchema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionDetachResponseSchema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionViewerUnfollowActionInputV1Schema,
+        projectOutput: projectExternalSessionViewerUnfollowResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -6036,14 +7283,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionDetachResponseSchema,
-    inputSchema: ExternalSessionDetachRequestSchema,
+    outputSchema: ExternalSessionViewerUnfollowActionResultV1Schema,
+    inputSchema: ExternalSessionViewerUnfollowActionInputV1Schema,
     inputHints: {
       title: 'Unfollow external session lease',
       fields: [
-        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
         { path: 'leaseId', title: 'Lease id', widget: 'text', required: true },
       ],
@@ -6058,6 +7305,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: {
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
     },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionFollowPolicySetRequestSchema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionFollowPolicySetResponseSchema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionBackgroundFollowActionInputV1Schema,
+        projectOutput: projectExternalSessionBackgroundFollowResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -6066,19 +7325,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'write',
-    outputSchema: ExternalSessionFollowPolicySetResponseSchema,
-    inputSchema: ExternalSessionFollowPolicySetRequestSchema,
+    outputSchema: ExternalSessionBackgroundFollowActionResultV1Schema,
+    inputSchema: ExternalSessionBackgroundFollowActionInputV1Schema,
     inputHints: {
       title: 'Set external session follow policy',
       fields: [
-        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
-        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
-        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
-        { path: 'source', title: 'External source', widget: 'textarea', required: true },
-        { path: 'enabled', title: 'Enabled', widget: 'toggle', required: true },
+        { path: 'enabled', title: 'Enabled', widget: 'boolean', required: true },
       ],
     },
   },
@@ -6092,6 +7348,18 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET,
       rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY],
     },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: ExternalSessionStatusGetRequestSchema,
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: ExternalSessionStatusGetResponseSchema,
+        encodeOutput: identityActionSurfaceValue,
+      },
+      plugin: {
+        inputSchema: ExternalSessionStatusActionInputV1Schema,
+        projectOutput: projectExternalSessionStatusResult,
+      },
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -6100,18 +7368,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: false,
+      plugin: true,
     },
     sideEffectClass: 'read',
-    outputSchema: ExternalSessionStatusGetResponseSchema,
-    inputSchema: ExternalSessionStatusGetRequestSchema,
+    outputSchema: ExternalSessionStatusActionResultV1Schema,
+    inputSchema: ExternalSessionStatusActionInputV1Schema,
     inputHints: {
       title: 'Get external session status',
       fields: [
-        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
-        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
-        { path: 'remoteSessionId', title: 'Remote session id', widget: 'text', required: true },
-        { path: 'source', title: 'External source', widget: 'textarea', required: true },
       ],
     },
   },
@@ -6133,7 +7398,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
+      sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: ExternalSessionTranscriptPageResponseSchema,
@@ -6173,7 +7439,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
+      sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'read',
     outputSchema: z.union([
@@ -6218,7 +7485,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       mcp: false,
       cli: false,
       rpc: true,
-      sdk: true,
+      sdk: false,
+      plugin: false,
     },
     sideEffectClass: 'danger',
     outputSchema: ExternalSessionTakeoverResultV1Schema,
@@ -6256,6 +7524,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestListResponseSchema,
@@ -6300,6 +7569,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestGetResponseSchema,
@@ -6332,6 +7602,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
@@ -6366,6 +7637,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmPullRequestOpenComposeResponseSchema,
@@ -6398,6 +7670,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmPullRequestCheckoutResponseSchema,
@@ -6430,6 +7703,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmPullRequestPrepareWorktreeResponseSchema,
@@ -6472,6 +7746,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: ScmPullRequestRunStackedResponseSchema,
@@ -6532,6 +7807,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmRepositoryCloneOutputSchema,
@@ -6553,7 +7829,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
             label: value.toUpperCase(),
           })),
         },
-        { path: 'confirmed', title: 'Confirm repository clone', widget: 'checkbox', required: true },
+        { path: 'confirmed', title: 'Confirm repository clone', widget: 'boolean', required: true },
         { path: 'authorizationToken', title: 'Authorization token', widget: 'text', required: true },
       ],
     },
@@ -6576,6 +7852,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'write',
     outputSchema: ScmRepositoryInitResponseSchema,
@@ -6606,6 +7883,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'danger',
     outputSchema: ScmRepositoryRemoveIndexLockResponseSchema,
@@ -6614,7 +7892,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       title: 'Remove stale source-control index lock',
       fields: [
         { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
-        { path: 'confirmed', title: 'Confirm stale index-lock removal', widget: 'checkbox', required: true },
+        { path: 'confirmed', title: 'Confirm stale index-lock removal', widget: 'boolean', required: true },
         { path: 'confirmationToken', title: 'Confirmation token', widget: 'text', required: true },
       ],
     },
@@ -6637,6 +7915,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'read',
     outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
@@ -6678,6 +7957,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmHostingRepositoryPublishResponseSchema,
@@ -6741,7 +8021,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
             { value: 'set-url', label: 'Set URL' },
           ],
         },
-        { path: 'pushCurrentBranch', title: 'Push current branch', widget: 'checkbox' },
+        { path: 'pushCurrentBranch', title: 'Push current branch', widget: 'boolean' },
       ],
     },
   },
@@ -6763,6 +8043,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       cli: false,
       rpc: true,
       sdk: true,
+      plugin: true,
     },
     sideEffectClass: 'external',
     outputSchema: ScmDiffSummaryGenerateOutputSchema,
@@ -6790,14 +8071,377 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       ],
     },
   },
-]);
+] as const));
+
+type PluginDevLoopPluginInvocableActionId = Extract<
+  PluginDevLoopActionId,
+  'plugins.list' | 'plugins.reload'
+>;
+type PluginDevLoopActionSpecDefinition = {
+  [TActionId in PluginDevLoopPluginInvocableActionId]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof PluginDevLoopActionInputSchemas)[TActionId];
+    outputSchema: typeof PluginDevLoopActionOutputSchema;
+  }>;
+}[PluginDevLoopPluginInvocableActionId];
+
+type PluginOwnedPermissionGrantActionId = Exclude<
+  PluginPermissionGrantActionIdV1,
+  'plugins.permissions.grants.grant' | 'plugins.permissions.grants.dismissRequest'
+>;
+type PluginPermissionGrantActionSpecDefinition = {
+  [TActionId in PluginOwnedPermissionGrantActionId]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof PluginPermissionGrantActionInputSchemasV1)[TActionId];
+    outputSchema: (typeof PluginPermissionGrantActionOutputSchemasV1)[TActionId];
+    surfaceBindings: Readonly<{
+      plugin: Readonly<{
+        inputSchema: (typeof PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS)[TActionId];
+      }>;
+    }>;
+  }>;
+}[PluginOwnedPermissionGrantActionId];
+
+type PluginReviewCommentActionSpecDefinition = {
+  [TActionId in ReviewCommentActionIdV1]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof ReviewCommentActionInputSchemasV1)[TActionId];
+    outputSchema: (typeof ReviewCommentActionOutputSchemasV1)[TActionId];
+  }>;
+}[ReviewCommentActionIdV1];
+
+type PluginWebhookPluginActionIdV1 = Exclude<
+  PluginWebhookActionIdV1,
+  PluginWebhookPresentUserActionIdV1
+>;
+type PluginWebhookActionSpecDefinition = {
+  [TActionId in PluginWebhookPluginActionIdV1]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof PluginWebhookActionInputSchemasV1)[TActionId];
+    outputSchema: (typeof PluginWebhookActionOutputSchemasV1)[TActionId];
+  }>;
+}[PluginWebhookPluginActionIdV1];
+
+type PluginAutomationEventActionSpecDefinition = {
+  [TActionId in AutomationEventActionIdV1]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof AutomationEventActionInputSchemasV1)[TActionId];
+    outputSchema: (typeof AutomationEventActionOutputSchemasV1)[TActionId];
+  }>;
+}[AutomationEventActionIdV1];
+
+type PluginAutomationConversationActionSpecDefinition = {
+  [TActionId in AutomationConversationActionIdV1]: Readonly<{
+    id: TActionId;
+    surfaces: Readonly<{ plugin: true }>;
+    inputSchema: (typeof AutomationConversationActionInputSchemasV1)[TActionId];
+    outputSchema: (typeof AutomationConversationActionOutputSchemasV1)[TActionId];
+  }>;
+}[AutomationConversationActionIdV1];
+
+export type CanonicalActionSpecDefinition =
+  | (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number]
+  | PluginDevLoopActionSpecDefinition
+  | PluginPermissionGrantActionSpecDefinition
+  | PluginReviewCommentActionSpecDefinition
+  | PluginWebhookActionSpecDefinition
+  | PluginAutomationEventActionSpecDefinition
+  | PluginAutomationConversationActionSpecDefinition;
+export type PluginInvocableActionSpecDefinition = Extract<
+  CanonicalActionSpecDefinition,
+  Readonly<{ surfaces: Readonly<{ plugin: true }> }>
+>;
+export type PluginInvocableActionId = PluginInvocableActionSpecDefinition['id'];
+
+type PluginActionSpecForId<TActionId extends PluginInvocableActionId> = Extract<
+  PluginInvocableActionSpecDefinition,
+  Readonly<{ id: TActionId }>
+>;
+
+export type PluginActionInputById = Readonly<{
+  [TActionId in PluginInvocableActionId]: PluginActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ plugin: Readonly<{ inputSchema: infer TInputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? z.input<TInputSchema>
+    : z.input<PluginActionSpecForId<TActionId>['inputSchema']>;
+}>;
+
+export type PluginActionResultById = Readonly<{
+  [TActionId in PluginInvocableActionId]: PluginActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ plugin: Readonly<{ outputSchema: infer TOutputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? z.output<TOutputSchema>
+    : PluginActionSpecForId<TActionId> extends Readonly<{
+      outputSchema: infer TOutputSchema extends z.ZodTypeAny;
+  }>
+      ? z.output<TOutputSchema>
+      : never;
+}>;
+
+type PluginActionInputSchemaById = Readonly<{
+  [TActionId in PluginInvocableActionId]: PluginActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ plugin: Readonly<{ inputSchema: infer TInputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? TInputSchema
+    : PluginActionSpecForId<TActionId>['inputSchema'];
+}>;
+
+type PluginActionOutputSchemaById = Readonly<{
+  [TActionId in PluginInvocableActionId]: PluginActionSpecForId<TActionId> extends Readonly<{
+    surfaceBindings: Readonly<{ plugin: Readonly<{ outputSchema: infer TOutputSchema extends z.ZodTypeAny }> }>;
+  }>
+    ? TOutputSchema
+    : PluginActionSpecForId<TActionId> extends Readonly<{
+      outputSchema: infer TOutputSchema extends z.ZodTypeAny;
+    }>
+      ? TOutputSchema
+      : never;
+}>;
+
+type IsUnknown<T> = unknown extends T
+  ? ([keyof T] extends [never] ? true : false)
+  : false;
+
+type UnknownPluginActionInputId = {
+  [TActionId in PluginInvocableActionId]: IsUnknown<PluginActionInputById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PluginInvocableActionId];
+
+type UnknownPluginActionResultId = {
+  [TActionId in PluginInvocableActionId]: IsUnknown<PluginActionResultById[TActionId]> extends true
+    ? TActionId
+    : never;
+}[PluginInvocableActionId];
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+type IsTypeEqual<TLeft, TRight> = (
+  <T>() => T extends TLeft ? 1 : 2
+) extends (
+  <T>() => T extends TRight ? 1 : 2
+) ? true : false;
+
+// Plugin-visible author and result carriers are generated from the canonical ActionSpec rows.
+// Keep this invariant in the production compilation lane so adding a plugin-backed `z.unknown()`
+// or an untyped preprocess schema cannot silently widen the public SDK map.
+type PluginActionInputsMustRemainExact = AssertNever<UnknownPluginActionInputId>;
+type PluginActionResultsMustRemainExact = AssertNever<UnknownPluginActionResultId>;
+type PluginSessionTranscriptInputMustRemainExternalShareable = AssertTrue<IsTypeEqual<
+  PluginActionInputById['session.transcript.get'],
+  SessionTranscriptGetExternalShareableInputV1
+>>;
+type PluginSessionMessageInputMustRemainAdmissionOnly = AssertTrue<IsTypeEqual<
+  PluginActionInputById['session.message.send'],
+  z.input<typeof SessionSendMessagePluginInputV1Schema>
+>>;
+type PluginSessionTranscriptResultMustRemainExternalShareable = AssertTrue<IsTypeEqual<
+  PluginActionResultById['session.transcript.get'],
+  SessionTranscriptGetExternalShareableResultV1
+>>;
+type PluginRawSessionReadersMustRemainUnavailable = AssertTrue<IsTypeEqual<
+  Extract<
+    PluginInvocableActionId,
+    'session.history.get' | 'session.events.get' | 'session.messages.recent.get'
+  >,
+  never
+>>;
+
+const PLUGIN_INVOCABLE_ACTION_SPECS = ACTION_SPECS_WITHOUT_APPROVAL.filter(
+  (spec): spec is typeof spec & Readonly<{ surfaces: Readonly<{ plugin: true }>; outputSchema: z.ZodTypeAny }> => (
+    spec.surfaces.plugin === true && spec.outputSchema !== undefined
+  ),
+);
+
+/** Runtime companion generated from the same canonical rows as the author type maps. */
+export const PLUGIN_INVOCABLE_ACTION_IDS = Object.freeze(
+  PLUGIN_INVOCABLE_ACTION_SPECS.map((spec) => spec.id),
+) as readonly PluginInvocableActionId[];
+
+const PLUGIN_INVOCABLE_ACTION_ID_SET = new Set<string>(PLUGIN_INVOCABLE_ACTION_IDS);
+
+/** Runtime parser for the ActionSpec rows explicitly surfaced to Plugin authors. */
+export const PluginInvocableActionIdSchema = z.custom<PluginInvocableActionId>(
+  (actionId) => typeof actionId === 'string' && PLUGIN_INVOCABLE_ACTION_ID_SET.has(actionId),
+  { message: 'Action is not available on the Plugin surface' },
+);
+
+function projectPluginActionInputSchemas(
+  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+): PluginActionInputSchemaById;
+function projectPluginActionInputSchemas(
+  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+): object {
+  return Object.freeze(Object.fromEntries(
+    specs.map((spec) => {
+    const surfaceBindings = 'surfaceBindings' in spec
+      ? spec.surfaceBindings
+      : undefined;
+    const pluginBinding = surfaceBindings && 'plugin' in surfaceBindings
+      ? surfaceBindings.plugin
+      : undefined;
+    return [spec.id, pluginBinding?.inputSchema ?? spec.inputSchema];
+    }),
+  ));
+}
+
+function projectPluginActionOutputSchemas(
+  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+): PluginActionOutputSchemaById;
+function projectPluginActionOutputSchemas(
+  specs: readonly (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number][],
+): object {
+  return Object.freeze(Object.fromEntries(
+    specs.map((spec) => {
+      const surfaceBindings = 'surfaceBindings' in spec
+        ? spec.surfaceBindings
+        : undefined;
+      const pluginBinding = surfaceBindings && 'plugin' in surfaceBindings
+        ? surfaceBindings.plugin
+        : undefined;
+      const pluginOutputSchema = pluginBinding && 'outputSchema' in pluginBinding
+        ? pluginBinding.outputSchema
+        : undefined;
+      return [spec.id, pluginOutputSchema ?? spec.outputSchema];
+    }),
+  ));
+}
+
+export const PLUGIN_ACTION_INPUT_SCHEMAS = projectPluginActionInputSchemas(
+  PLUGIN_INVOCABLE_ACTION_SPECS,
+);
+
+export const PLUGIN_ACTION_OUTPUT_SCHEMAS = projectPluginActionOutputSchemas(
+  PLUGIN_INVOCABLE_ACTION_SPECS,
+);
+
+type PluginActionInputByRuntimeSchemaMap = Readonly<{
+  [TActionId in keyof typeof PLUGIN_ACTION_INPUT_SCHEMAS]: z.input<
+    (typeof PLUGIN_ACTION_INPUT_SCHEMAS)[TActionId]
+  >;
+}>;
+
+type PluginActionResultByRuntimeSchemaMap = Readonly<{
+  [TActionId in keyof typeof PLUGIN_ACTION_OUTPUT_SCHEMAS]: z.output<
+    (typeof PLUGIN_ACTION_OUTPUT_SCHEMAS)[TActionId]
+  >;
+}>;
+
+// The runtime maps are the one executable projection of the canonical Action
+// rows. Preserve the exact per-id schemas here so SDK consumers cannot observe
+// a widened `ZodTypeAny` carrier while the type-level maps remain precise.
+type PluginActionInputRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
+  PluginActionInputByRuntimeSchemaMap,
+  PluginActionInputById
+>>;
+type PluginActionResultRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
+  PluginActionResultByRuntimeSchemaMap,
+  PluginActionResultById
+>>;
+
+const HOST_DOMAIN_PLUGIN_CALLER_POLICY: ActionPluginCallerPolicy = {
+  kind: 'caller',
+};
+const PLUGIN_RELOAD_CALLER_POLICY: ActionPluginCallerPolicy = {
+  kind: 'self_or_inspector_admin',
+  targetPluginIdField: 'pluginId',
+  administrativeCallers: [{
+    pluginId: 'happier.inspector',
+    contributionLocalId: 'inspector-app',
+  }],
+};
+
+/**
+ * The one declaration census for non-safe host Actions exposed to plugins.
+ * `caller` means the canonical executor requires a current host-stamped
+ * plugin caller. Further identity projection occurs only when the incumbent
+ * domain owner has caller-dependent authorization; it is deliberately not an
+ * ambient peer-plugin administration grant. The only plugin-targeted Action
+ * is reload, whose self scope and Inspector exception live here.
+ */
+const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
+  Partial<Record<ActionId, ActionPluginCallerPolicy>>
+> = Object.freeze({
+  'plugins.reload': PLUGIN_RELOAD_CALLER_POLICY,
+  'plugins.permissions.grants.request': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'plugins.permissions.grants.revoke': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'automation.event.admit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'automation.event.source.status.report': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'automation.conversation.admit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.create': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.transition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.edit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.reply': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.redact': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.setDisposition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.attachEvidence': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.bulkTransition': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'browser.navigate': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'plugins.sessionHooks.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'plugins.sessionHooks.disable': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'plugins.sessionHooks.enable': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'plugins.sessionHooks.uninstall': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.materialize.start': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.operation.cancel': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.operation.resume': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.operation.retry': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.operation.discard': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.rollback': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.checkpoint_code_rollback': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.checkpoint': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.restore': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.terminalComposer.clear': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.pendingInput.interruptAndRun': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.usageLimit.consumeResetCredit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_doc.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_bundle.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_asset.export': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_registry.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'daemon.promptAssets.delete': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'daemon.promptRegistry.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'transcript.import': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.follow': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.unfollow': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'sessions.external.backgroundFollow.set': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.pullRequest.openOrReuse': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.pullRequest.checkout': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.pullRequest.prepareWorktree': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.pullRequest.runStacked': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.repository.clone': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.repository.init': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.repository.removeIndexLock': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.hostingRepository.publish': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+});
+
+function resolveActionPluginCallerPolicy(
+  spec: ActionSpecWithoutApproval,
+): ActionPluginCallerPolicy | undefined {
+  const policy = ACTION_PLUGIN_CALLER_POLICY_BY_ID[spec.id];
+  const requiresPolicy = spec.surfaces.plugin && spec.safety !== 'safe';
+  if (requiresPolicy && !policy) {
+    throw new Error(`Non-safe plugin Action ${spec.id} is missing pluginCallerPolicy`);
+  }
+  if (!requiresPolicy && policy) {
+    throw new Error(`Action ${spec.id} declares pluginCallerPolicy without a non-safe plugin surface`);
+  }
+  return policy;
+}
 
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
-  ACTION_SPECS_WITHOUT_APPROVAL.map((spec): ActionSpec => ({
-    ...spec,
-    placements: [...spec.placements],
-    approval: resolveApprovalMetadataForActionId(spec.id),
-  })),
+  ACTION_SPECS_WITHOUT_APPROVAL.map((spec): ActionSpec => {
+    const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
+    return {
+      ...spec,
+      ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
+      placements: [...spec.placements],
+      approval: resolveApprovalMetadataForActionId(spec.id),
+    };
+  }),
 );
 
 export function listActionSpecs(): readonly ActionSpec[] {
@@ -6847,12 +8491,14 @@ export function listVoiceToolActionSpecs(): readonly ActionSpec[] {
   return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
 }
 
+export { describeActionForVoiceTool } from './actionVoiceToolSummary.js';
+
 /**
  * Canonical tool projection for provider SDK callbacks that cannot retain a
  * stable host call/result identity across reconnects. Such callbacks may
  * expose only none/read actions and must never advertise mutations.
  */
-export function isVoiceSdkSafeActionSpec(spec: ActionSpec): boolean {
+export function isVoiceSdkSafeActionSpec(spec: Pick<ActionSpec, 'sideEffectClass'>): boolean {
   return spec.sideEffectClass === 'none' || spec.sideEffectClass === 'read';
 }
 
@@ -6860,7 +8506,7 @@ export function listVoiceSdkSafeToolActionSpecs(): readonly ActionSpec[] {
   return listVoiceToolActionSpecs().filter(isVoiceSdkSafeActionSpec);
 }
 
-export function isVoicePromptHotPathSpec(spec: ActionSpec): boolean {
+export function isVoicePromptHotPathSpec(spec: Pick<ActionSpec, 'prompting'>): boolean {
   return spec.prompting?.voiceHotPath === true;
 }
 

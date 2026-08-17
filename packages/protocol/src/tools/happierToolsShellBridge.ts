@@ -42,13 +42,6 @@ function isLikelyHappierCliEntrypointToken(token: string): boolean {
   return (base === 'index.mjs' || base === 'index.ts') && normalized.includes('/cli/');
 }
 
-function stripSimpleUnsetPrelude(command: string): string {
-  const trimmed = command.trimStart();
-  const match = trimmed.match(/^unset(?:\s+[A-Za-z_][A-Za-z0-9_]*)+\s*;\s*/);
-  if (!match) return command;
-  return trimmed.slice(match[0].length);
-}
-
 function tokenizeShellWords(command: string): string[] | null {
   const tokens: string[] = [];
   let current = '';
@@ -64,6 +57,8 @@ function tokenizeShellWords(command: string): string[] | null {
   for (let index = 0; index < command.length; index++) {
     const ch = command[index] ?? '';
     const next = command[index + 1] ?? '';
+
+    if (ch === '\n' || ch === '\r') return null;
 
     if (escaped) {
       current += ch;
@@ -122,16 +117,20 @@ type ParsedBridgeFlags = Readonly<{
   json: boolean;
 }>;
 
-function parseBridgeFlags(subcommand: string, tokens: readonly string[]): ParsedBridgeFlags | null {
+function parseBridgeFlags(subcommand: 'list' | 'call', tokens: readonly string[]): ParsedBridgeFlags | null {
   let sessionId: string | null = null;
   let directory: string | null = null;
   let source: string | null = null;
   let tool: string | null = null;
   let argsJson: string | null = null;
   let json = false;
+  const seen = new Set<string>();
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index] ?? '';
+    if (seen.has(token)) return null;
+    seen.add(token);
+
     switch (token) {
       case '--json':
         json = true;
@@ -179,14 +178,7 @@ function parseBridgeFlags(subcommand: string, tokens: readonly string[]): Parsed
     }
   }
 
-  return {
-    sessionId,
-    directory,
-    source,
-    tool,
-    argsJson,
-    json,
-  };
+  return { sessionId, directory, source, tool, argsJson, json };
 }
 
 function normalizeHappierToolsTokens(tokens: readonly string[]): string[] | null {
@@ -207,14 +199,7 @@ export function parseHappierToolsShellBridgeCommand(command: string): HappierToo
   const rawCommand = String(command ?? '').trim();
   if (!rawCommand) return null;
 
-  let stripped = rawCommand;
-  for (let index = 0; index < 5; index++) {
-    const next = stripSimpleUnsetPrelude(stripped).trim();
-    if (next === stripped) break;
-    stripped = next;
-  }
-
-  const rawTokens = tokenizeShellWords(stripped);
+  const rawTokens = tokenizeShellWords(rawCommand);
   const tokens = rawTokens ? normalizeHappierToolsTokens(stripLeadingEnvAssignmentTokens(rawTokens)) : null;
   if (!tokens || tokens.length < 3) return null;
 
@@ -242,7 +227,7 @@ export function parseHappierToolsShellBridgeCommand(command: string): HappierToo
     try {
       args = JSON.parse(argsJson);
     } catch {
-      args = null;
+      return null;
     }
   }
 

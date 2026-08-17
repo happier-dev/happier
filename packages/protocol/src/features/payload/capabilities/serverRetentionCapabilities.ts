@@ -29,6 +29,7 @@ export const ServerRetentionCapabilitiesSchema = z.strictObject({
   policyVersion: z.literal(1),
   enabled: z.boolean(),
   sessions: SessionRetentionPolicySchema,
+  sessionMessages: AgeBasedRetentionPolicySchema.optional(),
   accountChanges: AgeBasedRetentionPolicySchema,
   usageEvents: AgeBasedRetentionPolicySchema.optional(),
   voiceSessionLeases: AgeBasedRetentionPolicySchema,

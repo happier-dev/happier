@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { AnyClientUpgradeRequiredV1Schema } from '../clientCompatibility/upgradeRequiredV1.js';
+
 export const MachineUpdateMetadataRequestSchema = z
   .object({
     machineId: z.string().min(1).optional(),
@@ -12,7 +14,7 @@ export type MachineUpdateMetadataRequest = z.infer<
   typeof MachineUpdateMetadataRequestSchema
 >;
 
-export const MachineUpdateMetadataResponseSchema = z.discriminatedUnion('result', [
+const MachineUpdateMetadataResultResponseSchema = z.discriminatedUnion('result', [
   z.object({
     result: z.literal('error'),
     message: z.string().optional(),
@@ -27,6 +29,11 @@ export const MachineUpdateMetadataResponseSchema = z.discriminatedUnion('result'
     version: z.number().int().nonnegative(),
     metadata: z.string(),
   }).strict(),
+]);
+
+export const MachineUpdateMetadataResponseSchema = z.union([
+  MachineUpdateMetadataResultResponseSchema,
+  AnyClientUpgradeRequiredV1Schema,
 ]);
 
 export type MachineUpdateMetadataResponse = z.infer<

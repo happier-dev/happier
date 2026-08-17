@@ -36,6 +36,30 @@ describe('PluginBackendExternalSessionSourceDeclarationV1Schema', () => {
     expect(PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse(validSourceDeclaration).success).toBe(true);
   });
 
+  it('rejects the retired source passthrough flag so declared source fields are exhaustive', () => {
+    expect(PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      schema: {
+        ...validSourceDeclaration.schema,
+        passthrough: true,
+      },
+    }).success).toBe(false);
+  });
+
+  it('admits terminal follow only through the explicit user-row classification contract', () => {
+    const admitted = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      terminalFollow: { userRowClassification: 'explicitV1' },
+    });
+    const guessed = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      terminalFollow: { userRowClassification: 'textHeuristic' },
+    });
+
+    expect(admitted.success).toBe(true);
+    expect(guessed.success).toBe(false);
+  });
+
   it('rejects key segments that reference undeclared fields', () => {
     const parsed = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
       ...validSourceDeclaration,
@@ -84,6 +108,125 @@ describe('PluginBackendExternalSessionSourceDeclarationV1Schema', () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it('accepts an agent-setting instance that supplies a declared field', () => {
+    const parsed = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [
+        { kind: 'default', constants: { home: 'user' } },
+        {
+          kind: 'agentSetting',
+          settingId: 'codexHomePathOverride',
+          byServerIdSettingId: 'codexHomePathOverrideByServerIdV1',
+          field: 'homePath',
+          normalization: 'httpOrigin',
+          constants: { home: 'user' },
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a configured-path override paired with one backward-compatible default', () => {
+    const parsed = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [
+        { kind: 'default', constants: { home: 'user' } },
+        {
+          kind: 'agentSettingOverride',
+          settingId: 'codexHomePathOverride',
+          field: 'homePath',
+          normalization: 'configuredPath',
+          constants: { home: 'user' },
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a configured-path override without exactly one fallback default', () => {
+    const withoutDefault = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{
+        kind: 'agentSettingOverride',
+        settingId: 'codexHomePathOverride',
+        field: 'homePath',
+        normalization: 'configuredPath',
+        constants: { home: 'user' },
+      }],
+    });
+    const duplicateOverrides = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [
+        { kind: 'default', constants: { home: 'user' } },
+        {
+          kind: 'agentSettingOverride', settingId: 'first', field: 'homePath',
+          normalization: 'configuredPath', constants: { home: 'user' },
+        },
+        {
+          kind: 'agentSettingOverride', settingId: 'second', field: 'homePath',
+          normalization: 'configuredPath', constants: { home: 'user' },
+        },
+      ],
+    });
+
+    expect(withoutDefault.success).toBe(false);
+    expect(duplicateOverrides.success).toBe(false);
+  });
+
+  it('rejects agent-setting instances that target an undeclared field or collide with their constants', () => {
+    const undeclaredField = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{
+        kind: 'agentSetting',
+        settingId: 'codexHomePathOverride',
+        field: 'missingHomePath',
+        normalization: 'httpOrigin',
+        constants: { home: 'user' },
+      }],
+    });
+    const constantCollision = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{
+        kind: 'agentSetting',
+        settingId: 'codexHomePathOverride',
+        field: 'homePath',
+        normalization: 'httpOrigin',
+        constants: { home: 'user', homePath: '/tmp' },
+      }],
+    });
+
+    expect(undeclaredField.success).toBe(false);
+    expect(constantCollision.success).toBe(false);
+  });
+
+  it('ignores instance kinds a newer producer declared while keeping known kinds strict', () => {
+    const forwardCompatible = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [
+        { kind: 'default', constants: { home: 'user' } },
+        { kind: 'someFutureInstanceKind', constants: { home: 'user' }, futureField: 'value' },
+      ],
+    });
+    const onlyUnknownKinds = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{ kind: 'someFutureInstanceKind', constants: { home: 'user' } }],
+    });
+    const malformedKnownKind = PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({
+      ...validSourceDeclaration,
+      instances: [{ kind: 'connectedServiceProfiles', serviceId: 'openai-codex', constants: {} }],
+    });
+
+    expect(forwardCompatible.success).toBe(true);
+    expect(forwardCompatible.success ? forwardCompatible.data.instances : null).toEqual([
+      { kind: 'default', constants: { home: 'user' } },
+    ]);
+    expect(onlyUnknownKinds.success).toBe(true);
+    expect(onlyUnknownKinds.success ? onlyUnknownKinds.data.instances : null).toEqual([]);
+    expect(malformedKnownKind.success).toBe(false);
   });
 
   it('rejects instance constants and identity mappings that reference undeclared fields', () => {

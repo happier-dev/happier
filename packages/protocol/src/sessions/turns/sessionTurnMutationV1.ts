@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 import { SessionIdSchema, SessionIndexedIdentifierMaxLengthV1, TurnIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
@@ -42,6 +43,7 @@ export const SessionTurnTranscriptAnchorsV1Schema = z
     userMessageSeqs: z.array(z.number().int().nonnegative()).readonly().optional(),
     startSeqInclusive: z.number().int().nonnegative().optional(),
     endSeqInclusive: z.number().int().nonnegative().nullable().optional(),
+    finalAssistantMessageSeq: z.number().int().nonnegative().nullable().optional(),
     providerCheckpoint: SessionTurnProviderCheckpointV1Schema.optional(),
   })
   .passthrough()
@@ -65,7 +67,7 @@ export type SessionTurnMutationActionV1 = z.infer<typeof SessionTurnMutationActi
 const SessionTurnMutationBaseV1Schema = z
   .object({
     v: z.literal(1),
-    sessionId: SessionIdSchema,
+    sessionId: asProtocolZod(SessionIdSchema),
     mutationId: SessionTurnMutationIdV1Schema,
     observedAt: SessionTurnObservedAtV1Schema,
     agentId: SessionTurnAgentIdV1Schema.optional(),
@@ -109,6 +111,7 @@ const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('complete'),
+    transcriptAnchors: SessionTurnTranscriptAnchorsV1Schema.optional(),
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('fail'),
@@ -164,7 +167,7 @@ export type SessionTurnMutationDecisionV1 = z.infer<typeof SessionTurnMutationDe
 export const SessionTurnMutationReceiptV1Schema = z
   .object({
     v: z.literal(1),
-    sessionId: SessionIdSchema,
+    sessionId: asProtocolZod(SessionIdSchema),
     mutationId: SessionTurnMutationIdV1Schema,
     turnId: TurnIdSchema.optional(),
     action: SessionTurnMutationActionV1Schema,
@@ -179,7 +182,7 @@ export type SessionTurnMutationReceiptV1 = z.infer<typeof SessionTurnMutationRec
 export const ExactSessionTurnMutationPositiveReceiptV1Schema = z
   .object({
     v: z.literal(1),
-    sessionId: SessionIdSchema,
+    sessionId: asProtocolZod(SessionIdSchema),
     mutationId: SessionTurnMutationIdV1Schema,
     turnId: TurnIdSchema,
     action: z.literal('end_session'),

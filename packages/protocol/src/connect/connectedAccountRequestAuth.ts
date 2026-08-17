@@ -11,6 +11,7 @@ import {
 import { ConnectedServiceLimitCategoryCanonicalV1Schema } from './connectedServiceLimitCategory.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
+import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH =
   '/connected-accounts/request-auth/lookup' as const;
@@ -263,7 +264,7 @@ const RequestAuthTokenFingerprintV1Schema = z.string()
   .regex(/^sha256:[a-f0-9]{64}$/u);
 
 export const RequestAuthCredentialContextV1Schema = z.object({
-  account: QualifiedConnectedAccountRefSchema,
+  account: asProtocolZod(QualifiedConnectedAccountRefSchema),
   group: z.object({
     groupId: ConnectedServiceAuthGroupIdSchema,
     generation: z.number().int().nonnegative(),

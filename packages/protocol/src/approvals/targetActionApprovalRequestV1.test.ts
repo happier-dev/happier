@@ -11,6 +11,18 @@ describe('TargetActionApprovalRequestV1Schema', () => {
     expect(() => TargetActionApprovalRequestV1Schema.parse({ ...request, subjectFingerprint: 'short' })).toThrow();
   });
 
+  it('retains bounded host-rendered confirmation detail in the durable subject', () => {
+    const request = { v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run',
+      input: { value: 'x' }, generation: '7', policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64),
+      summary: 'Start a new baseline', detail: 'Events in the history gap are not replayed.' };
+    expect(TargetActionApprovalRequestV1Schema.parse(request)).toEqual(request);
+    expect(() => TargetActionApprovalRequestV1Schema.parse({
+      ...request,
+      detail: 'x'.repeat(4_097),
+    })).toThrow();
+  });
+
   it('rejects non-JSON and oversized approval subjects before persistence', () => {
     const request = { v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run',

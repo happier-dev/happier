@@ -1,9 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { getActionSpec } from './actionSpecs.js';
+import type { ActionSpec } from './actionSpecs.js';
+import { ActionInputOptionSchema } from './actionInputHints.js';
 import { normalizeActionInputByFieldHints, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 
 describe('resolveEffectiveActionInputFields', () => {
+  it('accepts the exact input-hints owner rather than requiring a fabricated ActionSpec', () => {
+    expectTypeOf<Parameters<typeof resolveEffectiveActionInputFields>[0]>()
+      .toEqualTypeOf<Pick<ActionSpec, 'inputHints'>>();
+    expectTypeOf<Parameters<typeof normalizeActionInputByFieldHints>[0]>()
+      .toEqualTypeOf<Pick<ActionSpec, 'inputHints'>>();
+
+    const hintsOnly = {
+      inputHints: {
+        fields: [{ path: 'kind', title: 'Kind', widget: 'text' }],
+      },
+    } satisfies Pick<ActionSpec, 'inputHints'>;
+
+    expect(resolveEffectiveActionInputFields(hintsOnly, {}).map((field) => field.path)).toEqual(['kind']);
+    expect(normalizeActionInputByFieldHints(hintsOnly, { kind: 'review' })).toEqual({ kind: 'review' });
+  });
+
   it('hides conditional base fields for review.start based on base.kind', () => {
     const spec = getActionSpec('review.start');
 
@@ -37,6 +55,24 @@ describe('resolveEffectiveActionInputFields', () => {
     expect(commit.find((f) => f.path === 'base.baseCommit')?.required).toBe(true);
   });
 
+  it('retains schema-admitted inactive draft values without converting omission and null', () => {
+    const spec = getActionSpec('review.start');
+    const input = {
+      engineIds: ['codex'],
+      instructions: 'x',
+      changeType: 'committed',
+      base: {
+        kind: 'none',
+        baseBranch: 'main',
+        baseCommit: null,
+      },
+    };
+
+    expect(resolveEffectiveActionInputFields(spec, input).map((field) => field.path)).not.toContain('base.baseBranch');
+    expect(resolveEffectiveActionInputFields(spec, input).map((field) => field.path)).not.toContain('base.baseCommit');
+    expect(normalizeActionInputByFieldHints(spec, input)).toEqual(input);
+  });
+
   it('normalizes multiselect fields using protocol-owned field limits', () => {
     const spec = getActionSpec('subagents.plan.start');
 
@@ -49,5 +85,17 @@ describe('resolveEffectiveActionInputFields', () => {
       backendTargetKeys: ['agent:opencode'],
       instructions: 'Plan this.',
     });
+  });
+
+  it('accepts exact qualified Connected Account refs in host-resolved options', () => {
+    const account = {
+      service: { pluginId: 'com.acme.accounts', localId: 'service' },
+      accountId: 'account-1',
+    };
+
+    expect(ActionInputOptionSchema.parse({
+      value: account,
+      label: 'Work account',
+    }).value).toEqual(account);
   });
 });

@@ -51,23 +51,12 @@ describe('parseHappierToolsShellBridgeCommand', () => {
     });
   });
 
-  it('strips simple env and unset preludes before parsing', () => {
+  it('rejects unset preludes', () => {
     expect(
       parseHappierToolsShellBridgeCommand(
         'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; FOO=bar happier tools call --source playwright --tool open_page --args-json \'{"url":"https://example.com"}\'',
       ),
-    ).toEqual({
-      kind: 'call',
-      rawCommand:
-        'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; FOO=bar happier tools call --source playwright --tool open_page --args-json \'{"url":"https://example.com"}\'',
-      sessionId: null,
-      directory: null,
-      source: 'playwright',
-      tool: 'open_page',
-      argsJson: '{"url":"https://example.com"}',
-      args: { url: 'https://example.com' },
-      json: false,
-    });
+    ).toBeNull();
   });
 
   it('parses env preludes when quoted values contain spaces', () => {
@@ -94,10 +83,29 @@ describe('parseHappierToolsShellBridgeCommand', () => {
     'happier tools call --source happier --tool save_memory --json && touch /tmp/happier-pwn',
     'happier tools call --source happier --tool save_memory --json || touch /tmp/happier-pwn',
     'happier tools call --source happier --tool save_memory --json | cat',
+    'happier tools call --source happier --tool save_memory --json > /tmp/happier-pwn',
     'happier tools call --source happier --tool save_memory --json $(touch /tmp/happier-pwn)',
     'happier tools call --source happier --tool save_memory --json `touch /tmp/happier-pwn`',
+    'happier tools call --source happier --tool save_memory --json\n touch /tmp/happier-pwn',
     'happier tools call --source happier --tool save_memory --json extra-token',
   ])('rejects shell bridge commands with trailing shell execution: %s', (command) => {
     expect(parseHappierToolsShellBridgeCommand(command)).toBeNull();
+  });
+
+  it.each([
+    'happier tools list --json --json',
+    'happier tools list --session-id one --session-id two',
+    'happier tools call --source happier --source custom --tool think',
+    'happier tools call --source happier --tool think --tool save_memory',
+  ])('rejects duplicate flags: %s', (command) => {
+    expect(parseHappierToolsShellBridgeCommand(command)).toBeNull();
+  });
+
+  it('rejects invalid JSON arguments', () => {
+    expect(
+      parseHappierToolsShellBridgeCommand(
+        `happier tools call --source happier --tool save_memory --args-json '{'`,
+      ),
+    ).toBeNull();
   });
 });

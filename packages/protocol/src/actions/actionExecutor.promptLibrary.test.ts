@@ -15,7 +15,6 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     sessionFork: async () => ({}),
     sessionRollback: async () => ({}),
     sessionSpawnNew: async () => ({}),
-    sessionSpawnPicker: async () => ({}),
     pathsListRecent: async () => ({ items: [] }),
     machinesList: async () => ({ items: [] }),
     serversList: async () => ({ items: [] }),
@@ -41,6 +40,72 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it('routes daemon prompt adapter actions through canonical deps with caller cancellation', async () => {
+    const signal = new AbortController().signal;
+    const daemonPromptAssetsDiscover = vi.fn(async () => ({ ok: true, items: [] }));
+    const daemonPromptAssetsDelete = vi.fn(async () => ({ ok: true }));
+    const daemonPromptRegistryScanSource = vi.fn(async () => ({ ok: true, items: [] }));
+    const daemonPromptRegistryInstall = vi.fn(async () => ({ ok: true, installed: true }));
+    const executor = createExecutor({
+      daemonPromptAssetsDiscover,
+      daemonPromptAssetsDelete,
+      daemonPromptRegistryScanSource,
+      daemonPromptRegistryInstall,
+    });
+
+    await expect(executor.execute('daemon.promptAssets.discover', {
+      assetTypeId: 'agents.skill',
+      scope: 'user',
+    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
+    await expect(executor.execute('daemon.promptAssets.delete', {
+      assetTypeId: 'agents.skill',
+      scope: 'user',
+      externalRef: { path: 'skills/review' },
+    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true } });
+    await expect(executor.execute('daemon.promptRegistry.scanSource', {
+      sourceId: 'skills_sh:featured',
+    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
+    await expect(executor.execute('daemon.promptRegistry.install', {
+      sourceId: 'skills_sh:featured',
+      itemId: 'review',
+      installTarget: {
+        assetTypeId: 'agents.skill',
+        scope: 'user',
+        targetName: 'review',
+      },
+    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, installed: true } });
+
+    expect(daemonPromptAssetsDiscover).toHaveBeenCalledWith({
+      request: { assetTypeId: 'agents.skill', scope: 'user' },
+      signal,
+    });
+    expect(daemonPromptAssetsDelete).toHaveBeenCalledWith({
+      request: {
+        assetTypeId: 'agents.skill',
+        scope: 'user',
+        externalRef: { path: 'skills/review' },
+      },
+      signal,
+    });
+    expect(daemonPromptRegistryScanSource).toHaveBeenCalledWith({
+      request: { sourceId: 'skills_sh:featured', configuredSources: [] },
+      signal,
+    });
+    expect(daemonPromptRegistryInstall).toHaveBeenCalledWith({
+      request: {
+        sourceId: 'skills_sh:featured',
+        itemId: 'review',
+        configuredSources: [],
+        installTarget: {
+          assetTypeId: 'agents.skill',
+          scope: 'user',
+          targetName: 'review',
+        },
+      },
+      signal,
+    });
+  });
+
   it('routes prompt_doc.update to deps.promptDocUpdate', async () => {
     const promptDocUpdate = vi.fn(async () => ({ ok: true, artifactId: 'doc-1' }));
     const executor = createExecutor({ promptDocUpdate } as Partial<ActionExecutorDeps>);

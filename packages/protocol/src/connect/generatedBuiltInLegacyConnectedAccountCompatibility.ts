@@ -137,7 +137,7 @@ export const BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID = Obje
   }),
   "github": Object.freeze({
     service: Object.freeze({
-      pluginId: "happier.scm.hosting.github",
+      pluginId: "happier.scm.forge.github",
       localId: "github-account",
     }),
     peerOperations: Object.freeze({
@@ -154,7 +154,7 @@ export const BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID = Obje
   }),
   "bitbucket": Object.freeze({
     service: Object.freeze({
-      pluginId: "happier.scm.hosting.bitbucket",
+      pluginId: "happier.scm.forge.bitbucket",
       localId: "bitbucket-account",
     }),
     peerOperations: Object.freeze({

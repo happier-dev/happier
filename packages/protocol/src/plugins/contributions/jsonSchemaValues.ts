@@ -34,42 +34,100 @@ function readOwnDataValue(value: object, key: string): unknown | undefined {
  * JSON numbers are finite and treat -0 and 0 as the same mathematical value.
  */
 export function pluginJsonValuesEqual(left: unknown, right: unknown): boolean {
-  if (typeof left === 'number' || typeof right === 'number') {
-    return typeof left === 'number'
-      && typeof right === 'number'
-      && Number.isFinite(left)
-      && Number.isFinite(right)
-      && left === right;
-  }
-  if (left === null || right === null || typeof left === 'boolean' || typeof right === 'boolean'
-    || typeof left === 'string' || typeof right === 'string') {
-    return left === right;
-  }
-  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
-    return false;
-  }
-
   try {
-    if (Array.isArray(left) || Array.isArray(right)) {
-      if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-      if (hasUnsupportedOwnProperty(left, true) || hasUnsupportedOwnProperty(right, true)) return false;
-      for (let index = 0; index < left.length; index += 1) {
-        const key = String(index);
-        if (!Object.prototype.hasOwnProperty.call(left, key) || !Object.prototype.hasOwnProperty.call(right, key)) return false;
-        if (!pluginJsonValuesEqual(readOwnDataValue(left, key), readOwnDataValue(right, key))) return false;
+    type ComparisonWorkItem =
+      | Readonly<{ kind: 'compare'; left: unknown; right: unknown }>
+      | Readonly<{ kind: 'finish'; left: object; right: object }>;
+
+    const pending: ComparisonWorkItem[] = [{ kind: 'compare', left, right }];
+    // These track only the current path, so shared acyclic JSON is still valid
+    // while cyclic/exotic graphs fail closed instead of keeping this loop alive.
+    const activeLeft = new WeakSet<object>();
+    const activeRight = new WeakSet<object>();
+
+    while (pending.length > 0) {
+      const workItem = pending.pop()!;
+      if (workItem.kind === 'finish') {
+        activeLeft.delete(workItem.left);
+        activeRight.delete(workItem.right);
+        continue;
       }
-      return true;
-    }
 
-    if (!isPlainJsonObject(left) || !isPlainJsonObject(right)) return false;
-    if (hasUnsupportedOwnProperty(left, false) || hasUnsupportedOwnProperty(right, false)) return false;
+      const { left: currentLeft, right: currentRight } = workItem;
+      if (typeof currentLeft === 'number' || typeof currentRight === 'number') {
+        if (typeof currentLeft !== 'number'
+          || typeof currentRight !== 'number'
+          || !Number.isFinite(currentLeft)
+          || !Number.isFinite(currentRight)
+          || currentLeft !== currentRight) {
+          return false;
+        }
+        continue;
+      }
+      if (currentLeft === null || currentRight === null
+        || typeof currentLeft === 'boolean' || typeof currentRight === 'boolean'
+        || typeof currentLeft === 'string' || typeof currentRight === 'string') {
+        if (currentLeft !== currentRight) return false;
+        continue;
+      }
+      if (currentLeft === null || currentRight === null
+        || typeof currentLeft !== 'object' || typeof currentRight !== 'object') {
+        return false;
+      }
 
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (const key of leftKeys) {
-      if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
-      if (!pluginJsonValuesEqual(readOwnDataValue(left, key), readOwnDataValue(right, key))) return false;
+      const leftIsArray = Array.isArray(currentLeft);
+      const rightIsArray = Array.isArray(currentRight);
+      if (leftIsArray || rightIsArray) {
+        if (!leftIsArray || !rightIsArray || currentLeft.length !== currentRight.length) return false;
+        if (hasUnsupportedOwnProperty(currentLeft, true)
+          || hasUnsupportedOwnProperty(currentRight, true)
+          || activeLeft.has(currentLeft)
+          || activeRight.has(currentRight)) {
+          return false;
+        }
+
+        activeLeft.add(currentLeft);
+        activeRight.add(currentRight);
+        pending.push({ kind: 'finish', left: currentLeft, right: currentRight });
+        for (let index = currentLeft.length - 1; index >= 0; index -= 1) {
+          const key = String(index);
+          if (!Object.prototype.hasOwnProperty.call(currentLeft, key)
+            || !Object.prototype.hasOwnProperty.call(currentRight, key)) {
+            return false;
+          }
+          pending.push({
+            kind: 'compare',
+            left: readOwnDataValue(currentLeft, key),
+            right: readOwnDataValue(currentRight, key),
+          });
+        }
+        continue;
+      }
+
+      if (!isPlainJsonObject(currentLeft) || !isPlainJsonObject(currentRight)) return false;
+      if (hasUnsupportedOwnProperty(currentLeft, false)
+        || hasUnsupportedOwnProperty(currentRight, false)
+        || activeLeft.has(currentLeft)
+        || activeRight.has(currentRight)) {
+        return false;
+      }
+
+      const leftKeys = Object.keys(currentLeft);
+      const rightKeys = Object.keys(currentRight);
+      if (leftKeys.length !== rightKeys.length) return false;
+
+      activeLeft.add(currentLeft);
+      activeRight.add(currentRight);
+      pending.push({ kind: 'finish', left: currentLeft, right: currentRight });
+      for (let index = leftKeys.length - 1; index >= 0; index -= 1) {
+        const key = leftKeys[index]!;
+        if (!Object.prototype.hasOwnProperty.call(currentRight, key)) return false;
+        pending.push({
+          kind: 'compare',
+          left: readOwnDataValue(currentLeft, key),
+          right: readOwnDataValue(currentRight, key),
+        });
+      }
     }
     return true;
   } catch {

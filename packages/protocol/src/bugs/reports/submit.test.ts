@@ -1,8 +1,11 @@
+import { Buffer as NodeBuffer } from 'node:buffer';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   redactBugReportSensitiveText,
   submitBugReportToService,
+  trimBugReportTextHeadToMaxBytes,
   trimBugReportTextToMaxBytes,
   type BugReportFormPayload,
 } from './index.js';
@@ -271,13 +274,71 @@ describe('submitBugReportToService', () => {
     expect(trimmed).toContain('END-MARKER');
   });
 
+  it('keeps the leading text of a head-bounded cause without splitting a character', () => {
+    // A thrown message opens by naming the failure, so the head bound keeps the
+    // opening — and the cut lands on a character boundary rather than inside the
+    // 4-byte emoji that straddles the budget.
+    const head = `START-MARKER${'a'.repeat(2_048 - 'START-MARKER'.length - 2)}`;
+    const trimmed = trimBugReportTextHeadToMaxBytes(`${head}\u{1F600}END-MARKER`, 2_048);
+
+    expect(trimmed).toBe(head);
+    expect(trimmed).not.toContain('�');
+    expect(Buffer.byteLength(trimmed, 'utf8')).toBe(2_046);
+  });
+
+  it('never ends a head-bounded cause on half of a surrogate pair', () => {
+    // The budget leaves room for the 3 bytes a lone lead surrogate encodes to but
+    // not the 4 the whole emoji needs, so only the pair-aware bound stays clean.
+    const head = 'a'.repeat(2_046);
+    const trimmed = trimBugReportTextHeadToMaxBytes(`${head}\u{1F600}`, 2_049);
+
+    expect(trimmed).toBe(head);
+    expect(trimmed).not.toContain('�');
+  });
+
   it('does not crash when TextEncoder is unavailable', () => {
     const original = (globalThis as any).TextEncoder;
     vi.stubGlobal('TextEncoder', undefined as any);
     try {
-      const input = `${'a'.repeat(5_000)}END-MARKER`;
+      const input = `${'🙂'.repeat(1_200)}END-MARKER`;
       const trimmed = trimBugReportTextToMaxBytes(input, 2_048);
       expect(trimmed).toContain('END-MARKER');
+      expect(Buffer.byteLength(trimmed, 'utf8')).toBeLessThanOrEqual(2_048);
+      expect(trimmed).not.toContain('�');
+    } finally {
+      vi.stubGlobal('TextEncoder', original);
+    }
+  });
+
+  it('keeps head- and tail-bound cuts within bytes and on character boundaries without platform UTF-8 helpers', () => {
+    const originalTextEncoder = (globalThis as any).TextEncoder;
+    const originalBuffer = (globalThis as any).Buffer;
+    vi.stubGlobal('TextEncoder', undefined as any);
+    vi.stubGlobal('Buffer', undefined as any);
+    try {
+      const tail = trimBugReportTextToMaxBytes(`${'🙂'.repeat(1_000)}A`, 1_024);
+      const head = trimBugReportTextHeadToMaxBytes('🙂'.repeat(1_000), 1_024);
+      const firstCodeUnit = tail.charCodeAt(0);
+
+      expect(firstCodeUnit >= 0xdc00 && firstCodeUnit <= 0xdfff).toBe(false);
+      expect(NodeBuffer.byteLength(tail, 'utf8')).toBeLessThanOrEqual(1_024);
+      expect(NodeBuffer.byteLength(head, 'utf8')).toBeLessThanOrEqual(1_024);
+      expect(NodeBuffer.from(tail, 'utf8').toString('utf8')).not.toContain('�');
+      expect(NodeBuffer.from(head, 'utf8').toString('utf8')).not.toContain('�');
+    } finally {
+      vi.stubGlobal('TextEncoder', originalTextEncoder);
+      vi.stubGlobal('Buffer', originalBuffer);
+    }
+  });
+
+  it('enforces the head byte ceiling for multibyte text when TextEncoder is unavailable', () => {
+    const original = (globalThis as any).TextEncoder;
+    vi.stubGlobal('TextEncoder', undefined as any);
+    try {
+      const trimmed = trimBugReportTextHeadToMaxBytes('🙂'.repeat(1_200), 2_048);
+
+      expect(Buffer.byteLength(trimmed, 'utf8')).toBeLessThanOrEqual(2_048);
+      expect(trimmed).not.toContain('�');
     } finally {
       vi.stubGlobal('TextEncoder', original);
     }

@@ -6,6 +6,7 @@ import {
   buildQualifiedPluginContributionKey,
 } from '../../plugins/contributionIdentity.js';
 import { VoiceCredentialSlotIdSchema } from '../../plugins/contributions/voiceProviders.js';
+import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 const RESERVED_PROVIDER_IDS = new Set(['constructor', 'prototype']);
 
@@ -38,7 +39,7 @@ export const LegacyVoiceCredentialBindingV1Schema = z.object({
 
 /** Canonical current Voice credential binding keyed only by contribution and slot. */
 export const VoiceCredentialBindingV1Schema = z.object({
-  contribution: PluginContributionIdentityV1Schema,
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema),
   credentialSlotId: VoiceCredentialSlotIdSchema,
   credentialSource: z.object({
     kind: z.enum(['none', 'savedSecret', 'connectedAccount']),

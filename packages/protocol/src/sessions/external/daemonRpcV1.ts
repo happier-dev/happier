@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
-import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
 import { PluginAgentExternalSessionLinkDataSchema } from '../../plugins/contributions/agentExternalSessions.js';
 import {
   ExternalSessionsAgentIdSchema,
@@ -18,6 +17,7 @@ import {
   LinkedExternalSessionQualifiedIdentityV1Schema,
 } from './linkedSessionMetadata.js';
 import { ExternalSessionRefreshCursorV1Schema } from './secureRefreshV1.js';
+import { createExternalSessionTranscriptSourceItemV1Schema } from './sourceTranscriptItemV1.js';
 
 export {
   ExternalSessionsAgentIdSchema,
@@ -65,13 +65,22 @@ function normalizeReleasedExternalSessionRequest(
   if (!record) return value;
   const hasProviderId = Object.hasOwn(record, 'providerId');
   const hasAgentId = Object.hasOwn(record, 'agentId');
-  const providerId = typeof record.providerId === 'string' && record.providerId.trim()
-    ? record.providerId.trim()
+  const hasReleasedRuntimeDescriptor = Object.hasOwn(record, 'runtimeDescriptor');
+  const hasCanonicalRuntimeDescriptor = Object.hasOwn(record, 'runtimeDescriptorV1');
+  if (hasProviderId && hasAgentId) return undefined;
+  // The released descriptor spelling existed only on provider-only link-ensure
+  // requests; admitting it elsewhere would make strict current requests lossy.
+  if (
+    hasReleasedRuntimeDescriptor
+    && (!options.runtimeDescriptor || !hasProviderId || hasCanonicalRuntimeDescriptor)
+  ) {
+    return undefined;
+  }
+  if (hasProviderId && hasCanonicalRuntimeDescriptor) return undefined;
+  const releasedAgentId = hasProviderId
+    ? ExternalSessionsAgentIdSchema.safeParse(record.providerId)
     : null;
-  const agentId = typeof record.agentId === 'string' && record.agentId.trim()
-    ? record.agentId.trim()
-    : null;
-  if (hasProviderId && (!providerId || (hasAgentId && agentId !== providerId))) return undefined;
+  if (hasProviderId && !releasedAgentId?.success) return undefined;
 
   const {
     providerId: _releasedProviderId,
@@ -80,9 +89,9 @@ function normalizeReleasedExternalSessionRequest(
   } = record;
   const normalized: Record<string, unknown> = {
     ...canonical,
-    ...(hasProviderId ? { agentId: providerId } : {}),
+    ...(releasedAgentId?.success ? { agentId: releasedAgentId.data } : {}),
   };
-  if (!options.runtimeDescriptor || !Object.hasOwn(record, 'runtimeDescriptor')) return normalized;
+  if (!hasReleasedRuntimeDescriptor) return normalized;
 
   const releasedDescriptor = RuntimeDescriptorV1Schema.safeParse(record.runtimeDescriptor);
   if (!releasedDescriptor.success) return undefined;
@@ -105,7 +114,7 @@ export const ExternalSessionsCandidatesListRequestSchema = z.preprocess(
     limit: z.number().int().min(1).max(500).optional(),
     searchTerm: z.string().min(1).max(2000).optional(),
     searchMode: ExternalSessionsSearchModeSchema.optional(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
 
@@ -136,6 +145,13 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
       candidates: z.array(z.lazy(() => ExternalSessionCandidateV1Schema)),
       nextCursor: z.string().min(1).nullish(),
       searchIncomplete: z.boolean().optional(),
+      /**
+       * Positive `linkedSessionId` / `imported` projections are present when
+       * known. When this is true, omitted projections are not a negative fact:
+       * the bounded canonical Session scan or candidate preparation did not
+       * cover every matching owner record.
+       */
+      annotationsIncomplete: z.boolean().optional(),
       preparation: ExternalSessionsCandidatePreparationSchema.optional(),
       autoLinkPolicyScopeV1: ExternalSessionsAutoLinkPolicyScopeV1Schema.optional(),
     })
@@ -167,7 +183,7 @@ export const ExternalSessionLinkEnsureRequestSchema = z.preprocess(
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
     source: ExternalSessionsSourceSchema,
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionLinkEnsureRequest = z.infer<typeof ExternalSessionLinkEnsureRequestSchema>;
 
@@ -220,7 +236,7 @@ export const ExternalSessionStatusGetRequestSchema = z.preprocess(
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     takeoverReadiness: z.literal('fresh').optional(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionStatusGetRequest = z.infer<typeof ExternalSessionStatusGetRequestSchema>;
 
@@ -235,7 +251,7 @@ export const ExternalSessionAttachRequestSchema = z.preprocess(
     leaseId: z.string().min(1).max(2000).optional(),
     ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
     acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionAttachRequest = z.infer<typeof ExternalSessionAttachRequestSchema>;
 
@@ -254,6 +270,12 @@ export const ExternalSessionAttachResponseSchema = z.union([
       ok: z.literal(false),
       errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
+      /**
+       * Whether re-attaching can plausibly succeed. The daemon classifies the
+       * corridor failure once; a viewer must not poll a failure it already
+       * knows is terminal. Released producers omit it — absent stays retryable.
+       */
+      retryable: z.boolean().optional(),
     })
     .passthrough(),
 ]);
@@ -265,7 +287,7 @@ export const ExternalSessionDetachRequestSchema = z
     sessionId: z.string().min(1),
     leaseId: z.string().min(1).max(2000),
   })
-  .passthrough();
+  .strict();
 export type ExternalSessionDetachRequest = z.infer<typeof ExternalSessionDetachRequestSchema>;
 
 export const ExternalSessionDetachResponseSchema = z.union([
@@ -294,7 +316,7 @@ export const ExternalSessionFollowPolicySetRequestSchema = z.preprocess(
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     enabled: z.boolean(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionFollowPolicySetRequest = z.infer<typeof ExternalSessionFollowPolicySetRequestSchema>;
 
@@ -342,12 +364,113 @@ export const ExternalSessionStatusGetResponseSchema = z.union([
 ]);
 export type ExternalSessionStatusGetResponse = z.infer<typeof ExternalSessionStatusGetResponseSchema>;
 
-export const ExternalSessionTranscriptRawMessageV1Schema = z
-  .object({
-    id: z.string().min(1),
-    createdAtMs: z.number().int().min(0),
-    localId: z.string().min(1).nullable().optional(),
-    messageRole: SessionMessageRoleSchema.nullable().optional(),
+const ExternalSessionActionSessionIdSchema = z.string()
+  .min(1)
+  .max(191)
+  .refine((value) => value === value.trim(), 'Session id must already be trimmed.');
+const ExternalSessionActionLeaseIdSchema = z.string()
+  .min(1)
+  .max(2_000)
+  .refine((value) => value === value.trim(), 'Lease id must already be trimmed.');
+const ExternalSessionActionCursorSchema = z.string()
+  .min(1)
+  .max(4_096)
+  .regex(/^happier_external_cursor_v1:[A-Za-z0-9_-]+$/)
+  .refine((value) => value === value.trim(), 'Cursor must already be trimmed.');
+
+export const ExternalSessionStatusActionInputV1Schema = z.object({
+  sessionId: ExternalSessionActionSessionIdSchema,
+  takeoverReadiness: z.literal('fresh').optional(),
+}).strict();
+
+export const ExternalSessionViewerFollowActionInputV1Schema = z.object({
+  sessionId: ExternalSessionActionSessionIdSchema,
+  leaseId: ExternalSessionActionLeaseIdSchema.optional(),
+  ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
+  acceptedTailCursor: ExternalSessionActionCursorSchema.optional(),
+}).strict();
+
+export const ExternalSessionViewerUnfollowActionInputV1Schema = z.object({
+  sessionId: ExternalSessionActionSessionIdSchema,
+  leaseId: ExternalSessionActionLeaseIdSchema,
+}).strict();
+
+export const ExternalSessionBackgroundFollowActionInputV1Schema = z.object({
+  sessionId: ExternalSessionActionSessionIdSchema,
+  enabled: z.boolean(),
+}).strict();
+
+const ExternalSessionActionFailureV1Schema = z.object({
+  ok: z.literal(false),
+  errorCode: ExternalSessionsRpcErrorCodeSchema,
+  error: z.string().min(1).max(2_000),
+}).strict();
+
+export const ExternalSessionStatusActionResultV1Schema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    machineOnline: z.boolean(),
+    runnerActive: z.boolean(),
+    activity: ExternalSessionActivityV1Schema,
+    canTakeOverDirect: z.boolean(),
+    canTakeOverPersist: z.boolean(),
+    canForceStop: z.boolean(),
+    lastKnownActivityAtMs: z.number().int().min(0).optional(),
+  }).strict(),
+  ExternalSessionActionFailureV1Schema,
+]);
+
+/**
+ * A follow lease is the one External Session result its caller re-requests on a
+ * timer, so the daemon's terminal classification travels to the public surface
+ * too — otherwise a plugin polls a failure the daemon already answered forever.
+ * Released daemons omit it; absent stays retryable.
+ */
+const ExternalSessionViewerFollowActionFailureV1Schema = z.object({
+  ok: z.literal(false),
+  errorCode: ExternalSessionsRpcErrorCodeSchema,
+  error: z.string().min(1).max(2_000),
+  retryable: z.boolean().optional(),
+}).strict();
+
+export const ExternalSessionViewerFollowActionResultV1Schema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    leaseId: ExternalSessionActionLeaseIdSchema,
+    expiresAtMs: z.number().int().min(0),
+    renewed: z.boolean(),
+    acceptedTailCursor: ExternalSessionActionCursorSchema.optional(),
+  }).strict(),
+  ExternalSessionViewerFollowActionFailureV1Schema,
+]);
+
+export const ExternalSessionViewerUnfollowActionResultV1Schema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    detached: z.boolean(),
+  }).strict(),
+  ExternalSessionActionFailureV1Schema,
+]);
+
+export const ExternalSessionBackgroundFollowActionResultV1Schema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    enabled: z.boolean(),
+    leaseActive: z.boolean(),
+    updatedAtMs: z.number().int().min(0),
+  }).strict(),
+  ExternalSessionActionFailureV1Schema,
+]);
+
+export const ExternalSessionTranscriptRawMessageV1Schema =
+  createExternalSessionTranscriptSourceItemV1Schema({
+    identifier: z.string().min(1),
+    /**
+     * Historical-import and recipient-read wire carrier. Current Agent
+     * contributions use AgentExternalSessionTranscriptRawRecord instead; this
+     * retained compatibility reader never authorizes a user row as terminal
+     * input by itself.
+     */
     raw: z.object({}).passthrough(),
   })
   .passthrough();
@@ -364,7 +487,7 @@ export const ExternalSessionTranscriptPageRequestSchema = z.preprocess(
     cursor: z.string().min(1).optional(),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionTranscriptPageRequest = z.infer<typeof ExternalSessionTranscriptPageRequestSchema>;
 
@@ -399,7 +522,7 @@ export const ExternalSessionTranscriptReadAfterRequestSchema = z.preprocess(
     cursor: z.string().min(1),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
-  }).passthrough(),
+  }).strict(),
 );
 export type ExternalSessionTranscriptReadAfterRequest = z.infer<typeof ExternalSessionTranscriptReadAfterRequestSchema>;
 

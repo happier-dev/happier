@@ -956,3 +956,168 @@ describe('runtime-config-outcome agent event', () => {
     expect(parsed.success).toBe(true);
   });
 });
+
+describe('legacy ACP agent envelope (released `provider` key, pre-2026-07-10)', () => {
+  // Released builds before commit 3dfbdc4330 (2026-07-10) wrote the ACP agent envelope as
+  // `{ type: 'acp', provider, data }`; the current writer emits `agentId` instead
+  // (apps/cli/src/api/session/acpMessageEnvelope.ts). The shapes below are structurally faithful
+  // captures of persisted records decrypted from real sessions — only the string values are elided.
+  it('accepts a legacy `provider` message envelope and exposes it as `agentId`', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'acp',
+        provider: 'codex',
+        data: { type: 'message', message: 'the real agent answer' },
+      },
+      meta: { sentFrom: 'cli', source: 'codex-app-server-runtime' },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const content = parsed.data.content as { type: 'acp'; agentId: string; provider?: unknown };
+    expect(content.agentId).toBe('codex');
+    // The released key is preserved, not rewritten away.
+    expect(content.provider).toBe('codex');
+  });
+
+  it('accepts legacy `provider` tool-call and tool-result envelopes', () => {
+    const toolCall = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'acp',
+        provider: 'codex',
+        data: {
+          type: 'tool-call',
+          callId: 'call_legacy_tool_call_1',
+          name: 'Bash',
+          id: 'tool-call-legacy-1',
+          input: { cmd: 'ls', workdir: '/tmp', locations: [], _happier: {}, _raw: {}, _acp: {} },
+        },
+      },
+      meta: { sentFrom: 'cli', source: 'runtime', runtimeEventKind: 'tool-call' },
+    });
+
+    const toolResult = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'acp',
+        provider: 'opencode',
+        data: {
+          type: 'tool-result',
+          callId: 'call_legacy_tool_call_1',
+          id: 'tool-result-legacy-1',
+          output: { stdout: 'ok' },
+          isError: false,
+        },
+      },
+    });
+
+    expect(toolCall.success).toBe(true);
+    expect(toolResult.success).toBe(true);
+  });
+
+  it('does not accept an ACP envelope that identifies no agent at all', () => {
+    const missing = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: { type: 'acp', data: { type: 'message', message: 'orphan' } },
+    });
+    const blank = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: { type: 'acp', provider: '   ', data: { type: 'message', message: 'orphan' } },
+    });
+    const wrongType = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: { type: 'acp', provider: { id: 'codex' }, data: { type: 'message', message: 'orphan' } },
+    });
+
+    expect(missing.success).toBe(false);
+    expect(blank.success).toBe(false);
+    expect(wrongType.success).toBe(false);
+  });
+
+  it('keeps the canonical `agentId` authoritative when both keys are present', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'acp',
+        agentId: 'codex',
+        provider: 'stale-legacy-value',
+        data: { type: 'message', message: 'hi' },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect((parsed.data.content as { agentId: string }).agentId).toBe('codex');
+  });
+
+  it('does not mutate the caller-owned persisted record', () => {
+    const record = {
+      role: 'agent',
+      content: { type: 'acp', provider: 'gemini', data: { type: 'message', message: 'hi' } },
+    };
+
+    expect(TranscriptRawRecordV1Schema.safeParse(record).success).toBe(true);
+    expect(record.content).not.toHaveProperty('agentId');
+  });
+});
+
+/**
+ * `attentionImpact` is not a persisted column, so every read re-derives attention
+ * from stored content. This owner is therefore the single attention decision for
+ * the transition divider; both re-read resolvers inherit it by delegating here.
+ */
+describe('agent-transition divider attention', () => {
+  const divider = {
+    type: 'message',
+    message: 'Continued with another Agent.',
+    sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+  };
+
+  it('silences an event carrying the transition sidecar', () => {
+    expect(agentEventAttentionImpact(divider)).toEqual({
+      affectsUnread: false,
+      affectsMeaningfulActivity: false,
+    });
+  });
+
+  it('leaves an ordinary passthrough message event attention-bearing', () => {
+    expect(agentEventAttentionImpact({ type: 'message', message: 'Continued with another Agent.' })).toEqual({
+      affectsUnread: true,
+      affectsMeaningfulActivity: true,
+    });
+  });
+
+  it('does not silence a malformed or unknown-version sidecar', () => {
+    for (const sidecar of [{ v: 2, fromAgentId: 'claude', toAgentId: 'codex' }, 'garbage', null]) {
+      expect(agentEventAttentionImpact({ type: 'message', message: 'x', sessionAgentTransitionV1: sidecar })).toEqual({
+        affectsUnread: true,
+        affectsMeaningfulActivity: true,
+      });
+    }
+  });
+
+  /**
+   * A malformed sidecar must not make the whole row unparseable. The key name is
+   * writable by any client that can post an agent event, and the passthrough
+   * `message` arm accepted arbitrary extra keys before this program existed — so
+   * a strict nested field that fails the arm would let one write erase a
+   * transcript row for every reader.
+   */
+  it('keeps the transcript row parseable when the sidecar is malformed', () => {
+    const parseEventRow = (data: unknown) => TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: { type: 'event', id: 'evt-1', data },
+    });
+
+    // Control: the same row shape with a well-formed sidecar parses.
+    expect(parseEventRow(divider).success).toBe(true);
+
+    for (const sidecar of [{ v: 2 }, 'garbage', 42]) {
+      expect(
+        parseEventRow({ type: 'message', message: 'hi', sessionAgentTransitionV1: sidecar }).success,
+      ).toBe(true);
+    }
+  });
+});

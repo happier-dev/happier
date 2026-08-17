@@ -111,7 +111,7 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
     }).success).toBe(false);
   });
 
-  it('bounds per-machine endpoint override branches at the shared settings limit', () => {
+  it('accepts per-machine endpoint override branches beyond the retired global count', () => {
     const base = {
       v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
       role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
@@ -120,7 +120,7 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
     expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverridesByMachineId: atLimit }).success).toBe(true);
     expect(ProviderConnectionV1Schema.safeParse({
       ...base, endpointOverridesByMachineId: { ...atLimit, 'machine-over': [] },
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('enforces embedded custom-template override references for account and machine scopes', () => {

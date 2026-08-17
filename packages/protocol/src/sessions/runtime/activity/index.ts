@@ -18,12 +18,17 @@ export {
 } from './sessionRuntimeActivity.js';
 
 export {
+  SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
   SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
   SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT,
+  SessionPublisherAuthorityCheckAckSchema,
+  SessionPublisherAuthorityCheckRequestSchema,
   SessionRuntimeActivityCloseAckSchema,
   SessionRuntimeActivityCloseRequestSchema,
   SessionRuntimeActivitySnapshotAckSchema,
   SessionRuntimeActivitySnapshotRequestSchema,
+  type SessionPublisherAuthorityCheckAck,
+  type SessionPublisherAuthorityCheckRequest,
   type SessionRuntimeActivityCloseAck,
   type SessionRuntimeActivityCloseRequest,
   type SessionRuntimeActivitySnapshotAck,
