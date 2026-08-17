@@ -1,4 +1,4 @@
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 export type OpenCodeUsageLimitRetryTiming = Readonly<{
   retryAfterMs: number | null;

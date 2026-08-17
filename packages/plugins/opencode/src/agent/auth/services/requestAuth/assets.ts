@@ -4,12 +4,11 @@ import { join } from 'node:path';
 import {
   buildConnectedAccountRequestAuthClientSource,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import type { OpenCodeRequestAuthPurposeMap } from './env.js';
 import {
   buildOpenCodeRequestAuthPluginSource,
-  OPEN_CODE_REQUEST_AUTH_PLUGIN_VERSION,
   type OpenCodeRequestAuthProvider,
 } from './source.js';
 
@@ -27,11 +26,11 @@ export function resolveOpenCodeRequestAuthPluginPath(
 ): string {
   return join(
     resolveOpenCodeRequestAuthPluginDir(configHome),
-    `happier-request-auth-${provider}-${OPEN_CODE_REQUEST_AUTH_PLUGIN_VERSION}.js`,
+    `happier-request-auth-${provider}.js`,
   );
 }
 
-export async function retireLegacyOpenCodeBrokerAssets(
+export async function retireCompetingOpenCodeAuthAssets(
   rootDir: string,
   configHome: string,
 ): Promise<void> {
@@ -43,7 +42,10 @@ export async function retireLegacyOpenCodeBrokerAssets(
   await Promise.all(entries
     .filter((entry) => (
       entry.isFile()
-      && /^happier-broker-(?:openai|anthropic)-[^/]+\.js$/u.test(entry.name)
+      && (
+        /^happier-broker-(?:openai|anthropic)(?:-[^/]+)?\.js$/u.test(entry.name)
+        || /^happier-request-auth-(?:openai|anthropic)-[^/]+\.js$/u.test(entry.name)
+      )
     ))
     .map((entry) => rm(join(pluginDir, entry.name), { force: true })));
   await rm(join(rootDir, 'broker'), { recursive: true, force: true });

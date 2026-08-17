@@ -1,4 +1,4 @@
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { mergeCursorTodos } from '../extensions/todos.js';

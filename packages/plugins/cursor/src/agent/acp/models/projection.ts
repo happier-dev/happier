@@ -1,10 +1,6 @@
-import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionModelsSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { CursorAvailableModel } from './schemas.js';
-
-type AgentSessionModelsSnapshot = ReturnType<
-  Parameters<AgentSessionHostServices['models']['bind']>[0]['read']
->;
 
 export function projectCursorRuntimeModels(
   proprietaryModels: readonly CursorAvailableModel[],

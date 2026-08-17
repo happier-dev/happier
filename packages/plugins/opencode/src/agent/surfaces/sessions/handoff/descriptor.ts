@@ -1,14 +1,11 @@
-import {
-  type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
 import type {
-  PluginExecService,
+  ExecService,
   PluginProcessResult,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 import {
+  type AgentTerminalSessionStateUpdate,
   type HandoffSurfaceV1,
-  type SessionStateUpdateV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   readOpenCodeProviderSessionIdFromMetadata,
@@ -20,6 +17,7 @@ import {
 } from '../../../identity/affinity.js';
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../systemTool.js';
+import type { OpenCodeExternalSessionSource } from '../external/client.js';
 import { normalizeOpenCodeSessionExportForHandoffComparison } from './exportRecords.js';
 
 const OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES = 8 * 1024 * 1024;
@@ -66,7 +64,7 @@ function sessionStateUpdatesForImportedSession(params: Readonly<{
   backendMode: 'server';
   serverBaseUrl?: string | null;
   serverBaseUrlExplicit?: boolean;
-}>): SessionStateUpdateV1[] {
+}>): AgentTerminalSessionStateUpdate[] {
   const runtimeDescriptor = buildOpenCodeAgentRuntimeDescriptorV1({
     backendMode: params.backendMode,
     providerSessionId: params.providerSessionId,
@@ -93,7 +91,7 @@ function importedSessionResult(params: Readonly<{
 }>) {
   const backendMode = 'server';
   const serverBaseUrl = params.affinity.serverBaseUrlExplicit ? params.affinity.serverBaseUrl : null;
-  const source: ExternalSessionsSource = {
+  const source: OpenCodeExternalSessionSource = {
     kind: 'opencodeServer',
     ...(serverBaseUrl ? { baseUrl: serverBaseUrl } : {}),
     directory: params.targetDirectory,
@@ -137,7 +135,7 @@ function readProcessResult(result: PluginProcessResult): Readonly<{
 }
 
 async function resolveOpenCodeExecutable(
-  exec: PluginExecService,
+  exec: ExecService,
   purpose: string,
 ) {
   return (await exec.systemTools.resolve({
@@ -146,7 +144,7 @@ async function resolveOpenCodeExecutable(
   })).executable;
 }
 
-export function createOpenCodeHandoffSurfaceForExec(exec: PluginExecService): HandoffSurfaceV1 {
+export function createOpenCodeHandoffSurfaceForExec(exec: ExecService): HandoffSurfaceV1 {
   return {
     exportBundle: async (params) => {
       const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);

@@ -63,34 +63,11 @@ describe('OPENCODE_AGENT_RUNTIME_CONTRIBUTION', () => {
     expect(contribution).not.toHaveProperty('catalogControlAdapter');
   });
 
-  it('publishes the plugin-owned session-control adapter behavior', () => {
+  it('leaves runtime-descriptor compatibility and session controls at the generated host projection', () => {
     const contribution: RuntimeContributionWithSessionControl = OPENCODE_AGENT_RUNTIME_CONTRIBUTION;
-    const adapter = contribution.sessionControlAdapter;
 
-    expect(adapter).toBeDefined();
-    expect(adapter?.normalizeRuntimeKindOverride?.(' acp ')).toBe('acp');
-    expect(adapter?.normalizeRuntimeKindOverride?.('server')).toBe('server');
-    expect(adapter?.normalizeRuntimeKindOverride?.('appServer')).toBeNull();
-    expect(adapter?.applyRuntimeKindOverrideToAccountSettings?.({ other: 'value' }, 'server')).toEqual({
-      other: 'value',
-      opencodeBackendMode: 'server',
-    });
-    expect(adapter?.resolveConfiguredRuntimeKind?.({ opencodeBackendMode: ' acp ' })).toBe('acp');
-    expect(adapter?.resolvePersistedSessionRuntimeKind?.({
-      opencodeBackendMode: 'server',
-      opencodeServerBaseUrl: 'http://127.0.0.1:49196',
-      opencodeServerBaseUrlExplicit: true,
-    })).toBe('server');
-    expect(adapter?.resolveVendorResumeId?.({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'opencode',
-        provider: {
-          backendMode: 'server',
-          providerSessionId: ' opencode-session-1 ',
-        },
-      },
-    })).toBe('opencode-session-1');
+    expect(contribution).not.toHaveProperty('sessionControlAdapter');
+    expect(contribution).not.toHaveProperty('runtimeDescriptorReader');
   });
 
   it('leaves exact request-auth failure recovery at the request interceptor', () => {

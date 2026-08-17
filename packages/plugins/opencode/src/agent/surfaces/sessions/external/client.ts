@@ -1,18 +1,40 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
-
 import {
-  readOpenCodeManagedServerEndpointRegistration,
-} from '../../../runtime/server/endpoint.js';
-import type { OpenCodeServerTransport } from '../../../runtime/server/transport.js';
+  readManagedServiceEndpointUrl,
+  type ManagedServiceEndpointUrlRejection,
+} from '@happier-dev/plugin-sdk/managed-services';
+import type {
+  AgentExternalSessionSource,
+  AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+  OpenCodeNativeFetch,
+} from '../../../runtime/server/transport.js';
+import { createManagedEndpointFetch } from './managedEndpointFetch.js';
 
 export type OpenCodeExternalSessionSourceValidationResult =
-  | Readonly<{ ok: true; source: ExternalSessionsSource }>
+  | Readonly<{ ok: true; source: OpenCodeExternalSessionSource }>
   | Readonly<{ ok: false; error: string }>;
+
+export type OpenCodeExternalSessionSource = AgentExternalSessionSource & Readonly<{
+  kind: 'opencodeServer';
+  baseUrl?: string;
+  directory?: string;
+  managedEndpoint?: true;
+}>;
+
+export function projectOpenCodeExternalSessionSource(
+  source: AgentExternalSessionSource,
+): OpenCodeExternalSessionSource | null {
+  return source.kind === 'opencodeServer'
+    ? { ...source, kind: 'opencodeServer' }
+    : null;
+}
 
 export type OpenCodeExternalSessionClient = Readonly<{
   sessionList: (opts: Readonly<{
     limit: number;
     search?: string;
+    cursor?: number;
     signal?: AbortSignal;
   }>) => Promise<unknown[]>;
   sessionGet: (opts: Readonly<{ sessionId: string; signal?: AbortSignal }>) => Promise<unknown>;
@@ -29,21 +51,46 @@ export type OpenCodeExternalSessionClient = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
-type OpenCodeFetch = (input: string, init?: RequestInit) => Promise<Response>;
+type OpenCodeFetch = OpenCodeNativeFetch;
 const OPENCODE_SOURCE_FIELD_MAX_LENGTH = 10_000;
 type OpenCodeNormalizedSourceFieldResult =
   | Readonly<{ ok: true; value: string | null }>
   | Readonly<{ ok: false; error: string }>;
 
-function normalizeBaseUrl(raw: string): string {
-  return raw.trim().replace(/\/+$/, '');
-}
+/**
+ * The user's own server address, checked here — where the value is accepted —
+ * against the same rule the daemon dials it with, so a source a user can save
+ * is a source the daemon can attach to. Each rejection names what is wrong;
+ * without that, the first thing the user sees is a
+ * `plugin_managed_server_endpoint_denied` from inside the process supervisor.
+ */
+const OPENCODE_SOURCE_BASE_URL_ERRORS: Readonly<Record<ManagedServiceEndpointUrlRejection, string>> = {
+  malformed: 'source baseUrl must be an absolute URL, for example http://192.168.1.50:4096',
+  scheme: 'source baseUrl must be an http or https URL',
+  embeddedCredentials:
+    'source baseUrl must not embed a username or password; put the server password in the OpenCode server password setting',
+  host: 'source baseUrl must name a host',
+  queryOrFragment: 'source baseUrl must not carry a query or fragment',
+  port: 'source baseUrl port must be between 1 and 65535',
+};
 
-function normalizeExternalSessionsUrl(raw: string): string {
-  const url = new URL(raw.trim());
+function readExternalSessionsUrl(
+  raw: string,
+): Readonly<{ ok: true; value: string }> | Readonly<{ ok: false; error: string }> {
+  const read = readManagedServiceEndpointUrl(raw, {
+    hostPolicy: 'userDeclaredAttach',
+    // A saved value may carry a path, query or fragment; they are dropped
+    // below rather than treated as a reason to refuse the address.
+    allowSearch: true,
+    allowHash: true,
+  });
+  if (!read.ok) {
+    return { ok: false, error: OPENCODE_SOURCE_BASE_URL_ERRORS[read.rejection] };
+  }
+  const url = new URL(read.endpoint.baseUrl);
   url.hash = '';
   url.search = '';
-  return url.toString().replace(/\/+$/, '');
+  return { ok: true, value: url.toString().replace(/\/+$/, '') };
 }
 
 function sourceValidationError(error: string): OpenCodeExternalSessionSourceValidationResult {
@@ -74,41 +121,87 @@ function normalizeOptionalSourceField(
   return { ok: true, value: normalized };
 }
 
-function tryNormalizeExternalSessionsUrl(raw: string): string | null {
-  try {
-    return normalizeExternalSessionsUrl(raw);
-  } catch {
-    return null;
-  }
-}
-
-function buildUrl(baseUrl: string, path: string, query?: Record<string, string | undefined>): string {
-  const url = new URL(path, `${baseUrl}/`);
+function buildPathAndQuery(path: string, query?: Record<string, string | undefined>): string {
+  const url = new URL(path, 'http://opencode.invalid');
   for (const [key, value] of Object.entries(query ?? {})) {
     if (typeof value === 'string' && value.length > 0) {
       url.searchParams.set(key, value);
     }
   }
-  return url.toString();
+  return `${url.pathname}${url.search}`;
+}
+
+function readPositiveResponseByteBudget(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error('OpenCode response byte budget must be a positive safe integer.');
+  }
+  return value;
+}
+
+function readSessionListCursor(value: number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error('OpenCode session cursor must be a non-negative safe integer.');
+  }
+  return String(value);
+}
+
+async function readResponseText(
+  response: Response,
+  maxResponseBytes: number | undefined,
+): Promise<string> {
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      if (
+        maxResponseBytes !== undefined
+        && value.byteLength > maxResponseBytes - totalBytes
+      ) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(
+          `OpenCode response body exceeds its ${maxResponseBytes}-byte operation budget`,
+        );
+      }
+      chunks.push(value);
+      totalBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 async function fetchJsonResponse<T>(
   url: string,
   fetchFn: OpenCodeFetch,
+  maxResponseBytes: number | undefined,
   signal?: AbortSignal,
-  headers?: Readonly<Record<string, string>>,
 ): Promise<Readonly<{ value: T; response: Response }>> {
   const response = await fetchFn(url, {
     method: 'GET',
-    ...(headers ? { headers } : {}),
     ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`OpenCode HTTP GET ${url} failed: ${response.status} ${response.statusText}${text ? `\n${text}` : ''}`);
+    await readResponseText(response, maxResponseBytes);
+    throw new Error(`OpenCode HTTP GET ${url} failed: ${response.status} ${response.statusText}`);
   }
   return {
-    value: (await response.json()) as T,
+    value: JSON.parse(await readResponseText(response, maxResponseBytes)) as T,
     response,
   };
 }
@@ -116,10 +209,10 @@ async function fetchJsonResponse<T>(
 async function fetchJson<T>(
   url: string,
   fetchFn: OpenCodeFetch,
+  maxResponseBytes: number | undefined,
   signal?: AbortSignal,
-  headers?: Readonly<Record<string, string>>,
 ): Promise<T> {
-  return (await fetchJsonResponse<T>(url, fetchFn, signal, headers)).value;
+  return (await fetchJsonResponse<T>(url, fetchFn, maxResponseBytes, signal)).value;
 }
 
 export function parseOpenCodeSessionStatusMap(
@@ -143,14 +236,25 @@ export function parseOpenCodeSessionStatusMap(
   return Object.fromEntries(entries);
 }
 
+function parseOpenCodeArrayResponse(raw: unknown, endpoint: string): unknown[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`OpenCode ${endpoint} returned an invalid array response`);
+  }
+  return raw;
+}
+
 export function validateOpenCodeExternalSessionsSource(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OpenCodeExternalSessionSource;
   env?: Readonly<Record<string, string | undefined>>;
   baseUrlAuthority?: 'configured' | 'canonical';
 }>): OpenCodeExternalSessionSourceValidationResult {
   const { source } = params;
-  const env = params.env ?? {};
   if (source.kind !== 'opencodeServer') return sourceValidationError('provider/source mismatch');
+
+  const managedEndpoint = Reflect.get(source, 'managedEndpoint');
+  if (managedEndpoint !== undefined && managedEndpoint !== true) {
+    return sourceValidationError('invalid source managedEndpoint');
+  }
 
   const requestedBaseUrlField = normalizeOptionalSourceField(source.baseUrl, 'baseUrl');
   if (!requestedBaseUrlField.ok) {
@@ -162,71 +266,47 @@ export function validateOpenCodeExternalSessionsSource(params: Readonly<{
   }
 
   const requestedBaseUrlRaw = requestedBaseUrlField.value;
-  const requestedBaseUrl = requestedBaseUrlRaw ? tryNormalizeExternalSessionsUrl(requestedBaseUrlRaw) : null;
-  if (requestedBaseUrlRaw && !requestedBaseUrl) {
-    return sourceValidationError('invalid source baseUrl');
+  let requestedBaseUrl: string | null = null;
+  if (requestedBaseUrlRaw) {
+    const read = readExternalSessionsUrl(requestedBaseUrlRaw);
+    if (!read.ok) return sourceValidationError(read.error);
+    requestedBaseUrl = read.value;
   }
 
-  const configuredBaseUrlRaw =
-    typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' && env.HAPPIER_OPENCODE_SERVER_URL.trim().length > 0
-      ? env.HAPPIER_OPENCODE_SERVER_URL
-      : null;
-  const configuredBaseUrl = configuredBaseUrlRaw ? tryNormalizeExternalSessionsUrl(configuredBaseUrlRaw) : null;
-  if (configuredBaseUrlRaw && !configuredBaseUrl) {
-    return sourceValidationError('invalid configured baseUrl');
+  if (requestedBaseUrl && managedEndpoint === true) {
+    return sourceValidationError('source cannot combine baseUrl with managedEndpoint');
   }
-
-  const acceptsCanonicalBaseUrl = params.baseUrlAuthority === 'canonical';
-  if (requestedBaseUrl && !configuredBaseUrl && !acceptsCanonicalBaseUrl) {
-    return sourceValidationError('source baseUrl override is not allowed');
-  }
-  if (
-    requestedBaseUrl
-    && configuredBaseUrl
-    && requestedBaseUrl !== configuredBaseUrl
-    && !acceptsCanonicalBaseUrl
-  ) {
-    return sourceValidationError('source baseUrl override is not allowed');
-  }
-  const resolvedBaseUrl = acceptsCanonicalBaseUrl
-    ? requestedBaseUrl ?? configuredBaseUrl
-    : configuredBaseUrl ?? requestedBaseUrl;
 
   return {
     ok: true,
     source: {
-      ...source,
-      ...(resolvedBaseUrl ? { baseUrl: resolvedBaseUrl } : {}),
+      kind: 'opencodeServer',
+      ...(requestedBaseUrl ? { baseUrl: requestedBaseUrl } : { managedEndpoint: true }),
       ...(directoryField.value ? { directory: directoryField.value } : {}),
     },
   };
 }
 
-function resolveBaseUrlOrThrow(source: ExternalSessionsSource): string {
-  if (source.kind !== 'opencodeServer') {
-    throw new Error('OpenCode external-session client requires an opencodeServer source');
-  }
-  const raw = typeof source.baseUrl === 'string' ? source.baseUrl.trim() : '';
-  if (!raw) {
-    throw new Error('OpenCode external-session client requires source.baseUrl or HAPPIER_OPENCODE_SERVER_URL');
-  }
-  return normalizeBaseUrl(raw);
-}
-
-function resolveDirectory(source: ExternalSessionsSource): string {
+function resolveDirectory(source: OpenCodeExternalSessionSource): string {
   if (source.kind !== 'opencodeServer') return '';
   return typeof source.directory === 'string' && source.directory.trim().length > 0
     ? source.directory.trim()
     : '';
 }
 
+/**
+ * Every read goes through the host's managed-service endpoint, for a spawned
+ * server and an attached one alike. The client deliberately owns no transport
+ * and no address: the managed service holds the endpoint, and the host applies
+ * whichever credential authenticates it, so "connect to an OpenCode server" has
+ * exactly one implementation instead of one per surface.
+ */
 export async function createOpenCodeExternalSessionClient(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OpenCodeExternalSessionSource;
   env?: Readonly<Record<string, string | undefined>>;
-  fetchFn?: OpenCodeFetch;
-  headers?: Readonly<Record<string, string>>;
+  managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
   baseUrlAuthority?: 'configured' | 'canonical';
-  transport?: OpenCodeServerTransport;
+  maxResponseBytes?: number;
 }>): Promise<OpenCodeExternalSessionClient> {
   const validated = validateOpenCodeExternalSessionsSource({
     source: params.source,
@@ -237,53 +317,60 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
     throw new Error(validated.error);
   }
 
-  const baseUrl = resolveBaseUrlOrThrow(validated.source);
-  const transport = params.transport
-    ?? readOpenCodeManagedServerEndpointRegistration(baseUrl)?.transport
-    ?? null;
-  const fetchFn = transport?.fetch ?? params.fetchFn ?? fetch;
+  const managedEndpointRead = params.managedEndpointRead;
+  const fetchFn: OpenCodeFetch = managedEndpointRead
+    ? createManagedEndpointFetch(managedEndpointRead)
+    : async () => {
+      throw new Error(
+        'OpenCode managed external-session client requires an invocation-bound managedEndpointRead.',
+      );
+    };
+  const buildRequestTarget = buildPathAndQuery;
   const directory = resolveDirectory(validated.source);
   const directoryQuery = directory ? { directory } : {};
+  const maxResponseBytes = readPositiveResponseByteBudget(params.maxResponseBytes);
 
   return {
-    sessionList: async ({ limit, search, signal }) => {
-      const raw = await fetchJson<unknown>(buildUrl(baseUrl, '/session', {
+    sessionList: async ({ limit, search, cursor, signal }) => {
+      const sessionCursor = readSessionListCursor(cursor);
+      const raw = await fetchJson<unknown>(buildRequestTarget('/experimental/session', {
         ...directoryQuery,
         limit: String(Math.max(1, Math.trunc(limit))),
         ...(search ? { search } : {}),
-      }), fetchFn, signal, params.headers);
-      return Array.isArray(raw) ? raw : [];
+        ...(sessionCursor !== undefined ? { cursor: sessionCursor } : {}),
+      }), fetchFn, maxResponseBytes, signal);
+      return parseOpenCodeArrayResponse(raw, '/experimental/session');
     },
     sessionGet: async ({ sessionId, signal }) => {
       return await fetchJson<unknown>(
-        buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}`, directoryQuery),
+        buildRequestTarget(`/session/${encodeURIComponent(sessionId)}`, directoryQuery),
         fetchFn,
+        maxResponseBytes,
         signal,
-        params.headers,
       );
     },
     sessionStatusList: async (opts) => {
       const raw = await fetchJson<unknown>(
-        buildUrl(baseUrl, '/session/status', directoryQuery),
+        buildRequestTarget('/session/status', directoryQuery),
         fetchFn,
+        maxResponseBytes,
         opts?.signal,
-        params.headers,
       );
       return parseOpenCodeSessionStatusMap(raw);
     },
     sessionMessagesList: async ({ sessionId, limit, before, signal }) => {
       const result = await fetchJsonResponse<unknown>(
-        buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, {
+        buildRequestTarget(`/session/${encodeURIComponent(sessionId)}/message`, {
           ...directoryQuery,
           limit: String(Math.max(1, Math.trunc(limit))),
           ...(before ? { before } : {}),
         }),
         fetchFn,
+        maxResponseBytes,
         signal,
-        params.headers,
       );
       return {
-        items: Array.isArray(result.value) ? result.value : [],
+        items: parseOpenCodeArrayResponse(result.value, '/session/:id/message'),
         nextCursor: result.response.headers.get('x-next-cursor'),
       };
     },

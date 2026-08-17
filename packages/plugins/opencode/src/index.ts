@@ -1,10 +1,10 @@
 export * from './manifest.js';
+export { PLUGIN_MANIFEST as manifest } from './manifest.js';
 export * from './activate.js';
 export * from './cli.js';
 export * from './agent/index.js';
 export * from './agent/runtime/mode.js';
 export * from './agent/runtime/server/managedServerState.js';
-export * from './agent/runtime/server/catalog/control.js';
 export * from './agent/mcp/discovery.js';
 export * from './agent/auth/state.js';
 export * from './agent/auth/services/materialize.js';

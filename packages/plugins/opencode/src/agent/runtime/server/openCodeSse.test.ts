@@ -19,7 +19,7 @@ describe('subscribeSseJson', () => {
       read: () => new Promise<TestReaderResult<Uint8Array>>(() => undefined),
       cancel: vi.fn(async () => undefined),
     };
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       fetchSignalState.aborted = init?.signal?.aborted === true;
       init?.signal?.addEventListener('abort', () => {
         fetchSignalState.aborted = true;
@@ -32,10 +32,11 @@ describe('subscribeSseJson', () => {
           getReader: () => reader,
         },
       } as unknown as Response;
-    }));
+    });
 
     const subscription = await subscribeSseJson<{ type: string }>({
       url: 'http://127.0.0.1:9999/global/event',
+      fetch,
       signal: new AbortController().signal,
       readIdleTimeoutMs: 5,
       onMessage: vi.fn(),
@@ -56,7 +57,7 @@ describe('subscribeSseJson', () => {
       encoder.encode('id: evt-1\ndata: {"type":"hello"}\n\n'),
       encoder.encode('data: {"type":"bye"}\n\n'),
     ];
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    const fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       statusText: 'OK',
@@ -69,11 +70,12 @@ describe('subscribeSseJson', () => {
           cancel: vi.fn(async () => undefined),
         }),
       },
-    } as unknown as Response)));
+    } as unknown as Response));
     const onMessage = vi.fn();
 
     const subscription = await subscribeSseJson<{ type: string }>({
       url: 'http://127.0.0.1:9999/global/event',
+      fetch,
       signal: new AbortController().signal,
       readIdleTimeoutMs: null,
       onMessage,

@@ -140,7 +140,7 @@ export function createOpenCodeHappierAuthoredProviderUserMessageIds(params: Read
 
   async function persist(providerSessionId: string): Promise<void> {
     try {
-      await params.ctx.storage.session.set(storageKeyForProviderSession(providerSessionId), {
+      await params.ctx.storage.daemonSession.set(storageKeyForProviderSession(providerSessionId), {
         v: 2,
         providerSessionId,
         ids: [...ids],
@@ -221,7 +221,7 @@ export function createOpenCodeHappierAuthoredProviderUserMessageIds(params: Read
       if (!providerSessionId) return;
       let stored: unknown;
       try {
-        stored = await params.ctx.storage.session.get(storageKeyForProviderSession(providerSessionId));
+        stored = await params.ctx.storage.daemonSession.get(storageKeyForProviderSession(providerSessionId));
       } catch (error) {
         params.ctx.logger.debug('[OpenCodeServer] failed to read Happier-authored provider user ids', { error });
         return;

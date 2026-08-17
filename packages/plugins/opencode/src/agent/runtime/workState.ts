@@ -1,4 +1,4 @@
-import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import type { OpenCodeServerClient } from './server/openCodeServerClient.js';
 import { buildOpenCodeTodoWorkState } from './server/openCodeTodoWorkState.js';

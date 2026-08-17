@@ -4,7 +4,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
@@ -33,18 +33,37 @@ describe('activate', () => {
       _options: AgentAcpRuntimeOptions,
     ) => composedSession);
     const askQuestions = vi.fn(async () => ({
+      requestId: 'cursor-question-request',
+      kind: 'questions' as const,
       status: 'answered' as const,
       answers: {
-        choice: { type: 'single' as const, answer: { type: 'choice' as const, choiceId: 'beta-id' } },
+        choice: {
+          kind: 'singleChoice' as const,
+          answer: { kind: 'choice' as const, choiceId: 'beta-id' },
+        },
       },
     }));
-    const confirm = vi.fn(async () => true);
+    const confirm = vi.fn(async () => ({
+      requestId: 'cursor-confirm-request',
+      kind: 'confirmation' as const,
+      status: 'approved' as const,
+    }));
     const publish = vi.fn(async () => ({
       status: 'applied' as const,
       revision: 'work-state-1',
       sourceSequence: 1,
     }));
     const publisher = vi.fn(() => ({ publish }));
+    const daemonSettings = {
+      get: vi.fn(async (id: string) => (
+        id === 'cursorApiEndpoint'
+          ? 'https://cursor.example.test'
+          : null
+      )),
+    };
+    const settings = {
+      forScope: vi.fn(() => daemonSettings),
+    };
     const request: AgentSessionOpenRequest = {
       kind: 'resume',
       sessionId: 'session-cursor',
@@ -67,17 +86,11 @@ describe('activate', () => {
     const context = {
       protocols: { acp: { open } },
       session: { id: request.sessionId },
-      ui: { askQuestions, confirm },
       workState: { publisher },
       services: {
+        interactions: { askQuestions, confirm },
         logger: { debug: vi.fn() },
-        settings: {
-          get: vi.fn(async (id: string) => (
-            id === 'cursorApiEndpoint'
-              ? 'https://cursor.example.test'
-              : null
-          )),
-        },
+        settings,
         sessions: {
           current: { media: { registerSourceRoot: vi.fn() } },
           subagents: { observe: vi.fn() },
@@ -86,6 +99,8 @@ describe('activate', () => {
     } as unknown as AgentSessionRuntimeContext;
 
     const session = await runtime.sessions.open(request, context);
+
+    expect(settings.forScope).toHaveBeenCalledWith({ kind: 'daemon' });
 
     const [composedRequest, options] = open.mock.calls[0] ?? [];
     expect(composedRequest).toBe(request);
@@ -136,15 +151,19 @@ describe('activate', () => {
         answers: [{ questionId: 'choice', selectedOptionIds: ['beta-id'] }],
       },
     });
-    expect(askQuestions).toHaveBeenCalledWith([{
-      id: 'choice',
-      prompt: 'Pick one',
-      type: 'single',
-      choices: [
-        { id: 'alpha-id', label: 'Alpha', description: 'Alpha' },
-        { id: 'beta-id', label: 'Beta', description: 'Beta' },
-      ],
-    }], { title: 'Question' });
+    expect(askQuestions).toHaveBeenCalledWith({
+      kind: 'questions',
+      title: 'Question',
+      questions: [{
+        id: 'choice',
+        prompt: 'Pick one',
+        type: 'singleChoice',
+        choices: [
+          { id: 'alpha-id', label: 'Alpha', description: 'Alpha' },
+          { id: 'beta-id', label: 'Beta', description: 'Beta' },
+        ],
+      }],
+    }, { signal: extensionContext.signal });
 
     await expect(options?.extensions?.requests?.['cursor/create_plan']?.({
       name: 'Native migration',
@@ -164,7 +183,11 @@ describe('activate', () => {
         title: 'Migrate Cursor',
       })],
     }), { signal: extensionContext.signal });
-    expect(confirm).toHaveBeenCalledWith('# Plan', { title: 'Native migration' });
+    expect(confirm).toHaveBeenCalledWith({
+      kind: 'confirmation',
+      title: 'Native migration',
+      message: '# Plan',
+    }, { signal: extensionContext.signal });
 
     expect(session).not.toBe(composedSession);
     await activation.dispose();

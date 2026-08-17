@@ -1,4 +1,4 @@
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 
 import type { OpenCodeNativeFetch } from './transport.js';
 
@@ -68,7 +68,7 @@ function normalizeReadIdleTimeoutMs(value: number | null | undefined): number | 
 export async function subscribeSseJson<T>(params: Readonly<{
   url: string;
   headers?: Record<string, string>;
-  fetch?: OpenCodeNativeFetch;
+  fetch: OpenCodeNativeFetch;
   signal: AbortSignal;
   readIdleTimeoutMs?: number | null;
   onMessage: (msg: T, meta: { id?: string }) => void;
@@ -82,7 +82,7 @@ export async function subscribeSseJson<T>(params: Readonly<{
 
   const done = (async () => {
     try {
-      const response = await (params.fetch ?? globalThis.fetch)(params.url, {
+      const response = await params.fetch(params.url, {
         method: 'GET',
         headers: params.headers,
         signal: controller.signal,

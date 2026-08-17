@@ -3,11 +3,6 @@ import {
   createOpenCodeAttachArgs,
   resolveOpenCodeAttachTarget,
 } from '../surfaces/sessions/attach/descriptor.js';
-import {
-  isOpenCodeManagedServerCommand,
-  OPENCODE_MANAGED_SERVER_STATE_PATH_ENV_KEY,
-  resolveOpenCodeManagedServerStateFingerprintInput,
-} from '../runtime/server/managedServerState.js';
 import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 import {
   detectOpenCodeCliAuthStatus,
@@ -29,17 +24,17 @@ import {
   classifyOpenCodeUsageLimitError,
   OPEN_CODE_USAGE_LIMIT_RECOVERY,
 } from '../auth/services/usageLimit.js';
-import { readOpenCodeSessionMetadataRuntimeDescriptor } from '../identity/runtimeDescriptor.js';
 import { resolveOpenCodeSessionRuntimePreferences } from '../preferences/session.js';
-import { OPENCODE_SESSION_CONTROL_ADAPTER } from '../surfaces/sessions/controls/adapter.js';
 import { extractOpenCodeSessionHandoffAgentBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
 import { createOpenCodeHandoffSurfaceForExec } from '../surfaces/sessions/handoff/descriptor.js';
 import { resolveOpenCodeReplayChildLaunch } from '../surfaces/sessions/fork/descriptor.js';
 import {
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+  OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS,
 } from '../auth/services/requestAuth/purposes.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../systemTool.js';
+import type { ForkSessionMetadata as ForkSessionMetadataV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   providerId: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR.providerId,
@@ -74,8 +69,6 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     agentIdForAccountSettings: 'opencode',
     providerInfoCommandPrefixes: [['providers', 'list']],
   },
-  sessionControlAdapter: OPENCODE_SESSION_CONTROL_ADAPTER,
-  runtimeDescriptorReader: readOpenCodeSessionMetadataRuntimeDescriptor,
   cliAuth: {
     detectAuthStatus: async (params: Readonly<{
       env: Readonly<Record<string, string | undefined>>;
@@ -102,28 +95,8 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
       extract: extractOpenCodeSessionHandoffAgentBundleRecords,
     },
     resolveReplayChildLaunch: async ({ parentMetadata }: Readonly<{
-      parentMetadata: Readonly<Record<string, unknown>>;
+      parentMetadata: ForkSessionMetadataV1;
     }>) => await resolveOpenCodeReplayChildLaunch({ parentMetadata }),
-  },
-  managedServer: {
-    namespace: 'opencode',
-    statePathEnvKey: OPENCODE_MANAGED_SERVER_STATE_PATH_ENV_KEY,
-    resolveStateFingerprintInput: resolveOpenCodeManagedServerStateFingerprintInput,
-    isExpectedProcessCommand: isOpenCodeManagedServerCommand,
-    buildHealthUrl: buildOpenCodeAttachHealthUrl,
-    logLabel: 'OpenCode',
-    timeouts: {
-      authSwitchDrainMsEnvKey: 'HAPPIER_OPENCODE_MANAGED_SERVER_AUTH_SWITCH_DRAIN_TIMEOUT_MS',
-      authSwitchDrainMsDefault: 9_000,
-      healthProbeMsEnvKey: 'HAPPIER_OPENCODE_MANAGED_SERVER_SHUTDOWN_HEALTH_TIMEOUT_MS',
-      healthProbeMsDefault: 750,
-      shutdownGraceMsEnvKey: 'HAPPIER_OPENCODE_MANAGED_SERVER_SHUTDOWN_GRACE_TIMEOUT_MS',
-      shutdownGraceMsDefault: 5_000,
-      forceKillWaitMsEnvKey: 'HAPPIER_OPENCODE_MANAGED_SERVER_SHUTDOWN_FORCE_WAIT_TIMEOUT_MS',
-      forceKillWaitMsDefault: 500,
-      pollIntervalMsEnvKey: 'HAPPIER_OPENCODE_MANAGED_SERVER_SHUTDOWN_POLL_INTERVAL_MS',
-      pollIntervalMsDefault: 50,
-    },
   },
   attach: {
     resolveTarget: resolveOpenCodeAttachTarget,
@@ -136,14 +109,14 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
       purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origin: 'https://api.anthropic.com',
+        origin: OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS.anthropic,
         headerNames: Object.freeze(['authorization']),
       }),
     }), Object.freeze({
       purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origin: 'https://chatgpt.com',
+        origin: OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS.openai,
         headerNames: Object.freeze(['authorization', 'chatgpt-account-id']),
       }),
     })]),
@@ -164,8 +137,3 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   },
   preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,
 } as const);
-
-export {
-  OPENCODE_SESSION_CONTROL_ADAPTER,
-  readOpenCodeSessionMetadataRuntimeDescriptor,
-};

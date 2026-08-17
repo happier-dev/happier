@@ -1,4 +1,5 @@
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../../../identity/runtimeDescriptor.js';
+import type { AttachSessionMetadata as AttachSessionMetadataV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type OpenCodeAttachTarget =
   | Readonly<{
@@ -13,7 +14,7 @@ export type OpenCodeAttachTarget =
     }>;
 
 export function resolveOpenCodeAttachTarget(params: Readonly<{
-  metadata: Readonly<Record<string, unknown>>;
+  metadata: AttachSessionMetadataV1;
   fallbackServerBaseUrl?: string | null;
 }>): OpenCodeAttachTarget {
   const runtimeHandle = readOpenCodeSessionRuntimeHandleFromMetadata(params.metadata);

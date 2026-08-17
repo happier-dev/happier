@@ -1,16 +1,17 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
-  ManagedExecutableRef,
+  ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type {
   PluginProtocolClientHandle,
   PluginProtocolClientSpec,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type {
   AgentSessionConfigurationSnapshot,
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -31,6 +32,7 @@ type Capture = {
   versionProbeExecutable?: ManagedExecutableRef;
   listener?: (record: unknown) => void | Promise<void>;
   resolveExit?: (result: Awaited<ReturnType<PluginProtocolClientHandle<'jsonStream'>['wait']>>) => void;
+  warnings?: unknown[][];
 };
 
 function createRuntimeContext(capture: Capture) {
@@ -63,7 +65,12 @@ function createRuntimeContext(capture: Capture) {
     dispose: async () => undefined,
   };
   return {
-    logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+    logger: {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (...args: unknown[]) => capture.warnings?.push(args),
+      error: () => undefined,
+    },
     services: {
       exec: {
         systemTools: {
@@ -122,7 +129,10 @@ async function emitExit(
       observed: result.signal ? { kind: 'signal', signal: result.signal } : { kind: 'exit', exitCode: result.exitCode ?? 0 },
       requestedBy: { kind: 'none' },
     },
-    stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+    stdout: new Uint8Array(),
+    stderr: new TextEncoder().encode(result.stderr),
+    stdoutTruncated: false,
+    stderrTruncated: false,
   });
   await Promise.resolve();
 }
@@ -690,7 +700,7 @@ describe('createPiRuntimeOperations', () => {
   });
 
   it('classifies an exact negative prompt ACK as rejected before effect', async () => {
-    const capture: Capture = { specs: [], written: [] };
+    const capture: Capture = { specs: [], written: [], warnings: [] };
     const runtime = await createRuntime(capture);
     const events: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => events.push(event));
@@ -700,16 +710,29 @@ describe('createPiRuntimeOperations', () => {
       delivery: { kind: 'newTurn', turnId: 'pi-turn-no-evidence' },
     });
     await waitForWrittenCount(capture, 1);
-    await failLastCommand(capture, 'Prompt was not acknowledged');
+    await failLastCommand(capture, 'Provider session failed');
 
     await expect(prompt).resolves.toMatchObject({
       status: 'rejected',
-      diagnostic: expect.objectContaining({ code: 'pi_input_rejected' }),
+      diagnostic: expect.objectContaining({
+        code: 'pi_provider_session_error',
+        message: 'Pi provider rejected the prompt before acceptance without details',
+      }),
     });
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'input-rejected', inputIds: ['pi-input-no-evidence'] }),
     ]));
     expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(false);
+    expect(capture.warnings).toEqual([
+      [
+        '[PiRuntime] Provider prompt rejected',
+        {
+          classification: 'pi_provider_failure',
+          providerCode: 'pi_provider_session_error',
+          sanitizedPreview: 'Pi provider rejected the prompt before acceptance without details',
+        },
+      ],
+    ]);
     await runtime.dispose();
   });
 
@@ -731,7 +754,10 @@ describe('createPiRuntimeOperations', () => {
 
     await expect(prompt).resolves.toMatchObject({
       status: 'rejected',
-      diagnostic: expect.objectContaining({ code: 'pi_input_rejected' }),
+      diagnostic: expect.objectContaining({
+        code: 'pi_provider_session_error',
+        message: 'Pi provider rejected the prompt before acceptance: Prompt was rejected before acceptance',
+      }),
     });
     expect(events.filter((event) => event.kind === 'input-rejected')).toEqual([
       expect.objectContaining({ inputIds: ['pi-input-negative-ack-buffer-failure'] }),
@@ -766,7 +792,10 @@ describe('createPiRuntimeOperations', () => {
 
     await expect(prompt).resolves.toMatchObject({
       status: 'rejected',
-      diagnostic: expect.objectContaining({ code: 'pi_input_rejected' }),
+      diagnostic: expect.objectContaining({
+        code: 'pi_provider_session_error',
+        message: 'Pi provider rejected the prompt before acceptance: Prompt was rejected before acceptance',
+      }),
     });
     expect(events.filter((event) => event.kind === 'input-accepted')).toEqual([]);
     expect(events).toEqual(expect.arrayContaining([
@@ -1026,11 +1055,60 @@ describe('createPiRuntimeOperations', () => {
       kind: 'turn-failed',
       diagnostic: expect.objectContaining({
         code: 'pi_provider_session_error',
-        message:
-          '401 {"type":"error","error":{"type":"authentication_error","message":"Final credential was rejected"}}',
+        message: 'Final credential was rejected',
       }),
     }));
     expect(JSON.stringify(failed)).not.toContain('First attempt overloaded');
+    await runtime.dispose();
+  });
+
+  it('publishes and logs only the normalized safe fields from a structured Provider failure', async () => {
+    const capture: Capture = { specs: [], written: [], warnings: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const prompt = sendPrompt(runtime, 'hello');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+
+    await emit(capture, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        provider: 'openai-codex',
+        model: 'gpt-5.6-luna',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '401: {"error":{"code":"provider_auth_failed","message":"Credential sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa was rejected"},"request_body":"secret prompt payload"}',
+      },
+    });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'turn-failed',
+        diagnostic: {
+          code: 'provider_auth_failed',
+          severity: 'error',
+          message: 'Credential [REDACTED] was rejected',
+        },
+      }),
+    ]));
+    expect(capture.warnings).toEqual([
+      [
+        '[PiRuntime] Provider turn failed',
+        {
+          classification: 'pi_provider_failure',
+          providerCode: 'provider_auth_failed',
+          sanitizedPreview: 'Credential [REDACTED] was rejected',
+        },
+      ],
+    ]);
+    expect(JSON.stringify({ events, warnings: capture.warnings })).not.toContain('sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(JSON.stringify({ events, warnings: capture.warnings })).not.toContain('secret prompt payload');
     await runtime.dispose();
   });
 
@@ -1078,8 +1156,7 @@ describe('createPiRuntimeOperations', () => {
         kind: 'turn-failed',
         diagnostic: expect.objectContaining({
           code: 'pi_provider_session_error',
-          message:
-            '529 {"type":"error","error":{"type":"overloaded_error","message":"Provider failed after partial output"}}',
+          message: 'Provider failed after partial output',
         }),
       }),
     ]));
@@ -1130,8 +1207,7 @@ describe('createPiRuntimeOperations', () => {
         cause: 'user',
         diagnostic: expect.objectContaining({
           code: 'pi_provider_session_error',
-          message:
-            '529 {"type":"error","error":{"type":"overloaded_error","message":"Provider overloaded before retry backoff"}}',
+          message: 'Provider overloaded before retry backoff',
         }),
       }),
     ]));
@@ -1392,7 +1468,7 @@ describe('createPiRuntimeOperations', () => {
         kind: 'turn-failed',
         diagnostic: expect.objectContaining({
           code: 'pi_provider_session_error',
-          message: exactProviderDiagnostic,
+          message: 'rate limit maybe; contact support',
         }),
       }),
     ]));
@@ -1414,13 +1490,26 @@ describe('createPiRuntimeOperations', () => {
       message: { role: 'assistant', content: [{ type: 'text', text: 'partial' }] },
     });
 
-    const exit = { exitCode: 17, signal: null, stdout: '', stderr: 'secret child stderr' };
+    const exit = {
+      exitCode: 17,
+      signal: null,
+      stdout: '',
+      stderr: 'nested Pi child failure; apiKey=top-secret-value',
+    };
     await emitExit(capture, exit);
     await emitExit(capture, exit);
 
     expect(events.filter((event) => event.kind === 'turn-failed')).toHaveLength(1);
     expect(events.filter((event) => event.kind === 'runtime-ended')).toHaveLength(1);
-    expect(JSON.stringify(events)).not.toContain('secret child stderr');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'turn-failed',
+        diagnostic: expect.objectContaining({
+          message: expect.stringMatching(/exit code 17.*nested Pi child failure/u),
+        }),
+      }),
+    ]));
+    expect(JSON.stringify(events)).not.toContain('top-secret-value');
 
     await runtime.dispose();
     await emitExit(capture, exit);
@@ -1488,6 +1577,14 @@ describe('createPiRuntimeOperations', () => {
         code: 'malformed_runtime_event',
       },
     });
+    if (malformedResult.data.kind !== 'runtime-ended') return;
+    const details = malformedResult.data.diagnostic?.details;
+    expect(isRecord(details)).toBe(true);
+    if (!isRecord(details) || !Array.isArray(details.issues)) return;
+    expect(details.issues.length).toBeGreaterThan(0);
+    expect(details.issues.every((issue) => (
+      isRecord(issue) && Object.keys(issue).length === 1 && typeof issue.message === 'string'
+    ))).toBe(true);
     expect(JSON.stringify(malformedResult.data)).toContain('message-delta');
   });
 

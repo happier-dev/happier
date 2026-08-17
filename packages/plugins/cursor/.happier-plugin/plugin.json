@@ -1,0 +1,278 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "sessions": {
+            "cancel": true,
+            "configuration": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ],
+            "workStateSources": [
+              {
+                "id": "todos",
+                "itemKinds": [
+                  "todo"
+                ]
+              }
+            ]
+          }
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "CURSOR_API_KEY"
+              ],
+              "parser": "cursorAboutJson",
+              "statusArgs": [
+                "about",
+                "--format",
+                "json"
+              ]
+            },
+            "support": "status_only"
+          },
+          "displayName": "Cursor Agent CLI",
+          "executable": {
+            "alternativeBinaryFallbackEnabledEnvVar": "HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED",
+            "alternativeBinaryNames": [
+              "agent"
+            ],
+            "binaryName": "cursor-agent",
+            "knownUserBinDirSuffixes": [
+              ".local/bin"
+            ],
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://cursor.com/docs/cli",
+            "guideUrl": "https://cursor.com/docs/cli/installation",
+            "managed": null,
+            "manual": {
+              "kind": "vendor_recipe"
+            }
+          }
+        },
+        "id": "cursor",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "title": "Cursor"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "analytics": {
+              "identityScope": "device_user",
+              "privacy": "presence_only",
+              "valueKind": "presence"
+            },
+            "default": "",
+            "description": "Optional absolute path to cursor-agent or agent.",
+            "id": "cursorBinaryPath",
+            "presentation": {
+              "control": "text",
+              "order": 1
+            },
+            "schema": {
+              "type": "string"
+            },
+            "title": "Cursor binary path"
+          },
+          {
+            "analytics": {
+              "identityScope": "device_user",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "boolean"
+            },
+            "default": true,
+            "description": "Use the agent command when cursor-agent is unavailable.",
+            "id": "cursorAgentFallbackEnabled",
+            "presentation": {
+              "control": "switch",
+              "order": 2
+            },
+            "schema": {
+              "type": "boolean"
+            },
+            "title": "Allow agent fallback"
+          },
+          {
+            "analytics": {
+              "identityScope": "device_user",
+              "privacy": "presence_only",
+              "valueKind": "presence"
+            },
+            "default": "",
+            "description": "Optional Cursor Agent API endpoint override.",
+            "id": "cursorApiEndpoint",
+            "presentation": {
+              "control": "text",
+              "order": 3
+            },
+            "schema": {
+              "type": "string"
+            },
+            "title": "Cursor API endpoint"
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "green"
+            },
+            "ionName": "code-slash-outline"
+          },
+          "sections": [
+            {
+              "description": "Use a specific Cursor binary when auto-detection is not enough. Happier prefers cursor-agent and can fall back to agent when enabled.",
+              "fields": [
+                "cursorBinaryPath",
+                "cursorAgentFallbackEnabled",
+                "cursorApiEndpoint"
+              ],
+              "id": "cursor-cli",
+              "title": "Cursor CLI"
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "daemon",
+        "target": {
+          "agent": "cursor",
+          "kind": "agent"
+        },
+        "title": "Cursor",
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "cursor-agent",
+          "agent"
+        ],
+        "id": "cursor-agent",
+        "title": "Cursor Agent CLI"
+      },
+      {
+        "executableNames": [
+          "cursor-agent"
+        ],
+        "id": "cursor-agent-no-fallback",
+        "title": "Cursor Agent CLI without legacy agent fallback"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Cursor",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "environment",
+        "id": "cursor-api-key",
+        "reason": "Read CURSOR_API_KEY when environment-based Cursor authentication is selected.",
+        "scope": {
+          "keys": [
+            "CURSOR_API_KEY"
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "cursor-process",
+        "reason": "Launch the user-installed Cursor Agent CLI.",
+        "scope": {
+          "envKeys": [
+            "CURSOR_API_KEY"
+          ],
+          "executables": [
+            {
+              "id": "cursor-agent",
+              "kind": "systemTool"
+            },
+            {
+              "id": "cursor-agent-no-fallback",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.cursor",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,7 +1,8 @@
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
+import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
 import { readOpenCodeEventReconnectBackoffMs } from './openCodeEventReconnect.js';
 import { asRecord, normalizeString } from './openCodeParsing.js';
-import { OpenCodeSseHttpError, subscribeSseJson } from './openCodeSse.js';
+import { subscribeSseJson } from './openCodeSse.js';
 import type { OpenCodePromptPart } from './promptParts.js';
 import type {
   OpenCodeNativeFetch,
@@ -21,7 +22,7 @@ export type OpenCodeRuntimeFetchResponse = Readonly<{
 
 export type OpenCodeRuntimeFetch = (request: Readonly<{
   url: string;
-  method?: string;
+  method?: HttpMethod;
   headers?: Readonly<Record<string, string>>;
   body?: unknown;
   signal?: AbortSignal;
@@ -41,9 +42,9 @@ export type OpenCodeGlobalEvent = Readonly<{
 
 export type OpenCodeGlobalEventDelivery = Readonly<{
   /**
-   * OpenCode v1.14.41 can republish original bus events during sync replay without marking them as
-   * historical. `server.connected`, arrival order, event ids, and payload timestamps therefore do
-   * not establish liveness. This client never produces `accepted-live`.
+   * Global replay events remain untrusted observations. The directory-scoped `/event` route emits
+   * a connection boundary before subscribing to the instance bus, so only that route can produce
+   * `accepted-live` after its boundary.
    */
   provenance: 'connection-boundary' | 'untrusted-observation' | 'accepted-live';
   connectionGeneration: number;
@@ -56,12 +57,40 @@ export type OpenCodeServerPromptModel = Readonly<{
 
 export type OpenCodeServerPermissionReply = 'once' | 'always' | 'reject';
 
+export type OpenCodeMcpStatus = Readonly<
+  | { status: 'connected' }
+  | { status: 'disabled' }
+  | { status: 'failed'; error: string }
+  | { status: 'needs_auth' }
+  | { status: 'needs_client_registration'; error: string }
+>;
+
+function readOpenCodeMcpStatus(response: unknown, serverName: string): OpenCodeMcpStatus {
+  const statusMap = asRecord(response);
+  const rawStatus = asRecord(statusMap?.[serverName]);
+  if (!rawStatus) {
+    throw new Error(`OpenCode MCP registration response omitted status for "${serverName}"`);
+  }
+  const status = normalizeString(rawStatus.status);
+  if (status === 'connected' || status === 'disabled' || status === 'needs_auth') {
+    return { status };
+  }
+  if (status === 'failed' || status === 'needs_client_registration') {
+    const error = normalizeString(rawStatus.error);
+    if (!error) {
+      throw new Error(`OpenCode MCP registration returned status "${status}" without an error for "${serverName}"`);
+    }
+    return { status, error };
+  }
+  throw new Error(`OpenCode MCP registration returned an unknown status for "${serverName}"`);
+}
+
 export type OpenCodeServerClient = Readonly<{
   mcpAdd(input: Readonly<{
     directory: string;
     name: string;
     config: unknown;
-  }>): Promise<void>;
+  }>): Promise<OpenCodeMcpStatus>;
   sessionCreate(input: Readonly<{ directory: string }>): Promise<Readonly<{ id: string }>>;
   sessionFork(input: Readonly<{
     sessionId: string;
@@ -86,6 +115,8 @@ export type OpenCodeServerClient = Readonly<{
   sessionStatus(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<unknown>;
   sessionMessages(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<readonly unknown[]>;
   sessionTodo(input: Readonly<{ directory?: string | null; sessionId: string }>): Promise<readonly unknown[]>;
+  permissionList(): Promise<readonly unknown[]>;
+  questionList(): Promise<readonly unknown[]>;
   permissionReply(input: Readonly<{
     requestId: string;
     reply: OpenCodeServerPermissionReply;
@@ -141,14 +172,6 @@ export class OpenCodeServerHttpError extends Error {
   }
 }
 
-export function isOpenCodeGlobalEventSubscriptionPermanentError(error: unknown): boolean {
-  return error instanceof OpenCodeSseHttpError
-    && error.status !== 408
-    && error.status !== 425
-    && error.status !== 429
-    && error.status < 500;
-}
-
 function isAuthFailureStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
@@ -180,29 +203,22 @@ function createOpenCodeServerHttpError(params: Readonly<{
   });
 }
 
-function joinUrl(baseUrl: string, path: string): string {
-  const normalizedBase = baseUrl.replace(/\/+$/u, '');
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${normalizedBase}${normalizedPath}`;
-}
-
-function joinUrlWithQuery(
-  baseUrl: string,
+function pathWithQuery(
   path: string,
   query: Readonly<Record<string, string | null | undefined>>,
 ): string {
-  const url = new URL(joinUrl(baseUrl, path));
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const url = new URL(normalizedPath, 'http://opencode.invalid');
   for (const [key, value] of Object.entries(query)) {
     const normalized = normalizeString(value);
     if (normalized) url.searchParams.set(key, normalized);
   }
-  return url.toString();
+  return `${url.pathname}${url.search}`;
 }
 
 async function requestJson(params: Readonly<{
   fetch: OpenCodeRuntimeFetch;
-  baseUrl: string;
-  method: string;
+  method: HttpMethod;
   path: string;
   query?: Readonly<Record<string, string | null | undefined>>;
   body?: unknown;
@@ -211,8 +227,8 @@ async function requestJson(params: Readonly<{
 }>): Promise<unknown> {
   const response = await params.fetch({
     url: params.query
-      ? joinUrlWithQuery(params.baseUrl, params.path, params.query)
-      : joinUrl(params.baseUrl, params.path),
+      ? pathWithQuery(params.path, params.query)
+      : params.path,
     method: params.method,
     headers: { 'content-type': 'application/json' },
     ...(params.body === undefined ? {} : { body: JSON.stringify(params.body) }),
@@ -235,8 +251,7 @@ async function requestJson(params: Readonly<{
 
 async function requestOptionalJson(params: Readonly<{
   fetch: OpenCodeRuntimeFetch;
-  baseUrl: string;
-  method: string;
+  method: HttpMethod;
   path: string;
   query?: Readonly<Record<string, string | null | undefined>>;
   body?: unknown;
@@ -244,8 +259,8 @@ async function requestOptionalJson(params: Readonly<{
 }>): Promise<unknown> {
   const response = await params.fetch({
     url: params.query
-      ? joinUrlWithQuery(params.baseUrl, params.path, params.query)
-      : joinUrl(params.baseUrl, params.path),
+      ? pathWithQuery(params.path, params.query)
+      : params.path,
     method: params.method,
     headers: { 'content-type': 'application/json' },
     ...(params.body === undefined ? {} : { body: JSON.stringify(params.body) }),
@@ -345,9 +360,65 @@ function buildPromptConfig(input: Readonly<{
 }
 
 export async function subscribeOpenCodeGlobalEvents(params: Readonly<{
-  baseUrl: string;
+  baseUrl?: string;
   headers?: Readonly<Record<string, string>>;
-  fetch?: OpenCodeNativeFetch;
+  fetch: OpenCodeNativeFetch;
+  signal: AbortSignal;
+  onEvent: (event: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery) => void;
+  onUnavailable?: (error: unknown) => void;
+}>): Promise<void> {
+  await subscribeOpenCodeEvents({
+    ...params,
+    eventPath: '/global/event',
+    liveProvenance: 'untrusted-observation',
+    streamEndedMessage: 'OpenCode global event stream ended',
+    decodeEvent(rawEvent) {
+      const eventRecord = asRecord(rawEvent);
+      const payload = asRecord(eventRecord?.payload);
+      const eventType = normalizeString(payload?.type ?? eventRecord?.type);
+      if (!eventType) return null;
+      const directory = normalizeString(eventRecord?.directory);
+      return {
+        ...(directory ? { directory } : {}),
+        ...(payload
+          ? { payload: { type: eventType, properties: payload.properties } }
+          : { type: eventType, properties: eventRecord?.properties }),
+      };
+    },
+  });
+}
+
+async function subscribeOpenCodeInstanceEvents(params: Readonly<{
+  baseUrl?: string;
+  headers?: Readonly<Record<string, string>>;
+  directory?: string | null;
+  fetch: OpenCodeNativeFetch;
+  signal: AbortSignal;
+  onEvent: (event: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery) => void;
+  onUnavailable?: (error: unknown) => void;
+}>): Promise<void> {
+  await subscribeOpenCodeEvents({
+    ...params,
+    eventPath: pathWithQuery('/event', { directory: params.directory }),
+    liveProvenance: 'accepted-live',
+    streamEndedMessage: 'OpenCode instance event stream ended',
+    decodeEvent(rawEvent) {
+      const eventRecord = asRecord(rawEvent);
+      const eventType = normalizeString(eventRecord?.type);
+      if (!eventType) return null;
+      return { type: eventType, properties: eventRecord?.properties };
+    },
+  });
+}
+
+async function subscribeOpenCodeEvents(params: Readonly<{
+  baseUrl?: string;
+  headers?: Readonly<Record<string, string>>;
+  eventPath: string;
+  liveProvenance: 'untrusted-observation' | 'accepted-live';
+  streamEndedMessage: string;
+  decodeEvent: (rawEvent: unknown) => OpenCodeGlobalEvent | null;
+  fetch: OpenCodeNativeFetch;
   signal: AbortSignal;
   onEvent: (event: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery) => void;
   onUnavailable?: (error: unknown) => void;
@@ -361,12 +432,16 @@ export async function subscribeOpenCodeGlobalEvents(params: Readonly<{
       connectionGeneration += 1;
       const currentConnectionGeneration = connectionGeneration;
       const headers: Record<string, string> = { ...(params.headers ?? {}) };
-      const subscription = await subscribeSseJson<OpenCodeGlobalEvent>({
-        url: joinUrl(params.baseUrl, '/global/event'),
+      const subscription = await subscribeSseJson<unknown>({
+        url: params.baseUrl
+          ? `${params.baseUrl.replace(/\/+$/u, '')}${params.eventPath}`
+          : params.eventPath,
         headers,
-        ...(params.fetch ? { fetch: params.fetch } : {}),
+        fetch: params.fetch,
         signal: params.signal,
-        onMessage: (event) => {
+        onMessage: (rawEvent) => {
+          const event = params.decodeEvent(rawEvent);
+          if (!event) return;
           const eventType = normalizeString(event.payload?.type ?? event.type);
           if (eventType === 'server.connected') {
             connectionBoundarySeen = true;
@@ -378,18 +453,15 @@ export async function subscribeOpenCodeGlobalEvents(params: Readonly<{
           }
           if (!connectionBoundarySeen) return;
           params.onEvent(event, {
-            provenance: 'untrusted-observation',
+            provenance: params.liveProvenance,
             connectionGeneration: currentConnectionGeneration,
           });
         },
       });
       await subscription.done;
-      unavailableError = new Error('OpenCode global event stream ended');
+      unavailableError = new Error(params.streamEndedMessage);
     } catch (error) {
       if (params.signal.aborted) return;
-      if (isOpenCodeGlobalEventSubscriptionPermanentError(error)) {
-        throw error;
-      }
       unavailableError = error;
     }
     if (params.signal.aborted) return;
@@ -438,12 +510,10 @@ export function createOpenCodeServerClient(input: Readonly<{
 }>): OpenCodeServerClient {
   const params: Readonly<{
     fetch: OpenCodeRuntimeFetch;
-    baseUrl: string;
     streamFetch: OpenCodeNativeFetch;
     directory?: string | null;
   }> = {
     fetch: input.transport.request,
-    baseUrl: input.transport.baseUrl,
     streamFetch: input.transport.fetch,
     directory: input.directory,
   };
@@ -458,9 +528,9 @@ export function createOpenCodeServerClient(input: Readonly<{
   return {
     async mcpAdd(input) {
       const serverName = normalizeString(input.name);
-      if (!serverName) return;
+      if (!serverName) throw new Error('OpenCode MCP registration requires a server name');
       const response = await params.fetch({
-        url: joinUrlWithQuery(params.baseUrl, '/mcp', { directory: input.directory }),
+        url: pathWithQuery('/mcp', { directory: input.directory }),
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -478,11 +548,11 @@ export function createOpenCodeServerClient(input: Readonly<{
           responseBodyPreview,
         });
       }
+      return readOpenCodeMcpStatus(await response.json(), serverName);
     },
     async sessionCreate(input) {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: '/session',
         query: directoryQuery(input.directory),
@@ -493,7 +563,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionFork(input) {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/session/${encodeURIComponent(input.sessionId)}/fork`,
         query: directoryQuery(params.directory),
@@ -505,7 +574,6 @@ export function createOpenCodeServerClient(input: Readonly<{
       const promptConfig = buildPromptConfig(input);
       return await requestOptionalJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/session/${encodeURIComponent(input.sessionId)}/message`,
         query: directoryQuery(input.directory),
@@ -520,7 +588,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionAbort(input) {
       await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/session/${encodeURIComponent(input.sessionId)}/abort`,
         query: directoryQuery(input.directory),
@@ -530,7 +597,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionSummarize(input) {
       await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/session/${encodeURIComponent(input.sessionId)}/summarize`,
         query: directoryQuery(params.directory),
@@ -545,7 +611,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionStatus(input) {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'GET',
         path: '/session/status',
         query: directoryQuery(input.directory),
@@ -555,7 +620,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionMessages(input) {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'GET',
         path: `/session/${encodeURIComponent(input.sessionId)}/message`,
         query: directoryQuery(input.directory),
@@ -565,10 +629,27 @@ export function createOpenCodeServerClient(input: Readonly<{
     async sessionTodo(input) {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'GET',
         path: `/session/${encodeURIComponent(input.sessionId)}/todo`,
         query: directoryQuery(input.directory),
+      });
+      return Array.isArray(response) ? response : [];
+    },
+    async permissionList() {
+      const response = await requestJson({
+        fetch: params.fetch,
+        method: 'GET',
+        path: '/permission',
+        query: directoryQuery(params.directory),
+      });
+      return Array.isArray(response) ? response : [];
+    },
+    async questionList() {
+      const response = await requestJson({
+        fetch: params.fetch,
+        method: 'GET',
+        path: '/question',
+        query: directoryQuery(params.directory),
       });
       return Array.isArray(response) ? response : [];
     },
@@ -578,7 +659,6 @@ export function createOpenCodeServerClient(input: Readonly<{
       const message = normalizeString(input.message);
       await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/permission/${encodeURIComponent(requestId)}/reply`,
         expectJson: false,
@@ -591,7 +671,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async questionReply(input) {
       await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/question/${encodeURIComponent(input.requestId)}/reply`,
         body: { answers: input.answers },
@@ -601,7 +680,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async questionReject(input) {
       await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'POST',
         path: `/question/${encodeURIComponent(input.requestId)}/reject`,
         body: {},
@@ -610,7 +688,7 @@ export function createOpenCodeServerClient(input: Readonly<{
     },
     async appSkills(input) {
       const response = await params.fetch({
-        url: joinUrlWithQuery(params.baseUrl, '/skill', { directory: input.directory }),
+        url: pathWithQuery('/skill', { directory: input.directory }),
         method: 'GET',
         headers: { 'content-type': 'application/json' },
       });
@@ -627,9 +705,9 @@ export function createOpenCodeServerClient(input: Readonly<{
       return await response.json();
     },
     async subscribeGlobalEvents(input) {
-      await subscribeOpenCodeGlobalEvents({
-        baseUrl: params.baseUrl,
+      await subscribeOpenCodeInstanceEvents({
         fetch: params.streamFetch,
+        directory: resolveDirectory(),
         signal: input.signal,
         onEvent: input.onEvent,
         onUnavailable: input.onUnavailable,
@@ -638,7 +716,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async globalConfigGet() {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'GET',
         path: '/global/config',
       });
@@ -647,7 +724,6 @@ export function createOpenCodeServerClient(input: Readonly<{
     async providersList() {
       const response = await requestJson({
         fetch: params.fetch,
-        baseUrl: params.baseUrl,
         method: 'GET',
         path: '/provider',
       });

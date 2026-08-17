@@ -7,7 +7,7 @@ import {
 import type {
   AgentProviderBindingMaterializeInput,
   AgentProviderBindingPrepareInput,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
@@ -90,6 +90,7 @@ describe('OpenCode provider-binding adapter V1', () => {
           'OPENCODE_CONFIG_CONTENT',
           'OPENAI_API_KEY',
           'ANTHROPIC_API_KEY',
+          'CLAUDE_CODE_OAUTH_TOKEN',
         ],
       },
       materialization: 'configFile',
@@ -129,6 +130,7 @@ describe('OpenCode provider-binding adapter V1', () => {
           reasoningControls: 'unknown',
         },
       }],
+      credential: undefined,
       model: { id: 'gateway-model', name: 'Gateway model' },
     });
 
@@ -166,6 +168,7 @@ describe('OpenCode provider-binding adapter V1', () => {
         { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
         { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
         { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
+        { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: null, source: 'provider' },
       ],
       files: [{ relativePath: 'opencode/opencode.json' }],
     });
@@ -208,6 +211,7 @@ describe('OpenCode provider-binding adapter V1', () => {
       { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
       { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
       { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
+      { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: null, source: 'provider' },
     ]);
     expect(configText).not.toContain('selected-secret');
     expect(config).toMatchObject({

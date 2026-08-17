@@ -1,7 +1,7 @@
 import {
   classifyProviderLimitEvidence,
   type ProviderLimitCategory as RuntimeLimitCategory,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { summarizePiConnectedServiceActiveProfiles } from './activeProfiles.js';
 

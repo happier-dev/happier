@@ -4,13 +4,13 @@ import { join } from 'node:path';
 
 import {
     normalizeDetectedMcpServerV1,
-    type DaemonMcpServersDetectWarningV1,
     type DetectedMcpServerV1,
-} from '@happier-dev/plugin-sdk/experimental/mcp';
+    type DiscoveryWarning as McpDiscoveryWarningV1,
+} from '@happier-dev/plugin-sdk/mcp';
 
 export type ReadOpenCodeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
-    warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
+    warnings: ReadonlyArray<McpDiscoveryWarningV1>;
 }>;
 
 type OpenCodeMcpServersFile = Readonly<{
@@ -106,7 +106,7 @@ export async function readOpenCodeMcpConfigServers(
     }
 
     const servers: DetectedMcpServerV1[] = [];
-    const warnings: DaemonMcpServersDetectWarningV1[] = [];
+    const warnings: McpDiscoveryWarningV1[] = [];
 
     for (const candidate of candidates) {
         if (!existsSync(candidate.path)) continue;

@@ -6,9 +6,14 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionUsageLimitRecoveryControl,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createPiRuntimeOperations } from './rpc/operations.js';
+import { preparePiQualifiedConnectedAccounts } from './qualifiedConnectedAccounts.js';
+
+export {
+  piExternalSessionsContribution,
+} from '../externalSessions/contribution.js';
 
 const PI_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS = 600_000;
 
@@ -47,22 +52,54 @@ function readEnvironment(request: AgentSessionOpenRequest): Readonly<{
 
 async function openPiSession(
   request: AgentSessionOpenRequest,
-  context: Pick<AgentRuntimeContext, 'services'>,
+  context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
 ): Promise<AgentSessionRuntime> {
   if (request.kind === 'fork') {
     throw new Error('Pi does not support native session fork');
   }
-  const environment = readEnvironment(request);
-  return await createPiRuntimeOperations({
-    services: context.services,
-    logger: context.services.logger,
-    cwd: request.cwd,
-    env: environment.values,
-    unsetEnvKeys: environment.unset,
-    permissionMode: readPermissionMode(request),
-    resumeSessionId: request.kind === 'resume' ? request.providerSessionId : null,
-    sessionId: request.sessionId,
+  const prepared = await preparePiQualifiedConnectedAccounts({
+    launchEnvironment: readEnvironment(request),
+    context,
   });
+  let runtime: AgentSessionRuntime;
+  try {
+    runtime = prepared.bind(await createPiRuntimeOperations({
+      services: context.services,
+      logger: context.services.logger,
+      cwd: request.cwd,
+      env: prepared.launchEnvironment.values,
+      unsetEnvKeys: prepared.launchEnvironment.unset,
+      permissionMode: readPermissionMode(request),
+      resumeSessionId: request.kind === 'resume' ? request.providerSessionId : null,
+      sessionId: request.sessionId,
+    }));
+  } catch (error) {
+    try {
+      await prepared.dispose();
+    } catch (disposeError) {
+      throw new AggregateError([error, disposeError], 'Pi session preparation failed');
+    }
+    throw error;
+  }
+  if (request.configuration === undefined) {
+    return runtime;
+  }
+  const result = await runtime.updateConfiguration!(request.configuration);
+  if (result.status === 'applied') {
+    return runtime;
+  }
+  const failureCode = 'diagnostic' in result
+    ? result.diagnostic.code
+    : result.status;
+  const failure = new Error(
+    `Pi rejected its initial session configuration (${failureCode})`,
+  );
+  try {
+    await runtime.dispose();
+  } catch (disposeError) {
+    throw new AggregateError([failure, disposeError], failure.message);
+  }
+  throw failure;
 }
 
 async function openPiExecutionRun(

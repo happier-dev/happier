@@ -5,8 +5,7 @@ import type {
   AgentAcpNotificationExtension,
   AgentAcpRequestExtension,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createCursorTodoWorkStateUpdater } from '../workState/projection.js';
 import { buildCursorPlanPermissionInput, buildCursorPlanResponse } from './plans.js';
@@ -159,22 +158,23 @@ export function createCursorAcpExtensionHandlers(params: Readonly<{
     if (extensionContext.signal.aborted) {
       return cursorAskQuestionResponseSchema.parse({ outcome: { outcome: 'cancelled' } });
     }
-    const result = await params.context.ui.askQuestions(
-      buildCursorHostQuestions(request),
-      { title: request.title ?? 'Question' },
-    );
-    if (result.status === 'cancelled' || extensionContext.signal.aborted) {
-      return cursorAskQuestionResponseSchema.parse({ outcome: { outcome: 'cancelled' } });
+    const result = await params.context.services.interactions.askQuestions({
+      kind: 'questions',
+      title: request.title ?? 'Question',
+      questions: buildCursorHostQuestions(request),
+    }, { signal: extensionContext.signal });
+    if (result.status === 'answered') {
+      const answers = buildCursorQuestionAnswers(request, result);
+      return cursorAskQuestionResponseSchema.parse(answers.length > 0
+        ? { outcome: { outcome: 'answered', answers } }
+        : { outcome: { outcome: 'skipped' } });
     }
     if (result.status === 'unavailable') {
       return cursorAskQuestionResponseSchema.parse({
-        outcome: { outcome: 'skipped', reason: result.diagnostic.message },
+        outcome: { outcome: 'skipped', reason: 'Host interaction unavailable' },
       });
     }
-    const answers = buildCursorQuestionAnswers(request, result);
-    return cursorAskQuestionResponseSchema.parse(answers.length > 0
-      ? { outcome: { outcome: 'answered', answers } }
-      : { outcome: { outcome: 'skipped' } });
+    return cursorAskQuestionResponseSchema.parse({ outcome: { outcome: 'cancelled' } });
   };
 
   const createPlan: AgentAcpRequestExtension = async (extensionParams, extensionContext) => {
@@ -187,18 +187,16 @@ export function createCursorAcpExtensionHandlers(params: Readonly<{
       });
     }
     if (extensionContext.signal.aborted) return buildCursorPlanResponse('cancelled');
-    try {
-      const confirmed = await params.context.ui.confirm(
-        buildCursorPlanPermissionInput(request),
-        { title: readPlanTitle(request.name) },
-      );
-      return buildCursorPlanResponse(confirmed ? 'accepted' : 'rejected');
-    } catch (error) {
-      if (error instanceof PluginError && error.code === 'plugin_ui_cancelled') {
-        return buildCursorPlanResponse('cancelled');
-      }
-      throw error;
-    }
+    const result = await params.context.services.interactions.confirm({
+      kind: 'confirmation',
+      title: readPlanTitle(request.name),
+      message: buildCursorPlanPermissionInput(request),
+    }, { signal: extensionContext.signal });
+    return buildCursorPlanResponse(
+      result.status === 'approved'
+        ? 'accepted'
+        : result.status === 'declined' ? 'rejected' : 'cancelled',
+    );
   };
 
   async function handleUpdateTodos(
@@ -272,17 +270,22 @@ export function createCursorAcpExtensionHandlers(params: Readonly<{
 
   const generatedMediaNotification: AgentAcpNotificationExtension = async (value, extensionContext) => {
     const parsed = cursorGenerateImageNotificationSchema.safeParse(value);
-    if (!parsed.success || !params.mediaSourceRoot || !parsed.data.filePath) return;
+    if (!parsed.success) return;
+    const mediaSourceRoot = params.mediaSourceRoot;
+    const filePath = parsed.data.filePath;
+    if (!mediaSourceRoot || !filePath) return;
+    const currentSession = params.context.services.sessions.current;
+    if (!currentSession) return;
     const localId = parsed.data.toolCallId
-      ?? `cursor-generated-${createHash('sha256').update(parsed.data.filePath).digest('hex').slice(0, 32)}`;
+      ?? `cursor-generated-${createHash('sha256').update(filePath).digest('hex').slice(0, 32)}`;
     const entry = await acquireGeneratedMediaPublication(localId, async () => {
-      const source = await params.context.services.sessions.current.media.registerSourceRoot({
-        rootPath: params.mediaSourceRoot!,
+      const source = await currentSession.media.registerSourceRoot({
+        rootPath: mediaSourceRoot,
       });
       try {
         await source.publishGenerated({
           localId,
-          path: parsed.data.filePath!,
+          path: filePath,
           referencePaths: parsed.data.referenceImagePaths,
           description: parsed.data.description,
           ...(parsed.data.toolCallId ? { toolCallId: parsed.data.toolCallId } : {}),

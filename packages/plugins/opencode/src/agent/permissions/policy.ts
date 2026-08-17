@@ -1,6 +1,6 @@
 import {
   resolveAcpToolPermissionPolicy,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type OpenCodePermissionValue =
   ReturnType<typeof resolveAcpToolPermissionPolicy>[string];

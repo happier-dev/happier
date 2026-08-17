@@ -8,18 +8,32 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { activate } from './activate.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+
+function createUnboundConnectedAccounts() {
+  return {
+    getBinding: vi.fn(async () => null),
+    requestSelection: vi.fn(),
+    materialize: vi.fn(async () => {
+      throw new Error('Unbound OpenCode activation test must not materialize credentials');
+    }),
+    watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      listener({ kind: 'resync' });
+      return { dispose: vi.fn() };
+    }),
+  };
+}
 
 describe('activate', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('registers the OpenCode config MCP discovery provider through the plugin API', async () => {
+  it('registers the OpenCode config MCP discovery source through the plugin API', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-plugin-mcp-'));
     const opencodeDir = join(root, '.config', 'opencode');
     const configPath = join(opencodeDir, 'opencode.json');
@@ -50,7 +64,24 @@ describe('activate', () => {
         resolveLaunch: expect.any(Function),
       },
     }));
-    expect(agent?.providerBinding).toEqual(OPENCODE_PROVIDER_BINDING_ADAPTER_V1);
+    expect(agent?.providerBinding).toEqual({
+      v: 1,
+      adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
+      prepare: expect.any(Function),
+      materialize: expect.any(Function),
+    });
+    expect(agent?.providerBinding).not.toBe(OPENCODE_PROVIDER_BINDING_ADAPTER_V1);
+    expect(agent?.providerBinding?.prepare).not.toBe(
+      OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare,
+    );
+    const prepareInput = {
+      v: 1 as const,
+      agentTargetKey: 'backend:opencode:built_in',
+      connectionId: 'pc_opencode_activation_test',
+    };
+    expect(agent?.providerBinding?.prepare(prepareInput)).toEqual(
+      OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput),
+    );
     const externalSessions = agent?.externalSessions;
     expect(Object.keys(externalSessions ?? {}).sort()).toEqual([
       'listCandidates',
@@ -58,6 +89,9 @@ describe('activate', () => {
       'readAfterTranscript',
       'resolveLinkIdentity',
       'resolveLinkedIdentity',
+      // Declares the OpenCode server Happier owns for browse reads, so a
+      // listing does not require a live Session runner.
+      'resolveManagedEndpointService',
       'resolveSource',
     ]);
     expect(externalSessions).not.toHaveProperty('status');
@@ -73,25 +107,12 @@ describe('activate', () => {
     expect(Object.keys(
       agent?.externalSessionTakeover ?? {},
     )).toEqual(['resolveLaunch']);
-    const discovery = activation.registration('mcp.discoveryProviders', 'config');
+    const discovery = activation.registration('mcp.discoverySources', 'config');
     expect(discovery).toEqual(expect.any(Function));
     if (!discovery) throw new Error('Missing OpenCode MCP discovery registration');
     await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
       items: [],
-      servers: [
-        expect.objectContaining({
-          id: 'opencode.config.review',
-          name: 'review',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'review-mcp',
-              args: ['--stdio'],
-            },
-          },
-        }),
-      ],
+      endpoints: [],
       warnings: [],
     });
     await activation.dispose();
@@ -156,10 +177,13 @@ describe('activate', () => {
 
     const opened = await runtime.sessions.open(
       request,
-      { protocols: { acp: { open } } } as AgentSessionRuntimeContext,
+      {
+        protocols: { acp: { open } },
+        services: { connectedAccounts: createUnboundConnectedAccounts() },
+      } as unknown as AgentSessionRuntimeContext,
     );
 
-    expect(opened).toBe(session);
+    expect(opened).toMatchObject({ send: session.send });
     await activation.dispose();
   });
 
@@ -195,6 +219,7 @@ describe('activate', () => {
       },
     }, {
       protocols: { acp: { open } },
+      services: { connectedAccounts: createUnboundConnectedAccounts() },
     } as never);
 
     expect(execution).toBeDefined();

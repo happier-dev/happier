@@ -2,12 +2,12 @@ import type { PiPermissionMode } from './types.js';
 
 const READ_ONLY_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
 const SAFE_WRITE_TOOLS = ['read', 'edit', 'write', 'grep', 'find', 'ls'] as const;
-const FULL_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const;
 
 type PiPermissionIntent = 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
 
 export type PiPermissionModeResolutionV1 = Readonly<{
-  tools: readonly string[];
+  // `null` preserves Pi's native catalog, including extension/custom tools.
+  tools: readonly string[] | null;
   resolvedIntent: PiPermissionIntent;
   diagnostic: Readonly<{
     kind: 'unknown_permission_mode';
@@ -33,14 +33,15 @@ function normalizePermissionMode(permissionMode?: PiPermissionMode): PiPermissio
   return null;
 }
 
-function toolsForIntent(intent: PiPermissionIntent): readonly string[] {
+function toolsForIntent(intent: PiPermissionIntent): readonly string[] | null {
   if (intent === 'plan' || intent === 'read-only') return READ_ONLY_TOOLS;
   if (intent === 'safe-yolo') return SAFE_WRITE_TOOLS;
-  return FULL_TOOLS;
+  return null;
 }
 
-// Pi permissions are launch-time-only via the tools allowlist. There is no
-// mid-session ask/respond flow, so unrecognized modes must resolve read-only.
+// Restricted Pi permissions are launch-time-only via the tools allowlist.
+// There is no mid-session ask/respond flow, so unrecognized modes must resolve
+// read-only instead of inheriting Pi's unrestricted native tool catalog.
 export function resolvePiToolsForPermissionMode(permissionMode?: PiPermissionMode): PiPermissionModeResolutionV1 {
   const resolvedIntent = normalizePermissionMode(permissionMode);
   if (resolvedIntent) {
@@ -57,6 +58,6 @@ export function resolvePiToolsForPermissionMode(permissionMode?: PiPermissionMod
   };
 }
 
-export function buildPiToolsForPermissionMode(permissionMode?: PiPermissionMode): readonly string[] {
+export function buildPiToolsForPermissionMode(permissionMode?: PiPermissionMode): readonly string[] | null {
   return resolvePiToolsForPermissionMode(permissionMode).tools;
 }

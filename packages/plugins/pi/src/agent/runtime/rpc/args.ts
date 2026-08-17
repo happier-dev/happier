@@ -1,4 +1,4 @@
-import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/protocol';
+import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/plugin-sdk/agents';
 
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
 import {
@@ -73,6 +73,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
 }>): readonly string[] {
   const launchSelection = resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
+  const tools = buildPiToolsForPermissionMode(opts?.permissionMode);
   const args: string[] = [
     ...resolvePiRequestAuthExtensionArgs(opts?.env),
     ...(launchSelection
@@ -87,9 +88,8 @@ export function buildPiRpcArgs(opts?: Readonly<{
       : []),
     '--mode',
     'rpc',
-    '--tools',
-    buildPiToolsForPermissionMode(opts?.permissionMode).join(','),
   ];
+  if (tools) args.push('--tools', tools.join(','));
   const thinking = normalizePiThinkingLevel(opts?.thinkingLevel);
   if (thinking) args.push('--thinking', thinking);
   const resumeSessionId = typeof opts?.resumeSessionId === 'string' ? opts.resumeSessionId.trim() : '';

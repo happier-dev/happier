@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { PI_UI_DESCRIPTOR } from './descriptor.js';
@@ -33,6 +35,14 @@ function collectNoExecuteViolations(value: unknown, path = 'descriptor'): string
 }
 
 describe('PI_UI_DESCRIPTOR', () => {
+  it('keeps raw session-metadata UI behavior out of the plugin package surface', () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { exports?: Record<string, unknown> };
+
+    expect(packageJson.exports).not.toHaveProperty('./ui/behavior');
+  });
+
   it('is a versioned plugin UI descriptor', () => {
     expect(PI_UI_DESCRIPTOR).toMatchObject({
       kind: 'plugin.ui.v1',

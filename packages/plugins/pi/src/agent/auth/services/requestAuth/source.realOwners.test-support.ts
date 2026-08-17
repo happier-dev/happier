@@ -18,13 +18,14 @@ import {
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
-  JsonValue,
-  ManagedExecutableRef,
+  ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type {
   PluginProtocolClientHandle,
   PluginProtocolClientSpec,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonControlApp } from '../../../../../../../../apps/cli/src/daemon/controlServer.js';
@@ -217,6 +218,7 @@ function makeGroup(
   return QualifiedConnectedAccountGroupV4Schema.parse({
     v: 1,
     ref: { service, groupId: 'fallbacks' },
+    incarnation: 'qualified-group-row-fallbacks',
     displayName: 'Fallbacks',
     policy: {
       ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
@@ -1326,12 +1328,7 @@ async function runRealOwnerScenario(
   await mkdir(join(agentDir, 'extensions'), { recursive: true });
   const generated = buildPiRequestAuthExtensionAssetSource({
     [scenario.providerId]: purpose,
-  })
-    .replaceAll(
-      '@earendil-works/pi-ai/providers/all',
-      `${modules.providerAlias}/providers/all`,
-    )
-    .replaceAll('@earendil-works/pi-ai', modules.providerAlias);
+  });
   await writeFile(extensionPath, generated, 'utf8');
   const previousRequestAuthEnv = {
     agentDir: process.env.PI_CODING_AGENT_DIR,

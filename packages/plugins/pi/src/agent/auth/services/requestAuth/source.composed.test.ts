@@ -176,6 +176,45 @@ async function readAliasedVersion(alias: string): Promise<string> {
   return String(packageJson.version ?? '');
 }
 
+async function readToolOwnedPiAiContract(codingAlias: string): Promise<Readonly<{
+  dependencyRange: string;
+  version: string;
+  exportsRoot: boolean;
+  exportsProviders: boolean;
+}>> {
+  const codingRoot = await findAliasedPackageRoot(codingAlias);
+  const codingPackageJson = JSON.parse(
+    await readFile(join(codingRoot, 'package.json'), 'utf8'),
+  ) as {
+    dependencies?: Readonly<Record<string, unknown>>;
+  };
+  const dependencyRange = codingPackageJson.dependencies?.['@earendil-works/pi-ai'];
+  if (typeof dependencyRange !== 'string') {
+    throw new Error(`${codingAlias} does not declare @earendil-works/pi-ai`);
+  }
+
+  const codingRequire = createRequire(join(codingRoot, 'package.json'));
+  for (const searchRoot of codingRequire.resolve.paths('@earendil-works/pi-ai') ?? []) {
+    try {
+      const packageJson = JSON.parse(
+        await readFile(join(searchRoot, '@earendil-works', 'pi-ai', 'package.json'), 'utf8'),
+      ) as {
+        version?: unknown;
+        exports?: Readonly<Record<string, unknown>>;
+      };
+      return {
+        dependencyRange,
+        version: String(packageJson.version ?? ''),
+        exportsRoot: packageJson.exports?.['.'] !== undefined,
+        exportsProviders: packageJson.exports?.['./providers/*'] !== undefined,
+      };
+    } catch {
+      // Keep following the coding-agent package's ordinary dependency lookup path.
+    }
+  }
+  throw new Error(`Unable to resolve @earendil-works/pi-ai from ${codingAlias}`);
+}
+
 function jsonError(status: number, type: string, message: string): Response {
   return new Response(JSON.stringify({
     type: 'error',
@@ -1036,12 +1075,7 @@ async function runScenario(
   const generated = buildPiRequestAuthExtensionSource({
     purposes: { [scenario.providerId]: PURPOSES[scenario.providerId] },
     requestAuthClientSource: REQUEST_AUTH_CLIENT_SOURCE,
-  })
-    .replaceAll(
-      '@earendil-works/pi-ai/providers/all',
-      `${modules.providerAlias}/providers/all`,
-    )
-    .replaceAll('@earendil-works/pi-ai', modules.providerAlias);
+  });
   await writeFile(extensionPath, generated, 'utf8');
 
   const settings = modules.coding.SettingsManager.inMemory({
@@ -1407,6 +1441,12 @@ describe('Pi request-auth exact-version AgentSession composed matrix', () => {
       const modules = await loadExactPiModules(version);
       expect(await readAliasedVersion(modules.codingAlias)).toBe(version);
       expect(await readAliasedVersion(modules.providerAlias)).toBe(version);
+      expect(await readToolOwnedPiAiContract(modules.codingAlias)).toEqual({
+        dependencyRange: `^${version}`,
+        version,
+        exportsRoot: true,
+        exportsProviders: true,
+      });
 
       const previousVersion = process.env.HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION;
       process.env.HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION = version;

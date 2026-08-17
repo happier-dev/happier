@@ -1,7 +1,7 @@
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 const EMPTY_RESPONSE_DIAGNOSTIC = Object.freeze({
   code: 'cursor_empty_provider_response',

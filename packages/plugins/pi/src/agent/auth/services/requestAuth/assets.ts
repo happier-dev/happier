@@ -4,18 +4,17 @@ import { join } from 'node:path';
 import {
   buildConnectedAccountRequestAuthClientSource,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import {
   buildPiRequestAuthExtensionSource,
   type PiRequestAuthPurposeMap,
 } from './source.js';
 
-export const PI_REQUEST_AUTH_EXTENSION_VERSION = '2' as const;
-const PI_REQUEST_AUTH_EXTENSION_FILE_NAME =
-  `happier-pi-request-auth-${PI_REQUEST_AUTH_EXTENSION_VERSION}.js`;
-const LEGACY_PI_BROKER_EXTENSION_FILE_NAME = 'happier-pi-broker-1.js';
-const PI_REQUEST_AUTH_EXTENSION_FILE_PATTERN =
+const PI_REQUEST_AUTH_EXTENSION_FILE_NAME = 'happier-pi-request-auth.js';
+const LEGACY_PI_BROKER_EXTENSION_FILE_PATTERN =
+  /^happier-pi-broker(?:-[^/]+)?\.js$/u;
+const VERSIONED_PI_REQUEST_AUTH_EXTENSION_FILE_PATTERN =
   /^happier-pi-request-auth-[^/]+\.js$/u;
 
 export function resolvePiRequestAuthExtensionDir(agentDir: string): string {
@@ -48,12 +47,9 @@ export async function retireLegacyPiRequestAuthAssets(
     .filter((entry) => (
       entry.isFile()
       && (
-        entry.name === LEGACY_PI_BROKER_EXTENSION_FILE_NAME
-        || (
-          (!input.retainCurrent
-            || entry.name !== PI_REQUEST_AUTH_EXTENSION_FILE_NAME)
-          && PI_REQUEST_AUTH_EXTENSION_FILE_PATTERN.test(entry.name)
-        )
+        LEGACY_PI_BROKER_EXTENSION_FILE_PATTERN.test(entry.name)
+        || VERSIONED_PI_REQUEST_AUTH_EXTENSION_FILE_PATTERN.test(entry.name)
+        || (!input.retainCurrent && entry.name === PI_REQUEST_AUTH_EXTENSION_FILE_NAME)
       )
     ))
     .map((entry) => rm(join(extensionDir, entry.name), { force: true })),

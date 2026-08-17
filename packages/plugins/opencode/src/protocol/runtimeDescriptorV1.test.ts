@@ -39,13 +39,37 @@ describe('OpenCode runtime descriptor v1', () => {
       agentId: 'opencode',
       provider: {
         backendMode: 'server',
-        serverBaseUrl: 'http://example.com:4096',
+        // Credentials never belong in the URL; the host applies the recorded
+        // password as a header instead.
+        serverBaseUrl: 'http://opencode:secret@example.com:4096',
         serverBaseUrlExplicit: true,
       },
     })).toEqual({
       agentId: 'opencode',
       backendMode: 'server',
       providerSessionId: null,
+      serverBaseUrl: null,
+      serverBaseUrlExplicit: false,
+    });
+  });
+
+  it('admits HTTPS hosts but rejects non-loopback HTTP endpoints', () => {
+    expect(readCanonicalOpenCodeAgentRuntimeDescriptorV1(
+      buildOpenCodeAgentRuntimeDescriptorV1({
+        serverBaseUrl: 'https://OpenCode.Example.test:443/path?ignored=true#hash',
+        serverBaseUrlExplicit: true,
+      }),
+    )).toMatchObject({
+      serverBaseUrl: 'https://opencode.example.test/',
+      serverBaseUrlExplicit: true,
+    });
+
+    expect(readCanonicalOpenCodeAgentRuntimeDescriptorV1(
+      buildOpenCodeAgentRuntimeDescriptorV1({
+        serverBaseUrl: 'http://192.168.1.50:4096',
+        serverBaseUrlExplicit: true,
+      }),
+    )).toMatchObject({
       serverBaseUrl: null,
       serverBaseUrlExplicit: false,
     });

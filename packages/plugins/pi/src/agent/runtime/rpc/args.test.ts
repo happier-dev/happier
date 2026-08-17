@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/plugin-sdk/agents';
 
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -9,7 +10,7 @@ import { buildPiToolsForPermissionMode } from './permissions.js';
 
 type PermissionModule = Readonly<{
   resolvePiToolsForPermissionMode?: (permissionMode?: string) => Readonly<{
-    tools: readonly string[];
+    tools: readonly string[] | null;
     resolvedIntent: string;
     diagnostic: Readonly<{
       kind: 'unknown_permission_mode';
@@ -23,11 +24,11 @@ describe('buildPiToolsForPermissionMode', () => {
   it.each([
     { mode: 'plan', expected: ['read', 'grep', 'find', 'ls'] },
     { mode: 'read-only', expected: ['read', 'grep', 'find', 'ls'] },
-    { mode: 'default', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'default', expected: null },
     { mode: 'safe-yolo', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
     { mode: 'acceptEdits', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'yolo', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'bypassPermissions', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'yolo', expected: null },
+    { mode: 'bypassPermissions', expected: null },
   ] as const)('maps $mode to tools list', ({ mode, expected }) => {
     expect(buildPiToolsForPermissionMode(mode)).toEqual(expected);
   });
@@ -74,8 +75,6 @@ describe('buildPiRpcArgs', () => {
     })).toEqual([
       '--mode',
       'rpc',
-      '--tools',
-      'read,bash,edit,write,grep,find,ls',
       '--session',
       'pi-session-1',
     ]);
@@ -94,8 +93,22 @@ describe('buildPiRpcArgs', () => {
       'openai-codex/*',
       '--mode',
       'rpc',
-      '--tools',
-      'read,bash,edit,write,grep,find,ls',
+    ]);
+  });
+
+  it('uses the public shared Claude policy for Anthropic connected-service startup', () => {
+    expect(buildPiRpcArgs({
+      permissionMode: 'default',
+      connectedServiceId: 'anthropic',
+    })).toEqual([
+      '--provider',
+      'anthropic',
+      '--model',
+      CURRENT_FLAGSHIP_CLAUDE_MODEL_ID,
+      '--models',
+      'anthropic/*',
+      '--mode',
+      'rpc',
     ]);
   });
 
@@ -111,8 +124,6 @@ describe('buildPiRpcArgs', () => {
       resolvePiRequestAuthExtensionPath(agentDir),
       '--mode',
       'rpc',
-      '--tools',
-      'read,bash,edit,write,grep,find,ls',
     ]);
     expect(buildPiRpcArgs({
       env: {

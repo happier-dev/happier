@@ -2,7 +2,7 @@ import {
   boundSessionWorkStateItemsV1,
   type SessionWorkStateItemV1,
   type SessionWorkStateV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 export const OPEN_CODE_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES = ['todo:opencode'] as const;
 export const OPEN_CODE_TODO_WORK_STATE_ITEM_LIMIT = 100;

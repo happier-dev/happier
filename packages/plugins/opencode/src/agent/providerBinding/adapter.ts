@@ -5,7 +5,7 @@ import type {
   AgentProviderBindingMaterializeInput,
   AgentProviderBindingPrepareInput,
   AgentProviderBindingPrepared,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'configFile' }>['env'];
@@ -24,6 +24,7 @@ export const OPENCODE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'OPENCODE_CONFIG_CONTENT',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
 ] as const);
 
 const DRIVER_BY_PROTOCOL = Object.freeze({

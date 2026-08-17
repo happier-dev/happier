@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
+import { buildPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 import {
   createPiExternalSessionObservationContribution,
 } from './observation.js';
@@ -24,7 +25,16 @@ function linkedSource(params: Readonly<{
       sessionFile,
     },
     remoteSessionId: params.remoteSessionId ?? 'pi-session-one',
-    linkData: { sessionFile },
+    // Mirrors what the Pi link-identity contribution actually resolves: the session
+    // file travels on `source` and inside the runtime descriptor, never as a
+    // top-level `linkData.sessionFile` the host owner metadata would reject.
+    linkData: {
+      runtimeDescriptorV1: buildPiAgentRuntimeDescriptorV1({
+        resumeStrategy: 'sessionFileAbsolutePreferred',
+        providerSessionId: params.remoteSessionId ?? 'pi-session-one',
+        sessionFile,
+      }),
+    },
   };
 }
 

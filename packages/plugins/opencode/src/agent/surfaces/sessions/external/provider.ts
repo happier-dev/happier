@@ -2,11 +2,9 @@ import type {
   AgentExternalSessionTakeoverContribution,
   AgentExternalSessionTakeoverResolveLaunchRequest,
   AgentExternalSessionTakeoverResolveLaunchResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
-import {
-  getOpenCodeExternalSessionVerifiedWorkingDirectory,
-} from './candidates.js';
+import { projectOpenCodeExternalSessionSource } from './client.js';
 
 function invocationFailure(
   request: AgentExternalSessionTakeoverResolveLaunchRequest,
@@ -33,7 +31,7 @@ async function resolveLaunch(
 ): Promise<AgentExternalSessionTakeoverResolveLaunchResult> {
   const stopped = invocationFailure(request);
   if (stopped) return stopped;
-  if (request.source.kind !== 'opencodeServer') {
+  if (!projectOpenCodeExternalSessionSource(request.source)) {
     return {
       ok: false,
       code: 'source_invalid',
@@ -41,34 +39,10 @@ async function resolveLaunch(
     };
   }
 
-  const verifiedDirectory = await getOpenCodeExternalSessionVerifiedWorkingDirectory({
-    source: request.source,
-    providerSessionId: request.remoteSessionId,
-    signal: request.signal,
-    baseUrlAuthority: 'canonical',
-  });
-  const after = invocationFailure(request);
-  if (after) return after;
-
-  const sourceDirectory = typeof request.source.directory === 'string'
-    ? request.source.directory.trim()
-    : '';
-  const directory = verifiedDirectory
-    || sourceDirectory
-    || request.linkedDirectory?.trim()
-    || '';
-  if (!directory) {
-    return {
-      ok: false,
-      code: 'unavailable',
-      message: 'OpenCode external-session takeover requires a working directory.',
-    };
-  }
-
   return {
     ok: true,
     value: {
-      directory,
+      directory: request.targetDirectory,
       backendModeHint: 'server',
     },
   };

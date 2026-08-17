@@ -3,7 +3,7 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
   AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createOpenCodeServerRuntimeAssembly } from './assembly.js';
 import { readOpenCodeServerEndpoint } from './endpoint.js';

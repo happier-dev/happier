@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
 
@@ -33,7 +33,7 @@ describe('Cursor agent runtime contribution', () => {
       spawn: async () => { throw new Error('spawn should not be used'); },
       clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
       agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies PluginExecService;
+    } satisfies ExecService;
 
     await expect(CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls.probeModelsRaw?.({
       exec,

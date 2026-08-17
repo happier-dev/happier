@@ -1,4 +1,4 @@
-import { unsupportedAccountUsage, type UnsupportedAccountUsage } from '@happier-dev/plugin-sdk/experimental/account-usage';
+import { unsupportedAccountUsage, type UnsupportedAccountUsage } from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type PiAccountUsageAvailability = Readonly<{
   providerId: 'pi';

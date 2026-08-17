@@ -1,12 +1,15 @@
 import type {
-  ExternalSessionsSource,
-  ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  AgentExternalSessionTranscriptItem,
+  AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   readOpenCodeTranscriptBackwardWindow,
 } from '../../../runtime/server/transcript/indexedTranscript.js';
-import { createOpenCodeExternalSessionClient } from './client.js';
+import {
+  createOpenCodeExternalSessionClient,
+  type OpenCodeExternalSessionSource,
+} from './client.js';
 import {
   mapOpenCodeMessageToExternalSessionItem,
   measureOpenCodeExternalTranscriptItemBytes,
@@ -71,7 +74,7 @@ function readOpenCodeMessageId(raw: unknown): string | null {
 }
 
 export async function pageOpenCodeTranscript(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OpenCodeExternalSessionSource;
   providerSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -79,8 +82,9 @@ export async function pageOpenCodeTranscript(params: Readonly<{
   maxItems: number;
   signal?: AbortSignal;
   env?: Readonly<Record<string, string | undefined>>;
+  managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
 }>): Promise<Readonly<{
-  items: readonly ExternalSessionTranscriptRawMessageV1[];
+  items: readonly AgentExternalSessionTranscriptItem[];
   nextCursor: string | null;
   tailCursor: string | null;
   hasMore: boolean;
@@ -92,7 +96,9 @@ export async function pageOpenCodeTranscript(params: Readonly<{
 
   const client = await createOpenCodeExternalSessionClient({
     source: params.source,
+    maxResponseBytes: params.maxBytes,
     ...(params.env ? { env: params.env } : {}),
+    ...(params.managedEndpointRead ? { managedEndpointRead: params.managedEndpointRead } : {}),
   });
   try {
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
@@ -126,7 +132,7 @@ export async function pageOpenCodeTranscript(params: Readonly<{
     let rawMessages = pageResult.items;
     const newestMessageId = params.cursor ? null : readOpenCodeMessageId(rawMessages.at(-1));
 
-    let page = readOpenCodeTranscriptBackwardWindow<ExternalSessionTranscriptRawMessageV1>({
+    let page = readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
       messages: rawMessages,
       endIndex: rawMessages.length,
       maxBytes: params.maxBytes,
@@ -143,7 +149,7 @@ export async function pageOpenCodeTranscript(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
       });
       rawMessages = pageResult.items;
-      page = readOpenCodeTranscriptBackwardWindow<ExternalSessionTranscriptRawMessageV1>({
+      page = readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
         messages: rawMessages,
         endIndex: rawMessages.length,
         maxBytes: params.maxBytes,

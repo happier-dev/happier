@@ -17,8 +17,8 @@ import {
   type QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agent-runtime';
-import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/runtime';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import {
   createEphemeralTlsServerFixture,
 } from '@happier-dev/tests/testkit/tls/ephemeralTlsServerFixture';
@@ -31,6 +31,7 @@ import {
   mutateQualifiedConnectedAccountCredentialV4,
   readQualifiedConnectedAccountCredentialV4,
 } from '../../../../../../../../apps/cli/src/api/client/qualifiedConnectedAccountApi.js';
+import { reloadConfiguration } from '../../../../../../../../apps/cli/src/configuration.js';
 import { createDaemonControlApp } from '../../../../../../../../apps/cli/src/daemon/controlServer.js';
 import {
   createConnectedServiceContinuationMessageDispatcher,
@@ -737,9 +738,23 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
       const exactPiCli = resolveExactPiCli('pi-coding-agent-0821');
       await mkdir(join(agentDir, 'extensions'), { recursive: true });
 
-      const previousServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
+      const serverSelectionEnvKeys = [
+        'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_LOCAL_SERVER_URL',
+        'HAPPIER_PUBLIC_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
+      ] as const;
+      const previousServerSelectionEnv = new Map(
+        serverSelectionEnvKeys.map((key) => [key, process.env[key]]),
+      );
       const joinedServer = await startJoinedProductionTopologyServer();
-      process.env.HAPPIER_LOCAL_SERVER_URL = joinedServer.address;
+      delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+      process.env.HAPPIER_SERVER_URL = joinedServer.address;
+      delete process.env.HAPPIER_LOCAL_SERVER_URL;
+      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+      process.env.HAPPIER_WEBAPP_URL = joinedServer.address;
+      reloadConfiguration();
       const credentials = {
         token: joinedServer.accountId,
         encryption: {
@@ -1578,11 +1593,15 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
               .HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL =
               previousOauthRefreshUrl;
           }
-          if (previousServerUrl === undefined) {
-            delete process.env.HAPPIER_LOCAL_SERVER_URL;
-          } else {
-            process.env.HAPPIER_LOCAL_SERVER_URL = previousServerUrl;
+          for (const key of serverSelectionEnvKeys) {
+            const previous = previousServerSelectionEnv.get(key);
+            if (previous === undefined) {
+              delete process.env[key];
+            } else {
+              process.env[key] = previous;
+            }
           }
+          reloadConfiguration();
         } finally {
           await tlsFixture.cleanup();
           temporaryRoots.delete(tlsFixture.directoryPath);

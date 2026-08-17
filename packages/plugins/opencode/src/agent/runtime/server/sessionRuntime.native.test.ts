@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
@@ -230,6 +230,41 @@ describe('createOpenCodeSessionRuntime', () => {
     }
   });
 
+  it('preserves a declared runtime issue source in bounded diagnostic details', () => {
+    const { runtime, publish } = createRuntime();
+    const events: unknown[] = [];
+    runtime.watch((event) => events.push(event));
+
+    publish({
+      kind: 'turn-failed',
+      sessionId: 'happier-session-child',
+      turnId: 'turn-permission-denied',
+      emittedAtMs: 14,
+      issue: {
+        v: 1,
+        code: 'opencode_permission_denied',
+        source: 'permission_blocked',
+        occurredAt: 14,
+        agentId: 'opencode',
+        sanitizedPreview: 'Native denial detail intentionally does not drive host classification.',
+      },
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'turn-failed',
+        diagnostic: expect.objectContaining({
+          code: 'opencode_permission_denied',
+          details: {
+            v: 1,
+            source: 'permission_blocked',
+            agentId: 'opencode',
+          },
+        }),
+      }),
+    ]));
+  });
+
   it('reports unknown input custody instead of also accepting a failed provider write', async () => {
     const { runtime, operations, publish } = createRuntime();
     const events: Array<{ kind: string }> = [];
@@ -263,6 +298,37 @@ describe('createOpenCodeSessionRuntime', () => {
     expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(true);
     expect(events.some((event) => event.kind === 'input-accepted')).toBe(false);
     expect(events.some((event) => event.kind === 'turn-failed')).toBe(false);
+  });
+
+  it('preserves a pre-dispatch operations rejection as input-rejected when no ambiguous turn failure was emitted', async () => {
+    const { runtime, operations } = createRuntime();
+    const events: Array<{ kind: string; inputIds?: readonly string[] }> = [];
+    runtime.watch((event) => events.push(event));
+    operations.sendTurnPrompt.mockRejectedValueOnce(
+      new Error('OpenCode server became unavailable before prompt submission'),
+    );
+
+    await expect(runtime.send({
+      inputIds: ['input-pre-dispatch-rejected'],
+      input: { text: 'Do not dispatch this prompt' },
+      delivery: { kind: 'newTurn', turnId: 'turn-pre-dispatch-rejected' },
+    })).resolves.toMatchObject({
+      status: 'rejected',
+      retryable: true,
+      diagnostic: { code: 'opencode_input_rejected' },
+    });
+
+    expect(events.filter((event) => (
+      event.kind === 'input-rejected'
+      || event.kind === 'input-custody-unknown'
+      || event.kind === 'input-accepted'
+    ))).toEqual([
+      expect.objectContaining({
+        kind: 'input-rejected',
+        inputIds: ['input-pre-dispatch-rejected'],
+      }),
+    ]);
+    expect(operations.sendTurnPrompt).toHaveBeenCalledTimes(1);
   });
 
   it('delegates cancellation, configuration, and disposal to the one OpenCode owner', async () => {

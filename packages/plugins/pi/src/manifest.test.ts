@@ -2,7 +2,9 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import {
+  PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   PLUGIN_MANIFEST,
 } from './manifest.js';
@@ -26,12 +28,28 @@ describe('Pi plugin manifest', () => {
             pluginId: 'happier.agent.claude',
             localId: 'claude-subscription',
           },
+          materializationKinds: ['httpHeaders', 'environment'],
         }, {
           purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
           service: {
             pluginId: 'happier.agent.codex',
             localId: 'openai-codex',
           },
+          materializationKinds: ['httpHeaders'],
+        }, {
+          purpose: PI_OPENAI_API_KEY_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.voice.openai',
+            localId: 'openai',
+          },
+          materializationKinds: ['environment'],
+        }, {
+          purpose: PI_ANTHROPIC_API_KEY_PURPOSE_ID,
+          service: {
+            pluginId: 'happier.agent.claude',
+            localId: 'anthropic',
+          },
+          materializationKinds: ['environment'],
         }],
         capabilities: expect.objectContaining({
           surfaces: ['externalSessions'],
@@ -48,7 +66,6 @@ describe('Pi plugin manifest', () => {
                   { kind: 'literal', name: 'kind', value: 'piAgentDir' },
                   { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
                 ],
-                passthrough: true,
               },
               key: {
                 segments: [
@@ -56,7 +73,13 @@ describe('Pi plugin manifest', () => {
                   { kind: 'field', field: 'agentDir' },
                 ],
               },
-              instances: [{ kind: 'default', constants: {} }],
+              instances: [{ kind: 'default', constants: {} }, {
+                kind: 'agentSettingOverride',
+                settingId: 'piAgentDir',
+                field: 'agentDir',
+                normalization: 'configuredPath',
+                constants: {},
+              }],
             }],
           },
         },

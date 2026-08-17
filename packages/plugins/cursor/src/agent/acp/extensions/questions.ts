@@ -1,15 +1,15 @@
 import type {
-  PluginUiQuestion,
-  PluginUiQuestionAnswer,
-  PluginUiQuestionsResult,
-} from '@happier-dev/plugin-sdk/runtime';
+  InteractionTransientAuthorQuestionV1,
+  InteractionTransientQuestionAnswerV1,
+  InteractionTransientQuestionsResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import type { CursorAskQuestionRequest } from './schemas.js';
 
 export function buildCursorHostQuestions(
   request: CursorAskQuestionRequest,
-): readonly [PluginUiQuestion, ...PluginUiQuestion[]] {
-  const questions = request.questions.map((question): PluginUiQuestion => {
+): [InteractionTransientAuthorQuestionV1, ...InteractionTransientAuthorQuestionV1[]] {
+  const questions = request.questions.map((question): InteractionTransientAuthorQuestionV1 => {
     const options = question.options ?? [];
     if (options.length === 0) {
       return Object.freeze({
@@ -18,7 +18,7 @@ export function buildCursorHostQuestions(
         type: 'text',
       });
     }
-    const choices = options.map((option) => Object.freeze({
+    const choices = options.map((option) => ({
       id: option.id,
       label: option.label,
       description: option.label,
@@ -26,32 +26,32 @@ export function buildCursorHostQuestions(
       Readonly<{ id: string; label: string; description: string }>,
       ...Readonly<{ id: string; label: string; description: string }>[],
     ];
-    return Object.freeze({
+    return {
       id: question.id,
       prompt: question.prompt,
-      type: question.allowMultiple === true ? 'multiple' : 'single',
-      choices: Object.freeze(choices),
-    });
+      type: question.allowMultiple === true ? 'multipleChoice' : 'singleChoice',
+      choices,
+    };
   });
-  return Object.freeze(questions) as [PluginUiQuestion, ...PluginUiQuestion[]];
+  return questions as [InteractionTransientAuthorQuestionV1, ...InteractionTransientAuthorQuestionV1[]];
 }
 
-function readCursorAnswerValues(answer: PluginUiQuestionAnswer): readonly string[] {
-  if (answer.type === 'text') {
+function readCursorAnswerValues(answer: InteractionTransientQuestionAnswerV1): readonly string[] {
+  if (answer.kind === 'text') {
     return answer.value.length > 0 ? Object.freeze([answer.value]) : Object.freeze([]);
   }
-  if (answer.type === 'single') {
+  if (answer.kind === 'singleChoice') {
     return Object.freeze([
-      answer.answer.type === 'choice' ? answer.answer.choiceId : answer.answer.value,
+      answer.answer.kind === 'choice' ? answer.answer.choiceId : answer.answer.value,
     ]);
   }
   return Object.freeze(answer.answers.map((item) =>
-    item.type === 'choice' ? item.choiceId : item.value));
+    item.kind === 'choice' ? item.choiceId : item.value));
 }
 
 export function buildCursorQuestionAnswers(
   request: CursorAskQuestionRequest,
-  result: Extract<PluginUiQuestionsResult, { status: 'answered' }>,
+  result: Extract<InteractionTransientQuestionsResultV1, { status: 'answered' }>,
 ): readonly Readonly<{ questionId: string; selectedOptionIds: readonly string[] }>[] {
   return Object.freeze(request.questions.flatMap((question) => {
     const answer = result.answers[question.id];

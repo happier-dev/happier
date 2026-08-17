@@ -5,10 +5,17 @@ import {
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
 } from './agent/auth/services/requestAuth/purposes.js';
+import {
+  PI_ANTHROPIC_API_KEY_PURPOSE_ID,
+  PI_OPENAI_API_KEY_PURPOSE_ID,
+  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
+} from './agent/auth/services/qualifiedPurposes.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 export {
+  PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
 };
 
@@ -73,19 +80,11 @@ export const PLUGIN_MANIFEST = {
         },
       },
       primary: 'sessions',
-      connectedAccounts: [{
-        purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.agent.claude',
-          localId: 'claude-subscription',
-        },
-      }, {
-        purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-        service: {
-          pluginId: 'happier.agent.codex',
-          localId: 'openai-codex',
-        },
-      }],
+      connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((declaration) => ({
+        ...declaration,
+        service: { ...declaration.service },
+        materializationKinds: [...declaration.materializationKinds],
+      })),
       capabilities: {
         surfaces: ['externalSessions'],
         sessions: {
@@ -108,7 +107,6 @@ export const PLUGIN_MANIFEST = {
                 { kind: 'literal', name: 'kind', value: 'piAgentDir' },
                 { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
               ],
-              passthrough: true,
             },
             key: {
               segments: [
@@ -116,12 +114,27 @@ export const PLUGIN_MANIFEST = {
                 { kind: 'field', field: 'agentDir' },
               ],
             },
-            instances: [{ kind: 'default', constants: {} }],
+            instances: [{ kind: 'default', constants: {} }, {
+              kind: 'agentSettingOverride',
+              settingId: 'piAgentDir',
+              field: 'agentDir',
+              normalization: 'configuredPath',
+              constants: {},
+            }],
           }],
         },
       },
     }],
     systemTools: [{ id: 'pi-cli', title: 'Pi coding-agent CLI', executableNames: ['pi'] }],
+    hooks: [{
+      id: 'resolve-prerequisites',
+      on: 'agent.resolvePrerequisites',
+      hookApiVersion: 1,
+      category: 'decision',
+      scope: 'agent',
+      filters: { agentId: 'pi' },
+      executionKind: 'decide',
+    }],
     settings: [PI_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies PluginManifest;

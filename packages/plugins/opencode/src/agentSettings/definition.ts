@@ -1,4 +1,6 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
+
+import { OPENCODE_SERVER_PASSWORD_SETTING_ID } from '../agent/runtime/server/attachSpec.js';
 
 const OPENCODE_BACKEND_MODE_VALUES = ['server', 'acp'] as const;
 
@@ -13,12 +15,12 @@ const OPENCODE_BACKEND_MODE_PRESENTATION = {
   },
 } satisfies Record<(typeof OPENCODE_BACKEND_MODE_VALUES)[number], { title: string; description: string }>;
 
-export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION = {
+export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION: PluginSettingsContribution = {
   id: 'agent-settings',
   version: 1,
   title: { key: 'settingsAgents.plugins.opencode.title', fallback: 'OpenCode' },
   target: { kind: 'agent', agent: 'opencode' },
-  scope: 'synced',
+  scope: 'account',
   fields: [
     {
       id: 'opencodeBackendMode',
@@ -59,7 +61,7 @@ export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION = {
       },
       description: {
         key: 'settingsAgents.plugins.opencode.fields.opencodeServerBaseUrl.subtitle',
-        fallback: 'Optional override for a user-managed OpenCode server.',
+        fallback: 'Optional override for a server you run yourself. HTTPS may use any host; HTTP is limited to localhost.',
       },
       schema: {
         type: 'string',
@@ -73,6 +75,29 @@ export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION = {
           fallbackSettingId: 'opencodeServerBaseUrl',
           byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
         },
+      },
+    },
+    {
+      // The endpoint remains Account-scoped presentation metadata. The
+      // generic daemon secret owner derives its exact canonical origin at the
+      // write/read boundary; it never persists a server id, URL, or secret
+      // reference in the Account Settings record.
+      id: OPENCODE_SERVER_PASSWORD_SETTING_ID,
+      title: {
+        key: 'settingsAgents.plugins.opencode.fields.opencodeServerPassword.title',
+        fallback: 'Existing OpenCode server password',
+      },
+      description: {
+        key: 'settingsAgents.plugins.opencode.fields.opencodeServerPassword.subtitle',
+        fallback: 'Set this only if your OpenCode server runs with OPENCODE_SERVER_PASSWORD. Stored encrypted on this machine and never synced.',
+      },
+      schema: {
+        type: 'string',
+        description: 'OPENCODE_SERVER_PASSWORD of a user-managed OpenCode server',
+      },
+      secret: {
+        custody: 'daemon',
+        managedServiceOrigin: { endpointSettingId: 'opencodeServerBaseUrl' },
       },
     },
     {
@@ -111,10 +136,10 @@ export const OPENCODE_AGENT_SETTINGS_CONTRIBUTION = {
         },
         description: {
           key: 'settingsAgents.plugins.opencode.sections.server.footer',
-          fallback: 'Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead.',
+          fallback: 'Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute HTTPS URL for any server you run yourself, or HTTP only for localhost. Put the password in the field below, never in the URL.',
         },
-        fields: ['opencodeServerBaseUrl'],
+        fields: ['opencodeServerBaseUrl', OPENCODE_SERVER_PASSWORD_SETTING_ID],
       },
     ],
   },
-} satisfies PluginSettingsContribution;
+};

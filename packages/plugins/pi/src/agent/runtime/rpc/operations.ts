@@ -6,20 +6,21 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
-  ManagedExecutableRef,
-  PluginLoggerService,
+  ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type {
+  LoggerService as PluginLoggerService,
   PluginServices,
-} from '@happier-dev/plugin-sdk/runtime';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+} from '@happier-dev/plugin-sdk';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
-} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -39,6 +40,11 @@ import {
   type PiRuntimeEvent,
 } from './events.js';
 import { classifyPiAgentEndBoundary } from './lifecycle.js';
+import {
+  readPiProviderFailureDiagnostic,
+  readPiPromptRejectionDiagnostic,
+  type PiProviderFailureDiagnostic,
+} from './providerFailureDiagnostic.js';
 import {
   PiRequestAuthCompatibilityError,
   resolvePiRequestAuthCompatibility,
@@ -137,79 +143,6 @@ function classifyPiRpcSubmissionFailure(error: Error): Error {
   return error instanceof PiRpcNegativeAcknowledgementError
     ? error
     : new PiRpcSubmissionOutcomeUnknownError(error);
-}
-
-function readRawString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function readJsonProviderErrorMessage(value: unknown): string | null {
-  const record = isRecord(value) ? value : null;
-  if (!record) return null;
-  const nestedError = isRecord(record.error) ? record.error : null;
-  return readString(nestedError?.message)
-    ?? readString(nestedError?.errorMessage)
-    ?? readString(nestedError?.error_message)
-    ?? readString(record.message)
-    ?? readString(record.errorMessage)
-    ?? readString(record.error_message);
-}
-
-function readProviderErrorPreviewFromText(value: string): string | null {
-  const text = value.trim();
-  if (!text) return null;
-  const jsonStart = text.indexOf('{');
-  if (jsonStart >= 0) {
-    try {
-      const parsed = JSON.parse(text.slice(jsonStart));
-      const parsedMessage = readJsonProviderErrorMessage(parsed);
-      if (parsedMessage) return parsedMessage;
-    } catch {
-      // Non-JSON provider text still carries useful diagnostic context.
-    }
-  }
-  return text;
-}
-
-function readAssistantContentText(value: unknown): string | null {
-  const record = isRecord(value) ? value : null;
-  if (!record || !Array.isArray(record.content)) return null;
-  let text = '';
-  for (const item of record.content) {
-    const entry = isRecord(item) ? item : null;
-    if (!entry || entry.type !== 'text') continue;
-    const chunk = readRawString(entry.text);
-    if (chunk !== null) text += chunk;
-  }
-  return text.length > 0 ? text : null;
-}
-
-function readPiAssistantErrorPreview(record: Readonly<Record<string, unknown>>): string | null {
-  const message = isRecord(record.message) ? record.message : null;
-  if (message?.role !== 'assistant') return null;
-  const stopReason = readString(message.stopReason ?? message.stop_reason ?? record.stopReason ?? record.stop_reason);
-  const retainedProviderDiagnostic = readString(
-    message.happierRequestAuthProviderDiagnostic,
-  );
-  if (retainedProviderDiagnostic && stopReason === 'error') {
-    return retainedProviderDiagnostic;
-  }
-  const candidates = [
-    message.errorMessage,
-    message.error_message,
-    message.error,
-    record.errorMessage,
-    record.error_message,
-    record.error,
-    readAssistantContentText(message),
-  ];
-  const preview = candidates
-    .map((candidate) => readString(candidate))
-    .find((candidate): candidate is string => candidate !== null);
-  if (!preview || (stopReason !== 'error' && !message.errorMessage && !message.error_message && !record.errorMessage)) {
-    return null;
-  }
-  return readProviderErrorPreviewFromText(preview);
 }
 
 function diagnostic(code: string, message: string): PluginDiagnosticData {
@@ -347,6 +280,7 @@ function createPiExecSpec(
 
 function createRuntimeOperations(params: Readonly<{
   rpc: PiJsonStreamRpcClient;
+  logger: PluginLoggerService;
   sessionId: string;
   initialSessionId: string | null;
   subscribeRuntimeEvents: (handler: RuntimeEventHandler) => () => void;
@@ -357,8 +291,8 @@ function createRuntimeOperations(params: Readonly<{
   let activeTurn: ActiveTurnState | null = null;
   let activeTurnStartObserved = false;
   let activeTurnAssistantMessageObserved = false;
-  let activeTurnProviderErrorPreview: string | null = null;
-  let retryingTurnProviderErrorPreview: string | null = null;
+  let activeTurnProviderFailure: PiProviderFailureDiagnostic | null = null;
+  let retryingTurnProviderFailure: PiProviderFailureDiagnostic | null = null;
   let replayingPromptAckFailureRecords = false;
   let settledTurnFailure: Error | null = null;
   let pendingCompletion: PendingCompletion | null = null;
@@ -381,8 +315,8 @@ function createRuntimeOperations(params: Readonly<{
     activeTurn = turn;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
-    activeTurnProviderErrorPreview = null;
-    retryingTurnProviderErrorPreview = null;
+    activeTurnProviderFailure = null;
+    retryingTurnProviderFailure = null;
     settledTurnFailure = null;
     pendingCompletion = createCompletion();
     params.publishRuntimeEvent({
@@ -400,8 +334,8 @@ function createRuntimeOperations(params: Readonly<{
     activeTurn = null;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
-    activeTurnProviderErrorPreview = null;
-    retryingTurnProviderErrorPreview = null;
+    activeTurnProviderFailure = null;
+    retryingTurnProviderFailure = null;
     pendingCompletion = null;
     runtimeEventProjector.resetTurn();
   }
@@ -438,10 +372,10 @@ function createRuntimeOperations(params: Readonly<{
     agentTurnId: string | null,
     completion: PendingCompletion | null,
   ): boolean {
-    const providerErrorPreview = activeTurnProviderErrorPreview;
-    if (activeTurnAssistantMessageObserved && !providerErrorPreview) return false;
+    const providerFailure = activeTurnProviderFailure;
+    if (activeTurnAssistantMessageObserved && !providerFailure) return false;
     const emittedAtMs = Date.now();
-    settledTurnFailure = new Error(providerErrorPreview
+    settledTurnFailure = new Error(providerFailure?.sanitizedPreview
       ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.');
     params.publishRuntimeEvent({
       kind: 'turn-failed',
@@ -450,11 +384,18 @@ function createRuntimeOperations(params: Readonly<{
       turnId: turn.turnId,
       ...(agentTurnId ? { agentTurnId } : {}),
       diagnostic: diagnostic(
-        providerErrorPreview ? 'pi_provider_session_error' : 'pi_empty_provider_response',
-        providerErrorPreview
+        providerFailure?.code ?? 'pi_empty_provider_response',
+        providerFailure?.sanitizedPreview
           ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.',
       ),
     });
+    if (providerFailure) {
+      params.logger.warn('[PiRuntime] Provider turn failed', {
+        classification: providerFailure.classification,
+        providerCode: providerFailure.code,
+        sanitizedPreview: providerFailure.sanitizedPreview,
+      });
+    }
     clearActiveTurn();
     completion?.resolve();
     return true;
@@ -487,8 +428,7 @@ function createRuntimeOperations(params: Readonly<{
     const turn = activeTurn;
     if (!turn || turn.turnId !== turnId) return;
     const completion = pendingCompletion;
-    const providerErrorPreview =
-      activeTurnProviderErrorPreview ?? retryingTurnProviderErrorPreview;
+    const providerFailure = activeTurnProviderFailure ?? retryingTurnProviderFailure;
     params.publishRuntimeEvent({
       kind: 'turn-cancelled',
       sessionId: params.sessionId,
@@ -496,11 +436,11 @@ function createRuntimeOperations(params: Readonly<{
       turnId: turn.turnId,
       ...(turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
       cause: reason,
-      ...(providerErrorPreview
+      ...(providerFailure
         ? {
           diagnostic: diagnostic(
-            'pi_provider_session_error',
-            providerErrorPreview,
+            providerFailure.code,
+            providerFailure.sanitizedPreview,
           ),
         }
         : {}),
@@ -519,14 +459,14 @@ function createRuntimeOperations(params: Readonly<{
       return;
     }
     const turn = activeTurn;
-    const providerErrorPreview = readPiAssistantErrorPreview(record);
+    const providerFailure = readPiProviderFailureDiagnostic(record);
     if (
-      providerErrorPreview
-      && !activeTurnProviderErrorPreview
+      providerFailure
+      && !activeTurnProviderFailure
       && (!replayingPromptAckFailureRecords || activeTurnStartObserved || activeTurnAssistantMessageObserved)
     ) {
-      activeTurnProviderErrorPreview = providerErrorPreview;
-      retryingTurnProviderErrorPreview = null;
+      activeTurnProviderFailure = providerFailure;
+      retryingTurnProviderFailure = null;
     }
     const projectedEvents = runtimeEventProjector.project(record, {
       sessionId: params.sessionId,
@@ -554,12 +494,12 @@ function createRuntimeOperations(params: Readonly<{
     }
     const agentEndBoundary = classifyPiAgentEndBoundary(record);
     if (agentEndBoundary === 'retrying') {
-      retryingTurnProviderErrorPreview = activeTurnProviderErrorPreview;
-      activeTurnProviderErrorPreview = null;
+      retryingTurnProviderFailure = activeTurnProviderFailure;
+      activeTurnProviderFailure = null;
       return;
     }
     if (type === 'auto_retry_end' && record.success === false) {
-      activeTurnProviderErrorPreview ??= retryingTurnProviderErrorPreview;
+      activeTurnProviderFailure ??= retryingTurnProviderFailure;
       if (turn && pendingCancellation?.turnId === turn.turnId) {
         pendingCancellation.finalBoundaryObserved = true;
         pendingCancellation.finalBoundaryAgentTurnId =
@@ -584,10 +524,7 @@ function createRuntimeOperations(params: Readonly<{
   ): void {
     if (disposalStarted || unexpectedExitPublished) return;
     unexpectedExitPublished = true;
-    const exitDescription = result.signal
-      ? `signal ${result.signal}`
-      : `exit code ${result.exitCode ?? 'unknown'}`;
-    const failure = new Error(`Pi RPC process exited unexpectedly (${exitDescription}).`);
+    const failure = result.error;
     const turn = activeTurn;
     const completion = pendingCompletion;
     if (turn) {
@@ -840,6 +777,7 @@ export type PiSessionRuntime = AgentSessionRuntime;
 
 function createPiSessionRuntime(params: Readonly<{
   operations: PiRuntimeTurnOperations;
+  logger: PluginLoggerService;
   sessionId: string;
   resumeSessionId: string | null;
   clearSubscribers: () => void;
@@ -945,10 +883,22 @@ function createPiSessionRuntime(params: Readonly<{
         return { status: 'admitted' };
       } catch (error) {
         const outcomeUnknown = error instanceof PiRpcSubmissionOutcomeUnknownError;
-        const reason = diagnostic(
-          outcomeUnknown ? 'pi_input_outcome_unknown' : 'pi_input_rejected',
-          error instanceof Error ? error.message : String(error),
-        );
+        const providerFailure = error instanceof PiRpcNegativeAcknowledgementError
+          ? readPiPromptRejectionDiagnostic(error)
+          : null;
+        if (providerFailure) {
+          params.logger.warn('[PiRuntime] Provider prompt rejected', {
+            classification: providerFailure.classification,
+            providerCode: providerFailure.code,
+            sanitizedPreview: providerFailure.sanitizedPreview,
+          });
+        }
+        const reason = providerFailure
+          ? diagnostic(providerFailure.code, providerFailure.sanitizedPreview)
+          : diagnostic(
+            outcomeUnknown ? 'pi_input_outcome_unknown' : 'pi_input_rejected',
+            error instanceof Error ? error.message : String(error),
+          );
         if (accepted) publishInputDeliveryFailed(request, reason);
         else if (outcomeUnknown) publishInputCustodyUnknown(request, reason);
         else publishInputRejected(request, reason);
@@ -1054,7 +1004,7 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
   };
   const publishMalformedRuntimeEventDiagnostic = (
     event: unknown,
-    issues: ReadonlyArray<Readonly<{ code: string; path: readonly PropertyKey[]; message: string }>>,
+    issues: ReadonlyArray<Readonly<{ message: string }>>,
   ): void => {
     params.logger.warn('[PiRuntime] rejected malformed AgentSessionRuntimeEvent payload');
     if (malformedRuntimeEventPublished) return;
@@ -1074,8 +1024,6 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
         details: {
           eventKind,
           issues: issues.slice(0, 5).map((issue) => ({
-            code: issue.code,
-            path: issue.path.map((segment) => (typeof segment === 'symbol' ? segment.toString() : segment)),
             message: issue.message,
           })),
         },
@@ -1110,6 +1058,7 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
   });
   operations = createRuntimeOperations({
     rpc,
+    logger: params.logger,
     sessionId: params.sessionId,
     initialSessionId: params.initialSessionId ?? null,
     subscribeRuntimeEvents(handler) {
@@ -1130,6 +1079,7 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
   }
   return createPiSessionRuntime({
     operations,
+    logger: params.logger,
     sessionId: params.sessionId,
     resumeSessionId: readString(params.resumeSessionId),
     clearSubscribers: () => {

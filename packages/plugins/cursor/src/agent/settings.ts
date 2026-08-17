@@ -1,5 +1,4 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
-import type { PluginSettingsService } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginSettingsContribution, SettingsService } from '@happier-dev/plugin-sdk/settings';
 
 export const CURSOR_BINARY_PATH_SETTING_ID = 'cursorBinaryPath';
 export const CURSOR_AGENT_FALLBACK_SETTING_ID = 'cursorAgentFallbackEnabled';
@@ -26,12 +25,13 @@ export type CursorRuntimeSettings = Readonly<{
 }>;
 
 export async function readCursorRuntimeSettings(
-  settings: PluginSettingsService,
+  settings: SettingsService,
 ): Promise<CursorRuntimeSettings> {
+  const daemonSettings = settings.forScope({ kind: 'daemon' });
   const [binaryPath, agentFallbackEnabled, apiEndpoint] = await Promise.all([
-    settings.get(CURSOR_BINARY_PATH_SETTING_ID),
-    settings.get(CURSOR_AGENT_FALLBACK_SETTING_ID),
-    settings.get(CURSOR_API_ENDPOINT_SETTING_ID),
+    daemonSettings.get(CURSOR_BINARY_PATH_SETTING_ID),
+    daemonSettings.get(CURSOR_AGENT_FALLBACK_SETTING_ID),
+    daemonSettings.get(CURSOR_API_ENDPOINT_SETTING_ID),
   ]);
   return Object.freeze({
     binaryPath: normalizeCursorBinaryPath(binaryPath),
@@ -45,7 +45,7 @@ export const CURSOR_AGENT_SETTINGS_CONTRIBUTION = {
   version: 1,
   title: 'Cursor',
   target: { kind: 'agent', agent: 'cursor' },
-  scope: 'local',
+  scope: 'daemon',
   fields: [{
     id: CURSOR_BINARY_PATH_SETTING_ID,
     title: 'Cursor binary path',

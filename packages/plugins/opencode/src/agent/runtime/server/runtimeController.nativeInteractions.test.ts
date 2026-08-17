@@ -4,9 +4,13 @@ import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 
+const readyMcpRegistration = Promise.resolve({
+  requiredHappier: { status: 'ready' as const },
+});
+
 function createClient(): OpenCodeServerClient {
   return {
-    mcpAdd: vi.fn(async () => undefined),
+    mcpAdd: vi.fn(async () => ({ status: 'connected' as const })),
     sessionCreate: vi.fn(async () => ({ id: 'provider-session-1' })),
     sessionFork: vi.fn(async () => ({ id: 'provider-session-child' })),
     sessionPromptAsync: vi.fn(async () => undefined),
@@ -46,7 +50,8 @@ function createContext(
     },
     config: { values: {} },
     env: { list: () => ({}) },
-    managedServer: {
+    managedServices: {
+      dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
       supervise: vi.fn(async () => {
         throw new Error('managed server is outside this controller test');
       }),
@@ -62,7 +67,7 @@ function createContext(
       writeStateField: vi.fn(async () => undefined),
     },
     storage: {
-      session: {
+      daemonSession: {
         get: vi.fn(async (key: string) => sessionStorage.get(key)),
         set: vi.fn(async (key: string, value: unknown) => {
           sessionStorage.set(key, value);
@@ -83,6 +88,7 @@ async function createRuntime(params: Readonly<{
     happierSessionId: 'happier-session-1',
     baseUrl: 'http://127.0.0.1:49196',
     client: params.client,
+    mcpRegistration: readyMcpRegistration,
   });
   await runtime.openSession({ kind: 'create' });
   return runtime;
@@ -91,12 +97,14 @@ async function createRuntime(params: Readonly<{
 describe('OpenCode native interactions', () => {
   it('translates a provider question through the host owner and replies exactly once', async () => {
     const client = createClient();
-    const askQuestions = vi.fn(async (questions) => ({
+    const askQuestions = vi.fn(async (request) => ({
+      requestId: 'questions-1',
+      kind: 'questions' as const,
       status: 'answered' as const,
       answers: {
-        [questions[0].id]: {
-          type: 'single' as const,
-          answer: { type: 'choice' as const, choiceId: questions[0].choices![1].id },
+        [request.questions[0].id]: {
+          kind: 'singleChoice' as const,
+          answer: { kind: 'choice' as const, choiceId: request.questions[0].choices![1].id },
         },
       },
     }));
@@ -127,8 +135,10 @@ describe('OpenCode native interactions', () => {
   it('suppresses a late host answer after the provider turn is cancelled', async () => {
     const client = createClient();
     let resolveQuestion!: (value: {
+      requestId: string;
+      kind: 'questions';
       status: 'answered';
-      answers: Record<string, { type: 'text'; value: string }>;
+      answers: Record<string, { kind: 'text'; value: string }>;
     }) => void;
     const askQuestions = vi.fn(() => new Promise((resolve) => {
       resolveQuestion = resolve;
@@ -150,9 +160,11 @@ describe('OpenCode native interactions', () => {
 
     await runtime.cancelTurn();
     resolveQuestion({
+      requestId: 'questions-late',
+      kind: 'questions',
       status: 'answered',
       answers: {
-        'question-late:0': { type: 'text', value: 'late' },
+        'question-late:0': { kind: 'text', value: 'late' },
       },
     });
     await providerQuestion;

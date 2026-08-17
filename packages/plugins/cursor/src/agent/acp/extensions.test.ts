@@ -1,6 +1,8 @@
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { type PluginUiQuestionsResult } from '@happier-dev/plugin-sdk/runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  InteractionTransientConfirmationResultV1,
+  InteractionTransientQuestionsResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCursorAcpRuntimeExtensions } from './extensions/index.js';
@@ -12,16 +14,23 @@ function extensionContext(method: string, requestId = 'request-1') {
 }
 
 function createFixture(params?: Readonly<{
-  questionsResult?: PluginUiQuestionsResult;
-  confirm?: () => Promise<boolean>;
+  questionsResult?: InteractionTransientQuestionsResultV1;
+  confirm?: () => Promise<InteractionTransientConfirmationResultV1>;
   publish?: (...args: unknown[]) => Promise<unknown>;
   publishGenerated?: (...args: unknown[]) => Promise<unknown>;
+  currentSessionAvailable?: boolean;
 }>) {
   const askQuestions = vi.fn(async () => params?.questionsResult ?? ({
+    requestId: 'questions-default',
+    kind: 'questions' as const,
     status: 'answered' as const,
     answers: {},
   }));
-  const confirm = vi.fn(params?.confirm ?? (async () => true));
+  const confirm = vi.fn(params?.confirm ?? (async () => ({
+    requestId: 'confirmation-default',
+    kind: 'confirmation' as const,
+    status: 'approved' as const,
+  })));
   const publish = vi.fn(params?.publish ?? (async () => ({
     status: 'applied' as const,
     revision: 'work-state-1',
@@ -35,12 +44,14 @@ function createFixture(params?: Readonly<{
   const debug = vi.fn();
   const context = {
     session: { id: 'happier-session-1' },
-    ui: { askQuestions, confirm },
     workState: { publisher },
     services: {
+      interactions: { askQuestions, confirm },
       logger: { debug },
       sessions: {
-        current: { media: { registerSourceRoot } },
+        current: params?.currentSessionAvailable === false
+          ? null
+          : { media: { registerSourceRoot } },
         subagents: { observe },
       },
     },
@@ -63,16 +74,18 @@ describe('createCursorAcpRuntimeExtensions', () => {
   it('uses the host question owner and preserves opaque choice ids and custom text', async () => {
     const fixture = createFixture({
       questionsResult: {
+        requestId: 'questions-1',
+        kind: 'questions',
         status: 'answered',
         answers: {
           choice: {
-            type: 'multiple',
+            kind: 'multipleChoice',
             answers: [
-              { type: 'choice', choiceId: 'beta|opaque' },
-              { type: 'custom', value: 'something else' },
+              { kind: 'choice', choiceId: 'beta|opaque' },
+              { kind: 'custom', value: 'something else' },
             ],
           },
-          free: { type: 'text', value: 'typed answer' },
+          free: { kind: 'text', value: 'typed answer' },
         },
       },
     });
@@ -101,22 +114,28 @@ describe('createCursorAcpRuntimeExtensions', () => {
         ],
       },
     });
-    expect(fixture.askQuestions).toHaveBeenCalledWith([
-      {
-        id: 'choice',
-        prompt: 'Pick values',
-        type: 'multiple',
-        choices: [
-          { id: 'alpha', label: 'Alpha', description: 'Alpha' },
-          { id: 'beta|opaque', label: 'Beta', description: 'Beta' },
-        ],
-      },
-      { id: 'free', prompt: 'Explain', type: 'text' },
-    ], { title: 'Need input' });
+    expect(fixture.askQuestions).toHaveBeenCalledWith({
+      kind: 'questions',
+      title: 'Need input',
+      questions: [
+        {
+          id: 'choice',
+          prompt: 'Pick values',
+          type: 'multipleChoice',
+          choices: [
+            { id: 'alpha', label: 'Alpha', description: 'Alpha' },
+            { id: 'beta|opaque', label: 'Beta', description: 'Beta' },
+          ],
+        },
+        { id: 'free', prompt: 'Explain', type: 'text' },
+      ],
+    }, { signal: SIGNAL });
   });
 
   it('maps cancelled and unavailable host question outcomes without another custody path', async () => {
-    const cancelled = createFixture({ questionsResult: { status: 'cancelled' } });
+    const cancelled = createFixture({ questionsResult: {
+      requestId: 'questions-cancelled', kind: 'questions', status: 'userCancelled',
+    } });
     const cancelledExtensions = createCursorAcpRuntimeExtensions({ context: cancelled.context });
     await expect(cancelledExtensions.requests?.['cursor/ask_question']?.({
       questions: [{ id: 'q', prompt: 'Question' }],
@@ -126,15 +145,16 @@ describe('createCursorAcpRuntimeExtensions', () => {
 
     const unavailable = createFixture({
       questionsResult: {
+        requestId: 'questions-unavailable',
+        kind: 'questions',
         status: 'unavailable',
-        diagnostic: { code: 'no_present_client', message: 'No present client' },
       },
     });
     const unavailableExtensions = createCursorAcpRuntimeExtensions({ context: unavailable.context });
     await expect(unavailableExtensions.requests?.['cursor/ask_question']?.({
       questions: [{ id: 'q', prompt: 'Question' }],
     }, extensionContext('cursor/ask_question'))).resolves.toEqual({
-      outcome: { outcome: 'skipped', reason: 'No present client' },
+      outcome: { outcome: 'skipped', reason: 'Host interaction unavailable' },
     });
   });
 
@@ -164,8 +184,12 @@ describe('createCursorAcpRuntimeExtensions', () => {
       })],
     }), { signal: SIGNAL });
     expect(fixture.confirm).toHaveBeenCalledWith(
-      'Overview\n\nDetailed plan',
-      { title: 'Ship it' },
+      {
+        kind: 'confirmation',
+        title: 'Ship it',
+        message: 'Overview\n\nDetailed plan',
+      },
+      { signal: SIGNAL },
     );
     expect(fixture.publish.mock.invocationCallOrder[0]).toBeLessThan(
       fixture.confirm.mock.invocationCallOrder[0]!,
@@ -173,18 +197,18 @@ describe('createCursorAcpRuntimeExtensions', () => {
   });
 
   it('maps plan rejection and host cancellation to Cursor outcomes', async () => {
-    const rejected = createFixture({ confirm: async () => false });
+    const rejected = createFixture({ confirm: async () => ({
+      requestId: 'confirmation-declined', kind: 'confirmation', status: 'declined',
+    }) });
     await expect(createCursorAcpRuntimeExtensions({ context: rejected.context })
       .requests?.['cursor/create_plan']?.(
         { plan: 'Plan' },
         extensionContext('cursor/create_plan'),
       )).resolves.toEqual({ outcome: { outcome: 'rejected' } });
 
-    const cancelled = createFixture({
-      confirm: async () => {
-        throw new PluginError({ code: 'plugin_ui_cancelled' });
-      },
-    });
+    const cancelled = createFixture({ confirm: async () => ({
+      requestId: 'confirmation-cancelled', kind: 'confirmation', status: 'userCancelled',
+    }) });
     await expect(createCursorAcpRuntimeExtensions({ context: cancelled.context })
       .requests?.['cursor/create_plan']?.(
         { plan: 'Plan' },
@@ -326,5 +350,21 @@ describe('createCursorAcpRuntimeExtensions', () => {
       toolCallId: 'image-1',
     });
     expect(fixture.disposeMediaRoot).toHaveBeenCalledOnce();
+  });
+
+  it('ignores generated media when the current session capability is unavailable', async () => {
+    const fixture = createFixture({ currentSessionAvailable: false });
+    const extensions = createCursorAcpRuntimeExtensions({
+      context: fixture.context,
+      mediaSourceRoot: '/tmp/cursor-media',
+    });
+
+    await expect(extensions.requests?.['cursor/generate_image']?.({
+      toolCallId: 'image-without-session',
+      filePath: 'image.png',
+    }, extensionContext('cursor/generate_image'))).resolves.toEqual({});
+
+    expect(fixture.registerSourceRoot).not.toHaveBeenCalled();
+    expect(fixture.publishGenerated).not.toHaveBeenCalled();
   });
 });

@@ -3,92 +3,99 @@ import { createHash } from 'node:crypto';
 import type {
   AgentExternalSessionObservationContribution,
   AgentExternalSessionsResolvedIdentity,
-  ExternalSessionsSource,
-  ExternalAgentObservationLinkEvidenceBatchV1,
-  ExternalAgentObservationReconcileResultV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  AgentExternalSessionObservationLinkEvidenceBatchV1,
+  AgentExternalSessionObservationReconcileResultV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
-import {
-  readOpenCodeManagedServerEndpointRegistration,
-  readOpenCodeManagedServerEndpointRegistrationByGenerationToken,
-} from '../../../runtime/server/endpoint.js';
 import {
   type OpenCodeGlobalEvent,
   type OpenCodeGlobalEventDelivery,
   subscribeOpenCodeGlobalEvents,
 } from '../../../runtime/server/openCodeServerClient.js';
 import { asRecord, normalizeString } from '../../../runtime/server/openCodeParsing.js';
-import type { OpenCodeServerTransport } from '../../../runtime/server/transport.js';
 import {
   createOpenCodeExternalSessionClient,
+  type OpenCodeExternalSessionSource,
   validateOpenCodeExternalSessionsSource,
 } from './client.js';
+import {
+  createManagedEndpointFetch,
+  MANAGED_ENDPOINT_TRANSPORT_BASE_URL,
+} from './managedEndpointFetch.js';
 
 const OBSERVATION_FACT_TTL_MS = 30_000;
-const RESOURCE_KEY_PREFIX = 'opencode-resource-v1:';
+const RESOURCE_KEY_PREFIX = 'opencode-resource-v2:';
 const LINK_KEY_PREFIX = 'opencode-link-v1:';
-const EXPLICIT_EXTERNAL_GENERATION = 'explicit-external';
 const MAX_OPAQUE_KEY_LENGTH = 256;
+const MANAGED_ENDPOINT_RESOURCE_MARKER = 'opencode-current-global-managed-endpoint-v1';
 
 type SubscribeOpenCodeGlobalEvents = typeof subscribeOpenCodeGlobalEvents;
-type OpenCodeFetch = (input: string, init?: RequestInit) => Promise<Response>;
 type ExternalAgentObservationLeafFact =
-  ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+  AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+type NormalizedOpenCodeObservationSource =
+  | Readonly<{
+    mode: 'managed';
+    directory: string | null;
+  }>
+  | Readonly<{
+    mode: 'external';
+    baseUrl: string;
+    directory: string | null;
+  }>;
+type ResolvedOpenCodeObservationResource =
+  | Readonly<{
+    mode: 'managed';
+    endpointIdentity: string;
+  }>
+  | Readonly<{
+    mode: 'external';
+    endpointIdentity: string;
+  }>;
 
 function normalizedSourceOrThrow(
   identity: AgentExternalSessionsResolvedIdentity,
   env: Readonly<Record<string, string | undefined>>,
-): Readonly<{ baseUrl: string; directory: string | null }> {
+): NormalizedOpenCodeObservationSource {
   if (identity.source.kind !== 'opencodeServer') {
     throw new Error('provider/source mismatch');
   }
-  const legacySource: ExternalSessionsSource = {
+  const source: OpenCodeExternalSessionSource = {
+    ...identity.source,
     kind: 'opencodeServer',
-    ...(typeof identity.source.baseUrl === 'string'
-      ? { baseUrl: identity.source.baseUrl }
-      : {}),
-    ...(typeof identity.source.directory === 'string'
-      ? { directory: identity.source.directory }
-      : {}),
   };
   const validation = validateOpenCodeExternalSessionsSource({
-    source: legacySource,
+    source,
     env,
     baseUrlAuthority: 'canonical',
   });
   if (!validation.ok) {
     throw new Error(validation.error);
   }
-  const baseUrl = validation.source.kind === 'opencodeServer'
-    ? normalizeString(validation.source.baseUrl)
-    : '';
-  if (!baseUrl) {
-    throw new Error('OpenCode observation requires a canonical source baseUrl');
+  const directory = normalizeString(validation.source.directory) || null;
+  if (validation.source.managedEndpoint === true) {
+    if (normalizeString(validation.source.baseUrl)) {
+      throw new Error('OpenCode observation source mode is ambiguous');
+    }
+    return { mode: 'managed', directory };
   }
-  const directory = validation.source.kind === 'opencodeServer'
-    ? normalizeString(validation.source.directory) || null
-    : null;
-  return { baseUrl, directory };
-}
-
-function endpointGenerationForBaseUrl(baseUrl: string): string {
-  return readOpenCodeManagedServerEndpointRegistration(baseUrl)?.generationToken
-    ?? EXPLICIT_EXTERNAL_GENERATION;
+  const baseUrl = normalizeString(validation.source.baseUrl);
+  if (!baseUrl) {
+    throw new Error('OpenCode observation requires an explicit external source baseUrl');
+  }
+  return { mode: 'external', baseUrl, directory };
 }
 
 function hashOpaqueIdentity(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('base64url');
 }
 
-function buildResourceKeyForGeneration(baseUrl: string, endpointGeneration: string): string {
-  return `${RESOURCE_KEY_PREFIX}${endpointGeneration}:${hashOpaqueIdentity(baseUrl)}`;
-}
-
-function buildResourceKey(baseUrl: string): string {
-  const resourceKey = buildResourceKeyForGeneration(
-    baseUrl,
-    endpointGenerationForBaseUrl(baseUrl),
+function buildResourceKey(source: NormalizedOpenCodeObservationSource): string {
+  const endpointIdentity = hashOpaqueIdentity(
+    source.mode === 'managed'
+      ? MANAGED_ENDPOINT_RESOURCE_MARKER
+      : source.baseUrl,
   );
+  const resourceKey = `${RESOURCE_KEY_PREFIX}${source.mode}:${endpointIdentity}`;
   if (resourceKey.length > MAX_OPAQUE_KEY_LENGTH) {
     throw new Error('OpenCode observation endpoint identity exceeds the bounded resource key');
   }
@@ -96,8 +103,8 @@ function buildResourceKey(baseUrl: string): string {
 }
 
 function parseResourceKey(resourceKey: string): Readonly<{
-  endpointGeneration: string;
-  baseUrlHash: string;
+  mode: 'managed' | 'external';
+  endpointIdentity: string;
 }> {
   if (!resourceKey.startsWith(RESOURCE_KEY_PREFIX)) {
     throw new Error('OpenCode observation resource key is invalid');
@@ -107,68 +114,51 @@ function parseResourceKey(resourceKey: string): Readonly<{
   if (separator <= 0 || separator === remainder.length - 1) {
     throw new Error('OpenCode observation resource key is invalid');
   }
-  const endpointGeneration = remainder.slice(0, separator);
-  const baseUrlHash = remainder.slice(separator + 1);
-  if (!/^[A-Za-z0-9_-]{43}$/u.test(baseUrlHash)) {
+  const mode = remainder.slice(0, separator);
+  const endpointIdentity = remainder.slice(separator + 1);
+  if (
+    (mode !== 'managed' && mode !== 'external')
+    || !/^[A-Za-z0-9_-]{43}$/u.test(endpointIdentity)
+  ) {
     throw new Error('OpenCode observation resource key is invalid');
   }
-  return { endpointGeneration, baseUrlHash };
-}
-
-function configuredUnauthenticatedBaseUrl(
-  env: Readonly<Record<string, string | undefined>>,
-): string | null {
-  const validation = validateOpenCodeExternalSessionsSource({
-    source: { kind: 'opencodeServer' },
-    env,
-  });
-  if (!validation.ok || validation.source.kind !== 'opencodeServer') return null;
-  return normalizeString(validation.source.baseUrl) || null;
+  return { mode, endpointIdentity };
 }
 
 function resolveResource(
   resourceKey: string,
-  env: Readonly<Record<string, string | undefined>>,
-): Readonly<{
-  baseUrl: string;
-  headers?: Readonly<Record<string, string>>;
-  endpointGeneration: string;
-  transport?: OpenCodeServerTransport;
-}> {
+): ResolvedOpenCodeObservationResource {
   const parsed = parseResourceKey(resourceKey);
-  if (parsed.endpointGeneration === EXPLICIT_EXTERNAL_GENERATION) {
-    const baseUrl = configuredUnauthenticatedBaseUrl(env);
-    if (
-      !baseUrl
-      || readOpenCodeManagedServerEndpointRegistration(baseUrl)
-      || buildResourceKeyForGeneration(baseUrl, parsed.endpointGeneration) !== resourceKey
-    ) {
-      throw new Error('OpenCode observation resource belongs to a stale endpoint generation');
+  if (parsed.mode === 'managed') {
+    const managedSource: NormalizedOpenCodeObservationSource = {
+      mode: 'managed',
+      directory: null,
+    };
+    if (buildResourceKey(managedSource) !== resourceKey) {
+      throw new Error('OpenCode observation resource belongs to an unavailable managed endpoint');
     }
     return {
-      baseUrl,
-      endpointGeneration: parsed.endpointGeneration,
+      mode: 'managed',
+      endpointIdentity: parsed.endpointIdentity,
     };
   }
-  const registration =
-    readOpenCodeManagedServerEndpointRegistrationByGenerationToken(
-      parsed.endpointGeneration,
-    );
-  if (
-    !registration
-    || buildResourceKeyForGeneration(
-      registration.baseUrl,
-      registration.generationToken,
-    ) !== resourceKey
-  ) {
-    throw new Error('OpenCode observation resource belongs to a stale endpoint generation');
-  }
   return {
-    baseUrl: registration.baseUrl,
-    ...(registration.headers ? { headers: registration.headers } : {}),
-    endpointGeneration: registration.generationToken,
-    transport: registration.transport,
+    mode: 'external',
+    endpointIdentity: parsed.endpointIdentity,
   };
+}
+
+function resourceMatchesLinkedSource(
+  resource: ResolvedOpenCodeObservationResource,
+  linkedSource: NormalizedOpenCodeObservationSource,
+): boolean {
+  if (resource.mode === 'managed') {
+    return linkedSource.mode === 'managed'
+      && hashOpaqueIdentity(MANAGED_ENDPOINT_RESOURCE_MARKER)
+      === resource.endpointIdentity;
+  }
+  if (linkedSource.mode !== 'external') return false;
+  return hashOpaqueIdentity(linkedSource.baseUrl) === resource.endpointIdentity;
 }
 
 function buildLinkKey(directory: string | null, remoteSessionId: string): string {
@@ -210,36 +200,6 @@ function readEventPayload(event: OpenCodeGlobalEvent): Readonly<{
     type,
     properties: asRecord(event.payload?.properties ?? event.properties),
   };
-}
-
-function readEventTurnPhase(event: OpenCodeGlobalEvent):
-  | Readonly<{
-    kind: 'fact';
-    directory: string;
-    remoteSessionId: string;
-    value: 'working' | 'retrying' | 'idle';
-  }>
-  | Readonly<{ kind: 'reconcile' }>
-  | null {
-  const payload = readEventPayload(event);
-  if (
-    payload.type !== 'session.idle'
-    && payload.type !== 'session.status'
-    && payload.type !== 'session.error'
-  ) {
-    return null;
-  }
-  if (payload.type === 'session.error') return { kind: 'reconcile' };
-  const directory = normalizeString(event.directory);
-  const remoteSessionId = normalizeString(payload.properties?.sessionID);
-  if (!directory || !remoteSessionId) return { kind: 'reconcile' };
-  if (payload.type === 'session.idle') {
-    return { kind: 'fact', directory, remoteSessionId, value: 'idle' };
-  }
-  const value = mapOpenCodeStatus(asRecord(payload.properties?.status)?.type);
-  return value
-    ? { kind: 'fact', directory, remoteSessionId, value }
-    : { kind: 'reconcile' };
 }
 
 function readEventTranscriptChange(event: OpenCodeGlobalEvent):
@@ -284,23 +244,14 @@ function describeOpenCodeObservationResource(
   env: Readonly<Record<string, string | undefined>>,
 ) {
   const source = normalizedSourceOrThrow(request, env);
-  if (
-    !readOpenCodeManagedServerEndpointRegistration(source.baseUrl)
-    && configuredUnauthenticatedBaseUrl(env) !== source.baseUrl
-  ) {
-    throw new Error(
-      'OpenCode unauthenticated observation requires the configured endpoint',
-    );
-  }
   return {
-    resourceKey: buildResourceKey(source.baseUrl),
+    resourceKey: buildResourceKey(source),
     linkKey: buildLinkKey(source.directory, request.remoteSessionId),
   };
 }
 
 export function createOpenCodeExternalSessionObservationContribution(params: Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
-  fetchFn?: OpenCodeFetch;
   now?: () => number;
   subscribeGlobalEvents?: SubscribeOpenCodeGlobalEvents;
 }> = {}): AgentExternalSessionObservationContribution {
@@ -313,8 +264,8 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
       return describeOpenCodeObservationResource(request, env);
     },
 
-    observeResource(request) {
-      const resource = resolveResource(request.resourceKey, env);
+    async observeResource(request) {
+      const resource = resolveResource(request.resourceKey);
       const controller = new AbortController();
       const abort = () => controller.abort(request.signal.reason);
       if (request.signal.aborted) {
@@ -324,9 +275,11 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
       }
       let disposed = false;
       void subscribeGlobalEvents({
-        baseUrl: resource.baseUrl,
-        headers: resource.headers,
-        ...(resource.transport ? { fetch: resource.transport.fetch } : {}),
+        // Owned or attached, the endpoint lives with the managed service and
+        // the host issues the request; observation holds no address and no
+        // transport of its own.
+        baseUrl: MANAGED_ENDPOINT_TRANSPORT_BASE_URL,
+        fetch: createManagedEndpointFetch(request.managedEndpointRead),
         signal: controller.signal,
         onUnavailable() {
           if (!controller.signal.aborted) request.requestReconcile();
@@ -349,22 +302,7 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
             request.requestReconcile();
             return;
           }
-          const status = readEventTurnPhase(event);
-          if (!status) return;
-          if (
-            delivery.provenance !== 'accepted-live'
-            || status.kind === 'reconcile'
-          ) {
-            request.requestReconcile();
-            return;
-          }
-          const observedAtMs = now();
-          request.emit({
-            items: [{
-              linkKey: buildLinkKey(status.directory, status.remoteSessionId),
-              facts: [turnPhaseFact(status.value, 'agent_native', observedAtMs)],
-            }],
-          });
+          request.requestReconcile();
         },
       }).then(() => {
         if (!controller.signal.aborted) request.requestReconcile();
@@ -387,13 +325,12 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
         throw new Error('OpenCode observation reconciliation requires at least one current link');
       }
       if (request.purpose === 'resource_descriptors') {
-        const resource = (() => {
-          try {
-            return resolveResource(request.resourceKey, env);
-          } catch {
-            return null;
-          }
-        })();
+        let resource: ResolvedOpenCodeObservationResource | null;
+        try {
+          resource = resolveResource(request.resourceKey);
+        } catch {
+          resource = null;
+        }
         const outcomes = request.links.map((link) => {
           if (!resource) {
             return {
@@ -405,7 +342,7 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
             const linkedSource = normalizedSourceOrThrow(link.linkedSource, env);
             const remoteSessionId = normalizeString(link.linkedSource.remoteSessionId);
             if (
-              linkedSource.baseUrl !== resource.baseUrl
+              !resourceMatchesLinkedSource(resource, linkedSource)
               || !remoteSessionId
               || buildLinkKey(linkedSource.directory, remoteSessionId) !== link.linkKey
             ) {
@@ -435,16 +372,16 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
       const observedAtMs = now();
       type ReconcileOutcome =
         Extract<
-          ExternalAgentObservationReconcileResultV1,
+          AgentExternalSessionObservationReconcileResultV1,
           { purpose: 'observation_evidence' }
         >['outcomes'][number];
       const outcomes: ReconcileOutcome[] = request.links.map(({ linkKey }) => ({
         linkKey,
         facts: [retrievalFailedFact(observedAtMs)],
       }));
-      let resource: ReturnType<typeof resolveResource>;
+      let resource: ResolvedOpenCodeObservationResource;
       try {
-        resource = resolveResource(request.resourceKey, env);
+        resource = resolveResource(request.resourceKey);
       } catch {
         return {
           purpose: 'observation_evidence',
@@ -457,45 +394,55 @@ export function createOpenCodeExternalSessionObservationContribution(params: Rea
         linkKey: string;
         remoteSessionId: string;
       }>;
-      const linksByDirectory = new Map<string | null, DirectoryLink[]>();
+      type DirectoryGroup = Readonly<{
+        source: OpenCodeExternalSessionSource;
+        links: DirectoryLink[];
+      }>;
+      const linksByDirectory = new Map<string | null, DirectoryGroup>();
       for (const [index, link] of request.links.entries()) {
         try {
           const linkedSource = normalizedSourceOrThrow(link.linkedSource, env);
           const remoteSessionId = normalizeString(link.linkedSource.remoteSessionId);
           if (
-            linkedSource.baseUrl !== resource.baseUrl
+            !resourceMatchesLinkedSource(resource, linkedSource)
             || !remoteSessionId
             || buildLinkKey(linkedSource.directory, remoteSessionId) !== link.linkKey
           ) {
             continue;
           }
-          const directoryLinks = linksByDirectory.get(linkedSource.directory) ?? [];
-          directoryLinks.push({ index, linkKey: link.linkKey, remoteSessionId });
-          linksByDirectory.set(linkedSource.directory, directoryLinks);
+          const directoryGroup = linksByDirectory.get(linkedSource.directory) ?? {
+            source: linkedSource.mode === 'managed'
+              ? {
+                  kind: 'opencodeServer',
+                  managedEndpoint: true,
+                  ...(linkedSource.directory ? { directory: linkedSource.directory } : {}),
+                }
+              : {
+                  kind: 'opencodeServer',
+                  baseUrl: linkedSource.baseUrl,
+                  ...(linkedSource.directory ? { directory: linkedSource.directory } : {}),
+                },
+            links: [],
+          };
+          directoryGroup.links.push({ index, linkKey: link.linkKey, remoteSessionId });
+          linksByDirectory.set(linkedSource.directory, directoryGroup);
         } catch {
           // Invalid link identities remain isolated retrieval failures.
         }
       }
 
       await Promise.all([...linksByDirectory.entries()].map(
-        async ([directory, directoryLinks]) => {
+        async ([_directory, directoryGroup]) => {
           try {
             const client = await createOpenCodeExternalSessionClient({
-              source: {
-                kind: 'opencodeServer',
-                baseUrl: resource.baseUrl,
-                ...(directory ? { directory } : {}),
-              },
+              source: directoryGroup.source,
               env,
               baseUrlAuthority: 'canonical',
-              ...(resource.transport
-                ? { transport: resource.transport }
-                : { fetchFn: params.fetchFn }),
-              headers: resource.headers,
+              managedEndpointRead: request.managedEndpointRead,
             });
             try {
               const statuses = await client.sessionStatusList({ signal: request.signal });
-              for (const link of directoryLinks) {
+              for (const link of directoryGroup.links) {
                 if (!Object.prototype.hasOwnProperty.call(statuses, link.remoteSessionId)) {
                   outcomes[link.index] = {
                     linkKey: link.linkKey,

@@ -1,4 +1,4 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   mapOpenCodeMessageToTranscriptItem,
@@ -8,7 +8,7 @@ import {
 export function mapOpenCodeMessageToExternalSessionItem(
   message: unknown,
   providerSessionId: string,
-): ExternalSessionTranscriptRawMessageV1 | null {
+): AgentExternalSessionTranscriptItem | null {
   return mapOpenCodeMessageToTranscriptItem(message, providerSessionId);
 }
 

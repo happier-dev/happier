@@ -60,7 +60,7 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
             },
           },
           externalSessions: {
-            supportsBackgroundFollow: false,
+            supportsBackgroundFollow: true,
             browse: {
             order: 30,
             sourceOptions: [
@@ -98,7 +98,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
               runtimeDescriptorExplicitField: 'serverBaseUrlExplicit',
               allowedProtocols: ['http:', 'https:'],
               rejectCredentials: true,
-              httpLoopbackOnly: true,
               originOnly: true,
             },
           },

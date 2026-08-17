@@ -1,6 +1,7 @@
 import type {
   BackendSessionLaunchHintsV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  ForkSessionMetadata as ForkSessionMetadataV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   buildOpenCodeSessionEnvironmentVariables,
@@ -8,7 +9,7 @@ import {
 } from '../../../identity/affinity.js';
 
 export async function resolveOpenCodeReplayChildLaunch(params: Readonly<{
-  parentMetadata: Readonly<Record<string, unknown>>;
+  parentMetadata: ForkSessionMetadataV1;
 }>): Promise<BackendSessionLaunchHintsV1 | null> {
   const affinity = readOpenCodeSessionAffinityFromMetadata(params.parentMetadata);
   if (!affinity.backendMode) return null;

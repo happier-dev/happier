@@ -1,4 +1,4 @@
-import { isRecord } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import { isRecord } from '@happier-dev/plugin-sdk';
 
 export type PiAgentEndBoundary = 'retrying' | 'final' | null;
 

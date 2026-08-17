@@ -5,17 +5,17 @@ import type {
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
-} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import { asRecord, normalizeString } from './openCodeParsing.js';
-import { normalizeOpenCodeSkills } from './catalog/control.js';
+import { normalizeOpenCodeSkills } from './skills.js';
 import type { OpenCodeRuntimeEvent, OpenCodeRuntimeIssue } from './runtimeEvents.js';
 import {
   buildOpenCodePromptParts,
@@ -50,7 +50,14 @@ function toRuntimeJson(value: unknown) {
 }
 
 function mapIssue(issue: OpenCodeRuntimeIssue) {
-  return diagnostic(issue.code, issue.sanitizedPreview);
+  return {
+    ...diagnostic(issue.code, issue.sanitizedPreview),
+    details: {
+      v: issue.v,
+      source: issue.source,
+      agentId: issue.agentId,
+    },
+  };
 }
 
 function mapRuntimeEvent(event: OpenCodeRuntimeEvent): NativeEventInput | null {

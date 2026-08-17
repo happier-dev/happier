@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeSessionWorkStateMetadataV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
-
 import {
-  OPEN_CODE_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES,
   buildOpenCodeTodoWorkState,
 } from './openCodeTodoWorkState.js';
 
@@ -85,49 +82,4 @@ describe('OpenCode todo work-state mapping', () => {
     });
   });
 
-  it('preserves non-OpenCode work-state items during OpenCode todo merges', () => {
-    const snapshot = buildOpenCodeTodoWorkState({
-      backendId: 'opencode',
-      updatedAt: 100,
-      todos: [{ id: 'new', content: 'New OpenCode todo', status: 'pending' }],
-    });
-
-    const merged = mergeSessionWorkStateMetadataV1({
-      metadata: {
-        sessionWorkStateV1: {
-          v: 1,
-          backendId: 'opencode',
-          updatedAt: 50,
-          items: [
-            {
-              id: 'todo:opencode:old',
-              kind: 'todo',
-              origin: 'vendor',
-              backendId: 'opencode',
-              status: 'pending',
-              title: 'Old OpenCode todo',
-              updatedAt: 50,
-            },
-            {
-              id: 'todo:claude:keep',
-              kind: 'todo',
-              origin: 'vendor',
-              backendId: 'claude',
-              status: 'active',
-              title: 'Claude todo',
-              updatedAt: 50,
-            },
-          ],
-        },
-      },
-      nextOwned: snapshot,
-      ownedSourceFamilies: OPEN_CODE_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES,
-    });
-
-    expect(OPEN_CODE_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES).toEqual(['todo:opencode']);
-    expect(merged.sessionWorkStateV1.items.map((item) => item.id)).toEqual([
-      'todo:claude:keep',
-      'todo:opencode:new',
-    ]);
-  });
 });

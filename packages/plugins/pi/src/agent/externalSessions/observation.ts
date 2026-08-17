@@ -4,19 +4,20 @@ import { lstat } from 'node:fs/promises';
 import {
   deriveExternalSessionActivity,
   type AgentExternalSessionObservationContribution,
-  type AgentExternalSessionsResolvedIdentity,
-  type ExternalAgentObservationLinkEvidenceBatchV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  type AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import type {
+  AgentExternalSessionsResolvedIdentity,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
-  canonicalizePathSync,
-  resolveSessionFileStoreDirsSync,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+  canonicalizePathSync } from '@happier-dev/plugin-sdk/fs';
 
-import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../sessionFileStoreDescriptor.js';
+import { readCanonicalPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 import {
   isPiSessionFileInside,
   type PiExternalSessionFileState,
 } from './files.js';
+import { resolvePiExternalSessionSource } from './source.js';
 
 const RESOURCE_KEY_PREFIX = 'pi-file-resource-v1:';
 const LINK_KEY_PREFIX = 'pi-file-link-v1:';
@@ -24,7 +25,7 @@ const RECONCILIATION_FACT_TTL_MS = 1_000;
 const MAX_OPAQUE_KEY_LENGTH = 256;
 
 type ExternalAgentObservationLeafFact =
-  ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+  AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 type PiObservationLinkedFile = Readonly<{
   agentDir: string;
@@ -48,23 +49,15 @@ function readLinkedFile(
   identity: AgentExternalSessionsResolvedIdentity,
   env: NodeJS.ProcessEnv,
 ): PiObservationLinkedFile {
-  if (identity.source.kind !== 'piAgentDir') {
-    throw new Error('agent/source mismatch');
-  }
-  const configured = resolveSessionFileStoreDirsSync({
-    product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
-    env,
-  });
-  const requestedAgentDir = readNonemptyString(identity.source.agentDir);
-  const canonicalAgentDir = requestedAgentDir
-    ? canonicalizePathSync(requestedAgentDir)
-    : configured.agentDir;
-  if (canonicalAgentDir !== configured.agentDir) {
-    throw new Error('Pi observation source agentDir override is not allowed');
-  }
+  const resolvedSource = resolvePiExternalSessionSource({ source: identity.source, env });
+  if (!resolvedSource) throw new Error('agent/source mismatch');
 
   const sourceFile = readNonemptyString(identity.source.sessionFile);
-  const linkFile = readNonemptyString(identity.linkData.sessionFile);
+  // The resolved link data carries the session file inside the runtime descriptor;
+  // a top-level `sessionFile` there would be rejected by host owner metadata.
+  const linkFile = readCanonicalPiAgentRuntimeDescriptorV1(
+    identity.linkData.runtimeDescriptorV1,
+  )?.sessionFile ?? null;
   if (!sourceFile || !linkFile) {
     throw new Error('Pi observation requires one resolved session file');
   }
@@ -72,7 +65,7 @@ function readLinkedFile(
   const canonicalLinkFile = canonicalizePathSync(linkFile);
   if (
     canonicalSourceFile !== canonicalLinkFile
-    || !isPiSessionFileInside(configured.sessionsRoot, canonicalSourceFile)
+    || !isPiSessionFileInside(resolvedSource.sessionsRoot, canonicalSourceFile)
   ) {
     throw new Error('Pi observation session file does not match the resolved source');
   }
@@ -82,7 +75,7 @@ function readLinkedFile(
     throw new Error('Pi observation requires a native session id');
   }
   return {
-    agentDir: canonicalAgentDir,
+    agentDir: resolvedSource.agentDir,
     sessionFile: canonicalSourceFile,
     remoteSessionId,
   };

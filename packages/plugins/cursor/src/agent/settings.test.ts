@@ -16,7 +16,7 @@ describe('Cursor predecessor settings compatibility', () => {
       id: 'agent-settings',
       version: 1,
       target: { kind: 'agent', agent: 'cursor' },
-      scope: 'local',
+      scope: 'daemon',
       fields: [
         {
           id: 'cursorBinaryPath',

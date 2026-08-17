@@ -1,5 +1,4 @@
 import {
-  isOpenCodeGlobalEventSubscriptionPermanentError,
   type OpenCodeGlobalEventDelivery,
   type OpenCodeServerClient,
 } from './openCodeServerClient.js';
@@ -12,6 +11,7 @@ export function attachOpenCodeProviderEventSubscriptionIfNeeded(params: Readonly
   ctx: OpenCodeRuntimeContext;
   state: OpenCodeServerRuntimeState;
   handleProviderEvent: (event: unknown) => Promise<void>;
+  handleProviderObservation: (event: unknown) => Promise<void>;
   onSubscriptionUnavailable?: (error: unknown) => void;
 }>): void {
   if (params.state.subscriptionAbort) return;
@@ -53,9 +53,11 @@ export function attachOpenCodeProviderEventSubscriptionIfNeeded(params: Readonly
           : typeof event.type === 'string'
             ? event.type
             : '';
-        if (delivery.provenance === 'untrusted-observation') return;
         if (delivery.provenance === 'connection-boundary' && eventType !== 'server.connected') return;
-        void params.handleProviderEvent(event).catch((error: unknown) => {
+        const handler = delivery.provenance === 'untrusted-observation'
+          ? params.handleProviderObservation
+          : params.handleProviderEvent;
+        void handler(event).catch((error: unknown) => {
           params.ctx.logger.debug('[OpenCodeServer] failed to handle provider event (non-fatal)', { error });
         });
       },
@@ -75,7 +77,6 @@ export function attachOpenCodeProviderEventSubscriptionIfNeeded(params: Readonly
         }
         if (controller.signal.aborted || params.state.disposed) return;
         notifySubscriptionUnavailable(error);
-        if (isOpenCodeGlobalEventSubscriptionPermanentError(error)) return;
         scheduleAttach(attempt + 1);
       },
     );

@@ -39,5 +39,23 @@ describe('Pi strict plugin manifest', () => {
       'USERPROFILE',
       'PI_CODING_AGENT_DIR',
     ]);
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([
+      expect.objectContaining({
+        purpose: 'anthropic-model-request',
+        materializationKinds: ['httpHeaders', 'environment'],
+      }),
+      expect.objectContaining({
+        purpose: 'openai-codex-model-request',
+        materializationKinds: ['httpHeaders'],
+      }),
+      expect.objectContaining({
+        purpose: 'openai-api-key',
+        materializationKinds: ['environment'],
+      }),
+      expect.objectContaining({
+        purpose: 'anthropic-api-key',
+        materializationKinds: ['environment'],
+      }),
+    ]);
   });
 });

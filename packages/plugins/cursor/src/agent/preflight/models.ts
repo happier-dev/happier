@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { parseCursorCliModelsOutput } from '../cli/models.js';
 
@@ -29,7 +29,7 @@ export function buildCursorPreflightModelsFromModelsOutput(output: string): read
 }
 
 export async function probeCursorPreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;

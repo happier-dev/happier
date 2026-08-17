@@ -5,7 +5,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 describe('PLUGIN_MANIFEST MCP contribution', () => {
   it('declares OpenCode config discovery through the manifest MCP family', () => {
     expect(PLUGIN_MANIFEST.contributes?.mcp?.servers).toEqual([]);
-    expect(PLUGIN_MANIFEST.contributes?.mcp?.discoveryProviders).toEqual([
+    expect(PLUGIN_MANIFEST.contributes?.mcp?.discoverySources).toEqual([
       expect.objectContaining({
         id: 'config',
         title: 'OpenCode MCP configuration',

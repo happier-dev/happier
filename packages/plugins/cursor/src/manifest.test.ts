@@ -36,7 +36,7 @@ describe('Cursor plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
       expect.objectContaining({
         target: { kind: 'agent', agent: 'cursor' },
-        scope: 'local',
+        scope: 'daemon',
         fields: expect.arrayContaining([
           expect.objectContaining({ id: 'cursorBinaryPath' }),
           expect.objectContaining({ id: 'cursorAgentFallbackEnabled' }),

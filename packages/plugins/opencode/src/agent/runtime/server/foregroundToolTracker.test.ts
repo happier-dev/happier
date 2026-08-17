@@ -21,9 +21,12 @@ describe('createOpenCodeForegroundToolTracker', () => {
     expect(tracker.hasActiveToolCalls()).toBe(false);
   });
 
-  it('does not expose a history or session-next observation API', () => {
+  it('does not expose history, session-next, or generation-transition APIs', () => {
     const tracker = createOpenCodeForegroundToolTracker();
     expect(tracker).not.toHaveProperty('observeSessionNextTool');
     expect(tracker).not.toHaveProperty('getActiveSessionIds');
+    expect(tracker).not.toHaveProperty('setGenerationKey');
+    expect(tracker).not.toHaveProperty('hasActiveToolCallsForGeneration');
+    expect(tracker).not.toHaveProperty('clearOrphanedToolCalls');
   });
 });

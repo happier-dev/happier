@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import {
   PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,

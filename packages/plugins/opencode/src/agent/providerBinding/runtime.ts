@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH } from './adapter.js';
 

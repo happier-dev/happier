@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { selectPiLaunchEnvironment } from '../launchEnvironment.js';
 
@@ -75,7 +75,7 @@ export function buildPiPreflightModelsFromListModelsOutput(outputRaw: string): r
 }
 
 export async function probePiPreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
@@ -101,6 +101,7 @@ export async function probePiPreflightModelsRaw(params: Readonly<{
 }
 
 export const PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'cooldown',
   probeModelsRaw: probePiPreflightModelsRaw,
 } as const);

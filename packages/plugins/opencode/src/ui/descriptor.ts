@@ -49,7 +49,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     externalSessions: {
       browseDescriptorId: 'opencode.externalSessions.browse.v1',
       sessionHandoffDescriptorId: 'opencode.sessionHandoff.v1',
-      supportsBackgroundFollow: false,
+      supportsBackgroundFollow: true,
       browse: {
         order: 30,
         sourceOptions: [
@@ -87,7 +87,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
           runtimeDescriptorExplicitField: 'serverBaseUrlExplicit',
           allowedProtocols: ['http:', 'https:'],
           rejectCredentials: true,
-          httpLoopbackOnly: true,
           originOnly: true,
         },
         agentExtra: {

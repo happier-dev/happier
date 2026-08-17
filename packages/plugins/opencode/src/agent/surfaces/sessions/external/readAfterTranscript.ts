@@ -1,7 +1,7 @@
 import type {
-  ExternalSessionsSource,
-  ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  AgentExternalSessionTranscriptItem,
+  AgentExternalSessionsManagedEndpointRead,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   readOpenCodeTranscriptForwardWindow,
@@ -9,7 +9,10 @@ import {
 import {
   classifyOpenCodeMessageForProjection,
 } from '../../../runtime/server/transcript/projection/index.js';
-import { createOpenCodeExternalSessionClient } from './client.js';
+import {
+  createOpenCodeExternalSessionClient,
+  type OpenCodeExternalSessionSource,
+} from './client.js';
 import {
   mapOpenCodeMessageToExternalSessionItem,
   measureOpenCodeExternalTranscriptItemBytes,
@@ -71,7 +74,7 @@ export type OpenCodeExternalReadAfterOutcome =
   | Readonly<{ outcome: 'already_current' }>
   | Readonly<{
       outcome: 'advanced';
-      items: readonly ExternalSessionTranscriptRawMessageV1[];
+      items: readonly AgentExternalSessionTranscriptItem[];
       nextCursor: string;
       boundary: string;
       diagnostics?: readonly Readonly<{ code: string; count: number; positions: readonly number[] }>[];
@@ -86,17 +89,20 @@ function gap(): OpenCodeExternalReadAfterOutcome {
 }
 
 export async function readAfterOpenCodeTranscript(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: OpenCodeExternalSessionSource;
   providerSessionId: string;
   cursor: string;
   maxBytes: number;
   maxItems: number;
   signal?: AbortSignal;
   env?: Readonly<Record<string, string | undefined>>;
+  managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
 }>): Promise<OpenCodeExternalReadAfterOutcome> {
   const client = await createOpenCodeExternalSessionClient({
     source: params.source,
+    maxResponseBytes: params.maxBytes,
     ...(params.env ? { env: params.env } : {}),
+    ...(params.managedEndpointRead ? { managedEndpointRead: params.managedEndpointRead } : {}),
   });
   try {
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
@@ -163,7 +169,7 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
 
     const knownNonTranscriptPositions: number[] = [];
     const unsupportedPositions: number[] = [];
-    const page = readOpenCodeTranscriptForwardWindow<ExternalSessionTranscriptRawMessageV1>({
+    const page = readOpenCodeTranscriptForwardWindow<AgentExternalSessionTranscriptItem>({
       messages: rawMessages,
       startIndex,
       maxBytes: params.maxBytes,

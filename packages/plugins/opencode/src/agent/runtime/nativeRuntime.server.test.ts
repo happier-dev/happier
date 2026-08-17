@@ -8,7 +8,9 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
+import { buildOpenCodeRequestAuthMarker } from '../auth/services/requestAuth/source.js';
 
 const { openOpenCodeServerSession } = vi.hoisted(() => ({
   openOpenCodeServerSession: vi.fn(),
@@ -32,7 +34,66 @@ function createSession(): AgentSessionRuntime {
   };
 }
 
+const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = [
+  'anthropic-model-request',
+  'openai-codex-model-request',
+  'openai-api-key',
+  'anthropic-api-key',
+] as const;
+
+type OpenCodePurpose = typeof OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES[number];
+
+function createConnectedAccountsHarness(input: Readonly<{
+  bindings?: Readonly<Partial<Record<OpenCodePurpose, Readonly<{
+    pluginId: string;
+    localId: string;
+  }>>>>;
+  materialize?: (
+    purpose: string,
+    request: Readonly<Record<string, unknown>>,
+  ) => unknown | Promise<unknown>;
+  emitInitial?: boolean;
+}> = {}) {
+  const listeners = new Map<string, (event: { kind: 'resync' }) => unknown>();
+  const watcherDisposals = new Map<string, ReturnType<typeof vi.fn>>();
+  const connectedAccounts = {
+    getBinding: vi.fn(async (purpose: string) => {
+      const service = input.bindings?.[purpose as OpenCodePurpose];
+      return service
+        ? {
+            purpose,
+            service,
+            target: { kind: 'account' as const, displayName: `${service.localId} account` },
+          }
+        : null;
+    }),
+    requestSelection: vi.fn(),
+    materialize: vi.fn(async (purpose: string, request: Readonly<Record<string, unknown>>) => {
+      if (!input.materialize) throw new Error(`Unexpected materialization for ${purpose}`);
+      return await input.materialize(purpose, request);
+    }),
+    watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
+      listeners.set(purpose, listener);
+      const dispose = vi.fn();
+      watcherDisposals.set(purpose, dispose);
+      if (input.emitInitial !== false) listener({ kind: 'resync' });
+      return { dispose };
+    }),
+  };
+  return { connectedAccounts, listeners, watcherDisposals };
+}
+
 describe('createOpenCodeAgentRuntime server dispatch', () => {
+  it('declares its externally executed Agent tools as observable', () => {
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    expect(runtime.toolExecution).toEqual({ capability: 'observable' });
+  });
+
   it('routes the canonical configuration override through the common ACP composer', async () => {
     const session = createSession();
     const openAcp = vi.fn(async () => session);
@@ -58,9 +119,12 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       protocols: {
         acp: { open: openAcp },
       },
+      services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
     } as unknown as AgentSessionRuntimeContext;
 
-    await expect(runtime.sessions.open(request, context)).resolves.toBe(session);
+    await expect(runtime.sessions.open(request, context)).resolves.toMatchObject({
+      send: session.send,
+    });
     expect(openAcp).toHaveBeenCalledWith(request, expect.objectContaining({
       transport: expect.objectContaining({
         kind: 'stdio',
@@ -116,7 +180,10 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     try {
       await expect(runtime.sessions.open(request, {
         protocols: { acp: { open: openAcp } },
-      } as unknown as AgentSessionRuntimeContext)).resolves.toBe(session);
+        services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
+      } as unknown as AgentSessionRuntimeContext)).resolves.toMatchObject({
+        send: session.send,
+      });
 
       expect(openAcp).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -134,6 +201,311 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     } finally {
       await rm(rootPath, { recursive: true, force: true });
     }
+  });
+
+  it('materializes a direct OpenAI purpose before ACP open with the exact request and signal', async () => {
+    const session = createSession();
+    const openAcp = vi.fn(async () => session);
+    const signal = new AbortController().signal;
+    const harness = createConnectedAccountsHarness({
+      bindings: {
+        'openai-api-key': { pluginId: 'happier.voice.openai', localId: 'openai' },
+      },
+      materialize: async (purpose, request) => {
+        expect(purpose).toBe('openai-api-key');
+        expect(request).toEqual({ kind: 'environment', keys: ['OPENAI_API_KEY'] });
+        return { kind: 'environment', env: { OPENAI_API_KEY: 'sk-openai-public' } };
+      },
+    });
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal,
+    });
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'happier-acp-openai',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: {
+          HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+          HAPPIER_OPENCODE_PROVIDER_API_KEY: 'provider-secret',
+          XDG_CONFIG_HOME: '/private/opencode',
+          OPENCODE_CONFIG_CONTENT: '{"provider":"gateway"}',
+          OPENCODE_AUTH_CONTENT: '{}',
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+        },
+        unset: [],
+      },
+    };
+
+    await runtime.sessions.open(request, {
+      protocols: { acp: { open: openAcp } },
+      services: { connectedAccounts: harness.connectedAccounts },
+      signal,
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(harness.connectedAccounts.materialize).toHaveBeenCalledWith(
+      'openai-api-key',
+      { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+      { signal },
+    );
+    expect(openAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launchEnvironment: expect.objectContaining({
+          values: expect.objectContaining({
+            OPENCODE_AUTH_CONTENT: JSON.stringify({
+              openai: { type: 'api', key: 'sk-openai-public' },
+            }),
+            HAPPIER_OPENCODE_PROVIDER_API_KEY: 'provider-secret',
+            OPENCODE_CONFIG_CONTENT: '{"provider":"gateway"}',
+            OPENAI_API_KEY: '',
+            ANTHROPIC_API_KEY: '',
+          }),
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it('preserves the other provider request-auth marker when direct and OAuth purposes are mixed', async () => {
+    const session = createSession();
+    const harness = createConnectedAccountsHarness({
+      bindings: {
+        'anthropic-model-request': {
+          pluginId: 'happier.agent.claude',
+          localId: 'claude-subscription',
+        },
+        'openai-api-key': { pluginId: 'happier.voice.openai', localId: 'openai' },
+      },
+      materialize: async (purpose) => purpose === 'anthropic-model-request'
+        ? { kind: 'environment', env: {} }
+        : { kind: 'environment', env: { OPENAI_API_KEY: 'sk-openai-mixed' } },
+    });
+    openOpenCodeServerSession.mockResolvedValueOnce(session);
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-mixed-auth',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: {
+          HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            anthropic: {
+              type: 'api',
+              key: buildOpenCodeRequestAuthMarker('anthropic'),
+            },
+          }),
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+        },
+        unset: [],
+      },
+    }, {
+      services: { connectedAccounts: harness.connectedAccounts },
+      workState: { publish: vi.fn() },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(openOpenCodeServerSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launchEnvironment: expect.objectContaining({
+          values: expect.objectContaining({
+            OPENCODE_AUTH_CONTENT: JSON.stringify({
+              anthropic: {
+                type: 'api',
+                key: buildOpenCodeRequestAuthMarker('anthropic'),
+              },
+              openai: { type: 'api', key: 'sk-openai-mixed' },
+            }),
+          }),
+        }),
+      }),
+      expect.any(Object),
+      expect.anything(),
+      expect.any(Function),
+    );
+  });
+
+  it('maps a Claude setup-token environment materialization to direct Anthropic OpenCode auth', async () => {
+    const session = createSession();
+    const harness = createConnectedAccountsHarness({
+      bindings: {
+        'anthropic-model-request': {
+          pluginId: 'happier.agent.claude',
+          localId: 'claude-subscription',
+        },
+      },
+      materialize: async () => ({
+        kind: 'environment',
+        env: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-public-setup' },
+      }),
+    });
+    openOpenCodeServerSession.mockResolvedValueOnce(session);
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-setup-token',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: {
+          HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+          OPENCODE_AUTH_CONTENT: '{}',
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+        },
+        unset: [],
+      },
+    }, {
+      services: { connectedAccounts: harness.connectedAccounts },
+      workState: { publish: vi.fn() },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(harness.connectedAccounts.materialize).toHaveBeenCalledWith(
+      'anthropic-model-request',
+      { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+      expect.any(Object),
+    );
+    expect(openOpenCodeServerSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launchEnvironment: expect.objectContaining({
+          values: expect.objectContaining({
+            OPENCODE_AUTH_CONTENT: JSON.stringify({
+              anthropic: { type: 'api', key: 'sk-ant-oat01-public-setup' },
+            }),
+          }),
+        }),
+      }),
+      expect.any(Object),
+      expect.anything(),
+      expect.any(Function),
+    );
+  });
+
+  it('fails before ACP or server effects when a public materialization is malformed', async () => {
+    openOpenCodeServerSession.mockClear();
+    const session = createSession();
+    const openAcp = vi.fn(async () => session);
+    const harness = createConnectedAccountsHarness({
+      bindings: {
+        'anthropic-api-key': { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+      },
+      materialize: async () => ({
+        kind: 'environment',
+        env: {
+          ANTHROPIC_API_KEY: 'sk-ant-public',
+          UNDECLARED_SECRET: 'must-reject',
+        },
+      }),
+    });
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-malformed-auth',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
+        unset: [],
+      },
+    }, {
+      protocols: { acp: { open: openAcp } },
+      services: { connectedAccounts: harness.connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow(/materialization/i);
+
+    expect(openAcp).not.toHaveBeenCalled();
+    expect(openOpenCodeServerSession).not.toHaveBeenCalled();
+    for (const dispose of harness.watcherDisposals.values()) {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('watches every public purpose and converts a later resync into session recovery disposal', async () => {
+    const session = createSession();
+    const openAcp = vi.fn(async () => session);
+    const harness = createConnectedAccountsHarness();
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    const opened = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-watch-auth',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, {
+      protocols: { acp: { open: openAcp } },
+      services: { connectedAccounts: harness.connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(harness.connectedAccounts.watch.mock.calls.map(([purpose]) => purpose)).toEqual(
+      OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES,
+    );
+    expect(harness.connectedAccounts.materialize).not.toHaveBeenCalled();
+    await harness.listeners.get('openai-api-key')?.({ kind: 'resync' });
+    expect(session.dispose).toHaveBeenCalledWith('runtime_recovery');
+    for (const dispose of harness.watcherDisposals.values()) {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    }
+    await opened.dispose();
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes every initial purpose resync before reading the launch bindings', async () => {
+    const session = createSession();
+    const openAcp = vi.fn(async () => session);
+    const harness = createConnectedAccountsHarness({ emitInitial: false });
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    const opening = runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-watch-initial-auth',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, {
+      protocols: { acp: { open: openAcp } },
+      services: { connectedAccounts: harness.connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(harness.connectedAccounts.watch).toHaveBeenCalledTimes(4);
+    expect(harness.connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(openAcp).not.toHaveBeenCalled();
+
+    for (const purpose of OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES) {
+      await harness.listeners.get(purpose)?.({ kind: 'resync' });
+    }
+    const opened = await opening;
+
+    expect(harness.connectedAccounts.getBinding).toHaveBeenCalledTimes(4);
+    expect(openAcp).toHaveBeenCalledTimes(1);
+    await opened.dispose();
   });
 
   it('exposes mode-aware native catalog, recovery, and continuation controls', async () => {
@@ -173,6 +545,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         unset: [],
       },
     }, {
+      services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
       workState: { publish: vi.fn() },
     } as unknown as AgentSessionRuntimeContext);
     const activeContext = {
@@ -285,6 +658,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         signal: new AbortController().signal,
       });
       const context = {
+        services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
         workState: { publish: vi.fn() },
       } as unknown as AgentSessionRuntimeContext;
 
@@ -294,7 +668,9 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
           values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
           unset: [],
         },
-      }, context)).resolves.toBe(session);
+      }, context)).resolves.toMatchObject({
+        send: session.send,
+      });
 
       expect(openOpenCodeServerSession).toHaveBeenCalledWith(
         expect.objectContaining(request),
@@ -304,6 +680,64 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       );
     },
   );
+
+  it('carries bounded Provider launch inputs into the server session owner', async () => {
+    const session = createSession();
+    openOpenCodeServerSession.mockResolvedValueOnce(session);
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+    const context = {
+      services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext;
+    const providerConnectionId = ProviderConnectionIdSchema.parse('pc_opencode');
+    const configuration = {
+      mode: { value: null, updatedAtMs: 0 },
+      model: { value: 'openai/gpt-5.1', updatedAtMs: 5 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 5 },
+      options: { reasoning_effort: { value: 'high', updatedAtMs: 5 } },
+    };
+    const providerBinding = {
+      connectionId: providerConnectionId,
+      model: { id: 'openai/gpt-5.1', name: 'GPT-5.1' },
+      materialization: {
+        v: 1 as const,
+        kind: 'engineConfig' as const,
+        engineConfig: { provider: 'openai' },
+      },
+    };
+
+    const run = await runtime.executionRuns!.open({
+      kind: 'create',
+      runId: 'run-provider-opencode',
+      cwd: '/repo',
+      profile: {
+        pluginId: 'happier.agent.opencode',
+        contributionType: 'agents',
+        contributionId: 'opencode',
+      },
+      input: { text: 'Run it' },
+      launchEnvironment: {
+        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
+        unset: [],
+      },
+      modelSelection: {
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId,
+        modelId: 'openai/gpt-5.1',
+      },
+      configuration,
+      providerBinding,
+    }, context);
+
+    expect(openOpenCodeServerSession).toHaveBeenCalledWith(
+      expect.objectContaining({ configuration, providerBinding }),
+      context,
+    );
+    await run.dispose();
+  });
 
   it.each(['rejected', 'unavailable'] as const)(
     'returns terminal run evidence when the initial execution input is %s',
@@ -343,6 +777,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         },
         agent: { id: 'opencode' },
         signal: new AbortController().signal,
+        services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
       } as unknown as AgentSessionRuntimeContext);
       const events: Array<{ kind: string; diagnostic?: { code: string } }> = [];
       run.watch((event) => events.push(event));
@@ -387,7 +822,9 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
         unset: [],
       },
-    }, {} as AgentSessionRuntimeContext);
+    }, {
+      services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext);
     const events: Array<{ kind: string }> = [];
     run.watch((event) => events.push(event));
 

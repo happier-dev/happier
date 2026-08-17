@@ -1,20 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  AgentExternalSessionsManagedEndpointRead,
   AgentExternalSessionsResolvedIdentity,
-  ExternalAgentObservationLinkEvidenceBatchV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-
-import {
-  OPENCODE_SERVER_PASSWORD_ENV_KEY,
-  readOpenCodeManagedServerTransport,
-  registerOpenCodeManagedServerEndpoint,
-} from '../../../runtime/server/endpoint.js';
+  AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
   OpenCodeGlobalEvent,
   OpenCodeGlobalEventDelivery,
 } from '../../../runtime/server/openCodeServerClient.js';
-import { createOpenCodeServerTransport } from '../../../runtime/server/transport.js';
 import { createOpenCodeExternalSessionsContribution } from './contribution.js';
 import { createOpenCodeExternalSessionObservationContribution } from './observation.js';
 
@@ -34,102 +28,522 @@ function linkedSource(
   };
 }
 
-function registerCredential(
+function linkedManagedSource(
+  remoteSessionId: string,
+  directory = '/tmp/project',
+): AgentExternalSessionsResolvedIdentity {
+  return {
+    source: {
+      kind: 'opencodeServer',
+      managedEndpoint: true,
+      directory,
+    },
+    remoteSessionId,
+    linkData: {},
+  };
+}
+
+const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead = async () => {
+  throw new Error('Managed endpoint read is unavailable');
+};
+
+const liveReadByBaseUrl = new Map<string, AgentExternalSessionsManagedEndpointRead>();
+
+async function registerCredential(
   baseUrl: string,
-  secret: string,
+  _secret: string,
   fetchImpl: (input: string | URL, init?: RequestInit) => Promise<Response> =
     async () => new Response('{}'),
-) {
-  const credential = {
-    envKey: OPENCODE_SERVER_PASSWORD_ENV_KEY,
-    value: secret,
-    headers: {
-      authorization: `Basic ${secret}`,
+  mode: 'managedSpawn' | 'externalAttach' = 'managedSpawn',
+): Promise<Readonly<{
+  managedEndpointRead: AgentExternalSessionsManagedEndpointRead;
+  dispose(): void;
+}>> {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/u, '');
+  const managedEndpointRead = vi.fn<AgentExternalSessionsManagedEndpointRead>(async (request) => {
+    if (liveReadByBaseUrl.get(normalizedBaseUrl) !== managedEndpointRead) {
+      throw new Error('Managed endpoint read is unavailable or stale');
+    }
+    const response = await fetchImpl(
+      new URL(request.pathAndQuery, `${normalizedBaseUrl}/`),
+      {
+        method: 'GET',
+        ...(request.headers ? { headers: request.headers } : {}),
+      },
+    );
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: response.body,
+    };
+  });
+  liveReadByBaseUrl.set(normalizedBaseUrl, managedEndpointRead);
+  return Object.freeze({
+    managedEndpointRead,
+    dispose() {
+      if (liveReadByBaseUrl.get(normalizedBaseUrl) === managedEndpointRead) {
+        liveReadByBaseUrl.delete(normalizedBaseUrl);
+      }
     },
-  } as const;
-  return registerOpenCodeManagedServerEndpoint({
-    baseUrl,
-    credential,
-    transport: createOpenCodeServerTransport({
-      baseUrl,
-      instanceId: `instance-${secret}`,
-      headers: credential.headers,
-      readManagedServerSnapshot: () => ({
-        instanceId: `instance-${secret}`,
-        state: 'healthy',
-        baseUrl,
-      }),
-      fetchImpl,
-    }),
   });
 }
 
 describe('OpenCode External Session observation', () => {
   afterEach(() => {
+    liveReadByBaseUrl.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it('groups endpoint/auth-generation resources and obtains observation authority from reconciliation', async () => {
-    const firstCredential = registerCredential('http://127.0.0.1:49196', 'first-secret');
+  it('resolves a managed source without persisting endpoint authority in its observation keys', async () => {
+    const baseUrl = 'http://127.0.0.1:49196';
+    const registration = await registerCredential(baseUrl, 'managed-source');
+    const externalSessions = createOpenCodeExternalSessionsContribution({ env: {} });
+
+    const resolvedSource = await externalSessions.resolveSource({
+      source: { kind: 'opencodeServer' },
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 10_000,
+      maxSerializedBytes: 100_000,
+      managedEndpointRead: registration.managedEndpointRead,
+    });
+    expect(resolvedSource).toEqual({
+      ok: true,
+      value: {
+        source: {
+          kind: 'opencodeServer',
+          managedEndpoint: true,
+        },
+      },
+    });
+    if (!resolvedSource.ok) throw new Error('Expected a managed OpenCode source');
+
+    const observation = createOpenCodeExternalSessionObservationContribution({
+      env: { HAPPIER_OPENCODE_SERVER_URL: baseUrl },
+    });
+    const descriptor = observation.describeResource({
+      source: resolvedSource.value.source,
+      remoteSessionId: 'ses-managed',
+      linkData: {},
+    });
+
+    expect(descriptor.resourceKey).toMatch(
+      /^opencode-resource-v2:managed:[A-Za-z0-9_-]{43}$/u,
+    );
+    expect(descriptor.resourceKey.length).toBeLessThanOrEqual(256);
+    expect(descriptor.linkKey.length).toBeLessThanOrEqual(256);
+    expect(JSON.stringify(descriptor)).not.toContain(baseUrl);
+    expect(JSON.stringify(descriptor)).not.toContain('managed-source');
+    expect(JSON.stringify(descriptor)).not.toContain('/tmp/');
+    expect(registration.managedEndpointRead).not.toHaveBeenCalled();
+
+    registration.dispose();
+  });
+
+  it('keeps an explicitly configured external attach source unmarked and direct through observation', async () => {
+    const baseUrl = 'http://127.0.0.1:49198';
+    const directFetch = vi.fn(async () => new Response(JSON.stringify({
+      'ses-external-attach': { type: 'busy' },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const bypassFetch = vi.fn();
+    vi.stubGlobal('fetch', bypassFetch);
+    const registration = await registerCredential(
+      baseUrl,
+      'external-attach',
+      directFetch,
+      'externalAttach',
+    );
+    const externalSessions = createOpenCodeExternalSessionsContribution({ env: {} });
+    const invocation = {
+      signal: new AbortController().signal,
+      deadlineAtMs: Date.now() + 10_000,
+      maxSerializedBytes: 100_000,
+      managedEndpointRead: registration.managedEndpointRead,
+    };
+
+    const resolvedSource = await externalSessions.resolveSource({
+      source: { kind: 'opencodeServer', baseUrl, directory: '/tmp/external-attach' },
+      ...invocation,
+    });
+    expect(resolvedSource).toEqual({
+      ok: true,
+      value: {
+        source: {
+          kind: 'opencodeServer',
+          baseUrl,
+          directory: '/tmp/external-attach',
+        },
+      },
+    });
+    if (!resolvedSource.ok) throw new Error('Expected a configured external source');
+
+    const resolvedLink = await externalSessions.resolveLinkedIdentity({
+      source: resolvedSource.value.source,
+      remoteSessionId: 'ses-external-attach',
+      linkData: {},
+      ...invocation,
+    });
+    if (!resolvedLink.ok) throw new Error('Expected a configured external link');
+    const observation = createOpenCodeExternalSessionObservationContribution({
+      env: {},
+      now: () => 3_000,
+    });
+    const descriptor = observation.describeResource(resolvedLink.value);
+    expect(descriptor.resourceKey).toMatch(/^opencode-resource-v2:external:/u);
+    const links = [{
+      linkKey: descriptor.linkKey,
+      linkedSource: resolvedLink.value,
+    }];
+    await expect(observation.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: descriptor.resourceKey,
+      links,
+      signal: invocation.signal,
+      managedEndpointRead: registration.managedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{
+        kind: 'described',
+        descriptor: {
+          ...descriptor,
+          changeObservation: 'observe_resource',
+        },
+      }],
+    });
+    await expect(observation.reconcileResource({
+      purpose: 'observation_evidence',
+      resourceKey: descriptor.resourceKey,
+      links,
+      signal: invocation.signal,
+      managedEndpointRead: registration.managedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'observation_evidence',
+      outcomes: [{
+        linkKey: descriptor.linkKey,
+        facts: [{
+          kind: 'turn_phase',
+          evidenceClass: 'reconciliation',
+          observedAtMs: 3_000,
+          expiresAtMs: 33_000,
+          value: 'working',
+        }],
+      }],
+    });
+    // The attached server is read through the managed endpoint the host owns;
+    // nothing bypasses it onto an ambient fetch.
+    expect(directFetch).toHaveBeenCalledOnce();
+    expect(registration.managedEndpointRead).toHaveBeenCalled();
+    expect(bypassFetch).not.toHaveBeenCalled();
+
+    registration.dispose();
+  });
+
+  it('adapts managed global-event observation to relative contextual reads without caller auth or global fetch', async () => {
+    const directFetch = vi.fn();
+    vi.stubGlobal('fetch', directFetch);
+    const managedEndpointRead = vi.fn<AgentExternalSessionsManagedEndpointRead>(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Response(
+        'data: {"payload":{"type":"server.connected","properties":{}}}\n\n',
+      ).body,
+    }));
+    const requestReconcile = vi.fn();
     const contribution = createOpenCodeExternalSessionObservationContribution();
+    const descriptor = contribution.describeResource(
+      linkedManagedSource('ses-managed-observe'),
+    );
+    const disposable = await contribution.observeResource({
+      resourceKey: descriptor.resourceKey,
+      signal: new AbortController().signal,
+      managedEndpointRead,
+      emit() {},
+      requestReconcile,
+      requestTranscriptRefresh() {},
+    });
+
+    await vi.waitFor(() => expect(managedEndpointRead).toHaveBeenCalledOnce());
+    expect(managedEndpointRead).toHaveBeenCalledWith({
+      pathAndQuery: '/global/event',
+    });
+    await vi.waitFor(() => expect(requestReconcile).toHaveBeenCalled());
+    expect(directFetch).not.toHaveBeenCalled();
+
+    await disposable.dispose();
+  });
+
+  it('cancels an in-flight managed global-event read when observation is disposed', async () => {
+    const managedEndpointRead = vi.fn<AgentExternalSessionsManagedEndpointRead>(
+      async () => await new Promise<never>(() => undefined),
+    );
+    const adapterSettled = vi.fn();
+    const requestReconcile = vi.fn();
+    const contribution = createOpenCodeExternalSessionObservationContribution({
+      subscribeGlobalEvents: async (params) => {
+        if (!params.fetch) throw new Error('Expected a contextual managed fetch adapter');
+        try {
+          await params.fetch(new URL('/global/event', params.baseUrl), {
+            method: 'GET',
+            signal: params.signal,
+          });
+        } finally {
+          adapterSettled();
+        }
+      },
+    });
+    const descriptor = contribution.describeResource(
+      linkedManagedSource('ses-managed-cancel'),
+    );
+    const disposable = await contribution.observeResource({
+      resourceKey: descriptor.resourceKey,
+      signal: new AbortController().signal,
+      managedEndpointRead,
+      emit() {},
+      requestReconcile,
+      requestTranscriptRefresh() {},
+    });
+    await vi.waitFor(() => expect(managedEndpointRead).toHaveBeenCalledOnce());
+
+    await disposable.dispose();
+
+    await vi.waitFor(() => expect(adapterSettled).toHaveBeenCalledOnce());
+    expect(requestReconcile).not.toHaveBeenCalled();
+  });
+
+  it('reconciles managed links through the invocation-scoped endpoint reader only', async () => {
+    const directFetch = vi.fn();
+    vi.stubGlobal('fetch', directFetch);
+    const managedEndpointRead = vi.fn<AgentExternalSessionsManagedEndpointRead>(
+      async ({ pathAndQuery }) => {
+        expect(pathAndQuery).toBe(
+          '/session/status?directory=%2Ftmp%2Fmanaged-project',
+        );
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'application/json' },
+          body: new Response(JSON.stringify({
+            'ses-managed-reconcile': { type: 'busy' },
+          })).body,
+        };
+      },
+    );
+    const contribution = createOpenCodeExternalSessionObservationContribution({
+      now: () => 4_000,
+    });
+    const linked = linkedManagedSource(
+      'ses-managed-reconcile',
+      '/tmp/managed-project',
+    );
+    const descriptor = contribution.describeResource(linked);
+    const links = [{
+      linkKey: descriptor.linkKey,
+      linkedSource: linked,
+    }];
+
+    await expect(contribution.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: descriptor.resourceKey,
+      links,
+      signal: new AbortController().signal,
+      managedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{
+        kind: 'described',
+        descriptor: {
+          ...descriptor,
+          changeObservation: 'observe_resource',
+        },
+      }],
+    });
+    await expect(contribution.reconcileResource({
+      purpose: 'observation_evidence',
+      resourceKey: descriptor.resourceKey,
+      links,
+      signal: new AbortController().signal,
+      managedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'observation_evidence',
+      outcomes: [{
+        linkKey: descriptor.linkKey,
+        facts: [{
+          kind: 'turn_phase',
+          evidenceClass: 'reconciliation',
+          observedAtMs: 4_000,
+          expiresAtMs: 34_000,
+          value: 'working',
+        }],
+      }],
+    });
+    expect(managedEndpointRead).toHaveBeenCalledOnce();
+    expect(directFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails managed observation honestly when its contextual reader is unavailable or stale', async () => {
+    const directFetch = vi.fn();
+    vi.stubGlobal('fetch', directFetch);
+    const requestReconcile = vi.fn();
+    const contribution = createOpenCodeExternalSessionObservationContribution({
+      now: () => 5_000,
+    });
+    const linked = linkedManagedSource('ses-stale');
+    const descriptor = contribution.describeResource(linked);
+    const disposable = await contribution.observeResource({
+      resourceKey: descriptor.resourceKey,
+      signal: new AbortController().signal,
+      managedEndpointRead: unavailableManagedEndpointRead,
+      emit() {},
+      requestReconcile,
+      requestTranscriptRefresh() {},
+    });
+
+    await vi.waitFor(() => expect(requestReconcile).toHaveBeenCalledOnce());
+    await expect(contribution.reconcileResource({
+      purpose: 'observation_evidence',
+      resourceKey: descriptor.resourceKey,
+      links: [{ linkKey: descriptor.linkKey, linkedSource: linked }],
+      signal: new AbortController().signal,
+      managedEndpointRead: unavailableManagedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'observation_evidence',
+      outcomes: [{
+        linkKey: descriptor.linkKey,
+        facts: [{
+          kind: 'retrieval_failed',
+          evidenceClass: 'reconciliation',
+          observedAtMs: 5_000,
+          axis: 'turn_phase',
+        }],
+      }],
+    });
+    expect(directFetch).not.toHaveBeenCalled();
+
+    await disposable.dispose();
+  });
+
+  it('groups stable base-URL resources and obtains exact access during reconciliation', async () => {
+    const firstCredential = await registerCredential('http://127.0.0.1:49196', 'first-secret');
+    const contribution = createOpenCodeExternalSessionObservationContribution({ env: {} });
     const first = contribution.describeResource(linkedSource('ses-shared'));
     const sameResource = contribution.describeResource(
       linkedSource('ses-shared', 'http://127.0.0.1:49196', '/tmp/other-project'),
     );
     firstCredential.dispose();
-    const secondCredential = registerCredential('http://127.0.0.1:49196/', 'second-secret');
-    const nextGeneration = contribution.describeResource(linkedSource('ses-shared'));
+    const secondCredential = await registerCredential('http://127.0.0.1:49196/', 'second-secret');
+    const replacement = contribution.describeResource(linkedSource('ses-shared'));
 
     expect(first.resourceKey).toBe(sameResource.resourceKey);
     expect(first.linkKey).not.toBe(sameResource.linkKey);
     expect(Object.keys(first).sort()).toEqual(['linkKey', 'resourceKey']);
     await expect(contribution.reconcileResource({
       purpose: 'resource_descriptors',
-      resourceKey: nextGeneration.resourceKey,
+      resourceKey: replacement.resourceKey,
       links: [{
-        linkKey: nextGeneration.linkKey,
+        linkKey: replacement.linkKey,
         linkedSource: linkedSource('ses-shared'),
       }],
       signal: new AbortController().signal,
+      managedEndpointRead: secondCredential.managedEndpointRead,
     })).resolves.toEqual({
       purpose: 'resource_descriptors',
       outcomes: [{
         kind: 'described',
         descriptor: {
-          ...nextGeneration,
+          ...replacement,
           changeObservation: 'observe_resource',
         },
       }],
     });
-    expect(nextGeneration.resourceKey).not.toBe(first.resourceKey);
-    expect(nextGeneration.linkKey).toBe(first.linkKey);
+    expect(replacement.resourceKey).toBe(first.resourceKey);
+    expect(replacement.linkKey).toBe(first.linkKey);
+    expect(first.resourceKey).toMatch(
+      /^opencode-resource-v2:external:[A-Za-z0-9_-]{43}$/u,
+    );
     expect(first.resourceKey.length).toBeLessThanOrEqual(256);
     expect(first.linkKey.length).toBeLessThanOrEqual(256);
-    expect(JSON.stringify([first, sameResource, nextGeneration])).not.toContain('secret');
-    expect(JSON.stringify([first, sameResource, nextGeneration])).not.toContain('/tmp/');
-    expect(() => contribution.observeResource({
-      resourceKey: first.resourceKey,
-      signal: new AbortController().signal,
-      emit() {},
-      requestReconcile() {},
-      requestTranscriptRefresh() {},
-    })).toThrow(/stale endpoint generation/u);
-    expect(() => contribution.observeResource({
+    expect(JSON.stringify([first, sameResource, replacement])).not.toContain('secret');
+    expect(JSON.stringify([first, sameResource, replacement])).not.toContain('/tmp/');
+    await expect(contribution.observeResource({
       resourceKey: first.resourceKey.replace(
-        /^opencode-resource-v1:[^:]+:/u,
-        'opencode-resource-v1:unknown-generation:',
+        /^opencode-resource-v2:external:/u,
+        'opencode-resource-v2:external:invalid-',
       ),
       signal: new AbortController().signal,
+      managedEndpointRead: secondCredential.managedEndpointRead,
       emit() {},
       requestReconcile() {},
       requestTranscriptRefresh() {},
-    })).toThrow(/stale endpoint generation/u);
+    })).rejects.toThrow(/resource key is invalid|resource identity is unavailable/u);
 
     secondCredential.dispose();
   });
 
-  it('routes only correlated native status events and requests reconciliation at connection boundaries', async () => {
-    const credential = registerCredential('http://127.0.0.1:49196', 'observer-secret');
+  it('rejects ambiguous sources and isolates resource/link mode mismatches', async () => {
+    const baseUrl = 'http://127.0.0.1:49196';
+    const contribution = createOpenCodeExternalSessionObservationContribution({
+      env: { HAPPIER_OPENCODE_SERVER_URL: baseUrl },
+    });
+    expect(() => contribution.describeResource({
+      source: {
+        kind: 'opencodeServer',
+        baseUrl,
+        managedEndpoint: true,
+      },
+      remoteSessionId: 'ses-ambiguous',
+      linkData: {},
+    })).toThrow(/ambiguous|baseUrl.*managed|managed.*baseUrl|source mode/u);
+
+    const managed = linkedManagedSource('ses-mode');
+    const managedDescriptor = contribution.describeResource(managed);
+    const external = linkedSource('ses-mode', baseUrl);
+    const externalDescriptor = contribution.describeResource(external);
+    const signal = new AbortController().signal;
+
+    await expect(contribution.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: managedDescriptor.resourceKey,
+      links: [{
+        linkKey: externalDescriptor.linkKey,
+        linkedSource: external,
+      }],
+      signal,
+      managedEndpointRead: unavailableManagedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{
+        kind: 'unavailable',
+        linkKey: externalDescriptor.linkKey,
+      }],
+    });
+    await expect(contribution.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: externalDescriptor.resourceKey,
+      links: [{
+        linkKey: managedDescriptor.linkKey,
+        linkedSource: managed,
+      }],
+      signal,
+      managedEndpointRead: unavailableManagedEndpointRead,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{
+        kind: 'unavailable',
+        linkKey: managedDescriptor.linkKey,
+      }],
+    });
+  });
+
+  it('routes correlated transcript events and reconciles untrusted global status events', async () => {
+    const credential = await registerCredential('http://127.0.0.1:49196', 'observer-secret');
     let onEvent:
       | ((event: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery) => void)
       | undefined;
@@ -148,6 +562,7 @@ describe('OpenCode External Session observation', () => {
       await new Promise<void>(() => undefined);
     });
     const contribution = createOpenCodeExternalSessionObservationContribution({
+      env: { HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:49196' },
       now: () => 1_000,
       subscribeGlobalEvents,
     });
@@ -155,22 +570,25 @@ describe('OpenCode External Session observation', () => {
     const otherDirectory = contribution.describeResource(
       linkedSource('ses-shared', 'http://127.0.0.1:49196', '/tmp/other-project'),
     );
-    const emit = vi.fn<(batch: ExternalAgentObservationLinkEvidenceBatchV1) => void>();
+    const emit = vi.fn<(batch: AgentExternalSessionObservationLinkEvidenceBatchV1) => void>();
     const requestReconcile = vi.fn();
     const requestTranscriptRefresh = vi.fn();
     const disposable = await contribution.observeResource({
       resourceKey: first.resourceKey,
       signal: new AbortController().signal,
+      managedEndpointRead: credential.managedEndpointRead,
       emit,
       requestReconcile,
       requestTranscriptRefresh,
     });
     await vi.waitFor(() => expect(subscribeGlobalEvents).toHaveBeenCalledOnce());
 
+    // Global-event streaming rides the same host managed endpoint as every
+    // other read, so the transport carries the sentinel origin rather than the
+    // server address.
     expect(subscribeGlobalEvents).toHaveBeenCalledWith(expect.objectContaining({
-      baseUrl: 'http://127.0.0.1:49196',
-      fetch: readOpenCodeManagedServerTransport('http://127.0.0.1:49196')?.fetch,
-      headers: { authorization: 'Basic observer-secret' },
+      baseUrl: 'http://opencode-managed.invalid',
+      fetch: expect.any(Function),
     }));
     onEvent?.(
       { payload: { type: 'server.connected', properties: {} } },
@@ -224,84 +642,18 @@ describe('OpenCode External Session observation', () => {
     expect(requestReconcile).toHaveBeenCalledTimes(3);
     onEvent?.(
       {
-        payload: {
-          type: 'session.status',
-          properties: { sessionID: 'ses-shared', status: { type: 'busy' } },
-        },
-      },
-      { provenance: 'accepted-live', connectionGeneration: 1 },
-    );
-    expect(requestReconcile).toHaveBeenCalledTimes(4);
-    onEvent?.(
-      {
-        directory: '/tmp/project',
-        payload: {
-          type: 'session.status',
-          properties: { sessionID: 'ses-shared', status: { type: 'busy' } },
-        },
-      },
-      { provenance: 'accepted-live', connectionGeneration: 1 },
-    );
-    onEvent?.(
-      {
-        directory: '/tmp/other-project',
-        payload: {
-          type: 'session.idle',
-          properties: { sessionID: 'ses-shared' },
-        },
-      },
-      { provenance: 'accepted-live', connectionGeneration: 1 },
-    );
-    onEvent?.(
-      {
-        directory: '/tmp/project',
-        payload: {
-          type: 'session.status',
-          properties: { sessionID: 'ses-shared', status: { type: 'mystery' } },
-        },
-      },
-      { provenance: 'accepted-live', connectionGeneration: 1 },
-    );
-    expect(requestReconcile).toHaveBeenCalledTimes(5);
-    onEvent?.(
-      {
         directory: '/tmp/project',
         payload: {
           type: 'session.error',
           properties: { sessionID: 'ses-shared' },
         },
       },
-      { provenance: 'accepted-live', connectionGeneration: 1 },
+      { provenance: 'untrusted-observation', connectionGeneration: 1 },
     );
-    expect(requestReconcile).toHaveBeenCalledTimes(6);
+    expect(requestReconcile).toHaveBeenCalledTimes(4);
     onUnavailable?.(new TypeError('stream unavailable'));
-    expect(requestReconcile).toHaveBeenCalledTimes(7);
-    expect(emit.mock.calls.map(([batch]) => batch)).toEqual([
-      {
-        items: [{
-          linkKey: first.linkKey,
-          facts: [{
-            kind: 'turn_phase',
-            evidenceClass: 'agent_native',
-            observedAtMs: 1_000,
-            expiresAtMs: 31_000,
-            value: 'working',
-          }],
-        }],
-      },
-      {
-        items: [{
-          linkKey: otherDirectory.linkKey,
-          facts: [{
-            kind: 'turn_phase',
-            evidenceClass: 'agent_native',
-            observedAtMs: 1_000,
-            expiresAtMs: 31_000,
-            value: 'idle',
-          }],
-        }],
-      },
-    ]);
+    expect(requestReconcile).toHaveBeenCalledTimes(5);
+    expect(emit).not.toHaveBeenCalled();
     expect(JSON.stringify(emit.mock.calls)).not.toContain('ses-shared');
     expect(JSON.stringify(emit.mock.calls)).not.toContain('observer-secret');
 
@@ -312,44 +664,20 @@ describe('OpenCode External Session observation', () => {
     credential.dispose();
   });
 
-  it('keeps an observation resource bound to its exact registration across same-base replacement', async () => {
+  it('keeps external observation independent from managed endpoint reader replacement', async () => {
     const baseUrl = 'http://127.0.0.1:49196';
-    let firstState = 'healthy';
     const firstNetworkFetch = vi.fn(async () => new Response('{}', {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
-    const firstTransport = createOpenCodeServerTransport({
+    const firstRegistration = await registerCredential(
       baseUrl,
-      instanceId: 'first-observer-instance',
-      headers: { authorization: 'Basic first-observer-secret' },
-      readManagedServerSnapshot: () => ({
-        instanceId: 'first-observer-instance',
-        state: firstState,
-        baseUrl,
-      }),
-      fetchImpl: firstNetworkFetch,
-    });
-    const firstRegistration = registerOpenCodeManagedServerEndpoint({
-      baseUrl,
-      credential: {
-        envKey: OPENCODE_SERVER_PASSWORD_ENV_KEY,
-        value: 'first-observer-secret',
-        headers: { authorization: 'Basic first-observer-secret' },
-      },
-      transport: firstTransport,
-    });
-    const subscribeGlobalEvents = vi.fn(async (params: Readonly<{
-      fetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
-    }>) => {
-      await params.fetch?.(`${baseUrl}/global/event`, { method: 'GET' });
-    });
-    const fallbackFetch = vi.fn(async () => new Response('{}', {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
+      'first-observer-secret',
+      firstNetworkFetch,
+    );
+    const subscribeGlobalEvents = vi.fn(async () => undefined);
     const contribution = createOpenCodeExternalSessionObservationContribution({
-      fetchFn: fallbackFetch,
+      env: { HAPPIER_OPENCODE_SERVER_URL: baseUrl },
       subscribeGlobalEvents: subscribeGlobalEvents as never,
     });
     const descriptor = contribution.describeResource(
@@ -360,65 +688,41 @@ describe('OpenCode External Session observation', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
-    const secondRegistration = registerOpenCodeManagedServerEndpoint({
+    const secondRegistration = await registerCredential(
       baseUrl,
-      credential: {
-        envKey: OPENCODE_SERVER_PASSWORD_ENV_KEY,
-        value: 'second-observer-secret',
-        headers: { authorization: 'Basic second-observer-secret' },
-      },
-      transport: createOpenCodeServerTransport({
-        baseUrl,
-        instanceId: 'second-observer-instance',
-        headers: { authorization: 'Basic second-observer-secret' },
-        readManagedServerSnapshot: () => ({
-          instanceId: 'second-observer-instance',
-          state: 'healthy',
-          baseUrl,
-        }),
-        fetchImpl: secondNetworkFetch,
-      }),
-    });
-    firstState = 'stopped';
+      'second-observer-secret',
+      secondNetworkFetch,
+    );
+    firstRegistration.dispose();
 
-    const disposable = contribution.observeResource({
+    const disposable = await contribution.observeResource({
       resourceKey: descriptor.resourceKey,
       signal: new AbortController().signal,
+      managedEndpointRead: secondRegistration.managedEndpointRead,
       emit() {},
       requestReconcile() {},
       requestTranscriptRefresh() {},
     });
     await vi.waitFor(() => expect(subscribeGlobalEvents).toHaveBeenCalledOnce());
-    expect(subscribeGlobalEvents.mock.calls[0]?.[0]?.fetch).toBe(firstTransport.fetch);
 
-    await expect(contribution.reconcileResource({
-      purpose: 'observation_evidence',
-      resourceKey: descriptor.resourceKey,
-      links: [{
-        linkKey: descriptor.linkKey,
-        linkedSource: linkedSource('same-port-session', baseUrl),
-      }],
-      signal: new AbortController().signal,
-    })).resolves.toMatchObject({
-      purpose: 'observation_evidence',
-      outcomes: [{
-        linkKey: descriptor.linkKey,
-        facts: [{ kind: 'retrieval_failed' }],
-      }],
-    });
     expect(firstNetworkFetch).not.toHaveBeenCalled();
     expect(secondNetworkFetch).not.toHaveBeenCalled();
-    expect(fallbackFetch).not.toHaveBeenCalled();
+    expect(secondRegistration.managedEndpointRead).not.toHaveBeenCalled();
 
     await disposable.dispose();
     secondRegistration.dispose();
-    firstRegistration.dispose();
   });
 
-  it('canonicalizes a default link directory before admitting its accepted live event', async () => {
+  it('canonicalizes a default link directory while reconciling its untrusted status event', async () => {
     const baseUrl = 'http://127.0.0.1:49196';
     const managedFetch = vi.fn(async (input: string | URL) => {
       const url = new URL(input);
+      if (url.pathname === '/session/status') {
+        return new Response('{}', {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       expect(url.pathname).toBe('/session/ses-default');
       expect(url.searchParams.has('directory')).toBe(false);
       return new Response(JSON.stringify({
@@ -429,20 +733,25 @@ describe('OpenCode External Session observation', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    const credential = registerCredential(
+    const credential = await registerCredential(
       baseUrl,
       'default-link-secret',
       managedFetch,
     );
+    vi.stubGlobal('fetch', managedFetch);
     const externalSessions = createOpenCodeExternalSessionsContribution({
       env: { HAPPIER_OPENCODE_SERVER_URL: baseUrl },
     });
     const linked = await externalSessions.resolveLinkIdentity({
-      source: { kind: 'opencodeServer', baseUrl },
+      source: {
+        kind: 'opencodeServer',
+        baseUrl,
+      },
       remoteSessionId: 'ses-default',
       signal: new AbortController().signal,
       deadlineAtMs: Date.now() + 10_000,
       maxSerializedBytes: 100_000,
+      managedEndpointRead: credential.managedEndpointRead,
     });
     expect(linked).toMatchObject({
       ok: true,
@@ -461,6 +770,7 @@ describe('OpenCode External Session observation', () => {
       | ((event: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery) => void)
       | undefined;
     const observation = createOpenCodeExternalSessionObservationContribution({
+      env: { HAPPIER_OPENCODE_SERVER_URL: baseUrl },
       now: () => 1_000,
       subscribeGlobalEvents: async (params) => {
         onEvent = params.onEvent;
@@ -475,12 +785,14 @@ describe('OpenCode External Session observation', () => {
         directory: '/tmp/other-project',
       },
     });
-    const emit = vi.fn<(batch: ExternalAgentObservationLinkEvidenceBatchV1) => void>();
+    const emit = vi.fn<(batch: AgentExternalSessionObservationLinkEvidenceBatchV1) => void>();
+    const requestReconcile = vi.fn();
     const disposable = await observation.observeResource({
       resourceKey: descriptor.resourceKey,
       signal: new AbortController().signal,
+      managedEndpointRead: credential.managedEndpointRead,
       emit,
-      requestReconcile() {},
+      requestReconcile,
       requestTranscriptRefresh() {},
     });
     await vi.waitFor(() => expect(onEvent).toBeTypeOf('function'));
@@ -495,23 +807,13 @@ describe('OpenCode External Session observation', () => {
         },
       },
     }, {
-      provenance: 'accepted-live',
+      provenance: 'untrusted-observation',
       connectionGeneration: 1,
     });
 
     expect(descriptor.linkKey).not.toBe(otherDirectory.linkKey);
-    expect(emit).toHaveBeenCalledWith({
-      items: [{
-        linkKey: descriptor.linkKey,
-        facts: [{
-          kind: 'turn_phase',
-          evidenceClass: 'agent_native',
-          observedAtMs: 1_000,
-          expiresAtMs: 31_000,
-          value: 'working',
-        }],
-      }],
-    });
+    expect(requestReconcile).toHaveBeenCalledOnce();
+    expect(emit).not.toHaveBeenCalled();
 
     await disposable.dispose();
     credential.dispose();
@@ -528,7 +830,7 @@ describe('OpenCode External Session observation', () => {
       },
     });
     const descriptor = contribution.describeResource(
-      linkedSource('ses-long-endpoint', baseUrl),
+      linkedSource('ses-long-endpoint', baseUrl, '/tmp/project'),
     );
 
     expect(baseUrl.length).toBeGreaterThan(256);
@@ -538,17 +840,26 @@ describe('OpenCode External Session observation', () => {
     const disposable = await contribution.observeResource({
       resourceKey: descriptor.resourceKey,
       signal: new AbortController().signal,
+      managedEndpointRead: unavailableManagedEndpointRead,
       emit() {},
       requestReconcile() {},
       requestTranscriptRefresh() {},
     });
-    await vi.waitFor(() => expect(observedBaseUrl).toBe(baseUrl.replace(/\/+$/u, '')));
+    // The long configured address never reaches the transport: the managed
+    // endpoint holds it, and observation streams through the sentinel origin.
+    await vi.waitFor(() => expect(observedBaseUrl).toBe('http://opencode-managed.invalid'));
     await disposable.dispose();
   });
 
   it('reconciles each unique directory once with exact ordered outcomes and isolated failures', async () => {
     const fetchFn = vi.fn(async (input: string | URL) => {
       const directory = new URL(input).searchParams.get('directory');
+      if (directory === null) {
+        return new Response('{}', {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (directory === '/tmp/project-a') {
         return new Response(JSON.stringify({
           'ses-shared': { type: 'busy' },
@@ -562,12 +873,13 @@ describe('OpenCode External Session observation', () => {
       }
       throw new Error(`unexpected directory: ${directory ?? '<default>'}`);
     });
-    const credential = registerCredential(
+    const credential = await registerCredential(
       'http://127.0.0.1:49196',
       'status-secret',
       fetchFn,
     );
     const contribution = createOpenCodeExternalSessionObservationContribution({
+      env: { HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:49196' },
       now: () => 2_000,
     });
     const projectABusySource = linkedSource(
@@ -598,6 +910,7 @@ describe('OpenCode External Session observation', () => {
         { linkKey: projectAAbsent.linkKey, linkedSource: projectAAbsentSource },
       ],
       signal: new AbortController().signal,
+      managedEndpointRead: credential.managedEndpointRead,
     })).resolves.toEqual({
       purpose: 'resource_descriptors',
       outcomes: [
@@ -635,6 +948,7 @@ describe('OpenCode External Session observation', () => {
         { linkKey: projectAAbsent.linkKey, linkedSource: projectAAbsentSource },
       ],
       signal: new AbortController().signal,
+      managedEndpointRead: credential.managedEndpointRead,
     })).resolves.toEqual({
       purpose: 'observation_evidence',
       outcomes: [
@@ -671,7 +985,7 @@ describe('OpenCode External Session observation', () => {
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(fetchFn.mock.calls.map(([input]) => input).sort()).toEqual([
+    expect(fetchFn.mock.calls.map(([input]) => String(input)).sort()).toEqual([
       'http://127.0.0.1:49196/session/status?directory=%2Ftmp%2Fproject-a',
       'http://127.0.0.1:49196/session/status?directory=%2Ftmp%2Fproject-b',
     ]);
@@ -679,15 +993,14 @@ describe('OpenCode External Session observation', () => {
       expect(init).toEqual(expect.objectContaining({
         method: 'GET',
       }));
-      expect(new Headers(init?.headers).get('authorization')).toBe(
-        'Basic status-secret',
-      );
+      expect(new Headers(init?.headers).get('authorization')).toBeNull();
     }
     await expect(contribution.reconcileResource({
       purpose: 'observation_evidence',
       resourceKey: projectABusy.resourceKey,
       links: [],
       signal: new AbortController().signal,
+      managedEndpointRead: credential.managedEndpointRead,
     })).rejects.toThrow(/requires at least one current link/u);
     credential.dispose();
   });

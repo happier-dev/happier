@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  PluginExecService,
+  ExecService,
   PluginExecSpawnRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import {
   buildPiPreflightModelsFromListModelsOutput,
@@ -57,7 +57,7 @@ function createExecRunFixture(params: Readonly<{
         throw new Error('agent CLI readiness should not be used for Pi model preflight');
       },
     },
-  } satisfies PluginExecService;
+  } satisfies ExecService;
   return { exec, runs };
 }
 

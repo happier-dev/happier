@@ -34,10 +34,6 @@
       "types": "./dist/agent/sessionFiles.d.ts",
       "default": "./dist/agent/sessionFiles.js"
     },
-    "./agent/sessionMetadata": {
-      "types": "./dist/agent/sessionMetadata.d.ts",
-      "default": "./dist/agent/sessionMetadata.js"
-    },
     "./agent/runtime/compaction": {
       "types": "./dist/agent/runtime/compaction/index.d.ts",
       "default": "./dist/agent/runtime/compaction/index.js"
@@ -53,30 +49,27 @@
     "./agent/runtime/rpc/permissions": {
       "types": "./dist/agent/runtime/rpc/permissions.d.ts",
       "default": "./dist/agent/runtime/rpc/permissions.js"
-    },
-    "./ui/behavior": {
-      "types": "./dist/ui/uiBehavior.d.ts",
-      "react-native": "./dist/ui/uiBehavior.js",
-      "default": "./dist/ui/uiBehavior.js"
     }
   },
   "files": [
     "dist",
+    ".happier-plugin/plugin.json",
     "package.json"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "vitest run",
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run",
     "test:request-auth-composed": "vitest run src/agent/auth/services/requestAuth/source.composed.test.ts",
     "test:request-auth-real-owners": "vitest run --config vitest.realOwners.config.ts",
     "test:request-auth-spawned-real-owners": "vitest run --config vitest.spawnedRealOwners.config.ts",
-    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
-    "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/tests": "0.0.0",

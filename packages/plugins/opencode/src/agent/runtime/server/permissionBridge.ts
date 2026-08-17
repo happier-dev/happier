@@ -1,10 +1,10 @@
 import {
   AgentRuntimeJsonValueSchema,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
-  PluginUiApprovalRequest,
-  PluginUiApprovalResult,
-} from '@happier-dev/plugin-sdk/runtime';
+  InteractionTransientApprovalAuthorRequestV1,
+  InteractionTransientApprovalResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import type { OpenCodeServerPermissionReply } from './openCodeServerClient.js';
 import { asRecord, normalizeString } from './openCodeParsing.js';
@@ -106,9 +106,10 @@ export function readOpenCodePermissionAsk(
 
 export function buildOpenCodePermissionApprovalRequest(
   ask: OpenCodePermissionAsk,
-): PluginUiApprovalRequest {
+): InteractionTransientApprovalAuthorRequestV1 {
   const toolName = ask.permission;
   return {
+    kind: 'approval',
     title: `Allow OpenCode to use ${toolName}?`,
     description: `OpenCode requested permission to use ${toolName}.`,
     subject: {
@@ -126,7 +127,7 @@ export function buildOpenCodePermissionApprovalRequest(
 }
 
 export function mapOpenCodeApprovalResultToReply(
-  result: PluginUiApprovalResult,
+  result: InteractionTransientApprovalResultV1,
 ): OpenCodeServerPermissionReply {
   if (result.status === 'approved') {
     return result.persistence === 'session' ? 'always' : 'once';
@@ -135,14 +136,7 @@ export function mapOpenCodeApprovalResultToReply(
 }
 
 export function readOpenCodeApprovalReplyMessage(
-  result: PluginUiApprovalResult,
+  _result: InteractionTransientApprovalResultV1,
 ): string | null {
-  if (result.status === 'denied') return normalizeString(result.rationale) || null;
-  if (result.status === 'cancelled') {
-    return normalizeString(result.diagnostic?.message) || null;
-  }
-  if (result.status === 'unavailable') {
-    return normalizeString(result.diagnostic.message) || null;
-  }
   return null;
 }

@@ -1,33 +1,18 @@
 import { asRecord, normalizeString, readStringRecord } from './openCodeParsing.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
-import type {
-  OpenCodeResolvedMcpServer,
-  OpenCodeRuntimeContext,
-} from './runtimeContext.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 
 type OpenCodeMcpRegistration = Readonly<{
   name: string;
   config: Readonly<Record<string, unknown>>;
 }>;
 
-const SAFE_REMOTE_MCP_PROTOCOLS = new Set(['http:', 'https:']);
-const URL_WHITESPACE_PATTERN = /\s/u;
-
-function readSafeRemoteMcpUrl(value: unknown): string | null {
-  const url = normalizeString(value);
-  if (!url || URL_WHITESPACE_PATTERN.test(url)) return null;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-
-  if (!SAFE_REMOTE_MCP_PROTOCOLS.has(parsed.protocol)) return null;
-  if (parsed.username || parsed.password) return null;
-  return parsed.href;
-}
+export type OpenCodeMcpRegistrationResult = Readonly<{
+  requiredHappier: Readonly<
+    | { status: 'ready' }
+    | { status: 'failed'; error: unknown }
+  >;
+}>;
 
 function readStringArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return Object.freeze([]);
@@ -73,89 +58,54 @@ export function readOpenCodeMcpRegistrations(raw: unknown): readonly OpenCodeMcp
   return Object.freeze(registrations);
 }
 
-function readResolvedRemoteRegistration(server: OpenCodeResolvedMcpServer): OpenCodeMcpRegistration | null {
-  const name = normalizeString(server.name) || normalizeString(server.id);
-  if (!name) return null;
-
-  const transport = server.transport;
-  if (transport.kind === 'http' || transport.kind === 'sse') {
-    const url = readSafeRemoteMcpUrl(transport.url);
-    if (!url) return null;
-    return Object.freeze({
-      name,
-      config: Object.freeze({
-        type: 'remote',
-        enabled: true,
-        url,
-      }),
-    });
-  }
-
-  if (transport.kind === 'managed') {
-    const url = readSafeRemoteMcpUrl(transport.url);
-    if (!url) return null;
-    return Object.freeze({
-      name,
-      config: Object.freeze({
-        type: 'remote',
-        enabled: true,
-        url,
-      }),
-    });
-  }
-
-  return null;
-}
-
-export function readResolvedOpenCodeMcpRegistrations(
-  servers: readonly OpenCodeResolvedMcpServer[] | undefined,
-): readonly OpenCodeMcpRegistration[] {
-  const registrations: OpenCodeMcpRegistration[] = [];
-  for (const server of servers ?? []) {
-    const registration = readResolvedRemoteRegistration(server);
-    if (registration) registrations.push(registration);
-  }
-  return Object.freeze(registrations);
-}
-
-function mergeOpenCodeMcpRegistrations(
-  first: readonly OpenCodeMcpRegistration[],
-  second: readonly OpenCodeMcpRegistration[],
-): readonly OpenCodeMcpRegistration[] {
-  const seen = new Set<string>();
-  const merged: OpenCodeMcpRegistration[] = [];
-  for (const registration of [...first, ...second]) {
-    const key = registration.name;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(registration);
-  }
-  return Object.freeze(merged);
-}
-
 export async function registerOpenCodeMcpServers(params: Readonly<{
   ctx: OpenCodeRuntimeContext;
   client: OpenCodeServerClient;
   directory: string;
   mcpServers: unknown;
-  resolvedMcpServers?: readonly OpenCodeResolvedMcpServer[];
-}>): Promise<void> {
-  const registrations = mergeOpenCodeMcpRegistrations(
-    readOpenCodeMcpRegistrations(params.mcpServers),
-    readResolvedOpenCodeMcpRegistrations(params.resolvedMcpServers),
-  );
+}>): Promise<OpenCodeMcpRegistrationResult> {
+  const rawServers = asRecord(params.mcpServers);
+  const registrations = readOpenCodeMcpRegistrations(params.mcpServers);
+  let requiredHappier: OpenCodeMcpRegistrationResult['requiredHappier'] = {
+    status: 'failed',
+    error: new Error(
+      rawServers !== null && Object.prototype.hasOwnProperty.call(rawServers, 'happier')
+        ? 'required Happier MCP server command is missing'
+        : 'required Happier MCP server configuration is missing',
+    ),
+  };
   for (const registration of registrations) {
-    await params.client.mcpAdd({
-      directory: params.directory,
-      name: registration.name,
-      config: registration.config,
-    }).catch((error: unknown) => {
-      params.ctx.logger.debug('[OpenCodeServer] Failed to register MCP server (non-fatal)', {
-        serverName: registration.name,
-        error,
+    try {
+      const registrationStatus = await params.client.mcpAdd({
+        directory: params.directory,
+        name: registration.name,
+        config: registration.config,
       });
-    });
+      if (registrationStatus.status !== 'connected') {
+        const detail = 'error' in registrationStatus ? `: ${registrationStatus.error}` : '';
+        throw new Error(
+          `OpenCode MCP server "${registration.name}" returned status "${registrationStatus.status}"${detail}`,
+        );
+      }
+      if (registration.name === 'happier') {
+        requiredHappier = { status: 'ready' };
+      }
+    } catch (error) {
+      if (registration.name === 'happier') {
+        requiredHappier = { status: 'failed', error };
+      }
+      params.ctx.logger.debug(
+        registration.name === 'happier'
+          ? '[OpenCodeServer] Required Happier MCP server registration failed; prompt admission will fail closed'
+          : '[OpenCodeServer] Failed to register MCP server (non-fatal)',
+        {
+          serverName: registration.name,
+          error,
+        },
+      );
+    }
   }
+  return Object.freeze({ requiredHappier: Object.freeze(requiredHappier) });
 }
 
 export function scheduleOpenCodeMcpServerRegistration(params: Readonly<{
@@ -163,15 +113,21 @@ export function scheduleOpenCodeMcpServerRegistration(params: Readonly<{
   client: OpenCodeServerClient;
   directory: string;
   mcpServers: unknown;
-}>): void {
-  void (async () => {
-    await registerOpenCodeMcpServers({
+}>): Promise<OpenCodeMcpRegistrationResult> {
+  return (async () => {
+    return await registerOpenCodeMcpServers({
       ctx: params.ctx,
       client: params.client,
       directory: params.directory,
       mcpServers: params.mcpServers,
     });
   })().catch((error: unknown) => {
-    params.ctx.logger.debug('[OpenCodeServer] MCP server registration setup failed (non-fatal)', { error });
+    params.ctx.logger.debug(
+      '[OpenCodeServer] MCP server registration setup failed; prompt admission will fail closed',
+      { error },
+    );
+    return {
+      requiredHappier: { status: 'failed', error },
+    } satisfies OpenCodeMcpRegistrationResult;
   });
 }

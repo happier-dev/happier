@@ -1,16 +1,9 @@
 import {
   normalizeOpenCodeServerBaseUrl,
   normalizeOpenCodeServerBaseUrlExplicit,
-  readCanonicalOpenCodeAgentRuntimeDescriptorV1,
   type CanonicalOpenCodeAgentRuntimeDescriptorV1,
   type OpenCodeBackendMode,
 } from '../../protocol/runtimeDescriptorV1.js';
-
-type RuntimeDescriptorEnvelopeV1 = Readonly<{
-  v: 1;
-  agentId: string;
-  provider: Readonly<Record<string, unknown>>;
-} & Record<string, unknown>>;
 
 export {
   buildOpenCodeAgentRuntimeDescriptor,
@@ -48,51 +41,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorEnvelopeV1 | null {
-  const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1) {
-    return null;
-  }
-  const agentId = readAgentIdCompat(descriptor);
-  if (!agentId) return null;
-  const provider = asRecord(descriptor.provider);
-  if (!provider) return null;
-  const { providerId: _legacyProviderId, ...canonicalDescriptor } = descriptor;
-  return {
-    ...canonicalDescriptor,
-    v: 1,
-    agentId,
-    provider,
-  } as RuntimeDescriptorEnvelopeV1;
-}
-
-function readRuntimeDescriptorV1FromMetadata(metadata: unknown): RuntimeDescriptorEnvelopeV1 | null {
-  const metadataRecord = asRecord(metadata);
-  if (!metadataRecord) return null;
-  return readRuntimeDescriptorV1(metadataRecord.runtimeDescriptorV1)
-    ?? readRuntimeDescriptorV1(metadataRecord.agentRuntimeDescriptorV1);
-}
-
-function readRawRuntimeDescriptorV1FromMetadata(metadata: unknown): unknown {
-  const metadataRecord = asRecord(metadata);
-  if (!metadataRecord) return null;
-  return metadataRecord.runtimeDescriptorV1 ?? metadataRecord.agentRuntimeDescriptorV1 ?? null;
-}
-
 function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed || null;
-}
-
-function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
-  const hasAgentId = Object.hasOwn(record, 'agentId');
-  const hasProviderId = Object.hasOwn(record, 'providerId');
-  const agentId = normalizeTrimmedString(record.agentId);
-  const providerId = normalizeTrimmedString(record.providerId);
-  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
-  if (agentId && providerId && agentId !== providerId) return null;
-  return agentId ?? providerId;
 }
 
 function readLegacyOpenCodeBackendMode(metadata: Readonly<Record<string, unknown>>): OpenCodeBackendMode | null {
@@ -160,20 +112,7 @@ export function readOpenCodeSessionMetadataRuntimeDescriptor(
 ): OpenCodeRuntimeDescriptor | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
-  const rawDescriptorInput = readRawRuntimeDescriptorV1FromMetadata(metadataRecord);
-  const descriptor = readCanonicalOpenCodeAgentRuntimeDescriptorV1(
-    readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? rawDescriptorInput,
-  );
-  const legacyDescriptor = readLegacyOpenCodeRuntimeDescriptor(metadataRecord);
-  if (!descriptor) return legacyDescriptor;
-  const serverBaseUrl = descriptor.serverBaseUrl ?? legacyDescriptor?.serverBaseUrl ?? null;
-  return toOpenCodeRuntimeDescriptor({
-    agentId: 'opencode',
-    backendMode: descriptor.backendMode ?? legacyDescriptor?.backendMode ?? 'server',
-    providerSessionId: descriptor.providerSessionId ?? legacyDescriptor?.providerSessionId ?? null,
-    serverBaseUrl,
-    serverBaseUrlExplicit: Boolean(serverBaseUrl && (descriptor.serverBaseUrlExplicit || legacyDescriptor?.serverBaseUrlExplicit === true)),
-  });
+  return readLegacyOpenCodeRuntimeDescriptor(metadataRecord);
 }
 
 export function readOpenCodeSessionAffinityFromMetadata(metadata: unknown): OpenCodeSessionAffinity {

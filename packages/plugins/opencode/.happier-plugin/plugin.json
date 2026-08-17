@@ -1,0 +1,557 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": true,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "catalog": {
+              "active": [
+                "skills"
+              ]
+            },
+            "compaction": {
+              "events": true,
+              "manual": true
+            },
+            "configuration": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume",
+              "fork"
+            ],
+            "usageLimitRecovery": {
+              "active": [
+                "checkNow"
+              ],
+              "inactive": [
+                "checkNow"
+              ]
+            }
+          },
+          "surfaces": [
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "auth",
+                  "login"
+                ],
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "parser": "opencodeAuthList",
+              "statusArgs": [
+                "auth",
+                "list"
+              ]
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "OpenCode CLI",
+          "executable": {
+            "binaryName": "opencode",
+            "knownUserBinDirSuffixes": [
+              ".opencode/bin",
+              "AppData/Roaming/npm"
+            ],
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://opencode.ai",
+            "guideUrl": "https://opencode.ai/docs",
+            "managed": {
+              "binaryName": "opencode",
+              "kind": "managed_package",
+              "packageBinarySetup": {
+                "kind": "opencode_platform_binary"
+              },
+              "packageName": "opencode-ai"
+            },
+            "manual": {
+              "kind": "command"
+            },
+            "recommendationOrder": 40
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "environment",
+              "httpHeaders"
+            ],
+            "purpose": "anthropic-model-request",
+            "service": {
+              "localId": "claude-subscription",
+              "pluginId": "happier.agent.claude"
+            }
+          },
+          {
+            "materializationKinds": [
+              "httpHeaders"
+            ],
+            "purpose": "openai-codex-model-request",
+            "service": {
+              "localId": "openai-codex",
+              "pluginId": "happier.agent.codex"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "anthropic-api-key",
+            "service": {
+              "localId": "anthropic",
+              "pluginId": "happier.agent.claude"
+            }
+          }
+        ],
+        "id": "opencode",
+        "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-responses",
+            "openai-chat"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_OPENCODE_PROVIDER_API_KEY",
+              "OPENCODE_AUTH_CONTENT",
+              "OPENCODE_CONFIG_CONTENT",
+              "OPENAI_API_KEY",
+              "ANTHROPIC_API_KEY",
+              "CLAUDE_CODE_OAUTH_TOKEN"
+            ],
+            "suppressConnectedServiceIds": [
+              "openai-codex",
+              "openai",
+              "claude-subscription",
+              "anthropic"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "raw",
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": "anyValidated"
+                },
+                "protocol": "openai-responses"
+              },
+              {
+                "destination": {
+                  "formats": [
+                    "raw",
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": "anyValidated"
+                },
+                "protocol": "openai-chat"
+              }
+            ],
+            "supportsNoAuth": true
+          },
+          "materialization": "configFile",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {
+                      "managedEndpoint": true
+                    },
+                    "kind": "default"
+                  },
+                  {
+                    "byServerIdSettingId": "opencodeServerBaseUrlByServerIdV1",
+                    "constants": {},
+                    "field": "baseUrl",
+                    "kind": "agentSetting",
+                    "normalization": "httpOrigin",
+                    "settingId": "opencodeServerBaseUrl"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "opencodeServer"
+                    },
+                    {
+                      "field": "baseUrl",
+                      "kind": "field"
+                    },
+                    {
+                      "field": "directory",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "opencodeServer"
+                    },
+                    {
+                      "kind": "unknown",
+                      "name": "baseUrl",
+                      "optional": true
+                    },
+                    {
+                      "kind": "unknown",
+                      "name": "directory",
+                      "optional": true
+                    },
+                    {
+                      "kind": "unknown",
+                      "name": "managedEndpoint",
+                      "optional": true
+                    }
+                  ]
+                },
+                "sourceKind": "opencodeServer"
+              }
+            ]
+          }
+        },
+        "title": "OpenCode"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [
+        {
+          "id": "config",
+          "metadata": {
+            "agentId": "opencode"
+          },
+          "title": "OpenCode MCP configuration"
+        }
+      ],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "default": "server",
+            "description": {
+              "fallback": "Choose the integration backend.",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.subtitle"
+            },
+            "id": "opencodeBackendMode",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Uses OpenCode server APIs for richer features and reliability.",
+                    "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.options.server.subtitle"
+                  },
+                  "title": {
+                    "fallback": "Server (recommended)",
+                    "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.options.server.title"
+                  },
+                  "value": "server"
+                },
+                {
+                  "description": {
+                    "fallback": "Routes OpenCode through ACP; fewer features.",
+                    "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.options.acp.subtitle"
+                  },
+                  "title": {
+                    "fallback": "ACP (legacy)",
+                    "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.options.acp.title"
+                  },
+                  "value": "acp"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Preferred OpenCode backend mode",
+              "enum": [
+                "server",
+                "acp"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "OpenCode backend mode",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeBackendMode.title"
+            }
+          },
+          {
+            "default": "",
+            "description": {
+              "fallback": "Optional override for a server you run yourself. HTTPS may use any host; HTTP is limited to localhost.",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeServerBaseUrl.subtitle"
+            },
+            "id": "opencodeServerBaseUrl",
+            "presentation": {
+              "binding": {
+                "byServerIdSettingId": "opencodeServerBaseUrlByServerIdV1",
+                "fallbackSettingId": "opencodeServerBaseUrl",
+                "kind": "perActiveServer"
+              },
+              "control": "text"
+            },
+            "schema": {
+              "description": "Optional override for a user-managed OpenCode server URL",
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Existing OpenCode server URL",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeServerBaseUrl.title"
+            }
+          },
+          {
+            "description": {
+              "fallback": "Set this only if your OpenCode server runs with OPENCODE_SERVER_PASSWORD. Stored encrypted on this machine and never synced.",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeServerPassword.subtitle"
+            },
+            "id": "opencodeServerPassword",
+            "schema": {
+              "description": "OPENCODE_SERVER_PASSWORD of a user-managed OpenCode server",
+              "type": "string"
+            },
+            "secret": {
+              "custody": "daemon",
+              "managedServiceOrigin": {
+                "endpointSettingId": "opencodeServerBaseUrl"
+              }
+            },
+            "title": {
+              "fallback": "Existing OpenCode server password",
+              "key": "settingsAgents.plugins.opencode.fields.opencodeServerPassword.title"
+            }
+          },
+          {
+            "default": {},
+            "id": "opencodeServerBaseUrlByServerIdV1",
+            "presentation": {
+              "hidden": true
+            },
+            "schema": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Per-server overrides for user-managed OpenCode server URLs",
+              "type": "object"
+            },
+            "title": "Per-server OpenCode server URLs"
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "blue"
+            },
+            "ionName": "code-slash-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "Server mode unlocks questions and native forking. ACP mode is a legacy fallback.",
+                "key": "settingsAgents.plugins.opencode.sections.backendMode.footer"
+              },
+              "fields": [
+                "opencodeBackendMode"
+              ],
+              "id": "opencode-backend-mode",
+              "title": {
+                "fallback": "Backend mode",
+                "key": "settingsAgents.plugins.opencode.sections.backendMode.title"
+              }
+            },
+            {
+              "description": {
+                "fallback": "Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute HTTPS URL for any server you run yourself, or HTTP only for localhost. Put the password in the field below, never in the URL.",
+                "key": "settingsAgents.plugins.opencode.sections.server.footer"
+              },
+              "fields": [
+                "opencodeServerBaseUrl",
+                "opencodeServerPassword"
+              ],
+              "id": "opencode-server",
+              "title": {
+                "fallback": "Server connection",
+                "key": "settingsAgents.plugins.opencode.sections.server.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "opencode",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "OpenCode",
+          "key": "settingsAgents.plugins.opencode.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "opencode"
+        ],
+        "id": "opencode-cli",
+        "title": "OpenCode CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "OpenCode",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "opencode-workspace",
+        "reason": "Use the admitted Agent workspace as the OpenCode process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "opencode-process",
+        "reason": "Run the declared OpenCode CLI executable.",
+        "scope": {
+          "envKeys": [
+            "HAPPIER_OPENCODE_PROVIDER_API_KEY",
+            "OPENCODE_AUTH_CONTENT",
+            "OPENCODE_CONFIG_CONTENT",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "XDG_CONFIG_HOME",
+            "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH",
+            "OPENCODE_PERMISSION",
+            "OPENCODE_SERVER_PASSWORD"
+          ],
+          "executables": [
+            {
+              "id": "opencode-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.opencode",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

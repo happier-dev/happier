@@ -17,11 +17,11 @@ describe('OpenCode plugin session surface declarations', () => {
       {
         sourceKind: 'opencodeServer',
         schema: {
-          passthrough: true,
           fields: [
             { name: 'kind', kind: 'literal', value: 'opencodeServer' },
             { name: 'baseUrl', kind: 'unknown', optional: true },
             { name: 'directory', kind: 'unknown', optional: true },
+            { name: 'managedEndpoint', kind: 'unknown', optional: true },
           ],
         },
         key: {
@@ -31,7 +31,16 @@ describe('OpenCode plugin session surface declarations', () => {
             { kind: 'field', field: 'directory' },
           ],
         },
-        instances: [{ kind: 'default', constants: {} }],
+        instances: [
+          { kind: 'default', constants: { managedEndpoint: true } },
+          {
+            kind: 'agentSetting',
+            settingId: 'opencodeServerBaseUrl',
+            byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
+            field: 'baseUrl',
+            normalization: 'httpOrigin',
+          },
+        ],
       },
     ]);
   });

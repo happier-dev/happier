@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
-  createAdapterHarness,
-  type AdapterHarnessV1,
-} from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
+  createAgentSessionRuntimeHarness,
+  type AgentSessionRuntimeHarness,
+} from '@happier-dev/plugin-sdk/testing';
+import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
@@ -11,10 +12,27 @@ import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { OpenCodeSseHttpError } from './openCodeSse.js';
-import type {
-  OpenCodeManagedServerSnapshot,
-  OpenCodeRuntimeContext,
-} from './runtimeContext.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
+
+const readyMcpRegistration = Promise.resolve({
+  requiredHappier: { status: 'ready' as const },
+});
+
+function managedServiceSnapshot(
+  overrides: Partial<ManagedServiceSnapshot> = {},
+): ManagedServiceSnapshot {
+  return {
+    id: 'opencode-server',
+    state: 'healthy',
+    mode: 'spawn',
+    baseUrl: 'http://127.0.0.1:49196',
+    startedAtMs: 1000,
+    lastHealthyAtMs: 1200,
+    diagnostics: [],
+    diagnosticsTruncated: false,
+    ...overrides,
+  };
+}
 
 type RuntimeWithProviderEvents = OpenCodeRuntimeTurnOperations & Readonly<{
   handleProviderEvent(event: unknown): Promise<void>;
@@ -37,8 +55,8 @@ type TestOpenCodeClient = OpenCodeServerClient & Readonly<{
   }>): Promise<void>;
 }>;
 
-const activeHarnesses: AdapterHarnessV1[] = [];
-const runtimeEventsByHarness = new WeakMap<AdapterHarnessV1, OpenCodeRuntimeEvent[]>();
+const activeHarnesses: AgentSessionRuntimeHarness[] = [];
+const runtimeEventsByHarness = new WeakMap<AgentSessionRuntimeHarness, OpenCodeRuntimeEvent[]>();
 
 afterEach(() => {
   for (const harness of activeHarnesses) {
@@ -54,7 +72,7 @@ function createContextFixture(options?: Readonly<{
   ) => Promise<Readonly<{ decision: string; rationale?: string }>>;
   onSessionStateFieldWrite?: (request: unknown) => Promise<void>;
 }>) {
-  const harness = createAdapterHarness();
+  const harness = createAgentSessionRuntimeHarness();
   activeHarnesses.push(harness);
   const runtimeEvents: OpenCodeRuntimeEvent[] = [];
   runtimeEventsByHarness.set(harness, runtimeEvents);
@@ -88,13 +106,18 @@ function createContextFixture(options?: Readonly<{
     },
     config: { values: {} },
     env: { list: () => ({}) },
-    managedServer: {
+    managedServices: {
+      dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
       supervise: vi.fn(async () => {
         throw new Error('managed server is outside the OpenCode runtime fixture');
       }),
     },
     ui: {
-      askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })),
+      askQuestions: vi.fn(async () => ({
+        requestId: 'question-cancelled',
+        kind: 'questions' as const,
+        status: 'userCancelled' as const,
+      })),
     },
     sessions: {
       current: {
@@ -118,7 +141,7 @@ function createContextFixture(options?: Readonly<{
       },
     },
     storage: {
-      session: {
+      daemonSession: {
         get: async (key) => sessionStorage.get(key),
         set: async (key, value) => {
           sessionStorage.set(key, value);
@@ -212,6 +235,8 @@ function createClientFixture(): TestOpenCodeClient {
     sessionTodo: vi.fn(async () => [
       { id: 'todo-1', content: 'Ship OpenCode runtime', status: 'in_progress', priority: 'high' },
     ]),
+    permissionList: vi.fn(async () => []),
+    questionList: vi.fn(async () => []),
     permissionReply: vi.fn(async () => undefined),
     questionReply: vi.fn(async () => undefined),
     questionReject: vi.fn(async () => undefined),
@@ -228,8 +253,14 @@ async function createStartedRuntime(params?: Readonly<{
   client?: TestOpenCodeClient;
   ctx?: OpenCodeRuntimeContext;
   env?: Readonly<Record<string, string>>;
-  harness?: AdapterHarnessV1;
-  readManagedServerSnapshot?: () => OpenCodeManagedServerSnapshot | null;
+  harness?: AgentSessionRuntimeHarness;
+  readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null;
+  mcpRegistration?: Promise<Readonly<{
+    requiredHappier: Readonly<
+      | { status: 'ready' }
+      | { status: 'failed'; error: unknown }
+    >;
+  }>>;
 }>): Promise<RuntimeWithProviderEvents> {
   const runtimeParams = {
     ctx: params?.ctx ?? createContextFixture().ctx,
@@ -238,7 +269,8 @@ async function createStartedRuntime(params?: Readonly<{
     baseUrl: 'http://127.0.0.1:49196',
     client: params?.client ?? createClientFixture(),
     env: params?.env,
-    readManagedServerSnapshot: params?.readManagedServerSnapshot,
+    readManagedServiceSnapshot: params?.readManagedServiceSnapshot,
+    mcpRegistration: params?.mcpRegistration ?? readyMcpRegistration,
   };
   const runtime = createOpenCodeServerRuntime(runtimeParams) as RuntimeWithProviderEvents;
   const runtimeEvents = params?.harness
@@ -310,6 +342,7 @@ describe('createOpenCodeServerRuntime', () => {
       happierSessionId: 'happy-session-without-turn',
       baseUrl: 'http://127.0.0.1:49196',
       client,
+      mcpRegistration: readyMcpRegistration,
     });
 
     await expect(runtime.sendTurnPrompt('must not reach OpenCode')).rejects.toThrow(
@@ -328,6 +361,7 @@ describe('createOpenCodeServerRuntime', () => {
       happierSessionId: 'happy-child',
       baseUrl: 'http://127.0.0.1:49196',
       client,
+      mcpRegistration: readyMcpRegistration,
     });
 
     await expect(runtime.openSession({
@@ -357,6 +391,7 @@ describe('createOpenCodeServerRuntime', () => {
       happierSessionId: 'happy-resume',
       baseUrl: 'http://127.0.0.1:49196',
       client,
+      mcpRegistration: readyMcpRegistration,
     });
 
     await expect(runtime.openSession({
@@ -441,6 +476,13 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createClientFixture();
     vi.mocked(client.providersList).mockResolvedValue([{
       id: 'opencode',
+      models: {
+        'big-pickle': {
+          id: 'big-pickle',
+          status: 'active',
+          capabilities: { input: { text: true } },
+        },
+      },
     }]);
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
@@ -692,18 +734,7 @@ describe('createOpenCodeServerRuntime', () => {
       ctx,
       client,
       harness,
-      readManagedServerSnapshot: () => ({
-        id: 'opencode-server',
-        instanceId: 'host-instance-a',
-        state: 'healthy',
-        mode: 'managed-spawn',
-        baseUrl: 'http://127.0.0.1:49196',
-        port: 49196,
-        credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-        pid: 100,
-        startedAt: 1000,
-        lastHealthyAt: 1200,
-      } as OpenCodeManagedServerSnapshot),
+      readManagedServiceSnapshot: () => managedServiceSnapshot(),
     });
 
     beginTestHostTurn(runtime);
@@ -722,52 +753,132 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
-  it('does not let stale server.connected readiness satisfy a replacement managed-server generation', async () => {
+  it('waits for required Happier MCP registration before dispatching the first prompt', async () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
-    let snapshot: OpenCodeManagedServerSnapshot = {
-      id: 'opencode-server',
-      instanceId: 'host-instance-a',
-      state: 'healthy',
-      mode: 'managed-spawn',
-      baseUrl: 'http://127.0.0.1:49196',
-      port: 49196,
-      credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-      pid: 100,
-      startedAt: 1000,
-      lastHealthyAt: 1200,
-    } as OpenCodeManagedServerSnapshot;
+    let resolveRequiredHappier!: (result: Readonly<{
+      requiredHappier: Readonly<{ status: 'ready' }>;
+    }>) => void;
+    const mcpRegistration = new Promise<Readonly<{
+      requiredHappier: Readonly<{ status: 'ready' }>;
+    }>>((resolve) => {
+      resolveRequiredHappier = resolve;
+    });
     const runtime = await createStartedRuntime({
       ctx,
       client,
       harness,
-      readManagedServerSnapshot: () => snapshot,
+      mcpRegistration,
+    });
+
+    beginTestHostTurn(runtime);
+    const dispatch = runtime.sendTurnPrompt('first prompt requiring Happier tools');
+    const pending = observePromisePending(dispatch);
+    await flushMicrotasks();
+
+    expect(pending.isPending()).toBe(true);
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+    resolveRequiredHappier({ requiredHappier: { status: 'ready' } });
+
+    await expect.poll(() => vi.mocked(client.sessionPromptAsync).mock.calls.length).toBe(1);
+    await expect(dispatch).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
+  });
+
+  it('does not dispatch a prompt after its turn is cancelled while Happier MCP registration is pending', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let resolveRequiredHappier!: (result: Readonly<{
+      requiredHappier: Readonly<{ status: 'ready' }>;
+    }>) => void;
+    const mcpRegistration = new Promise<Readonly<{
+      requiredHappier: Readonly<{ status: 'ready' }>;
+    }>>((resolve) => {
+      resolveRequiredHappier = resolve;
+    });
+    const runtime = await createStartedRuntime({
+      ctx,
+      client,
+      harness,
+      mcpRegistration,
+    });
+
+    beginTestHostTurn(runtime);
+    const dispatch = runtime.sendTurnPrompt('prompt cancelled before Happier MCP readiness');
+    const pending = observePromisePending(dispatch);
+    await flushMicrotasks();
+
+    expect(pending.isPending()).toBe(true);
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+
+    await runtime.cancelTurn();
+    beginTestHostTurn(runtime);
+    resolveRequiredHappier({ requiredHappier: { status: 'ready' } });
+
+    await expect(dispatch).rejects.toThrow(/cancelled before prompt submission/iu);
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-cancelled')).toHaveLength(1);
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-failed')).toHaveLength(0);
+
+    await expect(runtime.sendTurnPrompt('replacement turn prompt')).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
+    expect(client.sessionPromptAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails before provider acceptance when required Happier MCP registration fails', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({
+      ctx,
+      client,
+      harness,
+      mcpRegistration: Promise.resolve({
+        requiredHappier: {
+          status: 'failed',
+          error: new Error('required bridge add failed'),
+        },
+      }),
+    });
+
+    beginTestHostTurn(runtime);
+
+    await expect(runtime.sendTurnPrompt('first prompt without Happier tools')).rejects.toThrow(
+      /required Happier MCP registration failed.*required bridge add failed/iu,
+    );
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      issue: expect.objectContaining({ code: 'opencode_prompt_submission_failed' }),
+    }));
+  });
+
+  it('does not treat mutable snapshot endpoint metadata as request-currentness authority', async () => {
+    const { ctx, harness } = createContextFixture();
+    const client = createClientFixture();
+    let snapshot = managedServiceSnapshot();
+    const runtime = await createStartedRuntime({
+      ctx,
+      client,
+      harness,
+      readManagedServiceSnapshot: () => snapshot,
     });
     await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
     snapshot = {
       ...snapshot,
-      instanceId: 'host-instance-b',
       baseUrl: 'http://127.0.0.1:49197',
-      port: 49197,
-      pid: 200,
-      startedAt: 2000,
-      lastHealthyAt: 2200,
-    } as OpenCodeManagedServerSnapshot;
+      startedAtMs: 2000,
+      lastHealthyAtMs: 2200,
+    };
     beginTestHostTurn(runtime);
-    const dispatch = runtime.sendTurnPrompt('first prompt after managed-server replacement');
-    const pending = observePromisePending(dispatch);
-    await flushMicrotasks();
-
-    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
-    expect(pending.isPending()).toBe(true);
-
-    await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
-    await expect.poll(() => vi.mocked(client.sessionPromptAsync).mock.calls.length).toBe(1);
-
+    const dispatch = runtime.sendTurnPrompt('first prompt after managed-service endpoint drift');
     await expect(dispatch).resolves.toMatchObject({
       providerUserMessageId: expect.any(String),
     });
+    expect(client.sessionPromptAsync).toHaveBeenCalledOnce();
   });
 
   it('falls back to managed-server health readiness when the provider event subscription fails before server.connected', async () => {
@@ -778,18 +889,7 @@ describe('createOpenCodeServerRuntime', () => {
       ctx,
       client,
       harness,
-      readManagedServerSnapshot: () => ({
-        id: 'opencode-server',
-        instanceId: 'host-instance-a',
-        state: 'healthy',
-        mode: 'managed-spawn',
-        baseUrl: 'http://127.0.0.1:49196',
-        port: 49196,
-        credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-        pid: 100,
-        startedAt: 1000,
-        lastHealthyAt: 1200,
-      } as OpenCodeManagedServerSnapshot),
+      readManagedServiceSnapshot: () => managedServiceSnapshot(),
     });
 
     beginTestHostTurn(runtime);
@@ -801,18 +901,18 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
-  it('does not retry the provider event subscription after a permanent authentication failure', async () => {
+  it('keeps retrying the provider event subscription after an authentication rejection', async () => {
     vi.useFakeTimers();
     const { ctx } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.subscribeGlobalEvents).mockRejectedValue(
-      new OpenCodeSseHttpError(401, 'Unauthorized'),
-    );
+    vi.mocked(client.subscribeGlobalEvents)
+      .mockRejectedValueOnce(new OpenCodeSseHttpError(401, 'Unauthorized'))
+      .mockImplementationOnce(async () => await new Promise<void>(() => undefined));
 
     await createStartedRuntime({ ctx, client });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(100);
 
-    expect(client.subscribeGlobalEvents).toHaveBeenCalledTimes(1);
+    expect(client.subscribeGlobalEvents).toHaveBeenCalledTimes(2);
   });
 
   it('unblocks a prompt waiting for managed-server readiness when the turn is cancelled', async () => {
@@ -822,18 +922,7 @@ describe('createOpenCodeServerRuntime', () => {
       ctx,
       client,
       harness,
-      readManagedServerSnapshot: () => ({
-        id: 'opencode-server',
-        instanceId: 'host-instance-a',
-        state: 'healthy',
-        mode: 'managed-spawn',
-        baseUrl: 'http://127.0.0.1:49196',
-        port: 49196,
-        credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-        pid: 100,
-        startedAt: 1000,
-        lastHealthyAt: 1200,
-      } as OpenCodeManagedServerSnapshot),
+      readManagedServiceSnapshot: () => managedServiceSnapshot(),
     });
 
     beginTestHostTurn(runtime);
@@ -878,6 +967,58 @@ describe('createOpenCodeServerRuntime', () => {
         providerID: 'openai',
         modelID: 'gpt-5.4-mini',
       },
+    }));
+  });
+
+  it('rejects a qualified per-prompt model absent from an authoritative provider inventory before prompting', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    vi.mocked(client.providersList).mockResolvedValue([{
+      id: 'openai',
+      models: {
+        'gpt-5.6-luna': {
+          id: 'gpt-5.6-luna',
+          status: 'active',
+          capabilities: { input: { text: true } },
+        },
+      },
+    }]);
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+
+    beginTestHostTurn(runtime);
+    await expect(runtime.sendTurnPrompt('Use the unavailable model.', {
+      modelId: 'openai-codex/gpt-5.6-luna',
+    })).rejects.toThrow(/not selectable/iu);
+
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+    expect(runtimeEvents).toContainEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      issue: expect.objectContaining({
+        code: 'opencode_prompt_submission_failed',
+        source: 'agent_session_error',
+      }),
+    }));
+  });
+
+  it('fails open for a qualified runtime model when provider inventory is unavailable', async () => {
+    const { ctx, harness } = createContextFixture();
+    const client = createClientFixture();
+    vi.mocked(client.providersList).mockRejectedValue(new Error('provider inventory unavailable'));
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+
+    await runtime.updateSessionRuntimeConfig({
+      modelId: 'custom-provider/custom-model',
+      configOption: { id: 'variant', value: ' low ' },
+    });
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('Use the selected custom model.');
+
+    expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
+      model: {
+        providerID: 'custom-provider',
+        modelID: 'custom-model',
+      },
+      variant: 'low',
     }));
   });
 
@@ -1528,7 +1669,6 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.permissionReply).toHaveBeenCalledWith({
       requestId: 'per_123',
       reply: 'reject',
-      message: 'read-only mode denied bash',
     });
   });
 
@@ -2390,7 +2530,9 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not passively mirror provider user rows after an accepted Happier turn fails before history finality', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
+    let providerUserMessageId = '';
     vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
       client.setMessages([
         {
           info: {
@@ -2416,6 +2558,36 @@ describe('createOpenCodeServerRuntime', () => {
           sessionID: 'ses-1',
           error: { message: 'provider failed after accepting prompt' },
         },
+      },
+    });
+    client.setMessages([
+      {
+        info: {
+          id: providerUserMessageId,
+          role: 'user',
+          sessionID: 'ses-1',
+          time: { created: Date.now() },
+        },
+        parts: [
+          { id: 'part-user-1', type: 'text', text: 'internal error-path guidance\n\nUSER_MARKER' },
+        ],
+      },
+      {
+        info: {
+          id: 'msg-provider-error',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          parentID: providerUserMessageId,
+          time: { created: Date.now(), completed: Date.now() + 1 },
+          error: { message: 'provider failed after accepting prompt' },
+        },
+        parts: [],
+      },
+    ]);
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'session.idle',
+        properties: { sessionID: 'ses-1' },
       },
     });
 
@@ -2937,6 +3109,10 @@ describe('createOpenCodeServerRuntime', () => {
         },
       },
     };
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
+    });
     const runtime = await createStartedRuntime({ ctx: ctxWithPermissionSignal, client, harness });
 
     beginTestHostTurn(runtime);
@@ -2965,6 +3141,31 @@ describe('createOpenCodeServerRuntime', () => {
             sessionID: 'ses-1',
             error: { message: 'provider failed while permission was pending' },
           },
+        },
+      });
+
+      expect(capturedSignal?.aborted).toBe(false);
+      client.setMessages([
+        {
+          info: { id: providerUserMessageId, role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+          parts: [{ id: 'part-current-user', type: 'text', text: 'hello' }],
+        },
+        {
+          info: {
+            id: 'msg-provider-error',
+            role: 'assistant',
+            sessionID: 'ses-1',
+            parentID: providerUserMessageId,
+            time: { created: 11, completed: 12 },
+            error: { message: 'provider failed while permission was pending' },
+          },
+          parts: [],
+        },
+      ]);
+      await runtime.handleProviderEvent({
+        payload: {
+          type: 'session.idle',
+          properties: { sessionID: 'ses-1' },
         },
       });
 
@@ -3050,7 +3251,6 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.permissionReply).toHaveBeenCalledWith({
       requestId: 'per_denied',
       reply: 'reject',
-      message: 'QA denied shell access',
     });
     expect(runtimeEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -3123,7 +3323,6 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.permissionReply).toHaveBeenCalledWith({
       requestId: 'per_denied_no_history',
       reply: 'reject',
-      message: 'QA denied shell access',
     });
     expect(runtimeEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -3720,23 +3919,15 @@ describe('createOpenCodeServerRuntime', () => {
       ctx,
       client,
       harness,
-      readManagedServerSnapshot: () => ({
-        id: 'opencode-server',
-        instanceId: 'host-instance-a',
-        state: 'unhealthy',
-        mode: 'managed-spawn',
-        baseUrl: 'http://127.0.0.1:49196',
-        port: 49196,
-        credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-        pid: 123,
-        startedAt: 100,
-        lastHealthyAt: 120,
-        lastErrorMessage: "Managed server 'opencode-server' exited after becoming healthy",
-        diagnostics: {
-          exitCode: 1,
-          exitSignal: null,
-          stderrTail: 'server crashed after ready with Authorization: Bearer sk-live-secret',
-        },
+      readManagedServiceSnapshot: () => managedServiceSnapshot({
+        state: 'failed',
+        startedAtMs: 100,
+        lastHealthyAtMs: 120,
+        diagnostics: [{
+          code: 'plugin_managed_server_process_exited',
+          severity: 'error',
+          message: "Managed server 'opencode-server' exited after becoming healthy",
+        }],
       }),
     });
     runtime.beginTurnLifecycle('test-turn');
@@ -3926,6 +4117,182 @@ describe('createOpenCodeServerRuntime', () => {
 
     await flushMicrotasks();
     expect(runtimeEvents).toEqual([]);
+
+    await runtime.resetOrDisposeRuntime();
+  });
+
+  it('projects only exact-current tool work from replayable OpenCode observations', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    runtime.beginTurnLifecycle('test-turn');
+
+    const { providerUserMessageId } = await runtime.sendTurnPrompt('run the current task');
+
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-replayed-assistant',
+            parentID: 'msg-old-user',
+            role: 'assistant',
+            sessionID: 'ses-1',
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-replayed-tool',
+            type: 'tool',
+            sessionID: 'ses-1',
+            messageID: 'msg-replayed-assistant',
+            callID: 'call-replayed-tool',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: { command: 'rm -rf /tmp/replayed' },
+              output: 'replayed',
+            },
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-current-assistant',
+            parentID: providerUserMessageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-current-tool',
+            type: 'tool',
+            sessionID: 'ses-1',
+            messageID: 'msg-current-assistant',
+            callID: 'call-current-tool',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: { command: 'pwd' },
+              output: '/repo\n',
+            },
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+
+    await flushMicrotasks();
+
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'tool-call',
+        toolCallId: 'call-current-tool',
+        toolName: 'bash',
+      }),
+      expect.objectContaining({
+        kind: 'tool-result',
+        toolCallId: 'call-current-tool',
+      }),
+    ]));
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolCallId: 'call-replayed-tool' }),
+      expect.objectContaining({ kind: 'turn-complete' }),
+      expect.objectContaining({ kind: 'turn-failed' }),
+    ]));
+
+    await runtime.resetOrDisposeRuntime();
+  });
+
+  it('uses replayable request events only to read authoritative active OpenCode inventories', async () => {
+    const permissionRequests: unknown[] = [];
+    const { ctx, harness } = createContextFixture({
+      onPermissionDecision: async (request) => {
+        permissionRequests.push(request);
+        return { decision: 'approved' };
+      },
+    });
+    const client = createClientFixture();
+    vi.mocked(client.permissionList).mockResolvedValueOnce([{
+      id: 'per-authoritative',
+      sessionID: 'ses-1',
+      permission: 'edit',
+      patterns: ['src/current.ts'],
+    }]);
+    vi.mocked(client.questionList).mockResolvedValueOnce([{
+      id: 'question-authoritative',
+      sessionID: 'ses-1',
+      questions: [{
+        header: 'Title',
+        question: '(internal) Apply the current title?',
+        options: [{ label: 'OK' }],
+        multiple: false,
+      }],
+    }]);
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+
+    client.emitProviderEvent({
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          id: 'per-replayed',
+          sessionID: 'ses-1',
+          permission: 'bash',
+          patterns: ['rm -rf /'],
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent({
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'question-replayed',
+          sessionID: 'ses-1',
+          questions: [{
+            header: 'Replay',
+            question: 'Trust replayed content?',
+            options: [{ label: 'yes' }],
+          }],
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+
+    await expect.poll(() => vi.mocked(client.permissionReply).mock.calls.length).toBe(1);
+    await expect.poll(() => vi.mocked(client.questionReply).mock.calls.length).toBe(1);
+    expect(client.permissionList).toHaveBeenCalledTimes(1);
+    expect(client.questionList).toHaveBeenCalledTimes(1);
+    expect(permissionRequests).toEqual([
+      expect.objectContaining({
+        subject: expect.objectContaining({
+          kind: 'tool',
+          name: 'edit',
+        }),
+      }),
+    ]);
+    expect(client.permissionReply).toHaveBeenCalledWith({
+      requestId: 'per-authoritative',
+      reply: 'once',
+    });
+    expect(client.questionReply).toHaveBeenCalledWith({
+      requestId: 'question-authoritative',
+      answers: [['OK']],
+    });
+    expect(JSON.stringify(permissionRequests)).not.toContain('rm -rf /');
 
     await runtime.resetOrDisposeRuntime();
   });
@@ -4196,30 +4563,98 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
   });
 
-  it('fails active turns when OpenCode reports a provider session error event', async () => {
+  it('defers a live session.error until exact-parent terminal history follows idle', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
+    });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle('test-turn');
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('hello');
+
+    const providerError = {
+      name: 'ProviderAuthError',
+      data: {
+        message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret',
+      },
+    };
 
     await runtime.handleProviderEvent({
       payload: {
         type: 'session.error',
         properties: {
           sessionID: 'ses-1',
-          error: {
-            name: 'ProviderAuthError',
-            data: {
-              message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret',
-            },
-          },
+          error: providerError,
         },
       },
     });
     await runtime.handleProviderEvent({
       payload: {
+        type: 'session.error',
+        properties: { sessionID: 'ses-1', error: providerError },
+      },
+    });
+
+    expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
+
+    client.setMessages([
+      {
+        info: { id: providerUserMessageId, role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+        parts: [{ id: 'part-current-user', type: 'text', text: 'hello' }],
+      },
+      {
+        info: {
+          id: 'msg-current-provider-error',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          parentID: providerUserMessageId,
+          time: { created: 11 },
+          error: providerError,
+        },
+        parts: [],
+      },
+    ]);
+    await runtime.handleProviderEvent({
+      payload: {
         type: 'session.idle',
         properties: { sessionID: 'ses-1' },
+      },
+    });
+
+    expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
+
+    client.setMessages([
+      {
+        info: { id: providerUserMessageId, role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+        parts: [{ id: 'part-current-user', type: 'text', text: 'hello' }],
+      },
+      {
+        info: {
+          id: 'msg-current-provider-error',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          parentID: providerUserMessageId,
+          time: { created: 11, completed: 12 },
+          error: providerError,
+        },
+        parts: [],
+      },
+    ]);
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-current-provider-error',
+            role: 'assistant',
+            sessionID: 'ses-1',
+            parentID: providerUserMessageId,
+            time: { created: 11, completed: 12 },
+            error: providerError,
+          },
+        },
       },
     });
 
@@ -4244,6 +4679,68 @@ describe('createOpenCodeServerRuntime', () => {
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
     expect(JSON.stringify(runtimeEvents)).not.toContain('sk-live-secret');
     expect(transcriptAppends).toHaveLength(0);
+  });
+
+  it('does not let an uncorrelated live session.error override a valid current assistant completion', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
+    });
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('hello');
+
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'session.error',
+        properties: {
+          sessionID: 'ses-1',
+          error: { name: 'UnknownError', data: { message: 'failure from another author' } },
+        },
+      },
+    });
+    expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
+
+    client.setMessages([
+      {
+        info: { id: providerUserMessageId, role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+        parts: [{ id: 'part-current-user', type: 'text', text: 'hello' }],
+      },
+      {
+        info: {
+          id: 'msg-current-success',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          parentID: providerUserMessageId,
+          time: { created: 11, completed: 12 },
+          finish: 'stop',
+        },
+        parts: [{ id: 'part-current-success', type: 'text', text: 'ok' }],
+      },
+    ]);
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-current-success',
+            role: 'assistant',
+            sessionID: 'ses-1',
+            parentID: providerUserMessageId,
+            time: { created: 11, completed: 12 },
+            finish: 'stop',
+          },
+        },
+      },
+    });
+    await runtime.handleProviderEvent({
+      payload: { type: 'session.idle', properties: { sessionID: 'ses-1' } },
+    });
+
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
+    expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
   });
 
   it('publishes a provider session failure once when provider event and status polling race', async () => {
@@ -4371,23 +4868,11 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
   });
 
-  describe('managed-server generation recovery (Lane E)', () => {
-    function generationSnapshot(
-      overrides: Partial<OpenCodeManagedServerSnapshot>,
-    ): OpenCodeManagedServerSnapshot {
-      return {
-        id: 'opencode-server',
-        instanceId: 'host-instance-a',
-        state: 'healthy',
-        mode: 'managed-spawn',
-        baseUrl: 'http://127.0.0.1:49196',
-        port: 49196,
-        credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
-        pid: 100,
-        startedAt: 1000,
-        lastHealthyAt: 1200,
-        ...overrides,
-      } as OpenCodeManagedServerSnapshot;
+  describe('exact managed-service handle loss recovery (Lane E)', () => {
+    function serviceSnapshot(
+      overrides: Partial<ManagedServiceSnapshot>,
+    ): ManagedServiceSnapshot {
+      return managedServiceSnapshot(overrides);
     }
 
     function runningToolPart(callId: string) {
@@ -4402,28 +4887,27 @@ describe('createOpenCodeServerRuntime', () => {
       };
     }
 
-    it('fails the active turn exactly once when the managed server is replaced with unreconciled tool work', async () => {
+    it('fails the active turn exactly once when the managed service is lost with unreconciled tool work', async () => {
       const { ctx, harness, runtimeEvents } = createContextFixture();
       const client = createClientFixture();
-      // Replacement server's history still shows the tool running → unreconciled live-known work.
+      // Durable history still shows the tool running → unreconciled live-known work.
       client.setMessages([
         { info: { id: 'msg-call-live-1', role: 'assistant', sessionID: 'ses-1' }, parts: [runningToolPart('call-live-1')] },
       ]);
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       runtime.beginTurnLifecycle('test-turn');
-      // Observe the live running tool under generation A.
+      // Observe live running tool work while the exact handle is healthy.
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-live-1') } },
       });
 
-      // Managed server replaced mid-turn (new host-issued instanceId) → generation B.
-      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = serviceSnapshot({ state: 'stopped' });
       await runtime.waitForTurnCompletion();
       await runtime.waitForTurnCompletion();
 
@@ -4444,29 +4928,29 @@ describe('createOpenCodeServerRuntime', () => {
       expect(client.sessionAbort).not.toHaveBeenCalled();
     });
 
-    it('does not fail the turn when the replacement server reconciles the tool as terminal', async () => {
+    it('does not fail the turn when durable history reconciles the tool as terminal after handle loss', async () => {
       const { ctx, harness, runtimeEvents } = createContextFixture();
       const client = createClientFixture();
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       runtime.beginTurnLifecycle('test-turn');
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-live-2') } },
       });
 
-      // The replacement server's durable history shows the tool COMPLETED (reconciled terminal).
+      // Durable history shows the tool COMPLETED (reconciled terminal).
       client.setMessages([
         {
           info: { id: 'msg-call-live-2', role: 'assistant', sessionID: 'ses-1' },
           parts: [{ ...runningToolPart('call-live-2'), state: { status: 'completed' } }],
         },
       ]);
-      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = serviceSnapshot({ state: 'stopped' });
       await runtime.waitForTurnCompletion();
 
       expect(runtimeEvents.some(
@@ -4475,26 +4959,26 @@ describe('createOpenCodeServerRuntime', () => {
       )).toBe(false);
     });
 
-    it('does not wedge: orphaned old-generation work reaches a terminal turn state', async () => {
+    it('does not wedge: orphaned work from the lost handle reaches a terminal turn state', async () => {
       const { ctx, harness, runtimeEvents } = createContextFixture();
       const client = createClientFixture();
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       runtime.beginTurnLifecycle('test-turn');
-      // Live running tool tracked under generation A.
+      // Live running tool tracked while the exact handle is healthy.
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-orphan') } },
       });
-      // Replacement server: history is empty (the orphaned tool is gone), so it cannot be reconciled
+      // History is empty (the orphaned tool is gone), so it cannot be reconciled
       // terminal and remains as unreconciled live-known work → the supervisor fails the turn once
-      // rather than letting orphaned old-generation work wedge completion forever.
+      // rather than letting orphaned work wedge completion forever.
       client.setMessages([]);
-      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = serviceSnapshot({ state: 'stopped' });
 
       await runtime.waitForTurnCompletion();
       await runtime.waitForTurnCompletion();
@@ -4509,7 +4993,7 @@ describe('createOpenCodeServerRuntime', () => {
       )).toBe(true);
     });
 
-    it('fails the active turn when the managed server is replaced while a permission ask is pending', async () => {
+    it('fails the active turn when the managed service is lost while a permission ask is pending', async () => {
       let resolvePermissionDecision: ((value: { decision: 'approved' }) => void) | null = null;
       let permissionResolved = false;
       const pendingPermissionDecision = new Promise<{ decision: 'approved' }>((resolve) => {
@@ -4522,12 +5006,12 @@ describe('createOpenCodeServerRuntime', () => {
         onPermissionDecision: async () => await pendingPermissionDecision,
       });
       const client = createClientFixture();
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
@@ -4548,7 +5032,7 @@ describe('createOpenCodeServerRuntime', () => {
       await Promise.resolve();
 
       try {
-        snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+        snapshot = serviceSnapshot({ state: 'stopped' });
 
         await runtime.waitForTurnCompletion();
 
@@ -4580,12 +5064,12 @@ describe('createOpenCodeServerRuntime', () => {
         onPermissionDecision: async () => await pendingPermissionDecision,
       });
       const client = createClientFixture();
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
@@ -4605,11 +5089,9 @@ describe('createOpenCodeServerRuntime', () => {
       void stalePermissionAsk.catch(() => undefined);
       await Promise.resolve();
 
-      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = serviceSnapshot({ state: 'stopped' });
       await runtime.waitForTurnCompletion();
-      await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
       beginTestHostTurn(runtime);
-      await runtime.sendTurnPrompt('next turn');
 
       resolvePermissionDecision?.({ decision: 'approved' });
       await stalePermissionAsk;
@@ -4626,7 +5108,7 @@ describe('createOpenCodeServerRuntime', () => {
       ]));
     });
 
-    it('drops permission decisions when the managed server was replaced before restart observation', async () => {
+    it('lets the exact handle reject a permission reply when loss precedes observation', async () => {
       let resolvePermissionDecision: ((value: { decision: 'approved' }) => void) | null = null;
       const pendingPermissionDecision = new Promise<{ decision: 'approved' }>((resolve) => {
         resolvePermissionDecision = resolve;
@@ -4635,12 +5117,12 @@ describe('createOpenCodeServerRuntime', () => {
         onPermissionDecision: async () => await pendingPermissionDecision,
       });
       const client = createClientFixture();
-      let snapshot = generationSnapshot({});
+      let snapshot = serviceSnapshot({});
       const runtime = await createStartedRuntime({
         ctx,
         client,
         harness,
-        readManagedServerSnapshot: () => snapshot,
+        readManagedServiceSnapshot: () => snapshot,
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
@@ -4660,11 +5142,14 @@ describe('createOpenCodeServerRuntime', () => {
       void stalePermissionAsk.catch(() => undefined);
       await Promise.resolve();
 
-      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = serviceSnapshot({ state: 'stopped' });
+      vi.mocked(client.permissionReply).mockRejectedValueOnce(
+        new Error('plugin_managed_service_not_reusable'),
+      );
       resolvePermissionDecision?.({ decision: 'approved' });
       await stalePermissionAsk;
 
-      expect(client.permissionReply).not.toHaveBeenCalled();
+      expect(client.permissionReply).toHaveBeenCalledOnce();
 
       await runtime.waitForTurnCompletion();
 
@@ -4672,7 +5157,7 @@ describe('createOpenCodeServerRuntime', () => {
         expect.objectContaining({
           kind: 'turn-failed',
           issue: expect.objectContaining({
-            code: 'opencode_server_restarted_during_turn',
+            code: 'opencode_provider_session_error',
           }),
         }),
       ]));

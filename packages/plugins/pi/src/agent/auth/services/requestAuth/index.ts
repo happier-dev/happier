@@ -1,7 +1,6 @@
 export {
   buildPiRequestAuthExtensionAssetSource,
   ensurePiRequestAuthExtensionAsset,
-  PI_REQUEST_AUTH_EXTENSION_VERSION,
   retireLegacyPiRequestAuthAssets,
   resolvePiRequestAuthExtensionDir,
   resolvePiRequestAuthExtensionPath,

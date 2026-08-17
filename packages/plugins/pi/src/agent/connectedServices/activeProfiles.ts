@@ -1,12 +1,10 @@
-import type { ConnectedServiceId, ConnectedServiceProfileId } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
 export function summarizePiConnectedServiceActiveProfiles(params: Readonly<{
-  openaiCodexProfileId: ConnectedServiceProfileId | null;
-  openaiProfileId: ConnectedServiceProfileId | null;
-  claudeSubscriptionProfileId: ConnectedServiceProfileId | null;
-  anthropicProfileId: ConnectedServiceProfileId | null;
-}>): Partial<Record<ConnectedServiceId, ConnectedServiceProfileId>> {
-  const summary: Partial<Record<ConnectedServiceId, ConnectedServiceProfileId>> = {};
+  openaiCodexProfileId: string | null;
+  openaiProfileId: string | null;
+  claudeSubscriptionProfileId: string | null;
+  anthropicProfileId: string | null;
+}>): Partial<Record<string, string>> {
+  const summary: Partial<Record<string, string>> = {};
   if (params.openaiCodexProfileId) summary['openai-codex'] = params.openaiCodexProfileId;
   if (params.openaiProfileId) summary.openai = params.openaiProfileId;
   if (params.claudeSubscriptionProfileId) summary['claude-subscription'] = params.claudeSubscriptionProfileId;

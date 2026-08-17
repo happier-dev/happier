@@ -1,9 +1,9 @@
 import type {
   AgentSessionCompactRequest,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 
 type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, 'sequence'> : never;
 export type PiRuntimeEvent = WithoutSequence<AgentSessionRuntimeEvent>;

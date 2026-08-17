@@ -4,17 +4,16 @@ import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import {
-  defineConnectedServiceAuthMaterialization,
-  readConnectedServiceCredentialRecord,
-  requireConnectedServiceOauthCredentialRecordWithExpiry,
-  requireConnectedServiceTokenCredentialRecord,
-  resolveConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+    defineAuthMaterialization as defineConnectedServiceAuthMaterialization,
+    parseCredentialRecord as readConnectedServiceCredentialRecord,
+    requireOauthCredentialRecordWithExpiry as requireConnectedServiceOauthCredentialRecordWithExpiry,
+    requireTokenCredentialRecord as requireConnectedServiceTokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import { formatPiSessionDirectoryForCwd } from '../../sessionFiles.js';
 import { PI_DIRECT_AUTH_ENV_KEYS } from '../../launchEnvironment.js';
+import { replacePiAuthConfig } from './authConfig.js';
 import {
   ensurePiRequestAuthExtensionAsset,
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -52,14 +51,6 @@ export const PI_AUTH_ENV_KEYS_TO_NEUTRALIZE = Object.freeze([
   'HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN',
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 ] as const);
-
-function resolvePiStateSharingMode(settingsLike: unknown): 'isolated' | 'shared' {
-  const record = isRecord(settingsLike) ? settingsLike : null;
-  return resolveConnectedServicesProviderStateSharingPolicyV1(
-    record?.connectedServicesProviderStateSharingSettingsV1,
-    'pi',
-  ).stateMode;
-}
 
 type SessionFileImportRoot = Readonly<{
   sourceRoot: string;
@@ -276,7 +267,10 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     agentDir,
     retainCurrent: requestAuthEnabled,
   });
-  await writeAtomicJsonFile({ path: join(agentDir, 'auth.json'), value: auth, mode: 0o600 });
+  await replacePiAuthConfig({
+    agentDir,
+    entries: auth,
+  });
 
   const env: Record<string, string> = {
     PI_CODING_AGENT_DIR: agentDir,
@@ -296,9 +290,8 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     for (const key of PI_DIRECT_AUTH_ENV_KEYS) env[key] = '';
   }
 
-  const requestedStateMode = resolvePiStateSharingMode(input.accountSettings);
   const cwd = readString(input.sessionDirectory);
-  if (requestedStateMode === 'shared' && cwd) {
+  if (input.connectedServicesSessionStateSharingRequested === true && cwd) {
     const sourceEnv = isRecord(input.processEnv)
       ? input.processEnv as Readonly<Record<string, string | undefined>>
       : null;

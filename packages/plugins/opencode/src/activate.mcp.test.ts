@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
+import type { McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint } from '@happier-dev/plugin-sdk/mcp';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
@@ -35,7 +35,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       'utf8',
     );
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    const registration = activation.registration('mcp.discoverySources', 'config');
     if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
     const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
@@ -43,25 +43,21 @@ describe('OpenCode plugin activation MCP discovery', () => {
     }]);
 
     expect(result.warnings).toEqual([]);
-    expect(result.servers).toEqual(expect.arrayContaining<McpServerSpecV1>([
+    expect(result.endpoints).toEqual(expect.arrayContaining<PluginMcpDiscoveredEndpoint>([
       expect.objectContaining({
         id: 'opencode.config.docs',
         name: 'docs',
-        transport: {
-          kind: 'http',
-          url: 'https://mcp.example.test/http',
-        },
+        kind: 'http',
+        url: 'https://mcp.example.test/http',
       }),
       expect.objectContaining({
         id: 'opencode.config.stream',
         name: 'stream',
-        transport: {
-          kind: 'sse',
-          url: 'https://mcp.example.test/sse',
-        },
+        kind: 'sse',
+        url: 'https://mcp.example.test/sse',
       }),
     ]));
-    expect(result.servers).not.toEqual(expect.arrayContaining([
+    expect(result.endpoints).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'opencode.config.disabledDocs',
       }),
@@ -85,7 +81,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       'utf8',
     );
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    const registration = activation.registration('mcp.discoverySources', 'config');
     if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
     const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
@@ -94,7 +90,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
 
     expect(result).toEqual({
       items: [],
-      servers: [
+      endpoints: [
         expect.objectContaining({
           id: 'opencode.config.team-docs',
           name: 'Team Docs',
@@ -124,7 +120,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       'utf8',
     );
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    const registration = activation.registration('mcp.discoverySources', 'config');
     if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
     const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
@@ -133,7 +129,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
 
     expect(result).toEqual({
       items: [],
-      servers: [],
+      endpoints: [],
       warnings: [],
     });
     await activation.dispose();

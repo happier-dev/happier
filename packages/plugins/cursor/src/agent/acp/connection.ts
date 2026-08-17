@@ -4,7 +4,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { withCursorEmptyResponseFailure } from '../runtime/emptyResponse.js';
 import { readCursorRuntimeSettings } from '../settings.js';

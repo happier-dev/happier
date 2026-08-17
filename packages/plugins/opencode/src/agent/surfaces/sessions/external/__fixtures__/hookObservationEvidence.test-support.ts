@@ -1,6 +1,6 @@
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 const endpoint = 'http://127.0.0.1:49196';
 const nativeSessionId = 'opencode-native-session-fixture';

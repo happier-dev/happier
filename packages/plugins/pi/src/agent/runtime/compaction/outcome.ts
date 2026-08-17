@@ -1,5 +1,5 @@
 import type { PiCompactionTurnOutcome, PiCompactionTurnState } from './types.js';
-import { isRecord, readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import { isRecord, readString } from '@happier-dev/plugin-sdk';
 
 function readTerminalPhase(end: NonNullable<PiCompactionTurnState['lastCompactionEnd']>): string | null {
   return readString(end.phase) ?? (isRecord(end.payload) ? readString(end.payload.phase) : null);

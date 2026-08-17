@@ -1,7 +1,4 @@
-import type {
-  ConnectedAccountRequestAuthUseV1,
-  QualifiedConnectedAccountPurposeV1,
-} from '@happier-dev/protocol';
+import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { PiRequestAuthProviderId, PiRequestAuthPurposeMap } from './source.js';
 
@@ -22,7 +19,7 @@ export const PI_REQUEST_AUTH_DECLARED_PURPOSES = Object.freeze({
     consumer: PI_REQUEST_AUTH_CONSUMER,
     purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   }),
-} satisfies Readonly<Record<PiRequestAuthProviderId, QualifiedConnectedAccountPurposeV1>>);
+});
 
 export const PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS = Object.freeze({
   anthropic: Object.freeze({
@@ -35,9 +32,7 @@ export const PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS = Object.freeze({
     origin: 'https://chatgpt.com',
     headerNames: Object.freeze(['authorization', 'chatgpt-account-id']),
   }),
-} satisfies Readonly<
-  Record<PiRequestAuthProviderId, ConnectedAccountRequestAuthUseV1['materialization']>
->);
+});
 
 // These are stripped before every wrapped attempt. Anthropic includes x-api-key for
 // native/API-key isolation even though the request-auth lease itself is OAuth Bearer.
@@ -55,15 +50,17 @@ export const PI_REQUEST_AUTH_USES = Object.freeze([
     purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
     materialization: PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS['openai-codex'],
   }),
-] satisfies readonly ConnectedAccountRequestAuthUseV1[]);
+]);
 
 export function isDeclaredPiRequestAuthPurpose(
   providerId: PiRequestAuthProviderId,
-  purpose: QualifiedConnectedAccountPurposeV1,
+  purpose: JsonValue,
 ): boolean {
   const declared = PI_REQUEST_AUTH_DECLARED_PURPOSES[providerId];
-  return purpose.consumer.pluginId === declared.consumer.pluginId
-    && purpose.consumer.localId === declared.consumer.localId
+  if (!isRecord(purpose)) return false;
+  const consumer = isRecord(purpose.consumer) ? purpose.consumer : null;
+  return consumer?.pluginId === declared.consumer.pluginId
+    && consumer.localId === declared.consumer.localId
     && purpose.purpose === declared.purpose;
 }
 

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import { readJsonlFileForward } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import { readJsonlFileForward } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { describe, expect, it } from 'vitest';
 
 import { classifyPiAgentEndBoundary } from '../runtime/rpc/lifecycle.js';

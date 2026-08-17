@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  PluginUiApprovalRequest,
-  PluginUiApprovalResult,
-} from '@happier-dev/plugin-sdk/runtime';
+  InteractionTransientApprovalAuthorRequestV1,
+  InteractionTransientApprovalResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import {
   buildOpenCodePermissionApprovalRequest,
@@ -21,6 +21,7 @@ const ASK = {
 describe('OpenCode native tool approval bridge', () => {
   it('builds only the public tool-approval intent and requests session persistence explicitly', () => {
     expect(buildOpenCodePermissionApprovalRequest(ASK)).toEqual({
+      kind: 'approval',
       title: 'Allow OpenCode to use bash?',
       description: 'OpenCode requested permission to use bash.',
       subject: {
@@ -34,37 +35,27 @@ describe('OpenCode native tool approval bridge', () => {
         },
       },
       allowSessionPersistence: true,
-    } satisfies PluginUiApprovalRequest);
+    } satisfies InteractionTransientApprovalAuthorRequestV1);
   });
 
   it.each([
-    [{ status: 'approved', persistence: 'once' }, 'once'],
-    [{ status: 'approved', persistence: 'session' }, 'always'],
-    [{ status: 'denied', rationale: 'No shell access' }, 'reject'],
-    [{ status: 'cancelled' }, 'reject'],
-    [{
-      status: 'unavailable',
-      diagnostic: { code: 'ui_unavailable', severity: 'error' },
-    }, 'reject'],
-  ] satisfies readonly (readonly [PluginUiApprovalResult, 'once' | 'always' | 'reject'])[])(
+    [{ requestId: 'approval-1', kind: 'approval', status: 'approved', persistence: 'once' }, 'once'],
+    [{ requestId: 'approval-2', kind: 'approval', status: 'approved', persistence: 'session' }, 'always'],
+    [{ requestId: 'approval-3', kind: 'approval', status: 'declined' }, 'reject'],
+    [{ requestId: 'approval-4', kind: 'approval', status: 'userCancelled' }, 'reject'],
+    [{ requestId: 'approval-5', kind: 'approval', status: 'unavailable' }, 'reject'],
+  ] satisfies readonly (readonly [InteractionTransientApprovalResultV1, 'once' | 'always' | 'reject'])[])(
     'maps %o to the fail-closed OpenCode reply %s',
     (result, expected) => {
       expect(mapOpenCodeApprovalResultToReply(result)).toBe(expected);
     },
   );
 
-  it('preserves only denial and terminal diagnostic messages for the provider reply', () => {
+  it('does not invent provider-facing messages absent from the strict result contract', () => {
     expect(readOpenCodeApprovalReplyMessage({
-      status: 'denied',
-      rationale: 'Denied by policy',
-    })).toBe('Denied by policy');
-    expect(readOpenCodeApprovalReplyMessage({
-      status: 'cancelled',
-      diagnostic: { code: 'cancelled', severity: 'warning', message: 'User cancelled' },
-    })).toBe('User cancelled');
-    expect(readOpenCodeApprovalReplyMessage({
+      requestId: 'approval-1',
+      kind: 'approval',
       status: 'unavailable',
-      diagnostic: { code: 'offline', severity: 'error', message: 'Approval UI unavailable' },
-    })).toBe('Approval UI unavailable');
+    })).toBeNull();
   });
 });

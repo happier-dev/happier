@@ -3,6 +3,8 @@ import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
   PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
 } from './auth/services/requestAuth/index.js';
+import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './sessionFileStoreDescriptor.js';
 
 export const PI_DIRECT_AUTH_ENV_KEYS = Object.freeze([
   'OPENAI_API_KEY',
@@ -67,15 +69,22 @@ export function selectPiLaunchEnvironment(
 }
 
 export function resolvePiSessionRuntimePreferences(params: Readonly<{
+  settings?: Readonly<Record<string, unknown>>;
   processEnv: Readonly<Record<string, string | undefined>>;
 }>): Readonly<{
   environmentVariables?: Readonly<Record<string, string>>;
   unsetEnvironmentVariables?: readonly string[];
 }> {
   const selected = selectPiLaunchEnvironment(params.processEnv);
+  const configuredAgentDir = resolveSessionFileStoreLaunchEnvironment({
+    product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+    settings: params.settings,
+    env: params.processEnv,
+  });
+  const values = Object.freeze({ ...selected.values, ...configuredAgentDir });
   return Object.freeze({
-    ...(Object.keys(selected.values).length > 0
-      ? { environmentVariables: selected.values }
+    ...(Object.keys(values).length > 0
+      ? { environmentVariables: values }
       : {}),
     ...(selected.unset.length > 0
       ? { unsetEnvironmentVariables: selected.unset }

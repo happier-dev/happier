@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path';
 
 import { defineConfig } from 'vitest/config';
 
+import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution.ts';
+
 const repositoryRoot = resolve(__dirname, '../../..');
 const cliSourceRoot = resolve(repositoryRoot, 'apps/cli/src');
 
@@ -59,19 +61,34 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: '@happier-dev/cli-common/process',
-        replacement: resolve(
-          __dirname,
-          '../../../packages/cli-common/src/process/index.ts',
-        ),
-      },
-      {
         find: '@',
         replacement: resolve(__dirname, '../../../apps/cli/src'),
       },
     ],
   },
   plugins: [
+    createWorkspacePackageSourcesPlugin([
+      {
+        packageName: '@happier-dev/agents',
+        packageSourceRoot: resolve(repositoryRoot, 'packages', 'agents', 'src'),
+      },
+      {
+        packageName: '@happier-dev/cli-common',
+        packageSourceRoot: resolve(repositoryRoot, 'packages', 'cli-common', 'src'),
+      },
+      {
+        packageName: '@happier-dev/plugin-sdk',
+        packageSourceRoot: resolve(repositoryRoot, 'packages', 'plugin-sdk', 'src'),
+      },
+      {
+        packageName: '@happier-dev/protocol',
+        packageSourceRoot: resolve(repositoryRoot, 'packages', 'protocol', 'src'),
+      },
+      {
+        packageName: '@happier-dev/tests',
+        packageSourceRoot: resolve(repositoryRoot, 'packages', 'tests', 'src'),
+      },
+    ], 'happier-pi-spawned-real-owners-workspace-package-sources'),
     preferWorkspaceTypeScriptSources,
   ],
 });

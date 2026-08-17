@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { formatPiSessionDirectoryForCwd } from '../sessionFiles.js';
 import { PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
@@ -219,6 +219,62 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
     }
   });
 
+  it('uses the host-stamped session-state sharing effect and ignores raw account settings', async () => {
+    const connectedServices = readConnectedServicesContribution();
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-state-sharing-effect-'));
+    const sourceAgentDir = join(root, 'source-pi-agent-dir');
+    const sessionDirectory = '/tmp/project';
+    const sourceSessionDir = join(
+      sourceAgentDir,
+      'sessions',
+      formatPiSessionDirectoryForCwd(sessionDirectory),
+    );
+    const sourceSessionFile = join(sourceSessionDir, '2026-08-14T00-00-00-000Z_pi-session.jsonl');
+
+    try {
+      await mkdir(sourceSessionDir, { recursive: true });
+      await writeFile(sourceSessionFile, '{"type":"session"}\n');
+
+      await connectedServices?.materializeAuthEnvironment?.({
+        rootDir: root,
+        processEnv: { PI_CODING_AGENT_DIR: sourceAgentDir },
+        sessionDirectory,
+        connectedServicesSessionStateSharingRequested: false,
+        accountSettings: {
+          connectedServicesProviderStateSharingSettingsV1: {
+            v: 1,
+            defaults: { configMode: 'linked', stateMode: 'shared' },
+            byAgentId: {},
+            acknowledgedRisksByAgentId: {},
+          },
+        },
+      });
+
+      await expect(readFile(join(root, 'pi-agent-dir', 'sessions', formatPiSessionDirectoryForCwd(sessionDirectory), '2026-08-14T00-00-00-000Z_pi-session.jsonl')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+
+      await connectedServices?.materializeAuthEnvironment?.({
+        rootDir: root,
+        processEnv: { PI_CODING_AGENT_DIR: sourceAgentDir },
+        sessionDirectory,
+        connectedServicesSessionStateSharingRequested: true,
+        accountSettings: {
+          connectedServicesProviderStateSharingSettingsV1: {
+            v: 1,
+            defaults: { configMode: 'linked', stateMode: 'isolated' },
+            byAgentId: {},
+            acknowledgedRisksByAgentId: {},
+          },
+        },
+      });
+
+      await expect(readFile(join(root, 'pi-agent-dir', 'sessions', formatPiSessionDirectoryForCwd(sessionDirectory), '2026-08-14T00-00-00-000Z_pi-session.jsonl')))
+        .resolves.toEqual(Buffer.from('{"type":"session"}\n'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('retires competing broker/request-auth assets and neutralizes legacy env across an auth switch', async () => {
     const connectedServices = readConnectedServicesContribution();
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-request-auth-upgrade-'));
@@ -242,8 +298,11 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
         mkdir(currentRequestAuthDir, { recursive: true }),
       ]);
       await Promise.all([
+        writeFile(join(extensionsDir, 'happier-pi-broker.js'), 'stable predecessor broker\n'),
         writeFile(join(extensionsDir, 'happier-pi-broker-1.js'), 'legacy broker\n'),
+        writeFile(join(extensionsDir, 'happier-pi-broker-2.js'), 'legacy broker v2\n'),
         writeFile(join(extensionsDir, 'happier-pi-request-auth-1.js'), 'superseded request auth\n'),
+        writeFile(join(extensionsDir, 'happier-pi-request-auth-2.js'), 'superseded request auth v2\n'),
         writeFile(join(extensionsDir, 'unrelated-extension.js'), 'unrelated\n'),
         writeFile(legacyBrokerCapabilityPath, 'retired secret\n'),
         writeFile(currentRequestAuthCapabilityPath, 'current strict V2\n'),
@@ -258,7 +317,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
         },
       });
       const expectedRequestAuthExtensions = [
-        'happier-pi-request-auth-2.js',
+        'happier-pi-request-auth.js',
         'unrelated-extension.js',
       ];
 

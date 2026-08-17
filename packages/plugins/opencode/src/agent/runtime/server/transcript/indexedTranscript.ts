@@ -1,4 +1,4 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   classifyOpenCodeMessageForProjection,
@@ -83,14 +83,14 @@ export function decodeOpenCodeIndexCursor(
   }
 }
 
-export function measureOpenCodeTranscriptItemBytes(item: ExternalSessionTranscriptRawMessageV1): number {
+export function measureOpenCodeTranscriptItemBytes(item: unknown): number {
   return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
 export function mapOpenCodeMessageToTranscriptItem(
   message: unknown,
   providerSessionId: string,
-): ExternalSessionTranscriptRawMessageV1 | null {
+): AgentExternalSessionTranscriptItem | null {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return null;
   }
@@ -136,7 +136,7 @@ export function mapOpenCodeMessageToTranscriptItem(
 }
 
 type OpenCodeTranscriptMessageProjection = Readonly<{
-  item: ExternalSessionTranscriptRawMessageV1 | null;
+  item: AgentExternalSessionTranscriptItem | null;
   projectionKind: 'user_transcript' | 'assistant_transcript' | 'other';
   messageId: string;
 }>;
@@ -166,7 +166,7 @@ export function createOpenCodeTranscriptProjectionMapper(params: Readonly<{
   messages: readonly unknown[];
   providerSessionId: string;
   options?: OpenCodeTranscriptProjectionOptions;
-}>): (message: unknown, index: number) => ExternalSessionTranscriptRawMessageV1 | null {
+}>): (message: unknown, index: number) => AgentExternalSessionTranscriptItem | null {
   const projections = new Map<number, OpenCodeTranscriptMessageProjection>();
   const latestUserOriginByIndex = new Map<number, 'external' | 'happier_authored' | null>();
   let latestScannedIndex = -1;

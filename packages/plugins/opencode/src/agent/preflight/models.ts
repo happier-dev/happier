@@ -1,5 +1,5 @@
-import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
-import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/protocol';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/plugin-sdk/agents';
 
 import { buildOpenCodeThinkingModelOptionsFromVariants } from '../config/thinking.js';
 import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
@@ -214,7 +214,7 @@ function buildOpenCodePreflightModelsFromPlainOutput(outputRaw: string): readonl
 }
 
 export async function probeOpenCodePreflightModelsRaw(params: Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
@@ -257,6 +257,7 @@ export async function probeOpenCodePreflightModelsRaw(params: Readonly<{
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'cooldown',
   probeModelsRaw: probeOpenCodePreflightModelsRaw,
   cliModelsCommandArgs: OPENCODE_CLI_MODELS_COMMAND_ARGS,

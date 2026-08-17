@@ -1,7 +1,7 @@
 import type {
   AgentAcpRuntimeExtensions,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createCursorAcpExtensionHandlers } from './handlers.js';
 

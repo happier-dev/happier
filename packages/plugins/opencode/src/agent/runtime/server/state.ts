@@ -19,6 +19,7 @@ export type OpenCodeServerRuntimeState = {
   currentTurnProviderPromptTexts: Set<string>;
   currentTurnPromptSubmittedAtMs: number | null;
   currentTurnPromptAcceptedAtMs: number | null;
+  currentTurnIdleObserved: boolean;
   currentTurnTerminalAssistantMessageIds: Set<string>;
   currentTurnPublishedAssistantMessageIds: Set<string>;
   emittedAssistantMessageIds: Set<string>;
@@ -43,6 +44,7 @@ export function createOpenCodeServerRuntimeState(): OpenCodeServerRuntimeState {
     currentTurnProviderPromptTexts: new Set<string>(),
     currentTurnPromptSubmittedAtMs: null,
     currentTurnPromptAcceptedAtMs: null,
+    currentTurnIdleObserved: false,
     currentTurnTerminalAssistantMessageIds: new Set<string>(),
     currentTurnPublishedAssistantMessageIds: new Set<string>(),
     emittedAssistantMessageIds: new Set<string>(),

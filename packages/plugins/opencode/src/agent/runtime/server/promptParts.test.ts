@@ -62,4 +62,24 @@ describe('buildOpenCodePromptParts', () => {
       },
     })).toThrow('OpenCode server mode cannot consume verified image uploads safely');
   });
+
+  it('accepts an additive mentions field and emits one part per reference (D-4, R-4)', () => {
+    // The envelope schema is `.passthrough()`, so `mentions[]` must not trip the
+    // `opencode_structured_input_invalid` rejection at the top of the projection.
+    expect(buildOpenCodePromptParts({
+      cwd: '/repo',
+      text: 'Review this',
+      structuredInput: {
+        v: 1,
+        mentions: [{
+          kind: 'happier.vendorPlugin',
+          ref: 'vendorPlugin:reviewer',
+          token: '@reviewer',
+          start: 0,
+          end: 9,
+        }],
+        vendorPluginMentions: [{ vendorPluginRef: 'reviewer', label: 'Reviewer' }],
+      },
+    })).toEqual([{ type: 'text', text: 'Review this' }]);
+  });
 });

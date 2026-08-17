@@ -1,4 +1,7 @@
-import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime';
+import {
+  HappierStructuredInputV1Schema,
+  readStructuredInputMentionSourcesV1,
+} from '@happier-dev/plugin-sdk/sessions';
 
 export type OpenCodePromptPart =
   | Readonly<{ type: 'text'; text: string }>
@@ -48,12 +51,17 @@ export function buildOpenCodePromptParts(params: Readonly<{
     );
   }
 
+  // D-4: when the envelope carries `mentions[]` it is the authoritative reference
+  // enumeration and the legacy per-kind arrays are ignored, so a dual-written envelope
+  // cannot emit a second part for the same reference.
+  const mentionSources = readStructuredInputMentionSourcesV1(structured?.data ?? null);
+
   const parts: OpenCodePromptPart[] = [];
   if (params.text.length > 0) parts.push({ type: 'text', text: params.text });
-  for (const mention of structured?.data.vendorPluginMentions ?? []) {
+  for (const mention of mentionSources.vendorPluginMentions) {
     parts.push({ type: 'agent', name: mention.vendorPluginRef });
   }
-  for (const skill of structured?.data.skillMentions ?? []) {
+  for (const skill of mentionSources.skillMentions) {
     parts.push({
       type: 'text',
       text: `Use the ${skill.name} skill for this request.`,

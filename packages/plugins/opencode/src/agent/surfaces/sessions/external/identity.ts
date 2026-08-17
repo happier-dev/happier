@@ -1,19 +1,29 @@
+import type { AgentTerminalSessionStateUpdate as SessionStateUpdateV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
-  type ExternalSessionsSource,
-  type RuntimeDescriptorV1,
-  type ExternalSessionResolvedIdentityV1,
-  type SessionStateUpdateV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  type AgentExternalSessionLinkData,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   buildOpenCodeAgentRuntimeDescriptorV1,
+  type OpenCodeAgentRuntimeDescriptorV1,
   readCanonicalOpenCodeAgentRuntimeDescriptorV1,
   readOpenCodeSessionRuntimeHandleFromMetadata,
 } from '../../../identity/runtimeDescriptor.js';
+import {
+  type OpenCodeExternalSessionSource,
+} from './client.js';
+
+export type OpenCodeExternalSessionResolvedIdentity = Readonly<{
+  providerSessionId: string;
+  source: OpenCodeExternalSessionSource;
+  runtimeDescriptor?: OpenCodeAgentRuntimeDescriptorV1;
+  vendorMetadata?: AgentExternalSessionLinkData;
+  sessionStateUpdates?: readonly SessionStateUpdateV1[];
+}>;
 
 function buildSessionStateUpdates(params: Readonly<{
   providerSessionId: string;
-  runtimeDescriptor: RuntimeDescriptorV1;
+  runtimeDescriptor: OpenCodeAgentRuntimeDescriptorV1;
 }>): SessionStateUpdateV1[] {
   return [
     {
@@ -32,7 +42,7 @@ function buildOpenCodeMetadataPatch(params: Readonly<{
   backendMode: 'server' | 'acp';
   serverBaseUrl?: string | null;
   serverBaseUrlExplicit?: boolean;
-}>): Record<string, unknown> {
+}>): AgentExternalSessionLinkData {
   return {
     opencodeSessionId: params.providerSessionId,
     opencodeBackendMode: params.backendMode,
@@ -43,55 +53,47 @@ function buildOpenCodeMetadataPatch(params: Readonly<{
 
 export function resolveOpenCodeExternalSessionIdentity(params: Readonly<{
   providerSessionId: string;
-  source: ExternalSessionsSource;
-  runtimeDescriptor?: RuntimeDescriptorV1 | null;
+  source: OpenCodeExternalSessionSource;
+  runtimeDescriptor?: unknown;
   metadata?: Readonly<Record<string, unknown>>;
-}>): ExternalSessionResolvedIdentityV1 {
+}>): OpenCodeExternalSessionResolvedIdentity {
   const canonicalRuntimeDescriptor = readCanonicalOpenCodeAgentRuntimeDescriptorV1(params.runtimeDescriptor);
   const providerSessionId = canonicalRuntimeDescriptor?.providerSessionId ?? params.providerSessionId;
-  const backendMode =
-    params.source.kind === 'opencodeServer'
-      ? 'server'
-      : canonicalRuntimeDescriptor?.backendMode === 'acp' || canonicalRuntimeDescriptor?.backendMode === 'server'
-        ? canonicalRuntimeDescriptor.backendMode
-        : null;
+  const backendMode = 'server';
+  const managedEndpoint = params.source.managedEndpoint === true;
 
-  if (!backendMode) {
-    return {
-      providerSessionId,
-      source: params.source,
-    };
-  }
-
-  const serverBaseUrl =
-    canonicalRuntimeDescriptor?.serverBaseUrl
-    ?? (params.source.kind === 'opencodeServer'
-      && typeof params.source.baseUrl === 'string'
-      && params.source.baseUrl.trim().length > 0
-      ? params.source.baseUrl.trim()
-      : undefined);
+  const serverBaseUrl = managedEndpoint
+    ? undefined
+    : canonicalRuntimeDescriptor?.serverBaseUrl
+      ?? (typeof params.source.baseUrl === 'string'
+        && params.source.baseUrl.trim().length > 0
+        ? params.source.baseUrl.trim()
+        : undefined);
+  const serverBaseUrlExplicit = !managedEndpoint
+    && (canonicalRuntimeDescriptor?.serverBaseUrlExplicit ?? Boolean(serverBaseUrl));
   const directory =
-    params.source.kind === 'opencodeServer' && typeof params.source.directory === 'string'
+    typeof params.source.directory === 'string'
       ? params.source.directory.trim()
       : '';
-  const source: ExternalSessionsSource = params.source.kind === 'opencodeServer'
-    ? {
-        kind: 'opencodeServer',
-        ...(serverBaseUrl ? { baseUrl: serverBaseUrl } : {}),
-        ...(directory ? { directory } : {}),
-      }
-    : params.source;
+  const source: OpenCodeExternalSessionSource = {
+    kind: 'opencodeServer',
+    ...(serverBaseUrl ? { baseUrl: serverBaseUrl } : {}),
+    ...(!serverBaseUrl && managedEndpoint
+      ? { managedEndpoint: true as const }
+      : {}),
+    ...(directory ? { directory } : {}),
+  };
   const runtimeDescriptor = buildOpenCodeAgentRuntimeDescriptorV1({
     backendMode,
     providerSessionId,
     ...(serverBaseUrl ? { serverBaseUrl } : {}),
-    ...((canonicalRuntimeDescriptor?.serverBaseUrlExplicit ?? Boolean(serverBaseUrl)) ? { serverBaseUrlExplicit: true } : {}),
+    ...(serverBaseUrlExplicit ? { serverBaseUrlExplicit: true } : {}),
   });
   const metadataPatch = buildOpenCodeMetadataPatch({
     providerSessionId,
     backendMode,
     serverBaseUrl,
-    serverBaseUrlExplicit: canonicalRuntimeDescriptor?.serverBaseUrlExplicit ?? Boolean(serverBaseUrl),
+    serverBaseUrlExplicit,
   });
 
   return {
@@ -99,7 +101,6 @@ export function resolveOpenCodeExternalSessionIdentity(params: Readonly<{
     source,
     runtimeDescriptor,
     vendorMetadata: metadataPatch,
-    externalSessionMetadata: metadataPatch,
     sessionStateUpdates: buildSessionStateUpdates({ providerSessionId, runtimeDescriptor }),
   };
 }
@@ -107,24 +108,36 @@ export function resolveOpenCodeExternalSessionIdentity(params: Readonly<{
 export function resolveOpenCodeLinkedExternalSessionIdentity(params: Readonly<{
   metadata: Readonly<Record<string, unknown>>;
   providerSessionId: string;
-  source: ExternalSessionsSource;
-}>): ExternalSessionResolvedIdentityV1 {
+  source: OpenCodeExternalSessionSource;
+  runtimeDescriptor?: unknown;
+}>): OpenCodeExternalSessionResolvedIdentity {
+  const canonicalRuntimeDescriptor = readCanonicalOpenCodeAgentRuntimeDescriptorV1(
+    params.runtimeDescriptor,
+  );
   const runtimeHandle = readOpenCodeSessionRuntimeHandleFromMetadata(params.metadata);
-  const baseUrl =
-    runtimeHandle.serverBaseUrl
-    ?? (params.source.kind === 'opencodeServer' && typeof params.source.baseUrl === 'string'
-      ? params.source.baseUrl.trim()
-      : '');
+  const managedEndpoint = params.source.managedEndpoint === true;
+  const baseUrl = managedEndpoint
+    ? ''
+    : canonicalRuntimeDescriptor?.serverBaseUrl
+      ?? runtimeHandle.serverBaseUrl
+      ?? (typeof params.source.baseUrl === 'string'
+        ? params.source.baseUrl.trim()
+        : '');
   const directory =
-    params.source.kind === 'opencodeServer' && typeof params.source.directory === 'string'
+    typeof params.source.directory === 'string'
       ? params.source.directory.trim()
       : '';
-  const source: ExternalSessionsSource = {
+  const source: OpenCodeExternalSessionSource = {
     kind: 'opencodeServer',
     ...(baseUrl ? { baseUrl } : {}),
+    ...(!baseUrl && managedEndpoint
+      ? { managedEndpoint: true as const }
+      : {}),
     ...(directory ? { directory } : {}),
   };
-  const providerSessionId = runtimeHandle.providerSessionId ?? params.providerSessionId;
+  const providerSessionId = canonicalRuntimeDescriptor?.providerSessionId
+    ?? runtimeHandle.providerSessionId
+    ?? params.providerSessionId;
   const runtimeDescriptor = buildOpenCodeAgentRuntimeDescriptorV1({
     backendMode: 'server',
     providerSessionId,
@@ -143,7 +156,6 @@ export function resolveOpenCodeLinkedExternalSessionIdentity(params: Readonly<{
     source,
     runtimeDescriptor,
     vendorMetadata: metadataPatch,
-    externalSessionMetadata: metadataPatch,
     sessionStateUpdates: buildSessionStateUpdates({ providerSessionId, runtimeDescriptor }),
   };
 }

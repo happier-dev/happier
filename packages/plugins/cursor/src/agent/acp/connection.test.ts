@@ -3,7 +3,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { openCursorAcpSession } from './connection.js';
@@ -18,6 +18,12 @@ function createFixture(request: AgentSessionOpenRequest) {
     _request: AgentSessionOpenRequest,
     _options: AgentAcpRuntimeOptions,
   ) => composedSession);
+  const daemonSettings = {
+    get: vi.fn(async () => null),
+  };
+  const settings = {
+    forScope: vi.fn(() => daemonSettings),
+  };
   const context = {
     protocols: { acp: { open } },
     session: { id: request.sessionId },
@@ -25,16 +31,14 @@ function createFixture(request: AgentSessionOpenRequest) {
     workState: { publisher: vi.fn(() => ({ publish: vi.fn() })) },
     services: {
       logger: { debug: vi.fn() },
-      settings: {
-        get: vi.fn(async () => null),
-      },
+      settings,
       sessions: {
         current: { media: { registerSourceRoot: vi.fn() } },
         subagents: { observe: vi.fn() },
       },
     },
   } as unknown as AgentSessionRuntimeContext;
-  return { composedSession, context, open };
+  return { composedSession, context, daemonSettings, settings, open };
 }
 
 describe('openCursorAcpSession', () => {
@@ -51,8 +55,8 @@ describe('openCursorAcpSession', () => {
         options: {},
       },
     };
-    const { context, open } = createFixture(request);
-    vi.mocked(context.services.settings.get).mockImplementation(async (id: string) => {
+    const { context, daemonSettings, settings, open } = createFixture(request);
+    vi.mocked(daemonSettings.get).mockImplementation(async (id: string) => {
       if (id === 'cursorBinaryPath') return ' /opt/cursor-agent ';
       if (id === 'cursorAgentFallbackEnabled') return false;
       if (id === 'cursorApiEndpoint') return ' https://cursor.example.test ';
@@ -60,6 +64,8 @@ describe('openCursorAcpSession', () => {
     });
 
     await openCursorAcpSession(request, context);
+
+    expect(settings.forScope).toHaveBeenCalledWith({ kind: 'daemon' });
 
     expect(open).toHaveBeenCalledWith(request, expect.objectContaining({
       transport: {

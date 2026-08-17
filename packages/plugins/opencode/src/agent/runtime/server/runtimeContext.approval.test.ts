@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
-  PluginUiApprovalRequest,
-  PluginUiApprovalResult,
-} from '@happier-dev/plugin-sdk/runtime';
+  InteractionTransientApprovalAuthorRequestV1,
+  InteractionTransientApprovalResultV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import { requestOpenCodeApprovalWithSignal } from './runtimeContext.js';
 
 const REQUEST = {
+  kind: 'approval',
   title: 'Allow Bash?',
   subject: {
     kind: 'tool',
@@ -14,12 +15,12 @@ const REQUEST = {
     input: { command: 'git status' },
   },
   allowSessionPersistence: true,
-} as const satisfies PluginUiApprovalRequest;
+} as const satisfies InteractionTransientApprovalAuthorRequestV1;
 
 describe('requestOpenCodeApprovalWithSignal', () => {
   it('settles cancelled when turn retirement aborts before a stale approval result', async () => {
-    let settle!: (result: PluginUiApprovalResult) => void;
-    const requestApproval = vi.fn(() => new Promise<PluginUiApprovalResult>((resolve) => {
+    let settle!: (result: InteractionTransientApprovalResultV1) => void;
+    const requestApproval = vi.fn(() => new Promise<InteractionTransientApprovalResultV1>((resolve) => {
       settle = resolve;
     }));
     const controller = new AbortController();
@@ -32,15 +33,12 @@ describe('requestOpenCodeApprovalWithSignal', () => {
     controller.abort(new Error('provider turn retired'));
 
     await expect(result).resolves.toEqual({
-      status: 'cancelled',
-      diagnostic: {
-        code: 'opencode_approval_cancelled',
-        severity: 'warning',
-        message: 'OpenCode approval was cancelled because its turn no longer owns the request.',
-      },
+      requestId: expect.any(String),
+      kind: 'approval',
+      status: 'requesterAborted',
     });
 
-    settle({ status: 'approved', persistence: 'session' });
+    settle({ requestId: 'approval-late', kind: 'approval', status: 'approved', persistence: 'session' });
     await Promise.resolve();
     expect(requestApproval).toHaveBeenCalledOnce();
   });

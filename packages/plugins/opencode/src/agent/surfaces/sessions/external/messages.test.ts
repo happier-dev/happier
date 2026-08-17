@@ -37,6 +37,10 @@ describe('OpenCode external-session transcript messages', () => {
         content: { type: 'text', text: 'hello from user' },
       },
     });
+    // The server's external message DTO has a stable native id, but does not
+    // carry the owned-runtime correlation needed to distinguish a terminal
+    // user row from a Happier prompt echo.
+    expect(user).not.toHaveProperty('userProjection');
     expect(assistant).toMatchObject({
       id: 'opencode:sess-1:msg-assistant',
       localId: 'opencode:sess-1:msg-assistant',

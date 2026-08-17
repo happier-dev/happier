@@ -1,4 +1,11 @@
 import type {
+  HttpMethod } from '@happier-dev/plugin-sdk/http';
+import type {
+  ManagedServiceHandle,
+  ManagedServiceResponse,
+} from '@happier-dev/plugin-sdk/managed-services';
+
+import type {
   OpenCodeRuntimeFetch,
   OpenCodeRuntimeFetchResponse,
 } from './openCodeServerClient.js';
@@ -9,30 +16,9 @@ export type OpenCodeNativeFetch = (
 ) => Promise<Response>;
 
 export type OpenCodeServerTransport = Readonly<{
-  baseUrl: string;
   request: OpenCodeRuntimeFetch;
   fetch: OpenCodeNativeFetch;
 }>;
-
-type OpenCodeServerTransportSnapshot = Readonly<{
-  instanceId?: string;
-  state: string;
-  baseUrl?: string | null;
-}>;
-
-function normalizeBaseUrl(value: string): string {
-  const url = new URL(value);
-  url.hash = '';
-  url.search = '';
-  return url.toString().replace(/\/+$/u, '');
-}
-
-function isWithinBaseUrl(target: URL, base: URL): boolean {
-  if (target.origin !== base.origin) return false;
-  const basePath = base.pathname.replace(/\/+$/u, '');
-  if (!basePath) return true;
-  return target.pathname === basePath || target.pathname.startsWith(`${basePath}/`);
-}
 
 function headersToRecord(headers: Headers): Readonly<Record<string, string>> {
   const result: Record<string, string> = {};
@@ -42,117 +28,99 @@ function headersToRecord(headers: Headers): Readonly<Record<string, string>> {
   return result;
 }
 
-function normalizeRequestBody(body: unknown): BodyInit | undefined {
-  if (body === undefined) return undefined;
-  if (
-    typeof body === 'string'
-    || body instanceof ArrayBuffer
-    || body instanceof Blob
-    || body instanceof FormData
-    || body instanceof URLSearchParams
-    || body instanceof ReadableStream
-  ) {
-    return body;
-  }
+async function normalizeRequestBody(body: unknown): Promise<Uint8Array | undefined> {
+  if (body === undefined || body === null) return undefined;
+  if (typeof body === 'string') return new TextEncoder().encode(body);
+  if (body instanceof ArrayBuffer) return new Uint8Array(body.slice(0));
   if (ArrayBuffer.isView(body)) {
-    const bytes = new Uint8Array(body.byteLength);
-    bytes.set(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
-    return bytes;
+    return new Uint8Array(
+      body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    );
   }
-  return JSON.stringify(body);
+  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer());
+  if (body instanceof URLSearchParams) return new TextEncoder().encode(body.toString());
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+function normalizeHttpMethod(method: string | undefined): HttpMethod | undefined {
+  if (method === undefined) return undefined;
+  const normalized = method.toUpperCase();
+  switch (normalized) {
+    case 'GET':
+    case 'HEAD':
+    case 'POST':
+    case 'PUT':
+    case 'PATCH':
+    case 'DELETE':
+    case 'OPTIONS':
+      return normalized;
+    default:
+      throw new Error(`Unsupported OpenCode HTTP method: ${method}`);
+  }
 }
 
 function composeSignals(
   ownerSignal: AbortSignal | undefined,
   requestSignal: AbortSignal | null | undefined,
-  timeoutMs: number | undefined,
 ): AbortSignal | undefined {
-  const signals = [
-    ownerSignal,
-    requestSignal ?? undefined,
-    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? AbortSignal.timeout(Math.trunc(timeoutMs))
-      : undefined,
-  ].filter((signal): signal is AbortSignal => signal !== undefined);
+  const signals = [ownerSignal, requestSignal ?? undefined]
+    .filter((signal): signal is AbortSignal => signal !== undefined);
   if (signals.length === 0) return undefined;
   if (signals.length === 1) return signals[0];
   return AbortSignal.any(signals);
 }
 
+function toNativeResponse(response: ManagedServiceResponse): Response {
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 export function createOpenCodeServerTransport(params: Readonly<{
-  baseUrl: string;
-  instanceId: string;
-  headers?: Readonly<Record<string, string>>;
+  managedService: ManagedServiceHandle;
   signal?: AbortSignal;
-  readManagedServerSnapshot: () => OpenCodeServerTransportSnapshot | null | undefined;
-  fetchImpl?: OpenCodeNativeFetch;
 }>): OpenCodeServerTransport {
-  const baseUrl = normalizeBaseUrl(params.baseUrl);
-  const base = new URL(`${baseUrl}/`);
-  const fetchImpl = params.fetchImpl ?? globalThis.fetch;
-
-  const assertCurrentIncarnation = (): void => {
-    const snapshot = params.readManagedServerSnapshot();
-    if (
-      !snapshot
-      || snapshot.instanceId !== params.instanceId
-      || snapshot.state !== 'healthy'
-    ) {
-      throw new Error('OpenCode managed server incarnation is stale');
-    }
-    const currentBaseUrl = typeof snapshot.baseUrl === 'string'
-      ? normalizeBaseUrl(snapshot.baseUrl)
-      : null;
-    if (currentBaseUrl !== baseUrl) {
-      throw new Error('OpenCode managed server endpoint is stale');
-    }
-  };
-
   const fetchBound: OpenCodeNativeFetch = async (input, init = {}) => {
-    const target = new URL(input.toString());
-    if (!isWithinBaseUrl(target, base)) {
-      throw new Error('OpenCode request is outside its supervised endpoint');
-    }
-    if (target.username || target.password || target.hash) {
-      throw new Error('OpenCode request contains unsupported URL credentials or fragments');
-    }
-    assertCurrentIncarnation();
-    const headers = new Headers(init.headers);
-    for (const [name, value] of Object.entries(params.headers ?? {})) {
-      headers.set(name, value);
-    }
-    const signal = composeSignals(params.signal, init.signal, undefined);
-    return await fetchImpl(target.toString(), {
-      ...init,
-      headers,
-      redirect: 'error',
-      ...(signal ? { signal } : {}),
+    const body = await normalizeRequestBody(init.body);
+    const signal = composeSignals(params.signal, init.signal);
+    const response = await params.managedService.request({
+      pathAndQuery: String(input),
+      ...(init.method === undefined ? {} : { method: normalizeHttpMethod(init.method) }),
+      ...(init.headers === undefined ? {} : { headers: headersToRecord(new Headers(init.headers)) }),
+      ...(body === undefined ? {} : { body }),
+      ...(signal === undefined ? {} : { signal }),
     });
+    return toNativeResponse(response);
   };
 
   const request: OpenCodeRuntimeFetch = async (input) => {
-    const signal = composeSignals(params.signal, input.signal, input.timeoutMs);
-    const body = normalizeRequestBody(input.body);
-    const response = await fetchBound(input.url, {
-      method: input.method,
-      headers: input.headers,
+    const body = await normalizeRequestBody(input.body);
+    const signal = composeSignals(params.signal, input.signal);
+    const response = await params.managedService.request({
+      pathAndQuery: input.url,
+      ...(input.method === undefined ? {} : { method: input.method }),
+      ...(input.headers === undefined ? {} : { headers: input.headers }),
       ...(body === undefined ? {} : { body }),
-      ...(signal ? { signal } : {}),
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      ...(signal === undefined ? {} : { signal }),
     });
+    const nativeResponse = toNativeResponse(response);
     const runtimeResponse: OpenCodeRuntimeFetchResponse = {
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
-      headers: headersToRecord(response.headers),
-      text: async () => await response.text(),
-      json: async () => await response.json(),
-      arrayBuffer: async () => await response.arrayBuffer(),
+      headers: response.headers,
+      body: nativeResponse.body,
+      text: async () => await nativeResponse.text(),
+      json: async () => await nativeResponse.json(),
+      arrayBuffer: async () => await nativeResponse.arrayBuffer(),
     };
     return runtimeResponse;
   };
 
   return Object.freeze({
-    baseUrl,
     request,
     fetch: fetchBound,
   });

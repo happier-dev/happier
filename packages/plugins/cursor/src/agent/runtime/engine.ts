@@ -1,4 +1,4 @@
-import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { openCursorAcpSession } from '../acp/connection.js';
 

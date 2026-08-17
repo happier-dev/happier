@@ -2,7 +2,7 @@ import {
   isRecord,
   parseTimestampMs,
   readString,
-} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk';
 
 const PI_V3_ENTRY_TYPES = new Set([
   'branch_summary',
@@ -73,6 +73,15 @@ function readTreeEntry(record: unknown): PiV3SessionTreeEntry | null {
     knownType: PI_V3_ENTRY_TYPES.has(type),
     record,
   };
+}
+
+/**
+ * A raw JSONL value is safe to advance past only when it is Pi's file header
+ * or a structurally complete tree entry. Semantic admission remains with the
+ * external-session projection owner.
+ */
+export function isPiV3SessionFileRecord(record: unknown): boolean {
+  return readPiV3Header(record) !== null || readTreeEntry(record) !== null;
 }
 
 /**

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  PluginExecService,
+  ExecService,
   PluginExecSpawnRequest,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import {
   buildOpenCodePreflightModelsFromVerboseOutput,
@@ -17,7 +17,7 @@ describe('OpenCode preflight model parsing', () => {
   }>;
 
   function readProbeModelsRaw(value: unknown): ((params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     cwd: string;
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
@@ -60,7 +60,7 @@ describe('OpenCode preflight model parsing', () => {
       },
       clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
       agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies PluginExecService;
+    } satisfies ExecService;
     return { exec, runs };
   }
 
@@ -140,6 +140,7 @@ describe('OpenCode preflight model parsing', () => {
 
   it('declares session-control probe facts and the verbose model probe', () => {
     expect(OPENCODE_PREFLIGHT_SESSION_CONTROLS).toEqual({
+      connectedServiceAuth: 'materialized-env',
       failureCacheStrategy: 'cooldown',
       probeModelsRaw: expect.any(Function),
       cliModelsCommandArgs: ['models'],

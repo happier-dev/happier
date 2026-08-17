@@ -25,9 +25,24 @@ describe('OpenCode runtime descriptor metadata reader', () => {
     });
   });
 
+  it('reads HTTPS hosts but rejects non-loopback HTTP metadata', () => {
+    expect(readOpenCodeSessionMetadataRuntimeDescriptor({
+      opencodeServerBaseUrl: 'https://OpenCode.Example.test:443/path?ignored=true#hash',
+      opencodeServerBaseUrlExplicit: true,
+    })).toMatchObject({
+      serverBaseUrl: 'https://opencode.example.test/',
+      serverBaseUrlExplicit: true,
+    });
+
+    expect(readOpenCodeSessionMetadataRuntimeDescriptor({
+      opencodeServerBaseUrl: 'http://192.168.1.50:4096',
+      opencodeServerBaseUrlExplicit: true,
+    })).toBeNull();
+  });
+
   it('fails closed for invalid explicit legacy server URLs', () => {
     expect(readOpenCodeSessionMetadataRuntimeDescriptor({
-      opencodeServerBaseUrl: 'http://example.com:4096',
+      opencodeServerBaseUrl: 'http://opencode:secret@example.com:4096',
       opencodeServerBaseUrlExplicit: true,
     })).toBeNull();
 
@@ -46,5 +61,19 @@ describe('OpenCode runtime descriptor metadata reader', () => {
       serverBaseUrl: null,
       serverBaseUrlExplicit: false,
     });
+  });
+
+  it('does not bypass the host runtime-descriptor validator for malformed persisted identities', () => {
+    expect(readOpenCodeSessionMetadataRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentIdentity: { pluginId: 'not a valid plugin id', localId: 'opencode' },
+        agentId: 'opencode',
+        agent: {
+          backendMode: 'server',
+          providerSessionId: 'must-not-leak-through',
+        },
+      },
+    })).toBeNull();
   });
 });

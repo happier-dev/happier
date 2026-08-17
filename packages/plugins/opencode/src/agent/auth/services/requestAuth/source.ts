@@ -1,8 +1,10 @@
-import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+
+import { OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS } from './purposes.js';
 
 export type OpenCodeRequestAuthProvider = 'openai' | 'anthropic';
 
-export const OPEN_CODE_REQUEST_AUTH_PLUGIN_VERSION = '2';
+export const OPEN_CODE_REQUEST_AUTH_PLUGIN_VERSION = '1';
 export const OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
 export const OPEN_CODE_REQUEST_AUTH_ANTHROPIC_BETA = 'oauth-2025-04-20';
 
@@ -20,7 +22,7 @@ function js(value: unknown): string {
  */
 export function buildOpenCodeRequestAuthPluginSource(input: Readonly<{
   provider: OpenCodeRequestAuthProvider;
-  purpose: QualifiedConnectedAccountPurposeV1;
+  purpose: JsonValue;
   requestAuthClientSource: string;
 }>): string {
   return `// Happier OpenCode connected-account request-auth plugin (generated).
@@ -32,6 +34,7 @@ const PROVIDER = ${js(input.provider)};
 const PURPOSE = Object.freeze(${js(input.purpose)});
 const MARKER = ${js(buildOpenCodeRequestAuthMarker(input.provider))};
 const CODEX_BASE_URL = ${js(OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL)};
+const REQUEST_AUTH_TARGET_ORIGIN = ${js(OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS[input.provider])};
 const ANTHROPIC_BETA = ${js(OPEN_CODE_REQUEST_AUTH_ANTHROPIC_BETA)};
 const ANTHROPIC_SYSTEM_IDENTITY = ${js("You are Claude Code, Anthropic's official CLI for Claude.")};
 
@@ -39,11 +42,38 @@ function rewriteCodexUrl(url) {
   return String(url).replace("/responses", "/codex/responses");
 }
 
+function requireRequestAuthDestination(url) {
+  let destination;
+  try {
+    destination = new URL(url);
+  } catch {
+    throw new Error("happier_opencode_request_auth_destination_mismatch");
+  }
+  if (
+    destination.protocol !== "https:"
+    || destination.origin !== REQUEST_AUTH_TARGET_ORIGIN
+    || destination.username
+    || destination.password
+  ) {
+    throw new Error("happier_opencode_request_auth_destination_mismatch");
+  }
+  return destination.toString();
+}
+
+function isRedirectResponse(response) {
+  return response.status === 301
+    || response.status === 302
+    || response.status === 303
+    || response.status === 307
+    || response.status === 308;
+}
+
 function mergeRequiredHeaders(init, lease) {
   const headers = new Headers(init && init.headers ? init.headers : {});
   headers.delete("authorization");
+  headers.delete("chatgpt-account-id");
   headers.delete("x-api-key");
-  if (PROVIDER === "openai") headers.delete("chatgpt-account-id");
+  headers.delete("x-claude-code-session-id");
   headers.set("authorization", "Bearer " + lease.accessToken);
   for (const [name, value] of Object.entries(lease.requiredHeaders || {})) {
     headers.set(name, value);
@@ -155,6 +185,11 @@ async function requestAuthFetch(requestInput, init) {
   const shaped = PROVIDER === "openai"
     ? transformCodexBody(init)
     : injectAnthropicIdentity(init);
+  // Validate before obtaining any bearer. Redirects are rejected below rather than
+  // allowing a credential-bearing fetch to choose a later destination.
+  const destination = requireRequestAuthDestination(
+    PROVIDER === "openai" ? rewriteCodexUrl(url) : url,
+  );
   const retrySafe = isReplayableRequest(requestInput, shaped);
   let retryUsed = false;
   while (true) {
@@ -164,9 +199,13 @@ async function requestAuthFetch(requestInput, init) {
       signal: shaped && shaped.signal,
     });
     const response = await fetch(
-      PROVIDER === "openai" ? rewriteCodexUrl(url) : url,
-      { ...shaped, headers: mergeRequiredHeaders(shaped, lease) },
+      destination,
+      { ...shaped, redirect: "manual", headers: mergeRequiredHeaders(shaped, lease) },
     );
+    if (isRedirectResponse(response)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("happier_opencode_request_auth_redirect_rejected");
+    }
     if (response.status !== 401 && response.status !== 429) return response;
 
     let outcome = null;
@@ -183,11 +222,14 @@ async function requestAuthFetch(requestInput, init) {
     ) {
       return response;
     }
+    // Once this leaf admits a replay, the rejected response is no longer observable.
+    // Release its stream before starting the one allowed replacement attempt.
+    await response.body?.cancel().catch(() => undefined);
     retryUsed = true;
   }
 }
 
-export const HappierOpenCodeRequestAuthPlugin = async () => ({
+const HappierOpenCodeRequestAuthPlugin = async () => ({
   auth: {
     provider: PROVIDER,
     methods: [],

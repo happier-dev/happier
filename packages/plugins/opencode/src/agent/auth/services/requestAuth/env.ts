@@ -1,10 +1,7 @@
-import {
-  QualifiedConnectedAccountPurposeBindingV1Schema,
-  type QualifiedConnectedAccountPurposeV1,
-} from '@happier-dev/protocol';
+import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+} from '@happier-dev/agents/request-auth';
 
 import { isDeclaredOpenCodeRequestAuthPurpose } from './purposes.js';
 import type { OpenCodeRequestAuthProvider } from './source.js';
@@ -14,7 +11,7 @@ export {
 };
 
 export type OpenCodeRequestAuthPurposeMap = Readonly<
-  Partial<Record<OpenCodeRequestAuthProvider, QualifiedConnectedAccountPurposeV1>>
+  Partial<Record<OpenCodeRequestAuthProvider, JsonValue>>
 >;
 
 export type OpenCodeRequestAuthTarget =
@@ -33,26 +30,77 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readPurpose(value: unknown): JsonValue | null {
+  const purpose = isRecord(value) ? value : null;
+  const consumer = purpose && isRecord(purpose.consumer) ? purpose.consumer : null;
+  const pluginId = readString(consumer?.pluginId);
+  const localId = readString(consumer?.localId);
+  const purposeId = readString(purpose?.purpose);
+  if (!pluginId || !localId || !purposeId) return null;
+  return Object.freeze({
+    consumer: Object.freeze({ pluginId, localId }),
+    purpose: purposeId,
+  });
+}
+
+function readBinding(value: unknown): Readonly<{
+  purpose: JsonValue;
+  target: OpenCodeRequestAuthTarget;
+  service: Readonly<{ pluginId: string; localId: string }>;
+}> | null {
+  const binding = isRecord(value) ? value : null;
+  const purpose = readPurpose(binding?.purpose);
+  const target = binding && isRecord(binding.target) ? binding.target : null;
+  if (!purpose || !target) return null;
+
+  if (target.kind === 'account') {
+    const account = isRecord(target.account) ? target.account : null;
+    const service = account && isRecord(account.service) ? account.service : null;
+    const pluginId = readString(service?.pluginId);
+    const localId = readString(service?.localId);
+    const accountId = readString(account?.accountId);
+    if (!pluginId || !localId || !accountId) return null;
+    return {
+      purpose,
+      target: { kind: 'account', accountId },
+      service: { pluginId, localId },
+    };
+  }
+
+  if (target.kind === 'group') {
+    const service = isRecord(target.service) ? target.service : null;
+    const pluginId = readString(service?.pluginId);
+    const localId = readString(service?.localId);
+    const groupId = readString(target.groupId);
+    if (!pluginId || !localId || !groupId) return null;
+    return {
+      purpose,
+      target: { kind: 'group', groupId },
+      service: { pluginId, localId },
+    };
+  }
+
+  return null;
+}
+
 export function readOpenCodeRequestAuthMaterialization(
   value: unknown,
 ): OpenCodeRequestAuthMaterialization | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const input = value as Record<string, unknown>;
+  const input = isRecord(value) ? value : null;
+  if (!input) return null;
   const capabilityPath = readString(input.capabilityPath);
   if (!capabilityPath || !Array.isArray(input.purposeBindings)) return null;
 
   const purposes: {
-    -readonly [K in OpenCodeRequestAuthProvider]?: QualifiedConnectedAccountPurposeV1;
+    -readonly [K in OpenCodeRequestAuthProvider]?: JsonValue;
   } = {};
   const targets: {
     -readonly [K in OpenCodeRequestAuthProvider]?: OpenCodeRequestAuthTarget;
   } = {};
   for (const candidate of input.purposeBindings) {
-    const parsed = QualifiedConnectedAccountPurposeBindingV1Schema.safeParse(candidate);
-    if (!parsed.success) return null;
-    const service = parsed.data.target.kind === 'account'
-      ? parsed.data.target.account.service
-      : parsed.data.target.service;
+    const parsed = readBinding(candidate);
+    if (!parsed) return null;
+    const { service, purpose, target } = parsed;
     const provider: OpenCodeRequestAuthProvider | null =
       service.pluginId === 'happier.agent.codex' && service.localId === 'openai-codex'
         ? 'openai'
@@ -62,20 +110,12 @@ export function readOpenCodeRequestAuthMaterialization(
     if (
       !provider
       || purposes[provider] !== undefined
-      || !isDeclaredOpenCodeRequestAuthPurpose(provider, parsed.data.purpose)
+      || !isDeclaredOpenCodeRequestAuthPurpose(provider, purpose)
     ) {
       return null;
     }
-    purposes[provider] = parsed.data.purpose;
-    targets[provider] = parsed.data.target.kind === 'account'
-      ? Object.freeze({
-          kind: 'account',
-          accountId: parsed.data.target.account.accountId,
-        })
-      : Object.freeze({
-          kind: 'group',
-          groupId: parsed.data.target.groupId,
-        });
+    purposes[provider] = purpose;
+    targets[provider] = Object.freeze(target);
   }
   if (Object.keys(purposes).length === 0) return null;
 

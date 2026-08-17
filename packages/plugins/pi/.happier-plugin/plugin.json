@@ -1,0 +1,375 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": false,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "compaction": {
+              "events": true,
+              "manual": true
+            },
+            "configuration": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "open": [
+              "create",
+              "resume"
+            ],
+            "usageLimitRecovery": {
+              "active": [
+                "checkNow"
+              ],
+              "inactive": [
+                "checkNow"
+              ]
+            }
+          },
+          "surfaces": [
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [],
+            "probe": {
+              "backgroundChecks": "safe",
+              "envVars": [
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "GEMINI_API_KEY",
+                "OPENROUTER_API_KEY",
+                "KIMI_API_KEY"
+              ],
+              "parser": "piEnvOnly",
+              "statusArgs": null
+            },
+            "support": "status_only"
+          },
+          "displayName": "Pi Coding Agent CLI",
+          "executable": {
+            "binaryName": "pi",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": null,
+            "guideUrl": "https://github.com/badlogic/pi-mono",
+            "managed": {
+              "binaryName": "pi",
+              "kind": "managed_package",
+              "packageName": "@earendil-works/pi-coding-agent"
+            },
+            "manual": {
+              "kind": "command"
+            }
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "httpHeaders",
+              "environment"
+            ],
+            "purpose": "anthropic-model-request",
+            "service": {
+              "localId": "claude-subscription",
+              "pluginId": "happier.agent.claude"
+            }
+          },
+          {
+            "materializationKinds": [
+              "httpHeaders"
+            ],
+            "purpose": "openai-codex-model-request",
+            "service": {
+              "localId": "openai-codex",
+              "pluginId": "happier.agent.codex"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "anthropic-api-key",
+            "service": {
+              "localId": "anthropic",
+              "pluginId": "happier.agent.claude"
+            }
+          }
+        ],
+        "id": "pi",
+        "primary": "sessions",
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  },
+                  {
+                    "constants": {},
+                    "field": "agentDir",
+                    "kind": "agentSettingOverride",
+                    "normalization": "configuredPath",
+                    "settingId": "piAgentDir"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "piAgentDir"
+                    },
+                    {
+                      "field": "agentDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "piAgentDir"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "agentDir",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "piAgentDir"
+              }
+            ]
+          }
+        },
+        "title": "Pi"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "pi"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      }
+    ],
+    "managedDependencies": [],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "default": "",
+            "description": {
+              "fallback": "Optional Pi data root. Leave empty to use ~/.pi/agent.",
+              "key": "settingsAgents.plugins.pi.fields.piAgentDir.subtitle"
+            },
+            "id": "piAgentDir",
+            "presentation": {
+              "control": "text"
+            },
+            "schema": {
+              "maxLength": 10000,
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Agent directory",
+              "key": "settingsAgents.plugins.pi.fields.piAgentDir.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "green"
+            },
+            "ionName": "code-slash-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "This directory is used only for Pi sessions started or discovered by Happier.",
+                "key": "settingsAgents.plugins.pi.sections.storage.footer"
+              },
+              "fields": [
+                "piAgentDir"
+              ],
+              "id": "pi-storage",
+              "title": {
+                "fallback": "Storage",
+                "key": "settingsAgents.plugins.pi.sections.storage.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "pi",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Pi",
+          "key": "settingsAgents.plugins.pi.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "pi"
+        ],
+        "id": "pi-cli",
+        "title": "Pi coding-agent CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "displayName": "Pi",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "pi-workspace",
+        "reason": "Use the admitted Agent workspace as the Pi process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "pi-process",
+        "reason": "Launch the Pi coding-agent CLI through the host execution service.",
+        "scope": {
+          "envKeys": [
+            "HAPPIER_PI_THINKING_LEVEL",
+            "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH",
+            "HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION",
+            "NODE_ENV",
+            "DEBUG",
+            "CI",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "KIMI_API_KEY",
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "USERPROFILE",
+            "PI_CODING_AGENT_DIR"
+          ],
+          "executables": [
+            {
+              "id": "pi-cli",
+              "kind": "systemTool"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.pi",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

@@ -1,4 +1,5 @@
 import { publishOpenCodeNativeTodosWorkState } from '../workState.js';
+import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import type { OpenCodeSessionOpenRequest } from './operations.js';
 import {
@@ -9,14 +10,11 @@ import {
 } from './openCodeRuntimeEvents.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
+import type { OpenCodeMcpRegistrationResult } from './mcpRegistration.js';
 import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import type { OpenCodeToolPart } from './foregroundToolTracker.js';
 import { createOpenCodeForegroundToolTracker } from './foregroundToolTracker.js';
-import {
-  resolveOpenCodeManagedServerGenerationIdentity,
-  type OpenCodeManagedServerGenerationIdentity,
-} from './managedServerGeneration.js';
 import {
   OPENCODE_SERVER_RESTARTED_DURING_TURN_ISSUE_CODE,
   createOpenCodeManagedServerTurnInterruptionSupervisor,
@@ -54,10 +52,7 @@ import {
 } from './transcript/identity.js';
 import { completeOpenCodeTurnIfReady } from './turnCompletion.js';
 import { createOpenCodeHappierAuthoredProviderUserMessageIds } from './happierAuthoredProviderUserMessages.js';
-import type {
-  OpenCodeManagedServerSnapshot,
-  OpenCodeRuntimeContext,
-} from './runtimeContext.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 
 function readOpenCodeProviderErrorMessage(error: unknown): string {
@@ -74,6 +69,15 @@ class OpenCodePromptIdentityUnresolvedError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'OpenCodePromptIdentityUnresolvedError';
+  }
+}
+
+class OpenCodePromptTurnRetiredBeforeDispatchError extends Error {
+  readonly code = 'opencode_prompt_turn_retired_before_dispatch';
+
+  constructor() {
+    super('OpenCode prompt turn was cancelled before prompt submission');
+    this.name = 'OpenCodePromptTurnRetiredBeforeDispatchError';
   }
 }
 
@@ -157,10 +161,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   ctx: OpenCodeRuntimeContext;
   directory: string;
   happierSessionId: string;
-  baseUrl: string;
   client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
-  readManagedServerSnapshot?: () => OpenCodeManagedServerSnapshot | null | undefined;
+  readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null | undefined;
+  mcpRegistration: Promise<OpenCodeMcpRegistrationResult>;
 }>): OpenCodeRuntimeTurnOperations {
   const client = params.client;
   const state = createOpenCodeServerRuntimeState();
@@ -187,21 +191,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   let promptModel: OpenCodePromptModel | null = null;
   let nextAssistantHistoryRefreshAtMs = 0;
   let serverConnectedDeferred = createDeferred<void>();
-  let serverConnectedGenerationKey: string | null = null;
+  let serverConnected = false;
 
   const markProviderUserMessageAsHappierAuthored = async (messageId: string): Promise<void> => {
     await happierAuthoredProviderUserMessageIds.add(messageId);
-  };
-
-  // --- Lane E: generation-aware managed-server crash recovery -------------------------------------
-  // `../dev` has no in-place restart and no client-side identity-change event; the generic host owns
-  // the managed server and the plugin observes it via `readManagedServerSnapshot`. The runtime derives
-  // a generation identity from the snapshot and polls it at completion/status points; a mid-turn
-  // generation change with unreconciled live-known tool work fails the turn exactly once.
-  const readManagedServerGenerationIdentity = (): OpenCodeManagedServerGenerationIdentity | null => {
-    const snapshot = params.readManagedServerSnapshot?.();
-    if (!snapshot) return null;
-    return resolveOpenCodeManagedServerGenerationIdentity(snapshot);
   };
 
   const wakeServerConnectedWaiters = (): void => {
@@ -211,43 +204,33 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const resetServerConnectedReadiness = (): void => {
-    serverConnectedGenerationKey = null;
+    serverConnected = false;
     wakeServerConnectedWaiters();
   };
 
-  const readManagedServerGenerationForReadiness = (): OpenCodeManagedServerGenerationIdentity | null => {
-    const identity = readManagedServerGenerationIdentity();
-    if (!identity) return null;
-    if (
-      serverConnectedGenerationKey !== null
-      && serverConnectedGenerationKey !== identity.generationKey
-    ) {
-      resetServerConnectedReadiness();
-    }
-    return identity;
-  };
-
   const markServerConnected = (): void => {
-    serverConnectedGenerationKey = readManagedServerGenerationIdentity()?.generationKey ?? null;
+    serverConnected = true;
     wakeServerConnectedWaiters();
   };
 
   const markServerReadinessUnavailableFallback = (error: unknown): void => {
-    const identity = readManagedServerGenerationForReadiness();
-    if (!identity) return;
+    const snapshot = params.readManagedServiceSnapshot?.();
+    if (!snapshot || snapshot.state !== 'healthy') return;
     params.ctx.logger.debug('[OpenCodeServer] provider event subscription unavailable before server.connected; falling back to managed-server health readiness', {
       error,
-      managedServerGenerationKey: identity.generationKey.slice(0, 12),
     });
-    serverConnectedGenerationKey = identity.generationKey;
+    serverConnected = true;
     wakeServerConnectedWaiters();
   };
 
   const waitForServerConnectedBeforePrompt = async (turnId: string): Promise<boolean> => {
     for (;;) {
-      const identity = readManagedServerGenerationForReadiness();
-      if (!identity) return true;
-      if (serverConnectedGenerationKey === identity.generationKey) return true;
+      const snapshot = params.readManagedServiceSnapshot?.();
+      if (!snapshot) return true;
+      if (serverConnected && snapshot.state === 'healthy') {
+        return true;
+      }
+      if (snapshot.state === 'stopped' || snapshot.state === 'failed') return false;
       if (state.disposed || !state.turnInFlight || state.activeTurnId !== turnId) return false;
       await serverConnectedDeferred.promise;
     }
@@ -286,11 +269,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const provider = providers.find((entry) => normalizeString(entry.id) === normalizedProviderId);
     if (!provider) return null;
     const models = asRecord(provider?.models);
-    if (!models) {
-      return modelIsSelectable({ providerID: normalizedProviderId, modelID: normalizedModelId })
-        ? { providerID: normalizedProviderId, modelID: normalizedModelId }
-        : null;
-    }
+    if (!models) return null;
     const modelRecord = models[normalizedModelId]
       ?? Object.values(models).find((candidate) => normalizeString(asRecord(candidate)?.id) === normalizedModelId);
     if (!modelRecord) return null;
@@ -312,10 +291,13 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (!parsed.hasModel) return null;
     const trimmed = normalizeString(modelId);
     if (!trimmed || trimmed === 'default') return null;
-    const [config, providers] = await Promise.all([
-      client.globalConfigGet().catch(() => ({})),
-      client.providersList(),
-    ]);
+    let providers: Awaited<ReturnType<OpenCodeServerClient['providersList']>>;
+    try {
+      providers = await client.providersList();
+    } catch (error) {
+      if (parsed.model) return parsed.model;
+      throw error;
+    }
     if (parsed.model) {
       return findModelForProvider(
         providers,
@@ -323,6 +305,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         parsed.model.modelID,
       );
     }
+    const config = await client.globalConfigGet().catch(() => ({}));
     const defaultProviderId = readDefaultProviderIdFromModelId(asRecord(config)?.model);
     const defaultProviderMatch = defaultProviderId
       ? findModelForProvider(providers, defaultProviderId, trimmed)
@@ -332,6 +315,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       .map((provider) => findModelForProvider(providers, provider.id, trimmed))
       .filter((candidate): candidate is OpenCodePromptModel => candidate !== null);
     return matches.length === 1 ? matches[0] : null;
+  };
+
+  const resolveRequiredPromptModel = async (modelId: string): Promise<OpenCodePromptModel> => {
+    const resolvedModel = await resolvePromptModel(modelId);
+    if (!resolvedModel) {
+      throw new Error(`OpenCode model "${normalizeString(modelId)}" is not selectable`);
+    }
+    return resolvedModel;
   };
 
   const resolveEffectivePromptModel = async (): Promise<OpenCodePromptModel | null> => {
@@ -393,6 +384,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     state.currentTurnProviderPromptTexts.clear();
     state.currentTurnPromptSubmittedAtMs = null;
     state.currentTurnPromptAcceptedAtMs = null;
+    state.currentTurnIdleObserved = false;
     state.currentTurnTerminalAssistantMessageIds.clear();
     state.currentTurnPublishedAssistantMessageIds.clear();
     pendingPermissionRequestKeys.clear();
@@ -850,7 +842,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (!hasTerminalAssistantHistory) {
       const statusType = readStatusType(status);
       const providerIsIdle = statusType !== 'busy';
-      const noLiveProviderWork = !turnHasLiveForegroundWorkForCurrentGeneration();
+      const noLiveProviderWork = !turnHasLiveForegroundWork();
       const acceptedAtMs = state.currentTurnPromptAcceptedAtMs;
       const assistantGraceExpired = acceptedAtMs !== null
         && Date.now() - acceptedAtMs >= 60_000;
@@ -899,7 +891,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       resetCurrentTurnObservations,
       status,
       hasTerminalAssistantHistory,
-      hasLiveProviderWork: turnHasLiveForegroundWorkForCurrentGeneration,
+      hasLiveProviderWork: turnHasLiveForegroundWork,
     });
   };
 
@@ -926,19 +918,15 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     source: 'agent_process_exit' | 'agent_session_error';
     message: string;
   }> | null => {
-    const snapshot = params.readManagedServerSnapshot?.();
-    if (!snapshot || (snapshot.state !== 'unhealthy' && snapshot.state !== 'stopped')) return null;
-    const diagnostics = snapshot.diagnostics;
-    const hasProcessExit = diagnostics?.exitCode !== undefined || diagnostics?.exitSignal !== undefined;
-    if (snapshot.state === 'stopped' && !hasProcessExit && !snapshot.lastErrorMessage) return null;
-    const details = [
-      snapshot.lastErrorMessage,
-      hasProcessExit
-        ? `exitCode=${diagnostics?.exitCode ?? 'null'} exitSignal=${diagnostics?.exitSignal ?? 'null'}`
-        : null,
-      diagnostics?.stderrTail,
-      diagnostics?.stdoutTail,
-    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    const snapshot = params.readManagedServiceSnapshot?.();
+    if (!snapshot || (snapshot.state !== 'failed' && snapshot.state !== 'stopped')) return null;
+    const hasProcessExit = snapshot.diagnostics.some((diagnostic) => (
+      diagnostic.code.includes('process_exited')
+      || diagnostic.code.includes('process_failed')
+    ));
+    const details = snapshot.diagnostics.flatMap((diagnostic) => (
+      diagnostic.message ? [diagnostic.message] : [diagnostic.code]
+    ));
     return {
       source: hasProcessExit ? 'agent_process_exit' : 'agent_session_error',
       message: formatOpenCodeServerPromptErrorMessage(
@@ -971,11 +959,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     return true;
   };
 
-  // Generation-aware crash recovery (Lane E): the managed `opencode serve` process was replaced
-  // mid-turn and the in-flight tool work could not be reconciled from durable history. Fails the turn
-  // once with the canonical server-restart issue code. NO completion, NO sessionAbort (the old process
-  // is gone), NO prompt replay.
-  const failActiveTurnDueToManagedServerRestart = async (input: Readonly<{
+  // If the exact managed-service handle is lost mid-turn, reconcile once and fail unresolved work
+  // without completion, aborting the already-lost process, or replaying the prompt.
+  const failActiveTurnDueToManagedServiceLoss = async (input: Readonly<{
     sanitizedPreview: string;
   }>): Promise<void> => {
     const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
@@ -996,14 +982,13 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     });
   };
 
-  const hasUnreconciledActiveLiveKnownToolWork = (_currentGenerationKey: string | null): boolean =>
+  const hasUnreconciledActiveLiveKnownToolWork = (): boolean =>
     foregroundToolTracker.hasActiveToolCalls() || pendingPermissionRequestKeys.size > 0;
 
   const managedServerTurnInterruptionSupervisor = createOpenCodeManagedServerTurnInterruptionSupervisor({
     logger: params.ctx.logger,
     isTurnActive: () => state.turnInFlight && state.activeTurnId !== null,
-    readOpenCodeManagedServerGenerationIdentity: readManagedServerGenerationIdentity,
-    setObservedGenerationKey: (generationKey) => foregroundToolTracker.setGenerationKey(generationKey),
+    readManagedServiceSnapshot: () => params.readManagedServiceSnapshot?.() ?? null,
     reconcileLiveKnownToolStateFromHistory: async () => {
       const providerSessionId = state.providerSessionId;
       if (!providerSessionId) return;
@@ -1018,15 +1003,15 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       }
     },
     hasUnreconciledActiveLiveKnownToolWork,
-    failActiveTurnDueToManagedServerRestart,
+    failActiveTurnDueToManagedServiceLoss,
     resetProviderWorkForInterruptedTurn: () => {
       foregroundToolTracker.reset();
       abortPendingPermissionDecisions('OpenCode managed server interrupted the active turn');
       pendingPermissionRequestKeys.clear();
     },
-    clearOrphanedProviderWork: (currentGenerationKey) => {
-      foregroundToolTracker.clearOrphanedToolCalls(currentGenerationKey);
-      abortPendingPermissionDecisions('OpenCode managed server generation replaced active work');
+    clearOrphanedProviderWork: () => {
+      foregroundToolTracker.reset();
+      abortPendingPermissionDecisions('OpenCode managed service lost active work');
       pendingPermissionRequestKeys.clear();
     },
     describeActiveProviderWorkForLog: () => {
@@ -1048,14 +1033,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     getProviderSessionId: () => state.providerSessionId,
   });
 
-  // Liveness for the turn-completion gate: a turn is only "still working" when it has active provider
-  // work NOT orphaned by a replaced managed-server generation. Closes the F4 wedge where an orphaned
-  // old-generation non-terminal tool would otherwise read as eternal work and block completion.
-  const turnHasLiveForegroundWorkForCurrentGeneration = (): boolean => {
+  const turnHasLiveForegroundWork = (): boolean => {
     if (pendingPermissionRequestKeys.size > 0 || pendingQuestionRequestKeys.size > 0) return true;
-    const currentGenerationKey = managedServerTurnInterruptionSupervisor.getCurrentGenerationKey();
-    if (currentGenerationKey === null) return foregroundToolTracker.hasActiveToolCalls();
-    return foregroundToolTracker.hasActiveToolCallsForGeneration(currentGenerationKey);
+    return foregroundToolTracker.hasActiveToolCalls();
   };
 
   const failCurrentTurnForProviderSessionError = async (
@@ -1182,7 +1162,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       return {
         id,
         prompt,
-        type: question.multiple === true ? 'multiple' as const : 'single' as const,
+        type: question.multiple === true ? 'multipleChoice' as const : 'singleChoice' as const,
         required: true,
         choices: options.map((option, optionIndex) => ({
           id: `${id}:choice:${optionIndex}`,
@@ -1213,9 +1193,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       && !params.ctx.abort.signal.aborted
     );
     try {
-      const result = await params.ctx.ui.askQuestions(
-        hostQuestions as [typeof hostQuestions[number], ...typeof hostQuestions[number][]],
-      );
+      const result = await params.ctx.ui.askQuestions({
+        kind: 'questions',
+        title: 'OpenCode question',
+        questions: hostQuestions as [typeof hostQuestions[number], ...typeof hostQuestions[number][]],
+      });
       if (!questionIsStillCurrent()) return;
       if (result.status !== 'answered') {
         await client.questionReject({ requestId });
@@ -1224,7 +1206,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const answers = hostQuestions.map((hostQuestion, questionIndex) => {
         const answer = result.answers[hostQuestion.id];
         if (!answer) return [] as string[];
-        if (answer.type === 'text') return [answer.value];
+        if (answer.kind === 'text') return [answer.value];
         const originalOptions = Array.isArray(questions[questionIndex]?.options)
           ? (questions[questionIndex]?.options as readonly unknown[])
               .map(asRecord)
@@ -1233,14 +1215,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
               )
           : [];
         const renderChoice = (
-          choice: Readonly<{ type: 'choice'; choiceId: string }>
-            | Readonly<{ type: 'custom'; value: string }>,
+          choice: Readonly<{ kind: 'choice'; choiceId: string }>
+            | Readonly<{ kind: 'custom'; value: string }>,
         ): string => {
-          if (choice.type === 'custom') return choice.value;
+          if (choice.kind === 'custom') return choice.value;
           const index = Number.parseInt(choice.choiceId.split(':').at(-1) ?? '', 10);
           return normalizeString(originalOptions[index]?.label);
         };
-        if (answer.type === 'single') return [renderChoice(answer.answer)].filter(Boolean);
+        if (answer.kind === 'singleChoice') return [renderChoice(answer.answer)].filter(Boolean);
         return answer.answers.map(renderChoice).filter(Boolean);
       });
       await client.questionReply({ requestId, answers });
@@ -1285,16 +1267,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const requestKey = buildPermissionRequestKey(ask.requestId);
     const requestTurnId = state.activeTurnId;
     const requestProviderSessionId = state.providerSessionId;
-    const requestGenerationKey = readManagedServerGenerationIdentity()?.generationKey ?? null;
     const requestIsTurnScoped = requestTurnId !== null;
-    const permissionRequestIsStillCurrent = (): boolean => (
-      !state.disposed
-      && !params.ctx.abort.signal.aborted
-      && (!requestIsTurnScoped || pendingPermissionRequestKeys.has(requestKey))
-      && (!requestIsTurnScoped || state.activeTurnId === requestTurnId)
-      && state.providerSessionId === requestProviderSessionId
-      && (readManagedServerGenerationIdentity()?.generationKey ?? null) === requestGenerationKey
-    );
+    const permissionRequestIsStillCurrent = (): boolean => {
+      return !state.disposed
+        && !params.ctx.abort.signal.aborted
+        && (!requestIsTurnScoped || pendingPermissionRequestKeys.has(requestKey))
+        && (!requestIsTurnScoped || state.activeTurnId === requestTurnId)
+        && state.providerSessionId === requestProviderSessionId;
+    };
     const permissionRequestMatchesTurnAndSession = (): boolean => (
       requestIsTurnScoped
       && pendingPermissionRequestKeys.has(requestKey)
@@ -1304,7 +1284,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const prepareCurrentPermissionReply = async (): Promise<boolean> => {
       if (permissionRequestIsStillCurrent()) return true;
       if (permissionRequestMatchesTurnAndSession()) {
-        await managedServerTurnInterruptionSupervisor.observeManagedServerGeneration();
+        await managedServerTurnInterruptionSupervisor.observeManagedServiceSnapshot();
       }
       return false;
     };
@@ -1385,7 +1365,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
 
     if (type === 'session.error') {
-      await failCurrentTurnForProviderSessionError(properties.error ?? properties);
+      // OpenCode emits this before the terminal assistant message is committed. Treat it only as a
+      // nonterminal lifecycle hint; exact-parent authoritative history owns turn failure attribution.
       return;
     }
 
@@ -1460,12 +1441,120 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           trigger: 'automatic',
         });
       }
+      if (state.turnInFlight && state.currentTurnIdleObserved) {
+        await settleCurrentTurnFromAuthoritativeInventoryAfterIdle(true);
+      }
       return;
     }
 
     if (type === 'message.part.delta') {
       observeCurrentTurnMessageId(normalizeString(properties.messageID));
       return;
+    }
+  };
+
+  let authoritativeRequestInventoryRefreshInFlight: Promise<void> | null = null;
+  const refreshAuthoritativeRequestInventories = async (): Promise<void> => {
+    if (authoritativeRequestInventoryRefreshInFlight) {
+      await authoritativeRequestInventoryRefreshInFlight;
+      return;
+    }
+    const work = (async () => {
+      const [permissionsResult, questionsResult] = await Promise.allSettled([
+        client.permissionList(),
+        client.questionList(),
+      ]);
+      if (permissionsResult.status === 'fulfilled') {
+        for (const rawPermission of permissionsResult.value) {
+          const permission = asRecord(rawPermission);
+          if (!permission) continue;
+          void handlePermissionAsked(permission).catch((error: unknown) => {
+            params.ctx.logger.debug('[OpenCodeServer] active permission handling failed (non-fatal)', { error });
+          });
+        }
+      } else {
+        params.ctx.logger.debug('[OpenCodeServer] active permission inventory refresh failed (non-fatal)', {
+          error: permissionsResult.reason,
+        });
+      }
+      if (questionsResult.status === 'fulfilled') {
+        for (const rawQuestion of questionsResult.value) {
+          const question = asRecord(rawQuestion);
+          if (!question) continue;
+          void handleQuestionAsked(question).catch((error: unknown) => {
+            params.ctx.logger.debug('[OpenCodeServer] active question handling failed (non-fatal)', { error });
+          });
+        }
+      } else {
+        params.ctx.logger.debug('[OpenCodeServer] active question inventory refresh failed (non-fatal)', {
+          error: questionsResult.reason,
+        });
+      }
+    })();
+    authoritativeRequestInventoryRefreshInFlight = work;
+    try {
+      await work;
+    } finally {
+      if (authoritativeRequestInventoryRefreshInFlight === work) {
+        authoritativeRequestInventoryRefreshInFlight = null;
+      }
+    }
+  };
+
+  const handleProviderObservation = async (event: unknown): Promise<void> => {
+    const { type, properties } = readProviderEvent(event);
+    if (!type) return;
+    const eventSessionId = readEventSessionId(properties);
+    if (eventSessionId && state.providerSessionId && eventSessionId !== state.providerSessionId) return;
+
+    if (type === 'message.updated') {
+      const info = asRecord(properties.info);
+      const messageId = normalizeString(info?.id);
+      if (!state.turnInFlight) {
+        if (state.providerSessionId && normalizeString(info?.sessionID) === state.providerSessionId) {
+          // Replayable events are content-free invalidations outside a Happier turn. The
+          // authoritative message inventory remains the sole transcript owner.
+          await projectExternalSessionMessagesBestEffort();
+        }
+        return;
+      }
+      if (
+        !messageId
+        || normalizeString(info?.role) !== 'assistant'
+        || normalizeString(info?.sessionID) !== state.providerSessionId
+        || normalizeString(info?.parentID) !== state.currentTurnProviderUserMessageId
+      ) {
+        return;
+      }
+      await handleProviderEvent(event);
+      return;
+    }
+
+    if (type === 'message.part.updated' || type === 'message.part.created' || type === 'message.part.delta') {
+      if (!state.turnInFlight || !state.providerSessionId) return;
+      const part = type === 'message.part.delta' ? properties : asRecord(properties.part);
+      const messageId = normalizeString(part?.messageID);
+      if (
+        !messageId
+        || normalizeString(part?.sessionID) !== state.providerSessionId
+        || state.currentTurnProviderUserMessageIds.has(messageId)
+        || !state.currentTurnObservedMessageIds.has(messageId)
+      ) {
+        return;
+      }
+      await handleProviderEvent(event);
+      return;
+    }
+
+    if (type === 'todo.updated') {
+      await publishNativeTodosWorkState().catch((error: unknown) => {
+        params.ctx.logger.debug('[OpenCodeServer] failed to refresh todos after provider observation', { error });
+      });
+      return;
+    }
+
+    if (type === 'permission.asked' || type === 'question.asked') {
+      await refreshAuthoritativeRequestInventories();
     }
   };
 
@@ -1478,13 +1567,22 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     });
   };
 
+  const settleCurrentTurnFromAuthoritativeInventoryAfterIdle = async (
+    forceHistoryRefresh = false,
+  ): Promise<void> => {
+    if (!state.turnInFlight || !state.currentTurnIdleObserved) return;
+    const historyProjection = await reconcileExactCurrentTurnTerminalAssistantFromAuthoritativeInventoryBestEffort(
+      forceHistoryRefresh,
+    );
+    if (await failCurrentTurnForPromptResponseError(historyProjection)) return;
+    await completeTurnIfReady({ type: 'idle' }, historyProjection);
+  };
+
   const handleStatus = async (
     status: unknown,
     options: Readonly<{ forceHistoryRefresh?: boolean }> = {},
   ): Promise<void> => {
-    // Lane E: observe a possible mid-turn managed-server generation change before processing status.
-    // Awaited so a detected replacement deterministically reconciles-or-fails before completion.
-    await managedServerTurnInterruptionSupervisor.observeManagedServerGeneration();
+    await managedServerTurnInterruptionSupervisor.observeManagedServiceSnapshot();
     await maybeFailOnOpenCodeRetryStatus({
       ctx: params.ctx,
       publishRuntimeEvent,
@@ -1496,6 +1594,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (await failCurrentTurnForProviderErrorStatus(status)) return;
     const statusType = readStatusType(status);
     if (statusType === 'busy') {
+      state.currentTurnIdleObserved = false;
       return;
     }
     if (statusType === 'idle') {
@@ -1506,11 +1605,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         await projectExternalSessionMessagesBestEffort();
         return;
       }
-      const historyProjection = await reconcileExactCurrentTurnTerminalAssistantFromAuthoritativeInventoryBestEffort(
-        options.forceHistoryRefresh === true,
-      );
-      if (await failCurrentTurnForPromptResponseError(historyProjection)) return;
-      await completeTurnIfReady(status, historyProjection);
+      state.currentTurnIdleObserved = true;
+      await settleCurrentTurnFromAuthoritativeInventoryAfterIdle(options.forceHistoryRefresh === true);
     }
   };
 
@@ -1519,8 +1615,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       state.activeTurnId = turnId;
       state.turnInFlight = true;
       resetCurrentTurnObservations();
-      // Lane E: stamp the managed-server generation this turn starts against.
-      managedServerTurnInterruptionSupervisor.captureTurnStartGeneration();
+      managedServerTurnInterruptionSupervisor.captureTurnStartSnapshot();
       void publishOpenCodeRuntimeEvent(publishRuntimeEvent, {
         kind: 'turn-start',
         sessionId: params.happierSessionId,
@@ -1570,6 +1665,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         ctx: params.ctx,
         state,
         handleProviderEvent,
+        handleProviderObservation,
         onSubscriptionUnavailable: markServerReadinessUnavailableFallback,
       });
       return state.providerSessionId;
@@ -1582,6 +1678,17 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const providerSessionId = state.providerSessionId;
       const turnId = state.activeTurnId;
       if (!providerSessionId || !turnId) throw new Error('OpenCode session failed to initialize');
+
+      const assertPromptTurnStillOwnsDispatch = (): void => {
+        if (
+          state.disposed
+          || !state.turnInFlight
+          || state.activeTurnId !== turnId
+          || state.providerSessionId !== providerSessionId
+        ) {
+          throw new OpenCodePromptTurnRetiredBeforeDispatchError();
+        }
+      };
 
       const serverReadyForPrompt = await waitForServerConnectedBeforePrompt(turnId);
       if (!serverReadyForPrompt) {
@@ -1643,13 +1750,27 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         );
       };
       try {
+        const mcpRegistration = await params.mcpRegistration;
+        assertPromptTurnStillOwnsDispatch();
+        if (mcpRegistration.requiredHappier.status === 'failed') {
+          const registrationError = mcpRegistration.requiredHappier.error;
+          const detail = registrationError instanceof Error
+            ? registrationError.message
+            : formatOpenCodeServerPromptErrorMessage(registrationError);
+          throw new Error(
+            `required Happier MCP registration failed${detail ? `: ${detail}` : ''}`,
+            { cause: registrationError },
+          );
+        }
         state.currentTurnProviderUserMessageIds.clear();
         state.currentTurnTerminalAssistantMessageIds.clear();
         state.currentTurnProviderUserMessageId = null;
+        state.currentTurnIdleObserved = false;
         const perPromptModelId = normalizeString(meta?.modelId);
         const modelForPrompt = perPromptModelId
-          ? await resolvePromptModel(perPromptModelId)
+          ? await resolveRequiredPromptModel(perPromptModelId)
           : promptModel;
+        assertPromptTurnStillOwnsDispatch();
         const promptSubmission = await client.sessionPromptAsync({
           sessionId: providerSessionId,
           text: prompt,
@@ -1693,7 +1814,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
             : {}),
         };
       } catch (error) {
-        if (error instanceof OpenCodePromptIdentityUnresolvedError) throw error;
+        if (
+          error instanceof OpenCodePromptIdentityUnresolvedError
+          || error instanceof OpenCodePromptTurnRetiredBeforeDispatchError
+        ) throw error;
         await failPromptSubmission(error);
         throw error;
       }
@@ -1703,9 +1827,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     },
     async waitForTurnCompletion() {
       if (!state.turnInFlight || !state.activeTurnId || !state.providerSessionId) return;
-      // Lane E: observe a possible mid-turn managed-server generation change and let the supervisor
-      // run its reconcile-once-then-fail policy deterministically before the completion gate.
-      await managedServerTurnInterruptionSupervisor.observeManagedServerGeneration();
+      await managedServerTurnInterruptionSupervisor.observeManagedServiceSnapshot();
       if (!state.turnInFlight || !state.activeTurnId || !state.providerSessionId) return;
       let status: unknown;
       try {
@@ -1776,11 +1898,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         if (!requestedModelId || requestedModelId === 'default') {
           promptModel = null;
         } else {
-          const resolvedModel = await resolvePromptModel(requestedModelId);
-          if (!resolvedModel) {
-            throw new Error(`OpenCode model "${requestedModelId}" is not selectable`);
-          }
-          promptModel = resolvedModel;
+          promptModel = await resolveRequiredPromptModel(requestedModelId);
         }
       }
       if (promptConfigUpdate.variant) {

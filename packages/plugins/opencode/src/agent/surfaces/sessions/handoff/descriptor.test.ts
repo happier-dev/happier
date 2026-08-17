@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  PluginExecService,
+  ExecService,
   PluginProcessResult,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec';
 
 import { createOpenCodeHandoffSurfaceForExec } from './descriptor.js';
 
@@ -41,8 +41,8 @@ function buildVendorExport(params?: Readonly<{
 }
 
 function createExecFixture(
-  run: PluginExecService['run'],
-): PluginExecService {
+  run: ExecService['run'],
+): ExecService {
   return {
     agentCli: {
       async checkReadiness() {

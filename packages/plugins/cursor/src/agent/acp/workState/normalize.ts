@@ -1,7 +1,7 @@
 import type {
-  PluginSessionWorkStateItem,
-  PluginSessionWorkStateTruncation,
-} from '@happier-dev/plugin-sdk/runtime';
+  WorkStateItem,
+  WorkStateTruncation,
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 const CURSOR_TODO_WORK_STATE_ITEM_LIMIT = 100;
 
@@ -13,9 +13,9 @@ export type CursorTodo = Readonly<{
 }>;
 
 export type CursorTodoWorkStateSnapshot = Readonly<{
-  items: readonly PluginSessionWorkStateItem[];
+  items: readonly WorkStateItem[];
   primaryLocalId: string | null;
-  truncation?: PluginSessionWorkStateTruncation;
+  truncation?: WorkStateTruncation;
 }>;
 
 function encodeCursorTodoIdPart(value: string): string {
@@ -32,7 +32,7 @@ function buildCursorTodoLocalId(params: Readonly<{
   return `todo:cursor:derived:${encodeCursorTodoIdPart(`${params.content}|${params.index}`)}`;
 }
 
-function normalizeCursorTodoStatus(status: string): PluginSessionWorkStateItem['status'] {
+function normalizeCursorTodoStatus(status: string): WorkStateItem['status'] {
   if (status === 'pending') return 'pending';
   if (status === 'in_progress' || status === 'inProgress' || status === 'active') return 'active';
   if (status === 'completed' || status === 'complete' || status === 'done') return 'complete';
@@ -42,14 +42,14 @@ function normalizeCursorTodoStatus(status: string): PluginSessionWorkStateItem['
   return 'pending';
 }
 
-function choosePrimaryTodoItem(items: readonly PluginSessionWorkStateItem[]): string | null {
+function choosePrimaryTodoItem(items: readonly WorkStateItem[]): string | null {
   return items.find((item) => item.status === 'active')?.localId
     ?? items.find((item) => item.status === 'pending')?.localId
     ?? items.find((item) => item.status === 'blocked')?.localId
     ?? null;
 }
 
-function rankCursorTodoItemForSnapshot(item: PluginSessionWorkStateItem): number {
+function rankCursorTodoItemForSnapshot(item: WorkStateItem): number {
   if (item.status === 'active') return 0;
   if (item.status === 'pending') return 1;
   if (item.status === 'blocked') return 2;
@@ -61,7 +61,7 @@ export function buildCursorTodoWorkState(params: Readonly<{
   todos: readonly CursorTodo[];
   maxItems?: number;
 }>): CursorTodoWorkStateSnapshot {
-  const items = params.todos.map((todo, index): PluginSessionWorkStateItem => ({
+  const items = params.todos.map((todo, index): WorkStateItem => ({
     localId: buildCursorTodoLocalId({
       ...(todo.id ? { providerRef: todo.id } : {}),
       content: todo.content,

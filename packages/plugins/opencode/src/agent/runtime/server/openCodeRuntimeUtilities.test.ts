@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 
 import { buildOpenCodeRetryStatusError } from './openCodeRetryStatus.js';
 

@@ -1,7 +1,5 @@
-import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
-import {
-  PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { PI_REQUEST_AUTH_PRODUCER_VERSION_ENV } from './env.js';
 import {
@@ -12,7 +10,7 @@ import {
 export type PiRequestAuthProviderId = 'anthropic' | 'openai-codex';
 
 export type PiRequestAuthPurposeMap = Readonly<
-  Partial<Record<PiRequestAuthProviderId, QualifiedConnectedAccountPurposeV1>>
+  Partial<Record<PiRequestAuthProviderId, JsonValue>>
 >;
 
 function js(value: unknown): string {
@@ -31,6 +29,8 @@ export function buildPiRequestAuthExtensionSource(input: Readonly<{
 }>): string {
   return `// Happier Pi connected-account request-auth extension (generated).
 import { readFileSync } from "node:fs";
+// These are Pi extension-runtime imports. Pi's loader provides them from the selected
+// @earendil-works/pi-coding-agent installation; they are not Happier plugin dependencies.
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
@@ -45,25 +45,6 @@ const PROVIDER_LIMIT_EVIDENCE = Object.freeze(${js(PROVIDER_LIMIT_EVIDENCE_CLASS
 const PRODUCER_VERSION = String(process.env[${js(PI_REQUEST_AUTH_PRODUCER_VERSION_ENV)}] || "");
 const REQUEST_AUTH_PLACEHOLDER = "happier-connected-account-request-auth";
 const OWNED_HEADERS = Object.freeze(${js(PI_REQUEST_AUTH_PROVIDER_OWNED_HEADERS)});
-
-function requestAuthOnlyProviderAuth() {
-  return {
-    apiKey: {
-      name: "Happier connected account",
-      async check() {
-        return { type: "api_key", source: "Happier connected account" };
-      },
-      async resolve() {
-        // This value only satisfies Pi's synchronous configured-provider gate. The complete Provider
-        // wrapper replaces it with a fresh lease before invoking an upstream stream.
-        return {
-          auth: { apiKey: REQUEST_AUTH_PLACEHOLDER },
-          source: "Happier connected account",
-        };
-      },
-    },
-  };
-}
 
 function mergeAttemptHeaders(providerId, existing, required) {
   const authoritativeNames = new Set([
@@ -613,6 +594,25 @@ function wrapProviderStream(providerId, purpose, baseStream) {
       }
     })();
     return outer;
+  };
+}
+
+function requestAuthOnlyProviderAuth() {
+  return {
+    apiKey: {
+      name: "Happier connected account",
+      async check() {
+        return { type: "api_key", source: "Happier connected account" };
+      },
+      async resolve() {
+        // This value only satisfies Pi's synchronous configured-provider gate. The complete Provider
+        // wrapper replaces it with a fresh lease before invoking an upstream stream.
+        return {
+          auth: { apiKey: REQUEST_AUTH_PLACEHOLDER },
+          source: "Happier connected account",
+        };
+      },
+    },
   };
 }
 

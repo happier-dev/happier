@@ -19,13 +19,18 @@ function createContextFixture(): OpenCodeRuntimeContext {
     },
     config: { values: {} },
     env: { list: () => ({}) },
-    managedServer: {
+    managedServices: {
+      dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
       supervise: async () => {
         throw new Error('managed server is outside this storage test');
       },
     },
     ui: {
-      askQuestions: async () => ({ status: 'cancelled' }),
+      askQuestions: async () => ({
+        requestId: 'question-cancelled',
+        kind: 'questions',
+        status: 'userCancelled',
+      }),
     },
     sessions: {
       current: {
@@ -36,7 +41,7 @@ function createContextFixture(): OpenCodeRuntimeContext {
       writeStateField: async () => undefined,
     },
     storage: {
-      session: {
+      daemonSession: {
         get: async (key) => storage.get(key),
         set: async (key, value) => {
           storage.set(key, value);

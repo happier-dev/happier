@@ -3,6 +3,7 @@
   "tiers": {
     "smoke": ["pi_read_known_file_smoke"],
     "extended": [
+      "daemon_runner_continuity_a_to_b_to_c",
       "acp_probe_models",
       "read_known_file",
       "search_known_token",

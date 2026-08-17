@@ -3,6 +3,7 @@
   "tiers": {
     "smoke": ["execute_trace_ok", "execute_error_exit_2"],
     "extended": [
+      "daemon_runner_continuity_a_to_b_to_c",
       "opencode_surface_status_error",
       "read_known_file",
       "search_known_token",

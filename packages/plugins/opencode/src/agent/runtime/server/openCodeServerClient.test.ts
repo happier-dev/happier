@@ -1,55 +1,63 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  ManagedServiceHandle,
+  ManagedServiceRequest,
+  ManagedServiceResponse,
+  ManagedServiceSnapshot,
+} from '@happier-dev/plugin-sdk/managed-services';
 
 import {
   createOpenCodeServerClient as createOpenCodeServerClientUnderTest,
   OpenCodeServerHttpError,
-  type OpenCodeRuntimeFetch as FetchRuntimeServiceV1,
-  type OpenCodeRuntimeFetchResponse,
 } from './openCodeServerClient.js';
 import { createOpenCodeServerTransport } from './transport.js';
 
-type FetchRuntimeRequestV1 = Parameters<FetchRuntimeServiceV1>[0];
+const HEALTHY_MANAGED_SERVICE_SNAPSHOT = Object.freeze({
+  id: 'opencode-server',
+  state: 'healthy',
+  mode: 'spawn',
+  baseUrl: null,
+  startedAtMs: 1,
+  lastHealthyAtMs: 2,
+  diagnostics: Object.freeze([]),
+  diagnosticsTruncated: false,
+}) satisfies ManagedServiceSnapshot;
 
-function createOpenCodeServerClient(params: Readonly<{
-  fetch: FetchRuntimeServiceV1;
-  baseUrl: string;
-  headers?: Readonly<Record<string, string>>;
+function healthyManagedService(
+  request: ManagedServiceHandle['request'],
+): ManagedServiceHandle {
+  return Object.freeze({
+    snapshot: () => HEALTHY_MANAGED_SERVICE_SNAPSHOT,
+    observe: (listener) => {
+      listener(HEALTHY_MANAGED_SERVICE_SNAPSHOT);
+      return { dispose() {} };
+    },
+    waitUntilHealthy: async () => HEALTHY_MANAGED_SERVICE_SNAPSHOT,
+    stop: async () => ({ status: 'stopped' }),
+    dispose: async () => undefined,
+    request,
+  });
+}
+
+function createClient(params: Readonly<{
+  request: ManagedServiceHandle['request'];
   directory?: string | null;
 }>) {
   return createOpenCodeServerClientUnderTest({
-    transport: {
-      baseUrl: params.baseUrl.replace(/\/+$/u, ''),
-      request: async (request) => await params.fetch({
-        ...request,
-        headers: {
-          ...(params.headers ?? {}),
-          ...(request.headers ?? {}),
-        },
-      }),
-      fetch: async (input, init) => {
-        const headers = new Headers(init?.headers);
-        for (const [name, value] of Object.entries(params.headers ?? {})) {
-          headers.set(name, value);
-        }
-        return await globalThis.fetch(input, {
-          ...init,
-          headers,
-        });
-      },
-    },
+    transport: createOpenCodeServerTransport({
+      managedService: healthyManagedService(params.request),
+    }),
     directory: params.directory,
   });
 }
 
-function createJsonResponse(body: unknown): OpenCodeRuntimeFetchResponse {
+function createJsonResponse(body: unknown): ManagedServiceResponse {
   return {
     ok: true,
     status: 200,
     statusText: 'OK',
-    headers: {},
-    text: async () => JSON.stringify(body),
-    json: async () => body,
-    arrayBuffer: async () => new ArrayBuffer(0),
+    headers: { 'content-type': 'application/json' },
+    body: new Response(JSON.stringify(body)).body,
   };
 }
 
@@ -57,30 +65,53 @@ function createErrorResponse(
   status: number,
   statusText: string,
   body = '',
-): OpenCodeRuntimeFetchResponse {
+): ManagedServiceResponse {
   return {
     ok: false,
     status,
     statusText,
     headers: {},
-    text: async () => body,
-    json: async () => ({}),
-    arrayBuffer: async () => new ArrayBuffer(0),
+    body: new Response(body).body,
   };
 }
 
-function createNoContentResponse(): Awaited<ReturnType<FetchRuntimeServiceV1>> {
+function createNoContentResponse(): ManagedServiceResponse {
   return {
     ok: true,
     status: 204,
     statusText: 'No Content',
     headers: {},
-    text: async () => '',
-    json: async () => {
-      throw new SyntaxError('Unexpected end of JSON input');
-    },
-    arrayBuffer: async () => new ArrayBuffer(0),
+    body: null,
   };
+}
+
+function createSseResponse(
+  chunks: readonly Uint8Array[],
+  options: Readonly<{
+    keepOpen?: boolean;
+    onCancel?: () => void;
+  }> = {},
+): ManagedServiceResponse {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: { 'content-type': 'text/event-stream' },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        if (options.keepOpen !== true) controller.close();
+      },
+      cancel() {
+        options.onCancel?.();
+      },
+    }),
+  };
+}
+
+function readJsonRequestBody(request: ManagedServiceRequest | undefined): unknown {
+  if (!request?.body) return undefined;
+  return JSON.parse(new TextDecoder().decode(request.body));
 }
 
 describe('createOpenCodeServerClient', () => {
@@ -90,43 +121,40 @@ describe('createOpenCodeServerClient', () => {
     vi.useRealTimers();
   });
 
-  it('uses the endpoint-bound transport for both JSON and global SSE requests', async () => {
+  it('uses the endpoint-bound transport for both JSON and directory-scoped SSE requests', async () => {
     const controller = new AbortController();
     const encoder = new TextEncoder();
-    const fetchImpl = vi.fn(async (url: string | URL, _init?: RequestInit) => {
-      if (String(url).endsWith('/provider')) {
-        return new Response(JSON.stringify({ all: [], connected: [] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response(new ReadableStream<Uint8Array>({
+    const request = vi.fn(async (input: ManagedServiceRequest) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {
+        'content-type': input.pathAndQuery === '/provider'
+          ? 'application/json'
+          : 'text/event-stream',
+      },
+      body: input.pathAndQuery === '/provider'
+        ? new Response(JSON.stringify({ all: [], connected: [] })).body
+        : new ReadableStream<Uint8Array>({
         start(streamController) {
           streamController.enqueue(encoder.encode(
-            'data: {"payload":{"type":"server.connected","properties":{}}}\n\n',
+            'data: {"type":"server.connected","properties":{}}\n\n',
           ));
           streamController.close();
         },
-      }), {
-        status: 200,
-        headers: { 'content-type': 'text/event-stream' },
-      });
-    });
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      throw new Error('primary OpenCode transport bypassed its injected fetch');
-    }));
-    const transport = createOpenCodeServerTransport({
-      baseUrl: 'http://127.0.0.1:49196',
-      instanceId: 'instance-1',
-      headers: { authorization: 'Basic current-boot' },
-      readManagedServerSnapshot: () => ({
-        instanceId: 'instance-1',
-        state: 'healthy',
-        baseUrl: 'http://127.0.0.1:49196',
       }),
-      fetchImpl,
+    } satisfies ManagedServiceResponse));
+    const globalFetch = vi.fn(async () => {
+      throw new Error('primary OpenCode transport bypassed its injected fetch');
     });
-    const client = createOpenCodeServerClientUnderTest({ transport });
+    vi.stubGlobal('fetch', globalFetch);
+    const transport = createOpenCodeServerTransport({
+      managedService: healthyManagedService(request),
+    });
+    const client = createOpenCodeServerClientUnderTest({
+      transport,
+      directory: '/tmp/opencode-project',
+    });
 
     await client.providersList();
     await client.subscribeGlobalEvents({
@@ -134,16 +162,17 @@ describe('createOpenCodeServerClient', () => {
       onEvent: () => controller.abort(),
     });
 
-    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
-      'http://127.0.0.1:49196/provider',
-      'http://127.0.0.1:49196/global/event',
+    expect(request.mock.calls.map(([input]) => input.pathAndQuery)).toEqual([
+      '/provider',
+      '/event?directory=%2Ftmp%2Fopencode-project',
     ]);
-    expect(new Headers(fetchImpl.mock.calls[1]?.[1]?.headers).get('authorization'))
-      .toBe('Basic current-boot');
+    expect(request.mock.calls[0]?.[0].headers).not.toHaveProperty('authorization');
+    expect(request.mock.calls[1]?.[0].headers).not.toHaveProperty('authorization');
+    expect(globalFetch).not.toHaveBeenCalled();
   });
 
   it('filters providers to the connected provider ids when the OpenCode server reports them', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createJsonResponse({
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createJsonResponse({
       all: [
         { id: 'anthropic', models: { sonnet: {} } },
         { id: 'openai', models: { 'gpt-5': {} } },
@@ -151,19 +180,19 @@ describe('createOpenCodeServerClient', () => {
       ],
       connected: [' openai ', 'anthropic'],
     }));
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196' });
+    const client = createClient({ request });
 
     const providers = await client.providersList();
 
     expect(providers.map((provider) => provider.id)).toEqual(['anthropic', 'openai']);
-    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
       method: 'GET',
-      url: 'http://127.0.0.1:49196/provider',
+      pathAndQuery: '/provider',
     }));
   });
 
   it('filters providers when connected entries are provider specs', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createJsonResponse({
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createJsonResponse({
       all: [
         { id: 'anthropic', models: { sonnet: {} } },
         { id: 'openai', models: { 'gpt-5': {} } },
@@ -174,7 +203,7 @@ describe('createOpenCodeServerClient', () => {
         { id: 'anthropic' },
       ],
     }));
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196' });
+    const client = createClient({ request });
 
     const providers = await client.providersList();
 
@@ -182,14 +211,14 @@ describe('createOpenCodeServerClient', () => {
   });
 
   it('keeps all valid providers when the connected provider list normalizes to empty', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createJsonResponse({
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createJsonResponse({
       all: [
         { id: 'anthropic', models: { sonnet: {} } },
         { id: 'openai', models: { 'gpt-5': {} } },
       ],
       connected: [null, ' ', 42],
     }));
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196' });
+    const client = createClient({ request });
 
     const providers = await client.providersList();
 
@@ -197,48 +226,47 @@ describe('createOpenCodeServerClient', () => {
   });
 
   it('fetches native session todos from the OpenCode server', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse([
         { id: 'todo-1', content: 'Ship runtime', status: 'in_progress' },
       ]);
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196' });
+    const client = createClient({ request });
 
     await expect(client.sessionTodo({ sessionId: 'ses-1' })).resolves.toEqual([
       { id: 'todo-1', content: 'Ship runtime', status: 'in_progress' },
     ]);
     expect(requests.at(0)).toMatchObject({
       method: 'GET',
-      url: 'http://127.0.0.1:49196/session/ses-1/todo',
+      pathAndQuery: '/session/ses-1/todo',
     });
   });
 
   it('fetches the OpenCode global config for default-provider resolution', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({ model: 'active-provider/default-large' });
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196' });
+    const client = createClient({ request });
 
     await expect(client.globalConfigGet()).resolves.toEqual({ model: 'active-provider/default-large' });
     expect(requests.at(0)).toMatchObject({
       method: 'GET',
-      url: 'http://127.0.0.1:49196/global/config',
+      pathAndQuery: '/global/config',
     });
   });
 
   it('adds the session directory query to directory-scoped session endpoints', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse([]);
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
+    const client = createClient({
+      request,
       directory: '/tmp/opencode-project',
     });
 
@@ -251,45 +279,41 @@ describe('createOpenCodeServerClient', () => {
     await client.sessionTodo({ sessionId: 'session-1' });
     await client.sessionAbort({ sessionId: 'session-1' });
 
-    expect(requests.map((request) => request.url)).toEqual([
-      'http://127.0.0.1:49196/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
-      'http://127.0.0.1:49196/session/status?directory=%2Ftmp%2Fopencode-project',
-      'http://127.0.0.1:49196/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
-      'http://127.0.0.1:49196/session/session-1/todo?directory=%2Ftmp%2Fopencode-project',
-      'http://127.0.0.1:49196/session/session-1/abort?directory=%2Ftmp%2Fopencode-project',
+    expect(requests.map((request) => request.pathAndQuery)).toEqual([
+      '/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
+      '/session/status?directory=%2Ftmp%2Fopencode-project',
+      '/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
+      '/session/session-1/todo?directory=%2Ftmp%2Fopencode-project',
+      '/session/session-1/abort?directory=%2Ftmp%2Fopencode-project',
     ]);
   });
 
   it('creates sessions with the directory query expected by the OpenCode server', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({ id: 'ses-1' });
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
-    });
+    const client = createClient({ request });
 
     await expect(client.sessionCreate({ directory: '/tmp/opencode-project' })).resolves.toEqual({ id: 'ses-1' });
 
     expect(requests).toHaveLength(1);
     expect(requests.at(0)).toMatchObject({
       method: 'POST',
-      url: 'http://127.0.0.1:49196/session?directory=%2Ftmp%2Fopencode-project',
+      pathAndQuery: '/session?directory=%2Ftmp%2Fopencode-project',
     });
-    expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).not.toHaveProperty('directory');
+    expect(readJsonRequestBody(requests.at(0))).not.toHaveProperty('directory');
   });
 
   it('forks an OpenCode session at an exact provider message checkpoint', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({ id: 'ses-child' });
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
+    const client = createClient({
+      request,
       directory: '/tmp/opencode-project',
     });
 
@@ -301,70 +325,59 @@ describe('createOpenCodeServerClient', () => {
     expect(requests).toHaveLength(1);
     expect(requests.at(0)).toMatchObject({
       method: 'POST',
-      url: 'http://127.0.0.1:49196/session/ses-parent/fork?directory=%2Ftmp%2Fopencode-project',
+      pathAndQuery: '/session/ses-parent/fork?directory=%2Ftmp%2Fopencode-project',
     });
-    expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).toEqual({
+    expect(readJsonRequestBody(requests.at(0))).toEqual({
       messageID: 'msg-checkpoint',
     });
   });
 
   it('reads a single session status from the directory-scoped OpenCode status list', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({
         'session-1': { type: 'busy' },
         'session-2': { type: 'idle' },
       });
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
+    const client = createClient({
+      request,
       directory: '/tmp/opencode-project',
     });
 
     await expect(client.sessionStatus({ sessionId: 'session-1' })).resolves.toEqual({ type: 'busy' });
-    expect(requests.at(0)?.url).toBe(
-      'http://127.0.0.1:49196/session/status?directory=%2Ftmp%2Fopencode-project',
+    expect(requests.at(0)?.pathAndQuery).toBe(
+      '/session/status?directory=%2Ftmp%2Fopencode-project',
     );
   });
 
-  it('fetches native app skills for a directory through the authenticated fetch service', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+  it('fetches native app skills through the exact managed service request transport', async () => {
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse([
         { name: 'reviewer', description: 'Review code', location: '/repo/.agents/skills/reviewer/SKILL.md' },
       ]);
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
-      headers: { authorization: 'Bearer managed-secret' },
-    });
+    const client = createClient({ request });
 
-    await expect((client as {
-      appSkills?(input: Readonly<{ directory: string }>): Promise<unknown>;
-    }).appSkills?.({ directory: '/repo' })).resolves.toEqual([
+    await expect(client.appSkills({ directory: '/repo' })).resolves.toEqual([
       { name: 'reviewer', description: 'Review code', location: '/repo/.agents/skills/reviewer/SKILL.md' },
     ]);
 
     expect(requests.at(0)).toMatchObject({
       method: 'GET',
-      url: 'http://127.0.0.1:49196/skill?directory=%2Frepo',
-      headers: expect.objectContaining({
-        authorization: 'Bearer managed-secret',
-      }),
+      pathAndQuery: '/skill?directory=%2Frepo',
+      headers: { 'content-type': 'application/json' },
     });
   });
 
   it('throws a typed auth failure for unauthorized server responses', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createErrorResponse(401, 'Unauthorized'));
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
-      headers: { authorization: 'Bearer stale-managed-secret' },
-    });
+    const transportRequest = vi.fn<ManagedServiceHandle['request']>(
+      async () => createErrorResponse(401, 'Unauthorized'),
+    );
+    const client = createClient({ request: transportRequest });
 
     const request = client.appSkills({ directory: '/repo' });
     await expect(request).rejects.toMatchObject({
@@ -375,19 +388,16 @@ describe('createOpenCodeServerClient', () => {
     });
 
     await expect(request).rejects.toBeInstanceOf(OpenCodeServerHttpError);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(transportRequest).toHaveBeenCalledTimes(1);
   });
 
   it('includes a sanitized response body preview in server HTTP errors', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createErrorResponse(
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createErrorResponse(
       400,
       'Bad Request',
       'invalid prompt with authorization: Basic c2VjcmV0 and api_key=sk-live-secret',
     ));
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
-    });
+    const client = createClient({ request });
 
     await expect(client.sessionPromptAsync({
       sessionId: 'session-1',
@@ -408,14 +418,13 @@ describe('createOpenCodeServerClient', () => {
   });
 
   it('accepts empty success responses for command-style session endpoints', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createNoContentResponse();
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
+    const client = createClient({
+      request,
       directory: '/tmp/opencode-project',
     });
 
@@ -425,25 +434,21 @@ describe('createOpenCodeServerClient', () => {
     })).resolves.toBeUndefined();
     await expect(client.sessionAbort({ sessionId: 'session-1' })).resolves.toBeUndefined();
 
-    expect(requests.map((request) => request.url)).toEqual([
-      'http://127.0.0.1:49196/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
-      'http://127.0.0.1:49196/session/session-1/abort?directory=%2Ftmp%2Fopencode-project',
+    expect(requests.map((request) => request.pathAndQuery)).toEqual([
+      '/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
+      '/session/session-1/abort?directory=%2Ftmp%2Fopencode-project',
     ]);
   });
 
   it('rejects non-empty malformed prompt responses instead of confirming endpoint success', async () => {
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => ({
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => ({
       ok: true,
       status: 200,
       statusText: 'OK',
       headers: {},
-      text: async () => '{not-json',
-      json: async () => {
-        throw new SyntaxError('Unexpected token');
-      },
-      arrayBuffer: async () => new ArrayBuffer(0),
+      body: new Response('{not-json').body,
     }));
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const client = createClient({ request });
 
     await expect(client.sessionPromptAsync({
       sessionId: 'session-1',
@@ -466,8 +471,10 @@ describe('createOpenCodeServerClient', () => {
       },
       parts: [],
     };
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => createJsonResponse(immediateAssistantError));
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const request = vi.fn<ManagedServiceHandle['request']>(
+      async () => createJsonResponse(immediateAssistantError),
+    );
+    const client = createClient({ request });
 
     await expect(client.sessionPromptAsync({
       sessionId: 'session-1',
@@ -476,16 +483,12 @@ describe('createOpenCodeServerClient', () => {
   });
 
   it('replies to OpenCode permission requests through the managed server', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createNoContentResponse();
     });
-    const client = createOpenCodeServerClient({
-      fetch,
-      baseUrl: 'http://127.0.0.1:49196/',
-      headers: { authorization: 'Bearer managed-secret' },
-    });
+    const client = createClient({ request });
 
     await client.permissionReply({
       requestId: 'per_123',
@@ -496,24 +499,57 @@ describe('createOpenCodeServerClient', () => {
     expect(requests).toHaveLength(1);
     expect(requests.at(0)).toMatchObject({
       method: 'POST',
-      url: 'http://127.0.0.1:49196/permission/per_123/reply',
-      headers: expect.objectContaining({
-        authorization: 'Bearer managed-secret',
-      }),
+      pathAndQuery: '/permission/per_123/reply',
+      headers: { 'content-type': 'application/json' },
     });
-    expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).toEqual({
+    expect(readJsonRequestBody(requests.at(0))).toEqual({
       reply: 'reject',
       message: 'Denied by Happier permission policy.',
     });
   });
 
+  it('reads authoritative active permission and question inventories from the managed server', async () => {
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
+      if (input.pathAndQuery.includes('/permission')) {
+        return createJsonResponse([{ id: 'per-current', sessionID: 'session-1' }]);
+      }
+      return createJsonResponse([{ id: 'question-current', sessionID: 'session-1' }]);
+    });
+    const client = createClient({
+      request,
+      directory: '/repo',
+    });
+
+    await expect(client.permissionList()).resolves.toEqual([
+      { id: 'per-current', sessionID: 'session-1' },
+    ]);
+    await expect(client.questionList()).resolves.toEqual([
+      { id: 'question-current', sessionID: 'session-1' },
+    ]);
+    expect(requests.map((request) => ({
+      method: request.method,
+      pathAndQuery: request.pathAndQuery,
+    }))).toEqual([
+      {
+        method: 'GET',
+        pathAndQuery: '/permission?directory=%2Frepo',
+      },
+      {
+        method: 'GET',
+        pathAndQuery: '/question?directory=%2Frepo',
+      },
+    ]);
+  });
+
   it('sends prompt variant as a top-level field instead of nesting it in config', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({});
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const client = createClient({ request });
 
     await client.sessionPromptAsync({
       sessionId: 'session-1',
@@ -526,7 +562,7 @@ describe('createOpenCodeServerClient', () => {
       },
     });
 
-    const body = JSON.parse(String(requests.at(0)?.body ?? '{}')) as Record<string, unknown>;
+    const body = readJsonRequestBody(requests.at(0));
 
     expect(body).toMatchObject({
       messageID: 'message-1',
@@ -534,17 +570,17 @@ describe('createOpenCodeServerClient', () => {
       config: { temperature: 0.2 },
       parts: [{ type: 'text', text: 'hello' }],
     });
-    expect((body.config as Record<string, unknown>).variant).toBeUndefined();
-    expect(requests.at(0)?.url).toBe('http://127.0.0.1:49196/session/session-1/message');
+    expect(body).not.toHaveProperty('config.variant');
+    expect(requests.at(0)?.pathAndQuery).toBe('/session/session-1/message');
   });
 
   it('serializes the selected model as the OpenCode server model object', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({});
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const client = createClient({ request });
     const input = {
       sessionId: 'session-1',
       text: 'hello',
@@ -556,7 +592,7 @@ describe('createOpenCodeServerClient', () => {
 
     await client.sessionPromptAsync(input);
 
-    const body = JSON.parse(String(requests.at(0)?.body ?? '{}')) as Record<string, unknown>;
+    const body = readJsonRequestBody(requests.at(0));
 
     expect(body).toMatchObject({
       model: {
@@ -568,12 +604,12 @@ describe('createOpenCodeServerClient', () => {
   });
 
   it('lifts config variant to top-level prompt field when explicit variant is absent', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
       return createJsonResponse({});
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const client = createClient({ request });
 
     await client.sessionPromptAsync({
       sessionId: 'session-1',
@@ -584,28 +620,25 @@ describe('createOpenCodeServerClient', () => {
       },
     });
 
-    const body = JSON.parse(String(requests.at(0)?.body ?? '{}')) as Record<string, unknown>;
+    const body = readJsonRequestBody(requests.at(0));
 
     expect(body).toMatchObject({
       variant: 'medium',
       config: { temperature: 0.2 },
       parts: [{ type: 'text', text: 'hello' }],
     });
-    expect((body.config as Record<string, unknown>).variant).toBeUndefined();
+    expect(body).not.toHaveProperty('config.variant');
   });
 
   it('posts local MCP server registrations to the OpenCode server for the session directory', async () => {
-    const requests: FetchRuntimeRequestV1[] = [];
-    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
-      requests.push(request);
-      return createJsonResponse({});
+    const requests: ManagedServiceRequest[] = [];
+    const request = vi.fn<ManagedServiceHandle['request']>(async (input) => {
+      requests.push(input);
+      return createJsonResponse({ happier: { status: 'connected' } });
     });
-    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+    const client = createClient({ request });
 
-    expect(typeof (client as { mcpAdd?: unknown }).mcpAdd).toBe('function');
-    await (client as {
-      mcpAdd(input: Readonly<{ directory: string; name: string; config: unknown }>): Promise<void>;
-    }).mcpAdd({
+    await client.mcpAdd({
       directory: '/tmp/opencode-project',
       name: 'happier',
       config: {
@@ -618,8 +651,8 @@ describe('createOpenCodeServerClient', () => {
 
     expect(requests).toHaveLength(1);
     expect(requests.at(0)?.method).toBe('POST');
-    expect(requests.at(0)?.url).toBe('http://127.0.0.1:49196/mcp?directory=%2Ftmp%2Fopencode-project');
-    expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).toEqual({
+    expect(requests.at(0)?.pathAndQuery).toBe('/mcp?directory=%2Ftmp%2Fopencode-project');
+    expect(readJsonRequestBody(requests.at(0))).toEqual({
       name: 'happier',
       config: {
         type: 'local',
@@ -630,146 +663,116 @@ describe('createOpenCodeServerClient', () => {
     });
   });
 
-  it('reconnects the global event stream after a read-idle timeout', async () => {
+  it('returns the named MCP failure status from an HTTP 200 response', async () => {
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createJsonResponse({
+      happier: { status: 'failed', error: 'bridge startup failed' },
+    }));
+    const client = createClient({ request });
+
+    await expect(client.mcpAdd({
+      directory: '/tmp/opencode-project',
+      name: 'happier',
+      config: {
+        type: 'local',
+        enabled: true,
+        command: ['node', 'server.js'],
+      },
+    })).resolves.toEqual({
+      status: 'failed',
+      error: 'bridge startup failed',
+    });
+  });
+
+  it('reconnects the directory-scoped event stream after a read-idle timeout', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
     const encoder = new TextEncoder();
     const firstChunks = [
-      encoder.encode('id: evt-pre-boundary\ndata: {"payload":{"type":"message.part.updated","properties":{"time":1,"part":{"type":"tool","sessionID":"ses-1","callID":"history-1","tool":"bash","state":{"status":"running"}}}}}\n\n'),
-      encoder.encode('id: evt-boundary-1\ndata: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
-      encoder.encode('id: evt-1\ndata: {"payload":{"type":"session.updated","properties":{"sessionID":"ses-1"}}}\n\n'),
+      encoder.encode('id: evt-pre-boundary\ndata: {"type":"message.part.updated","properties":{"time":1,"part":{"type":"tool","sessionID":"ses-1","callID":"history-1","tool":"bash","state":{"status":"running"}}}}\n\n'),
+      encoder.encode('id: evt-boundary-1\ndata: {"type":"server.connected","properties":{}}\n\n'),
+      encoder.encode('id: evt-1\ndata: {"type":"session.updated","properties":{"sessionID":"ses-1"}}\n\n'),
     ];
-    const firstReader = {
-      read: () => {
-        const chunk = firstChunks.shift();
-        return chunk
-          ? Promise.resolve({ done: false as const, value: chunk })
-          : new Promise<Readonly<{ done: false; value: Uint8Array }>>(() => undefined);
-      },
-      cancel: vi.fn(async () => undefined),
-    };
+    const firstStreamCancel = vi.fn();
     const secondChunks = [
-      encoder.encode('id: evt-boundary-2\ndata: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
-      encoder.encode('id: evt-2\ndata: {"payload":{"type":"session.idle","properties":{"sessionID":"ses-1"}}}\n\n'),
+      encoder.encode('id: evt-boundary-2\ndata: {"type":"server.connected","properties":{}}\n\n'),
+      encoder.encode('id: evt-2\ndata: {"type":"session.idle","properties":{"sessionID":"ses-1"}}\n\n'),
     ];
-    const fetch = vi.fn(async () => {
-      if (fetch.mock.calls.length === 1) {
-        return {
-          ok: true,
-          status: 200,
-          statusText: 'OK',
-          body: { getReader: () => firstReader },
-        } as unknown as Response;
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => {
+      if (request.mock.calls.length === 1) {
+        return createSseResponse(firstChunks, {
+          keepOpen: true,
+          onCancel: firstStreamCancel,
+        });
       }
-      return {
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        body: {
-          getReader: () => ({
-            read: async () => {
-              const chunk = secondChunks.shift();
-              return chunk ? { done: false, value: chunk } : { done: true };
-            },
-            cancel: vi.fn(async () => undefined),
-          }),
-        },
-      } as unknown as Response;
+      return createSseResponse(secondChunks);
     });
-    vi.stubGlobal('fetch', fetch);
-    const client = createOpenCodeServerClient({
-      fetch: vi.fn<FetchRuntimeServiceV1>(),
-      baseUrl: 'http://127.0.0.1:49196',
-    });
+    const client = createClient({ request, directory: '/repo' });
     const events: Array<Readonly<{ event: unknown; delivery: unknown }>> = [];
 
     const done = client.subscribeGlobalEvents({
       signal: controller.signal,
-      onEvent: (event, delivery?: unknown) => {
+      onEvent: (event, delivery) => {
         events.push({ event, delivery });
-        if (event.payload?.type === 'session.idle') controller.abort();
+        if (event.type === 'session.idle') controller.abort();
       },
     });
     await vi.advanceTimersByTimeAsync(30_051);
     await done;
 
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls[0]?.[1]?.headers).not.toMatchObject({ 'Last-Event-ID': expect.any(String) });
-    expect(fetch.mock.calls[1]?.[1]?.headers).not.toMatchObject({ 'Last-Event-ID': expect.any(String) });
-    expect(firstReader.cancel).toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([input]) => input.pathAndQuery)).toEqual([
+      '/event?directory=%2Frepo',
+      '/event?directory=%2Frepo',
+    ]);
+    expect(request.mock.calls[0]?.[0].headers).not.toHaveProperty('Last-Event-ID');
+    expect(request.mock.calls[1]?.[0].headers).not.toHaveProperty('Last-Event-ID');
+    expect(firstStreamCancel).toHaveBeenCalled();
     expect(events).toEqual([
       {
         event: {
-          payload: {
-            type: 'server.connected',
-            properties: {},
-          },
+          type: 'server.connected',
+          properties: {},
         },
         delivery: expect.objectContaining({ provenance: 'connection-boundary' }),
       },
       {
         event: {
-          payload: {
-            type: 'session.updated',
-            properties: { sessionID: 'ses-1' },
-          },
+          type: 'session.updated',
+          properties: { sessionID: 'ses-1' },
         },
-        delivery: expect.objectContaining({ provenance: 'untrusted-observation' }),
+        delivery: expect.objectContaining({ provenance: 'accepted-live' }),
       },
       {
         event: {
-          payload: {
-            type: 'server.connected',
-            properties: {},
-          },
+          type: 'server.connected',
+          properties: {},
         },
         delivery: expect.objectContaining({ provenance: 'connection-boundary' }),
       },
       {
         event: {
-          payload: {
-            type: 'session.idle',
-            properties: { sessionID: 'ses-1' },
-          },
+          type: 'session.idle',
+          properties: { sessionID: 'ses-1' },
         },
-        delivery: expect.objectContaining({ provenance: 'untrusted-observation' }),
+        delivery: expect.objectContaining({ provenance: 'accepted-live' }),
       },
     ]);
   });
 
-  it('reconnects with bounded backoff after a transient global event fetch failure', async () => {
+  it('reconnects with bounded backoff after a transient instance event fetch failure', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
     const encoder = new TextEncoder();
     const secondChunks = [
-      encoder.encode('data: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
+      encoder.encode('data: {"type":"server.connected","properties":{}}\n\n'),
     ];
-    const fetch = vi.fn(async () => {
-      if (fetch.mock.calls.length === 1) {
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => {
+      if (request.mock.calls.length === 1) {
         throw new TypeError('temporary network failure');
       }
-      return {
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        body: {
-          getReader: () => ({
-            read: async () => {
-              const chunk = secondChunks.shift();
-              return chunk
-                ? { done: false as const, value: chunk }
-                : { done: true as const };
-            },
-            cancel: vi.fn(async () => undefined),
-          }),
-        },
-      } as unknown as Response;
+      return createSseResponse(secondChunks);
     });
-    vi.stubGlobal('fetch', fetch);
-    const client = createOpenCodeServerClient({
-      fetch: vi.fn<FetchRuntimeServiceV1>(),
-      baseUrl: 'http://127.0.0.1:49196',
-    });
+    const client = createClient({ request });
     const boundaries: unknown[] = [];
     const onUnavailable = vi.fn();
     const done = client.subscribeGlobalEvents({
@@ -783,23 +786,21 @@ describe('createOpenCodeServerClient', () => {
     const doneExpectation = expect(done).resolves.toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(49);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     await doneExpectation;
 
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(2);
     expect(onUnavailable).toHaveBeenCalledOnce();
     expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
       message: 'temporary network failure',
     }));
     expect(boundaries).toEqual([{
       event: {
-        payload: {
-          type: 'server.connected',
-          properties: {},
-        },
+        type: 'server.connected',
+        properties: {},
       },
       delivery: {
         provenance: 'connection-boundary',
@@ -813,29 +814,15 @@ describe('createOpenCodeServerClient', () => {
     const controller = new AbortController();
     const encoder = new TextEncoder();
     const secondChunks = [
-      encoder.encode('data: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
+      encoder.encode('data: {"type":"server.connected","properties":{}}\n\n'),
     ];
-    const fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      body: {
-        getReader: () => ({
-          read: async () => {
-            if (fetch.mock.calls.length === 1) return { done: true as const };
-            const chunk = secondChunks.shift();
-            return chunk
-              ? { done: false as const, value: chunk }
-              : { done: true as const };
-          },
-          cancel: vi.fn(async () => undefined),
-        }),
-      },
-    } as unknown as Response));
-    vi.stubGlobal('fetch', fetch);
-    const client = createOpenCodeServerClient({
-      fetch: vi.fn<FetchRuntimeServiceV1>(),
-      baseUrl: 'http://127.0.0.1:49196',
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => (
+      request.mock.calls.length === 1
+        ? createSseResponse([])
+        : createSseResponse(secondChunks)
+    ));
+    const client = createClient({
+      request,
     });
     const onUnavailable = vi.fn();
     const done = client.subscribeGlobalEvents({
@@ -848,29 +835,25 @@ describe('createOpenCodeServerClient', () => {
     const doneExpectation = expect(done).resolves.toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(49);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     await doneExpectation;
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(2);
     expect(onUnavailable).toHaveBeenCalledOnce();
     expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'OpenCode global event stream ended',
+      message: 'OpenCode instance event stream ended',
     }));
   });
 
   it('cancels a pending reconnect backoff when the observer aborts', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
-    const fetch = vi.fn(async () => {
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => {
       throw new TypeError('temporary network failure');
     });
-    vi.stubGlobal('fetch', fetch);
-    const client = createOpenCodeServerClient({
-      fetch: vi.fn<FetchRuntimeServiceV1>(),
-      baseUrl: 'http://127.0.0.1:49196',
-    });
+    const client = createClient({ request });
     const done = client.subscribeGlobalEvents({
       signal: controller.signal,
       onEvent() {},
@@ -878,37 +861,50 @@ describe('createOpenCodeServerClient', () => {
     const doneExpectation = expect(done).resolves.toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     controller.abort();
     await vi.advanceTimersByTimeAsync(5_000);
     await doneExpectation;
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed without reconnecting when the global event endpoint rejects authentication', async () => {
+  it('keeps the subscription alive and recovers after an HTTP authentication rejection', async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn(async () => ({
-      ok: false,
-      status: 401,
-      statusText: 'Unauthorized',
-      body: null,
-    } as unknown as Response));
-    vi.stubGlobal('fetch', fetch);
-    const client = createOpenCodeServerClient({
-      fetch: vi.fn<FetchRuntimeServiceV1>(),
-      baseUrl: 'http://127.0.0.1:49196',
-    });
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => (
+      request.mock.calls.length === 1
+        ? {
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            headers: {},
+            body: null,
+          }
+        : createSseResponse([
+            encoder.encode('data: {"type":"server.connected","properties":{}}\n\n'),
+          ])
+    ));
+    const client = createClient({ request });
+    const onUnavailable = vi.fn();
     const done = client.subscribeGlobalEvents({
-      signal: new AbortController().signal,
-      onEvent() {},
+      signal: controller.signal,
+      onUnavailable,
+      onEvent(_event, delivery) {
+        if (delivery.provenance === 'connection-boundary') controller.abort();
+      },
     });
-    const doneExpectation = expect(done).rejects.toMatchObject({
+    const doneExpectation = expect(done).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50);
+    await doneExpectation;
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(onUnavailable).toHaveBeenCalledOnce();
+    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
       name: 'OpenCodeSseHttpError',
       status: 401,
-    });
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    await doneExpectation;
-    expect(fetch).toHaveBeenCalledTimes(1);
+    }));
   });
 });

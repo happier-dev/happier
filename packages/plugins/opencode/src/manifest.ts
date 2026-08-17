@@ -2,9 +2,11 @@ import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
 import { OPENCODE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import {
+  OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-} from './agent/auth/services/requestAuth/purposes.js';
+} from './agent/auth/services/purposes.js';
 import {
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from './agent/auth/services/requestAuth/env.js';
@@ -81,12 +83,28 @@ export const PLUGIN_MANIFEST = {
           pluginId: 'happier.agent.claude',
           localId: 'claude-subscription',
         },
+        materializationKinds: ['environment', 'httpHeaders'],
       }, {
         purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
         service: {
           pluginId: 'happier.agent.codex',
           localId: 'openai-codex',
         },
+        materializationKinds: ['httpHeaders'],
+      }, {
+        purpose: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
+        service: {
+          pluginId: 'happier.voice.openai',
+          localId: 'openai',
+        },
+        materializationKinds: ['environment'],
+      }, {
+        purpose: OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
+        service: {
+          pluginId: 'happier.agent.claude',
+          localId: 'anthropic',
+        },
+        materializationKinds: ['environment'],
       }],
       capabilities: {
         surfaces: ['externalSessions'],
@@ -132,21 +150,33 @@ export const PLUGIN_MANIFEST = {
         externalLinkedTakeover: { writerSafety: 'unsupported' },
         sources: [{
         sourceKind: 'opencodeServer',
-        schema: { passthrough: true, fields: [
+        schema: { fields: [
           { name: 'kind', kind: 'literal', value: 'opencodeServer' },
           { name: 'baseUrl', kind: 'unknown', optional: true },
           { name: 'directory', kind: 'unknown', optional: true },
+          { name: 'managedEndpoint', kind: 'unknown', optional: true },
         ] },
         key: { segments: [
           { kind: 'literal', value: 'opencodeServer' },
           { kind: 'field', field: 'baseUrl' },
           { kind: 'field', field: 'directory' },
         ] },
-        instances: [{ kind: 'default', constants: {} }],
+        instances: [
+          // Happier owns an OpenCode server by default…
+          { kind: 'default', constants: { managedEndpoint: true } },
+          // …and attaches to the user's own server when they configured one.
+          {
+            kind: 'agentSetting',
+            settingId: 'opencodeServerBaseUrl',
+            byServerIdSettingId: 'opencodeServerBaseUrlByServerIdV1',
+            field: 'baseUrl',
+            normalization: 'httpOrigin',
+          },
+        ],
       }],
       } },
     }],
-    mcp: { servers: [], discoveryProviders: [{ id: 'config', title: 'OpenCode MCP configuration', metadata: { agentId: 'opencode' } }] },
+    mcp: { servers: [], discoverySources: [{ id: 'config', title: 'OpenCode MCP configuration', metadata: { agentId: 'opencode' } }] },
     systemTools: [{
       id: OPEN_CODE_SYSTEM_TOOL_ID,
       title: 'OpenCode CLI',

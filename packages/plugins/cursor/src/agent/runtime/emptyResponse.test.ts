@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { withCursorEmptyResponseFailure } from './emptyResponse.js';
 

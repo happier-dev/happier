@@ -8,22 +8,27 @@ import type {
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsInvocation,
   AgentExternalSessionsReadAfterTranscriptResult,
+  AgentExternalSessionsResolvedIdentity,
   AgentExternalSessionsResult,
   AgentExternalSessionsTranscriptPage,
-  ExternalSessionsSource,
-  ExternalSessionTranscriptRawMessageV1,
-  RuntimeDescriptorV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   getOpenCodeExternalSessionVerifiedWorkingDirectory,
   listOpenCodeSessionCandidates,
+  type OpenCodeExternalSessionCandidate,
 } from './candidates.js';
-import { validateOpenCodeExternalSessionsSource } from './client.js';
+import {
+  type OpenCodeExternalSessionSource,
+  projectOpenCodeExternalSessionSource,
+  validateOpenCodeExternalSessionsSource,
+} from './client.js';
 import {
   resolveOpenCodeExternalSessionIdentity,
   resolveOpenCodeLinkedExternalSessionIdentity,
 } from './identity.js';
+import {
+  resolveOpenCodeExternalSessionsManagedService,
+} from './managedServer.js';
 import { pageOpenCodeTranscript } from './pageTranscript.js';
 import {
   readAfterOpenCodeTranscript,
@@ -109,14 +114,9 @@ function bounded<T>(
     : failed('invalid_request', message);
 }
 
-function toLegacySource(source: AgentExternalSessionSource): ExternalSessionsSource | null {
-  if (source.kind !== 'opencodeServer') return null;
-  return source as ExternalSessionsSource;
-}
-
-function toPublicSource(source: ExternalSessionsSource): AgentExternalSessionSource | null {
+function toAgentSource(source: OpenCodeExternalSessionSource): AgentExternalSessionSource | null {
   return isLinkData(source)
-    ? source as AgentExternalSessionSource
+    ? { ...source }
     : null;
 }
 
@@ -125,47 +125,38 @@ function validateSource(params: Readonly<{
   env: Readonly<Record<string, string | undefined>>;
   baseUrlAuthority?: 'configured' | 'canonical';
 }>): AgentExternalSessionsResult<Readonly<{
-  legacySource: ExternalSessionsSource;
-  publicSource: AgentExternalSessionSource;
+  source: OpenCodeExternalSessionSource;
+  agentSource: AgentExternalSessionSource;
 }>> {
-  const legacySource = toLegacySource(params.source);
-  if (!legacySource) return failed('source_invalid', 'provider/source mismatch');
+  const source = projectOpenCodeExternalSessionSource(params.source);
+  if (!source) return failed('source_invalid', 'provider/source mismatch');
   const validation = validateOpenCodeExternalSessionsSource({
-    source: legacySource,
+    source,
     env: params.env,
     ...(params.baseUrlAuthority ? { baseUrlAuthority: params.baseUrlAuthority } : {}),
   });
   if (!validation.ok) return failed('source_invalid', validation.error);
-  const publicSource = toPublicSource(validation.source);
-  return publicSource
-    ? ok({ legacySource: validation.source, publicSource })
+  const agentSource = toAgentSource(validation.source);
+  return agentSource
+    ? ok({ source: validation.source, agentSource })
     : failed('agent_error', 'OpenCode produced a source outside the public JSON contract.');
 }
 
-function mapCandidate(candidate: Readonly<{
-  remoteSessionId: string;
-  title?: string | null;
-  updatedAtMs: number;
-  createdAtMs?: number;
-  archived?: boolean;
-  details?: unknown;
-}>): AgentExternalSessionCandidate {
-  const details = isPlainObject(candidate.details) ? candidate.details : null;
-  const runtimeDescriptorV1 = details?.runtimeDescriptorV1;
+function mapCandidate(candidate: OpenCodeExternalSessionCandidate): AgentExternalSessionCandidate {
   return {
     remoteSessionId: candidate.remoteSessionId,
     ...(candidate.title ? { title: candidate.title } : {}),
     updatedAtMs: candidate.updatedAtMs,
     ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
     ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
-    ...(isLinkDataValue(runtimeDescriptorV1, new Set())
-      ? { linkData: { runtimeDescriptorV1 } }
+    ...(isLinkDataValue(candidate.runtimeDescriptor, new Set())
+      ? { linkData: { runtimeDescriptorV1: candidate.runtimeDescriptor } }
       : {}),
   };
 }
 
 function mapTranscriptItem(
-  item: ExternalSessionTranscriptRawMessageV1,
+  item: AgentExternalSessionTranscriptItem,
 ): AgentExternalSessionTranscriptItem | null {
   if (!isLinkData(item.raw)) return null;
   return {
@@ -178,7 +169,7 @@ function mapTranscriptItem(
 }
 
 function mapTranscriptPage(page: Readonly<{
-  items: readonly ExternalSessionTranscriptRawMessageV1[];
+  items: readonly AgentExternalSessionTranscriptItem[];
   nextCursor: string | null;
   tailCursor?: string | null;
   hasMore?: boolean;
@@ -213,22 +204,29 @@ function mapReadAfterOutcome(
 
 function readRuntimeDescriptor(
   linkData: AgentExternalSessionLinkData | undefined,
-): RuntimeDescriptorV1 | undefined {
+): unknown {
   const runtimeDescriptorV1 = linkData?.runtimeDescriptorV1;
   return isPlainObject(runtimeDescriptorV1)
-    ? runtimeDescriptorV1 as RuntimeDescriptorV1
+    ? runtimeDescriptorV1
     : undefined;
+}
+
+function stripManagedEndpointAuthority(
+  linkData: AgentExternalSessionLinkData,
+): AgentExternalSessionLinkData {
+  const {
+    opencodeServerBaseUrl: _serverBaseUrl,
+    opencodeServerBaseUrlExplicit: _serverBaseUrlExplicit,
+    ...safeLinkData
+  } = linkData;
+  return safeLinkData;
 }
 
 function mapResolvedIdentity(params: Readonly<{
   resolved: ReturnType<typeof resolveOpenCodeExternalSessionIdentity>;
   fallbackLinkData?: AgentExternalSessionLinkData;
-}>): AgentExternalSessionsResult<Readonly<{
-  source: AgentExternalSessionSource;
-  remoteSessionId: string;
-  linkData: AgentExternalSessionLinkData;
-}>> {
-  const source = toPublicSource(params.resolved.source);
+}>): AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity> {
+  const source = toAgentSource(params.resolved.source);
   if (!source) {
     return failed('agent_error', 'OpenCode produced a linked source outside the public JSON contract.');
   }
@@ -238,13 +236,16 @@ function mapResolvedIdentity(params: Readonly<{
   ) {
     return failed('agent_error', 'OpenCode produced linked metadata outside the public JSON contract.');
   }
-  const linkData: AgentExternalSessionLinkData = {
+  const mergedLinkData: AgentExternalSessionLinkData = {
     ...(params.fallbackLinkData ?? {}),
     ...(params.resolved.vendorMetadata ?? {}),
     ...(isLinkDataValue(params.resolved.runtimeDescriptor, new Set())
       ? { runtimeDescriptorV1: params.resolved.runtimeDescriptor }
       : {}),
   };
+  const linkData = params.resolved.source.managedEndpoint === true
+    ? stripManagedEndpointAuthority(mergedLinkData)
+    : mergedLinkData;
   return ok({
     source,
     remoteSessionId: params.resolved.providerSessionId,
@@ -271,8 +272,10 @@ async function canonicalizeMissingOpenCodeDirectory(params: Readonly<{
   const directory = await getOpenCodeExternalSessionVerifiedWorkingDirectory({
     source: params.resolved.source,
     providerSessionId: params.resolved.providerSessionId,
+    maxBytes: params.invocation.maxSerializedBytes,
     signal: params.invocation.signal,
     env: params.env,
+    managedEndpointRead: params.invocation.managedEndpointRead,
     baseUrlAuthority: 'canonical',
   });
   const stopped = invocationFailure(params.invocation);
@@ -312,13 +315,17 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
   const readEnv = () => params.env ?? process.env;
 
   return Object.freeze({
+    resolveManagedEndpointService(request) {
+      return resolveOpenCodeExternalSessionsManagedService(request);
+    },
+
     resolveSource(request) {
       const stopped = invocationFailure(request);
       if (stopped) return stopped;
       const validation = validateSource({ source: request.source, env: readEnv() });
       return bounded(
         request,
-        validation.ok ? ok({ source: validation.value.publicSource }) : validation,
+        validation.ok ? ok({ source: validation.value.agentSource }) : validation,
         'OpenCode source result exceeds the host byte bound.',
       );
     },
@@ -328,48 +335,32 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       if (stopped) return stopped;
       const badLimit = invalidLimit(request.maxItems, 'candidate');
       if (badLimit) return badLimit;
-      if (request.cursor) {
-        return failed(
-          'unsupported',
-          'OpenCode session listing exposes bounded top-N search but no official continuation cursor.',
-        );
-      }
-      if (request.searchMode === 'full' && request.searchTerm?.trim()) {
-        return failed(
-          'unsupported',
-          'OpenCode does not expose a bounded full id-and-title session search.',
-        );
-      }
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
       try {
         const listed = await listOpenCodeSessionCandidates({
-          source: validation.value.legacySource,
+          source: validation.value.source,
+          ...(request.cursor ? { cursor: request.cursor } : {}),
           limit: request.maxItems,
+          maxBytes: request.maxSerializedBytes,
           searchTerm: request.searchTerm,
           searchMode: request.searchMode,
-          includeActivity: false,
           signal: request.signal,
           env,
+          managedEndpointRead: request.managedEndpointRead,
         });
         const after = invocationFailure(request);
         if (after) return after;
         const candidates = listed.candidates.map(mapCandidate);
-        while (candidates.length > 0 && serializedByteLength(ok({
+        const value = {
           candidates,
-          nextCursor: null,
+          nextCursor: listed.nextCursor,
           ...(listed.searchIncomplete ? { searchIncomplete: true } : {}),
-        })) > request.maxSerializedBytes) {
-          candidates.pop();
-        }
-        const result = ok({
-          candidates,
-          nextCursor: null,
-          ...((listed.searchIncomplete || candidates.length < listed.candidates.length)
-            ? { searchIncomplete: true }
-            : {}),
-        });
+        };
+        const result = serializedByteLength(ok(value)) <= request.maxSerializedBytes
+          ? ok(value)
+          : failed('invalid_request', 'OpenCode candidate result byte budget cannot fit the page envelope.');
         return bounded(
           request,
           result,
@@ -393,7 +384,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       const canonical = await canonicalizeMissingOpenCodeDirectory({
         resolved: resolveOpenCodeExternalSessionIdentity({
           providerSessionId: request.remoteSessionId,
-          source: validation.value.legacySource,
+          source: validation.value.source,
           runtimeDescriptor: readRuntimeDescriptor(request.linkData),
         }),
         invocation: request,
@@ -424,8 +415,9 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       const canonical = await canonicalizeMissingOpenCodeDirectory({
         resolved: resolveOpenCodeLinkedExternalSessionIdentity({
           providerSessionId: request.remoteSessionId,
-          source: validation.value.legacySource,
+          source: validation.value.source,
           metadata: request.linkData,
+          runtimeDescriptor: readRuntimeDescriptor(request.linkData),
         }),
         invocation: request,
         env,
@@ -452,7 +444,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       if (!validation.ok) return validation;
       try {
         const page = await pageOpenCodeTranscript({
-          source: validation.value.legacySource,
+          source: validation.value.source,
           providerSessionId: request.remoteSessionId,
           direction: request.direction,
           cursor: request.cursor,
@@ -460,6 +452,7 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           maxItems: request.maxItems,
           signal: request.signal,
           env,
+          managedEndpointRead: request.managedEndpointRead,
         });
         const after = invocationFailure(request);
         if (after) return after;
@@ -483,13 +476,14 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       if (!validation.ok) return validation;
       try {
         const page = await readAfterOpenCodeTranscript({
-          source: validation.value.legacySource,
+          source: validation.value.source,
           providerSessionId: request.remoteSessionId,
           cursor: request.cursor,
           maxBytes: request.maxSerializedBytes,
           maxItems: request.maxItems,
           signal: request.signal,
           env,
+          managedEndpointRead: request.managedEndpointRead,
         });
         const after = invocationFailure(request);
         if (after) return after;
@@ -506,4 +500,4 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
   });
 }
 
-export const openCodeExternalSessionsContribution = createOpenCodeExternalSessionsContribution();
+export const openCodeExternalSessionsContribution: AgentExternalSessionsContribution = createOpenCodeExternalSessionsContribution();

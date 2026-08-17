@@ -8,7 +8,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   resolveOpenCodeBackendMode,
@@ -20,6 +20,11 @@ import {
   type OpenCodeActiveSkillsReaderRegistrar,
 } from './controls.js';
 import { withOpenCodeProviderConfigLaunchEnvironment } from '../providerBinding/runtime.js';
+import { prepareOpenCodeQualifiedConnectedAccounts } from '../auth/services/qualifiedPurposeLaunch.js';
+
+export {
+  openCodeExternalSessionsContribution,
+} from '../surfaces/sessions/external/contribution.js';
 
 const OPEN_CODE_ACP_RUNTIME_DEFINITION = {
   mcp: { policy: 'pass_through' },
@@ -79,14 +84,22 @@ async function openOpenCodeSession(
   context: AgentSessionRuntimeContext,
   bindActiveSkillsReader: OpenCodeActiveSkillsReaderRegistrar,
 ): Promise<AgentSessionRuntime> {
-  const mode = readOpenCodeNativeMode(request);
-  if (mode === 'acp') return openOpenCodeAcpSession(request, context);
-  return openOpenCodeServerSession(
-    request,
-    context,
-    context.workState,
-    bindActiveSkillsReader,
-  );
+  const prepared = await prepareOpenCodeQualifiedConnectedAccounts(request, context);
+  try {
+    const mode = readOpenCodeNativeMode(prepared.request);
+    const session = mode === 'acp'
+      ? await openOpenCodeAcpSession(prepared.request, context)
+      : await openOpenCodeServerSession(
+          prepared.request,
+          context,
+          context.workState,
+          bindActiveSkillsReader,
+        );
+    return prepared.bind(session);
+  } catch (error) {
+    await prepared.dispose();
+    throw error;
+  }
 }
 
 function createOpenCodeExecutionRunRuntime(
@@ -196,18 +209,27 @@ async function openOpenCodeExecutionRun(
     ...(request.launchEnvironment
       ? { launchEnvironment: request.launchEnvironment }
       : {}),
+    ...(request.configuration ? { configuration: request.configuration } : {}),
+    ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
   } as const;
-  const session = readOpenCodeNativeMode(sessionRequest) === 'acp'
-    ? await openOpenCodeAcpSession(sessionRequest, context)
-    : await openOpenCodeServerSession(sessionRequest, context);
-  const runtime = createOpenCodeExecutionRunRuntime(request, session);
-  await runtime.send(request.input);
-  return runtime;
+  const prepared = await prepareOpenCodeQualifiedConnectedAccounts(sessionRequest, context);
+  try {
+    const session = readOpenCodeNativeMode(prepared.request) === 'acp'
+      ? await openOpenCodeAcpSession(prepared.request, context)
+      : await openOpenCodeServerSession(prepared.request, context);
+    const runtime = createOpenCodeExecutionRunRuntime(request, prepared.bind(session));
+    await runtime.send(request.input);
+    return runtime;
+  } catch (error) {
+    await prepared.dispose();
+    throw error;
+  }
 }
 
 export const createOpenCodeAgentRuntime: AgentRuntimeFactory = () => {
   const controlsOwner = createOpenCodeNativeSessionControls();
   return {
+    toolExecution: { capability: 'observable' },
     sessions: {
       ...controlsOwner.sessions,
       open: (request, context) => openOpenCodeSession(
