@@ -224,63 +224,7 @@ test('assertSelectedBuildPrerequisites accepts bun from BUN_INSTALL even when PA
   }
 });
 
-test('ensureArtifactSourceInputsReady refreshes cli dist before daemon artifact builds', async (t) => {
-  assert.equal(typeof buildModule.ensureArtifactSourceInputsReady, 'function');
-  const ensureCliBuiltCalls = [];
-  const ensureCliBuiltMock = async (...args) => {
-    ensureCliBuiltCalls.push(args);
-    return { built: true, reason: 'changed' };
-  };
-
-  await buildModule.ensureArtifactSourceInputsReady({
-    selection: {
-      components: {
-        web: false,
-        server: false,
-        daemon: true,
-      },
-    },
-    repoDir: '/repo',
-    env: { HAPPIER_STACK_CLI_BUILD_MODE: 'auto' },
-    ensureCliBuiltImpl: ensureCliBuiltMock,
-  });
-
-  assert.equal(ensureCliBuiltCalls.length, 1);
-  assert.deepEqual(ensureCliBuiltCalls[0], [
-    join('/repo', 'apps', 'cli'),
-    {
-      buildCli: true,
-      quiet: true,
-      env: { HAPPIER_STACK_CLI_BUILD_MODE: 'auto' },
-    },
-  ]);
-});
-
-test('ensureArtifactSourceInputsReady skips cli dist refresh when daemon artifacts are not selected', async (t) => {
-  assert.equal(typeof buildModule.ensureArtifactSourceInputsReady, 'function');
-  const ensureCliBuiltCalls = [];
-  const ensureCliBuiltMock = async (...args) => {
-    ensureCliBuiltCalls.push(args);
-    return { built: true, reason: 'changed' };
-  };
-
-  await buildModule.ensureArtifactSourceInputsReady({
-    selection: {
-      components: {
-        web: true,
-        server: true,
-        daemon: false,
-      },
-    },
-    repoDir: '/repo',
-    env: {},
-    ensureCliBuiltImpl: ensureCliBuiltMock,
-  });
-
-  assert.equal(ensureCliBuiltCalls.length, 0);
-});
-
-test('component preparation and payload work use identity locks and prune their declared owner-specific support artifacts', async () => {
+test('the artifact coordinator delegates preparation to component owners and only coordinates identity locks and retention', async () => {
   assert.equal(typeof buildModule.buildRuntimeArtifactComponents, 'function');
   const events = [];
   const stackBaseDir = '/stacks/repository-producer';
@@ -296,12 +240,10 @@ test('component preparation and payload work use identity locks and prune their 
     env: {},
     assertSelectedBuildPrerequisitesImpl: () => {},
     ensureWorkspacePackagesBuiltForComponentImpl: async () => {
-      assert.deepEqual(events, []);
-      events.push('workspace-preparation');
+      throw new Error('the artifact coordinator must not run a generic workspace build');
     },
     refreshLocalBundledWorkspacePackagesImpl: async () => {
-      assert.deepEqual(events, ['workspace-preparation']);
-      events.push('bundled-preflight');
+      throw new Error('the artifact coordinator must not run the Stack bundled-workspace preflight');
     },
     collectBuildSourceMetadataImpl: async () => ({
       repoDir: '/repo',
@@ -311,8 +253,7 @@ test('component preparation and payload work use identity locks and prune their 
       dbProvider: 'sqlite',
     }),
     ensureArtifactSourceInputsReadyImpl: async () => {
-      assert.deepEqual(events, ['workspace-preparation', 'bundled-preflight']);
-      events.push('source-inputs');
+      throw new Error('the artifact coordinator must not prepare daemon source inputs before identity resolution');
     },
     resolveRuntimeBuildRequestIdentityImpl: async () => ({
       sourceMetadata: {
@@ -339,9 +280,6 @@ test('component preparation and payload work use identity locks and prune their 
     buildSelectedStackArtifactsImpl: async ({ buildComponent }) => ({
       server: await buildComponent('server', async (input) => {
         assert.deepEqual(events, [
-          'workspace-preparation',
-          'bundled-preflight',
-          'source-inputs',
           'component-lock:server',
         ]);
         assert.equal(input.supportArtifactFingerprint, 'server-support-a');
@@ -357,9 +295,6 @@ test('component preparation and payload work use identity locks and prune their 
       }),
       daemon: await buildComponent('daemon', async (input) => {
         assert.deepEqual(events, [
-          'workspace-preparation',
-          'bundled-preflight',
-          'source-inputs',
           'component-lock:server',
           'server-payload',
           'component-retention:server',
@@ -382,9 +317,6 @@ test('component preparation and payload work use identity locks and prune their 
   });
 
   assert.deepEqual(events, [
-      'workspace-preparation',
-      'bundled-preflight',
-      'source-inputs',
       'component-lock:server',
       'server-payload',
       'component-retention:server',

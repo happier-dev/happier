@@ -50,20 +50,11 @@ async function installInitialDependencies({ repoDir, env }) {
   });
 }
 
-function runCanonicalUiPostinstall({ repoDir, env }) {
-  execYarn(['-s', 'postinstall:real'], {
-    cwd: join(repoDir, 'apps', 'ui'),
-    env: resolveInitialInstallEnv(env),
-    stdio: 'inherit',
-  });
-}
-
 export async function bootstrapRemoteDependencies({
   repoDir = resolve(process.cwd()),
   env = process.env,
   packageExists = existsSync,
   installInitialDependencies: installInitialDependenciesImpl = installInitialDependencies,
-  runUiPostinstall: runUiPostinstallImpl = runCanonicalUiPostinstall,
   withDependencyRefresh: withDependencyRefreshImpl = withDependencyRefresh,
   loadWorkspaceBuildOwner = async () => await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'),
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
@@ -94,10 +85,7 @@ export async function bootstrapRemoteDependencies({
   await ensureDepsInstalled(
     componentDir,
     'remote Happier workspace',
-    {
-      env,
-      onDependenciesReady: () => runUiPostinstallImpl({ repoDir, env }),
-    },
+    { env },
   );
 }
 

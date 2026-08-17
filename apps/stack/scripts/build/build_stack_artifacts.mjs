@@ -3,10 +3,6 @@ import { join } from 'node:path';
 import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import {
-  ensureCliBuilt,
-  ensureWorkspacePackagesBuiltForComponent,
-} from '../utils/proc/pm.mjs';
-import {
   resolveStackComponentArtifactDir,
   resolveStackComponentArtifactLockPath,
   resolveStackRuntimePaths,
@@ -37,7 +33,6 @@ import {
 } from './runtime_artifact_identity.mjs';
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
-import { refreshLocalBundledWorkspacePackages } from '../../bin/localBundledWorkspacePreflight.mjs';
 import { inspectActiveRuntimeSnapshot } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import {
   captureRuntimeBuildStoreState,
@@ -52,23 +47,6 @@ function assertNamedStack(env) {
     throw new Error('[build] runtime artifact builds are supported for named consumer stacks only.');
   }
   return stackName;
-}
-
-export async function ensureArtifactSourceInputsReady({
-  selection,
-  repoDir,
-  env = process.env,
-  ensureCliBuiltImpl = ensureCliBuilt,
-}) {
-  if (!selection?.components?.daemon) {
-    return;
-  }
-
-  await ensureCliBuiltImpl(join(repoDir, 'apps', 'cli'), {
-    buildCli: true,
-    quiet: true,
-    env,
-  });
 }
 
 export async function buildSelectedStackArtifacts({
@@ -212,10 +190,7 @@ export async function buildRuntimeArtifactComponents({
   env = process.env,
   retentionPolicy = resolveRuntimeRetentionPolicy({ env }),
   assertSelectedBuildPrerequisitesImpl = assertSelectedBuildPrerequisites,
-  ensureWorkspacePackagesBuiltForComponentImpl = ensureWorkspacePackagesBuiltForComponent,
-  refreshLocalBundledWorkspacePackagesImpl = refreshLocalBundledWorkspacePackages,
   collectBuildSourceMetadataImpl = collectBuildSourceMetadata,
-  ensureArtifactSourceInputsReadyImpl = ensureArtifactSourceInputsReady,
   resolveRuntimeBuildRequestIdentityImpl = resolveRuntimeBuildRequestIdentity,
   buildSelectedStackArtifactsImpl = buildSelectedStackArtifacts,
   buildComponentArtifactWithIdentityLockImpl = buildComponentArtifactWithIdentityLock,
@@ -223,14 +198,7 @@ export async function buildRuntimeArtifactComponents({
   pruneComponentArtifactsImpl = pruneComponentArtifacts,
 }) {
   assertSelectedBuildPrerequisitesImpl({ selection, env });
-  await ensureWorkspacePackagesBuiltForComponentImpl(rootDir, { quiet: true, env });
-  await refreshLocalBundledWorkspacePackagesImpl(rootDir);
   const initialSourceMetadata = await collectBuildSourceMetadataImpl({ rootDir, env });
-  await ensureArtifactSourceInputsReadyImpl({
-    selection,
-    repoDir: initialSourceMetadata.repoDir,
-    env,
-  });
   const buildRequest = await resolveRuntimeBuildRequestIdentityImpl({
     rootDir,
     producerStackBaseDir: stackBaseDir,

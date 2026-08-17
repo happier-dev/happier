@@ -117,8 +117,6 @@ export async function runDevTargetDependencyBootstrap(
     target,
     stackBaseDir,
     commandArgs: [
-      'corepack',
-      'yarn',
       'node',
       './apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
     ],

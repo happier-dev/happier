@@ -47,8 +47,6 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
     target,
     stackBaseDir: '/tmp/stack',
     commandArgs: [
-      'corepack',
-      'yarn',
       'node',
       './apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs',
     ],

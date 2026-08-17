@@ -70,16 +70,13 @@ test('remote dependency bootstrap serializes stage-zero installs through the can
     await writeFile(join(repoDir, 'node_modules', '.yarn-integrity'), 'fixture\n', 'utf-8');
   };
   const loadDependencyOwner = async () => ({
-    ensureDepsInstalled: async (_dir, _label, options) => {
-      await options.onDependenciesReady();
-    },
+    ensureDepsInstalled: async () => {},
   });
   const options = {
     repoDir,
     env: { ...process.env, CI: '1' },
     installInitialDependencies,
     loadDependencyOwner,
-    runUiPostinstall: async () => {},
   };
 
   const firstBootstrap = bootstrapRemoteDependencies(options);
@@ -113,11 +110,9 @@ test('remote dependency bootstrap builds the dependency-owner closure before loa
             env: options.env,
             hasDependencyReadyAction: typeof options.onDependenciesReady === 'function',
           }]);
-          await options.onDependenciesReady();
         },
       };
     },
-    runUiPostinstall: async () => {},
   });
 
   assert.deepEqual(calls, [
@@ -132,12 +127,12 @@ test('remote dependency bootstrap builds the dependency-owner closure before loa
     ['load-owner'],
     ['ensure', '/remote/happier/apps/stack', 'remote Happier workspace', {
       env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
-      hasDependencyReadyAction: true,
+      hasDependencyReadyAction: false,
     }],
   ]);
 });
 
-test('remote dependency bootstrap gives the canonical UI postinstall to the dependency owner', async () => {
+test('remote dependency bootstrap does not run component-owned UI preparation for an arbitrary command', async () => {
   const calls = [];
 
   await bootstrapRemoteDependencies({
@@ -152,11 +147,10 @@ test('remote dependency bootstrap gives the canonical UI postinstall to the depe
     loadDependencyOwner: async () => ({
       ensureDepsInstalled: async (_dir, _label, options) => {
         calls.push(['ensure:begin']);
-        await options.onDependenciesReady();
+        assert.equal(options.onDependenciesReady, undefined);
         calls.push(['ensure:end']);
       },
     }),
-    runUiPostinstall: async (options) => calls.push(['ui-postinstall', options]),
   });
 
   assert.deepEqual(calls, [
@@ -169,10 +163,6 @@ test('remote dependency bootstrap gives the canonical UI postinstall to the depe
       includeDevDependencies: false,
     }],
     ['ensure:begin'],
-    ['ui-postinstall', {
-      repoDir: '/remote/happier',
-      env: { HAPPIER_STACK_PM_CACHE_BASE_DIR: '/remote/cache' },
-    }],
     ['ensure:end'],
   ]);
 });
@@ -205,32 +195,10 @@ test('remote dependency bootstrap propagates stage-zero failures before loading 
   assert.equal(dependencyOwnerLoaded, false);
 });
 
-test('remote dependency bootstrap propagates the canonical UI postinstall failure', async () => {
-  const postinstallFailure = new Error('postinstall failed');
-
-  await assert.rejects(
-    () => bootstrapRemoteDependencies({
-      repoDir: '/remote/happier',
-      packageExists: () => true,
-      withDependencyRefresh: async () => ({ refreshed: false, reason: 'up-to-date' }),
-      loadDependencyOwner: async () => ({
-        ensureDepsInstalled: async (_dir, _label, options) => {
-          await options.onDependenciesReady();
-        },
-      }),
-      runUiPostinstall: async () => {
-        throw postinstallFailure;
-      },
-    }),
-    (error) => error === postinstallFailure,
-  );
-});
-
 test('remote dependency bootstrap reuses the canonical dependency owner when stage zero exists', async () => {
   let initialInstallCalled = false;
   let workspaceBuildOwnerLoaded = false;
   let ensured = false;
-  let uiPostinstallRan = false;
 
   await bootstrapRemoteDependencies({
     repoDir: '/remote/happier',
@@ -249,20 +217,15 @@ test('remote dependency bootstrap reuses the canonical dependency owner when sta
       };
     },
     loadDependencyOwner: async () => ({
-      ensureDepsInstalled: async (_dir, _label, options) => {
+      ensureDepsInstalled: async () => {
         ensured = true;
-        await options.onDependenciesReady();
       },
     }),
-    runUiPostinstall: async () => {
-      uiPostinstallRan = true;
-    },
   });
 
   assert.equal(initialInstallCalled, false);
   assert.equal(workspaceBuildOwnerLoaded, true);
   assert.equal(ensured, true);
-  assert.equal(uiPostinstallRan, true);
 });
 
 test('remote dependency bootstrap repairs a scriptless install whose dependency owner was not built', async () => {
@@ -278,12 +241,10 @@ test('remote dependency bootstrap repairs a scriptless install whose dependency 
       ensureWorkspacePackagesBuiltByName: async (...args) => calls.push(['build-owner', ...args]),
     }),
     loadDependencyOwner: async () => ({
-      ensureDepsInstalled: async (_dir, _label, options) => {
+      ensureDepsInstalled: async () => {
         calls.push(['ensure']);
-        await options.onDependenciesReady();
       },
     }),
-    runUiPostinstall: async () => calls.push(['ui-postinstall']),
   });
 
   assert.deepEqual(calls, [
@@ -292,6 +253,5 @@ test('remote dependency bootstrap repairs a scriptless install whose dependency 
       includeDevDependencies: false,
     }],
     ['ensure'],
-    ['ui-postinstall'],
   ]);
 });
