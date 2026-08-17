@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,23 @@ import { bundleWorkspaceDeps } from './bundleWorkspaceDeps.mjs';
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+async function waitForCondition(predicate, label, timeoutMs = 1_000) {
+  await new Promise((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => {
+      rejectPromise(new Error(`Timed out waiting for ${label}`));
+    }, timeoutMs);
+    const check = () => {
+      if (predicate()) {
+        clearTimeout(timeout);
+        resolvePromise();
+        return;
+      }
+      setTimeout(check, 5);
+    };
+    check();
+  });
 }
 
 function writeCliCommonWorkspacesStub(cliCommonDir) {
@@ -125,6 +142,75 @@ test('bundledDependencies are declared in dependencies', () => {
 
   for (const name of bundled) {
     assert.equal(Boolean(deps[name]), true, `Expected ${name} to be declared in dependencies`);
+  }
+});
+
+test('bundleWorkspaceDeps uses the canonical long shared-lock contention budget', async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happy-relay-bundle-workspace-deps-lock-budget-'));
+  const relayDir = resolve(repoRoot, 'packages', 'relay-server');
+  const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+  const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+  let attempt = null;
+  const originalNow = Date.now;
+  try {
+    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
+    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+    mkdirSync(relayDir, { recursive: true });
+    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+    writeJson(resolve(relayDir, 'package.json'), {
+      name: '@happier-dev/relay-server',
+      private: true,
+      bundledDependencies: [],
+      dependencies: {},
+    });
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': './dist/index.js' },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+    writeCliCommonWorkspacesStub(cliCommonDir);
+
+    let nowMs = originalNow();
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({
+      pid: process.pid,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    }), 'utf8');
+    Date.now = () => nowMs;
+
+    attempt = bundleWorkspaceDeps({
+      repoRoot,
+      relayDir,
+      ensureWorkspacePackagesBuiltByName: async () => ({ ok: true, built: [], skipped: [] }),
+    });
+    await waitForCondition(
+      () => existsSync(`${lockPath}.priority-claim`),
+      'relay workspace-bundle lock contender',
+    );
+
+    nowMs += 4 * 60_000 + 1;
+    const outcome = await Promise.race([
+      attempt.then(
+        () => 'fulfilled',
+        () => 'rejected',
+      ),
+      new Promise((resolvePromise) => setTimeout(() => resolvePromise('pending'), 1_100)),
+    ]);
+    assert.equal(outcome, 'pending');
+
+    Date.now = originalNow;
+    unlinkSync(lockPath);
+    await attempt;
+    attempt = null;
+  } finally {
+    Date.now = originalNow;
+    if (existsSync(lockPath)) unlinkSync(lockPath);
+    await attempt?.catch(() => {});
+    rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 

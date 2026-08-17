@@ -54,7 +54,7 @@ export function parseRunnerInvocation(argv = []) {
     throw new Error(`Missing rolling release suffix for channel '${channel}'.`);
   }
   const serverTag = String(kv.get('--tag') ?? '').trim() || `server-${suffix}`;
-  const uiWebTag = String(kv.get('--ui-tag') ?? '').trim() || `ui-web-${suffix}`;
+  const uiWebTag = String(kv.get('--ui-tag') ?? '').trim() || null;
 
   const withUiWeb =
     !(flags.has('--without-ui') || parseBooleanFlag(kv.get('--with-ui'), true) === false);
