@@ -72,6 +72,68 @@ describe('useChromeSafeAreaInsets helpers', () => {
         expect(hook.getCurrent()).toEqual({ top: 47, bottom: 34, left: 0, right: 0 });
     });
 
+    it('zeroes the web bottom inset on non-iOS web (Firefox reports a nav bar the viewport never overlaps)', async () => {
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'web' },
+            useWindowDimensions: () => nativeSafeAreaState.dimensions,
+        }));
+        vi.doMock('react-native-safe-area-context', () => ({
+            get initialWindowMetrics() {
+                return nativeSafeAreaState.initialWindowMetrics;
+            },
+            default: {
+                get initialWindowMetrics() {
+                    return nativeSafeAreaState.initialWindowMetrics;
+                },
+            },
+            useSafeAreaInsets: () => nativeSafeAreaState.insets,
+        }));
+        nativeSafeAreaState.insets = { top: 0, bottom: 80, left: 0, right: 0 };
+        nativeSafeAreaState.initialWindowMetrics = null;
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { userAgent: 'Mozilla/5.0 (Linux; Android 15) Gecko/20100101 Firefox/142.0', maxTouchPoints: 5 },
+            configurable: true,
+        });
+        try {
+            const { useChromeSafeAreaInsets } = await import('./useChromeSafeAreaInsets');
+            const hook = await renderHook(() => useChromeSafeAreaInsets());
+            expect(hook.getCurrent().bottom).toBe(0);
+        } finally {
+            delete (globalThis as Record<string, unknown>).navigator;
+        }
+    });
+
+    it('keeps the web bottom inset on iOS web (home-indicator viewport overlap is real)', async () => {
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'web' },
+            useWindowDimensions: () => nativeSafeAreaState.dimensions,
+        }));
+        vi.doMock('react-native-safe-area-context', () => ({
+            get initialWindowMetrics() {
+                return nativeSafeAreaState.initialWindowMetrics;
+            },
+            default: {
+                get initialWindowMetrics() {
+                    return nativeSafeAreaState.initialWindowMetrics;
+                },
+            },
+            useSafeAreaInsets: () => nativeSafeAreaState.insets,
+        }));
+        nativeSafeAreaState.insets = { top: 0, bottom: 34, left: 0, right: 0 };
+        nativeSafeAreaState.initialWindowMetrics = null;
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15', maxTouchPoints: 5 },
+            configurable: true,
+        });
+        try {
+            const { useChromeSafeAreaInsets } = await import('./useChromeSafeAreaInsets');
+            const hook = await renderHook(() => useChromeSafeAreaInsets());
+            expect(hook.getCurrent().bottom).toBe(34);
+        } finally {
+            delete (globalThis as Record<string, unknown>).navigator;
+        }
+    });
+
     it('does not resurrect a stale native inset when a later zero-inset frame has no fallback', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'ios' },

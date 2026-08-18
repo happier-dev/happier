@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolveTrustedWebSafeAreaBottomInset } from '@/utils/platform/webSafeAreaInset';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
@@ -38,11 +39,14 @@ export const FABWide = React.memo(({ onPress }: { onPress: () => void }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const safeArea = useSafeAreaInsets();
+    const trustedBottomInset = Platform.OS === 'web'
+        ? resolveTrustedWebSafeAreaBottomInset(safeArea.bottom)
+        : safeArea.bottom;
     return (
         <View
             style={[
                 styles.container,
-                { bottom: safeArea.bottom + 16 }
+                { bottom: trustedBottomInset + 16 }
             ]}
         >
             <Pressable

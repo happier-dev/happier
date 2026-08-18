@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { layout } from '@/components/ui/layout/layout';
+import { resolveTrustedWebSafeAreaBottomInset } from '@/utils/platform/webSafeAreaInset';
 import { resolveFloatingTabBarBottomPadding } from './floatingTabBarBottomInset';
 
 /**
@@ -101,7 +102,14 @@ export type FloatingTabBarSurfaceProps = Readonly<{
 }>;
 
 export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(props: FloatingTabBarSurfaceProps) {
-    const bottomPadding = resolveFloatingTabBarBottomPadding(props.bottomInset, Platform.OS === 'ios');
+    // On web the bottom safe-area inset is only trustworthy on iOS browsers (see
+    // webSafeAreaInset.ts): Firefox Android reports the on-screen nav bar as the bottom inset
+    // even though the viewport never extends under it, which used to leave a dead band under
+    // the floating capsule.
+    const trustedBottomInset = Platform.OS === 'web'
+        ? resolveTrustedWebSafeAreaBottomInset(props.bottomInset)
+        : props.bottomInset;
+    const bottomPadding = resolveFloatingTabBarBottomPadding(trustedBottomInset, Platform.OS === 'ios');
 
     const bar = (
         <GlassPanel

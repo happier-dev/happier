@@ -4,6 +4,11 @@ import { useSharedValue } from 'react-native-reanimated';
 
 import { resolveWebVisualViewportKeyboardInset } from '@/hooks/ui/resolveWebVisualViewportKeyboardInset';
 import {
+    resolveWebKeyboardReferenceViewportHeight,
+    updateWebVisualViewportKeyboardReference,
+    type WebVisualViewportKeyboardReference,
+} from '@/hooks/ui/webVisualViewportKeyboardReference';
+import {
     resolveAvailablePanelHeight,
     resolveComposerBottomOffset,
 } from './composerKeyboardGeometry';
@@ -22,15 +27,27 @@ function isMobileLikeHost(width: number): boolean {
     return width < 768;
 }
 
-function readVisualViewportKeyboardInset(): number {
+function readVisualViewportKeyboardInset(keyboardReferenceRef: React.MutableRefObject<WebVisualViewportKeyboardReference | null>): number {
     if (typeof window === 'undefined') return 0;
     const visualViewport = window.visualViewport;
     if (!visualViewport) return 0;
-    return resolveWebVisualViewportKeyboardInset({
+    const isEditableFocused = isEditableElementFocused();
+    // `window.innerHeight` cannot be the unoccluded-viewport reference: Firefox Android reports
+    // a layout viewport taller than the visual viewport can ever reach, so the difference
+    // counts browser chrome as keyboard. The canonical reference is the largest visual bottom
+    // observed while nothing editable was focused (see webVisualViewportKeyboardReference.ts).
+    const reference = updateWebVisualViewportKeyboardReference(keyboardReferenceRef.current, {
+        width: visualViewport.width,
+        visualBottom: visualViewport.height + visualViewport.offsetTop,
         layoutViewportHeight: window.innerHeight,
+        isEditableElementFocused: isEditableFocused,
+    });
+    keyboardReferenceRef.current = reference;
+    return resolveWebVisualViewportKeyboardInset({
+        layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(reference),
         visualViewportHeight: visualViewport.height,
         visualViewportOffsetTop: visualViewport.offsetTop,
-        isEditableElementFocused: isEditableElementFocused(),
+        isEditableElementFocused: isEditableFocused,
         isMobileLikeHost: isMobileLikeHost(visualViewport.width),
     });
 }
@@ -55,6 +72,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
     const keyboardHeightSnapshotRef = React.useRef(0);
     const keyboardHeightSubscribersRef = React.useRef(new Set<(height: number) => void>());
     const listBottomInsetSubscribersRef = React.useRef(new Set<(height: number) => void>());
+    const keyboardReferenceRef = React.useRef<WebVisualViewportKeyboardReference | null>(null);
 
     const notifyAvailablePanelHeight = React.useCallback((height: number) => {
         for (const listener of availablePanelHeightSubscribersRef.current) {
@@ -142,7 +160,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
 
     React.useEffect(() => {
         const update = () => {
-            recompute(readVisualViewportKeyboardInset());
+            recompute(readVisualViewportKeyboardInset(keyboardReferenceRef));
         };
         update();
         if (typeof window === 'undefined') return undefined;

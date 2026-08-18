@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as safeAreaContext from 'react-native-safe-area-context';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
+import { resolveTrustedWebSafeAreaBottomInset } from '@/utils/platform/webSafeAreaInset';
 
 const CSS_SAFE_AREA_VAR_PREFIX = '--happier-safe-area-';
 
@@ -142,5 +143,8 @@ export function useChromeSafeAreaInsets(): EdgeInsets {
         return mergeSafeAreaInsets(insets, nativeFallback);
     }
 
-    return mergeSafeAreaInsets(insets, webFallback);
+    const merged = mergeSafeAreaInsets(insets, webFallback);
+    // The web bottom inset is only trustworthy on iOS browsers (Firefox Android reports the
+    // nav bar the viewport never overlaps); see webSafeAreaInset.ts.
+    return { ...merged, bottom: resolveTrustedWebSafeAreaBottomInset(merged.bottom) };
 }
