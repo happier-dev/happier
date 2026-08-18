@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE } from '../bridgeExtension/piBridgeExtensionEnv';
+import { parsePiContextTelemetryFromSessionStats } from './piContextTelemetryMarker';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
@@ -9,9 +10,11 @@ type PrivateContextTelemetryBackend = {
   latestContextTelemetry: { used: number; size: number } | null;
   lastPublishedUsageKey: string | null;
   handleStderrLine(line: string): void;
+  handleEvent(event: Record<string, unknown>): void;
   emitMessage(message: unknown): void;
   getSessionStats(): Promise<unknown>;
   publishUsageStatsBestEffort(): Promise<void>;
+  scheduleUsageStatsPublish(): Promise<void>;
 };
 
 function createBackendForContextTelemetry(): PiRpcBackend {
@@ -111,5 +114,91 @@ describe('PiRpcBackend context telemetry markers', () => {
     await priv.publishUsageStatsBestEffort();
 
     expect(emitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers stats.contextUsage over the stderr marker when both are present', async () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 3,
+      tokens: { input: 50, output: 10 },
+      contextUsage: { tokens: 555, contextWindow: 999, percent: 55.5 },
+    });
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":1000,"size":200000}`);
+
+    await priv.publishUsageStatsBestEffort();
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    expect((emitSpy.mock.calls[0][0] as Record<string, unknown>).tokens).toMatchObject({
+      context_used_tokens: 555,
+      context_window_tokens: 999,
+    });
+  });
+
+  it('ignores null/absent stats.contextUsage (post-compaction) and falls back to the marker', async () => {
+    expect(parsePiContextTelemetryFromSessionStats({ contextUsage: { tokens: null, contextWindow: 200000 } })).toBeNull();
+    expect(parsePiContextTelemetryFromSessionStats({})).toBeNull();
+    expect(parsePiContextTelemetryFromSessionStats({ contextUsage: { tokens: 5, contextWindow: 0 } })).toBeNull();
+
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 3,
+      tokens: { input: 50 },
+      contextUsage: { tokens: null, contextWindow: 200000, percent: null },
+    });
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":777,"size":200000}`);
+
+    await priv.publishUsageStatsBestEffort();
+
+    expect((emitSpy.mock.calls[0][0] as Record<string, unknown>).tokens).toMatchObject({
+      context_used_tokens: 777,
+    });
+  });
+
+  it('publishes immediately at assistant message_end (before tool calls run), not only at idle', async () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 4,
+      tokens: { input: 100, output: 20 },
+      contextUsage: { tokens: 1234, contextWindow: 128000, percent: 1 },
+    });
+
+    // An assistant message_end carrying a tool_use: the fresh context is known NOW, while
+    // the slow tool has not even started. Mid-turn publishes are gated on bridge telemetry
+    // being present, so feed a marker first. (Drain the serialized publish chain.)
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":1234,"size":128000}`);
+    priv.handleEvent({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'bash' }] },
+    });
+    await priv.scheduleUsageStatsPublish();
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    const message = emitSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(message.type).toBe('token-count');
+    expect(message.tokens).toMatchObject({
+      context_used_tokens: 1234,
+      context_window_tokens: 128000,
+    });
+  });
+
+  it('does not publish on user message_end events', async () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    const statsSpy = vi.spyOn(priv, 'getSessionStats');
+
+    await priv.handleEvent({ type: 'message_end', message: { role: 'user', content: [] } });
+
+    expect(emitSpy).not.toHaveBeenCalled();
+    expect(statsSpy).not.toHaveBeenCalled();
   });
 });
