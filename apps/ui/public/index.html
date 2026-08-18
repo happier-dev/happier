@@ -3,9 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <!-- interactive-widget=resizes-content: the layout viewport itself ends at the software
+         keyboard top (Chrome default; Firefox 132+ honors it, Safari ignores it). This makes
+         window.innerHeight the true unoccluded height, kills sub-keyboard drag-panning, and
+         makes the visual-viewport keyboard baseline resolve to a ~0 inset on these browsers —
+         the same content-resizing contract the composer's keyboard geometry already handles. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <!-- Match standalone browser chrome to the canonical sidebar canvas without owning the app background. -->
     <meta name="theme-color" content="#F5F5F5" media="(prefers-color-scheme: light)" />
