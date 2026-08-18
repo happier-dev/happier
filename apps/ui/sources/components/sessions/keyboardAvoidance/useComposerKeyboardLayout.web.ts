@@ -41,7 +41,10 @@ function readVisualViewportKeyboardInset(keyboardReferenceRef: React.MutableRefO
     });
     keyboardReferenceRef.current = reference;
     return resolveWebVisualViewportKeyboardInset({
-        layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(reference),
+        layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(reference, {
+            layoutViewportHeight: window.innerHeight,
+            currentVisualBottom: visualViewport.height + visualViewport.offsetTop,
+        }),
         visualViewportHeight: visualViewport.height,
         visualViewportOffsetTop: visualViewport.offsetTop,
         isEditableElementFocused: isEditableFocused,

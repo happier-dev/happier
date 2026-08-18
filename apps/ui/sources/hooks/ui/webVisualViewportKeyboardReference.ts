@@ -1,18 +1,23 @@
 // Reference height for the mobile-web software-keyboard inset.
 //
 // `window.innerHeight` is NOT a trustworthy unoccluded-viewport reference on every mobile
-// browser: on Firefox Android it reports a layout viewport taller than the visual viewport can
-// ever reach even with no keyboard open (reproduced on-device: a ~90 CSS px phantom band), so
-// `innerHeight - visualViewport.height - offsetTop` counts browser chrome as keyboard and the
-// composer floats above the keyboard top.
+// browser: on Firefox Android it reports a layout viewport that ignores the dynamic URL
+// toolbar, so the visual viewport with the toolbar HIDDEN (measured on-device: 742 CSS px)
+// exceeds the layout viewport (678 CSS px it keeps even with the keyboard open).
+// `innerHeight - visualViewport.height` therefore mixes browser chrome into the keyboard.
 //
 // The visual viewport is authoritative for what is actually visible. The unoccluded reference
-// is therefore the largest visual bottom (`height + offsetTop`) observed while NO editable was
-// focused — a state in which the software keyboard cannot be covering the window — at the
-// current viewport width. The fallback for the one state where no unoccluded observation can
-// exist yet (a scaffold mounting while the keyboard is already open) is the layout viewport
-// height, which restores the previous best-effort behavior rather than leaving the composer
-// under the keyboard.
+// is the largest visual bottom (`height + offsetTop`) observed while NO editable was focused —
+// a state in which the software keyboard cannot be covering the window — at the current
+// viewport width. That reference is then CLAMPED by the current layout viewport bottom: the
+// toolbar-hidden visual overshoot can exceed the layout viewport itself, but the keyboard can
+// never lift the layout bottom, so the reference must not. The same clamp also keeps
+// content-resizing browsers (Chrome Android, iOS Safari) at a near-zero inset, where the
+// resized canvas already ends at the keyboard top.
+//
+// The fallback for the one state where no unoccluded observation can exist yet (a scaffold
+// mounting while the keyboard is already open) is the layout viewport height, which restores
+// the previous best-effort behavior rather than leaving the composer under the keyboard.
 
 export type WebVisualViewportKeyboardReference = Readonly<{
     width: number;
@@ -26,6 +31,13 @@ export type WebVisualViewportKeyboardReading = Readonly<{
     visualBottom: number;
     layoutViewportHeight: number;
     isEditableElementFocused: boolean;
+}>;
+
+export type WebVisualViewportKeyboardReferenceBounds = Readonly<{
+    /** Current layout viewport (`window.innerHeight`). */
+    layoutViewportHeight: number;
+    /** Current visual bottom (`visualViewport.height + offsetTop`). */
+    currentVisualBottom: number;
 }>;
 
 function normalizePositive(value: number): number | null {
@@ -64,9 +76,20 @@ export function updateWebVisualViewportKeyboardReference(
 }
 
 /**
- * The reference the keyboard inset is measured against. The unoccluded visual bottom is the
- * canonical reference; the layout viewport is only the mount-with-open-keyboard fallback.
+ * The reference the keyboard inset is measured against: the observed unoccluded visual bottom
+ * (the mount-with-open-keyboard fallback is the layout viewport), clamped to the current
+ * layout viewport bottom. The clamp removes the dynamic-toolbar overshoot (the visual viewport
+ * with hidden browser chrome can exceed the layout viewport on Firefox Android) while keeping
+ * content-resizing browsers flush by construction.
  */
-export function resolveWebKeyboardReferenceViewportHeight(state: WebVisualViewportKeyboardReference): number {
-    return state.maxUnfocusedVisualBottom ?? state.maxLayoutViewportHeight ?? 0;
+export function resolveWebKeyboardReferenceViewportHeight(
+    state: WebVisualViewportKeyboardReference,
+    bounds: WebVisualViewportKeyboardReferenceBounds,
+): number {
+    const reference = state.maxUnfocusedVisualBottom ?? state.maxLayoutViewportHeight ?? 0;
+    const layoutViewportHeight = normalizePositive(bounds.layoutViewportHeight);
+    const currentVisualBottom = normalizePositive(bounds.currentVisualBottom);
+    const layoutBottom = Math.max(layoutViewportHeight ?? 0, currentVisualBottom ?? 0);
+    if (layoutBottom <= 0) return reference;
+    return Math.min(reference, layoutBottom);
 }

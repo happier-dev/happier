@@ -124,7 +124,10 @@ export default function ViewportGeometryDebug() {
                 referenceRef.current = updated;
                 setReference(updated);
                 const inset = (focused: boolean) => resolveWebVisualViewportKeyboardInset({
-                    layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(updated),
+                    layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(updated, {
+                        layoutViewportHeight: window.innerHeight,
+                        currentVisualBottom: vv.height + vv.offsetTop,
+                    }),
                     visualViewportHeight: vv.height,
                     visualViewportOffsetTop: vv.offsetTop,
                     isEditableElementFocused: focused,
@@ -185,7 +188,12 @@ export default function ViewportGeometryDebug() {
                         <Row label="env(safe-area-inset-bottom) probe" value={`${fmt(snapshot.safeAreaBottomProbePx)} CSS px`} />
                         <Row label="env(safe-area-inset-top) probe" value={`${fmt(snapshot.safeAreaTopProbePx)} CSS px`} />
                         <Row label="trusted env bottom (our rule)" value={`${fmt(snapshot.trustedEnvBottomPx)} CSS px`} />
-                        <Row label="keyboard reference (baseline)" value={fmt(reference ? resolveWebKeyboardReferenceViewportHeight(reference) : null)} />
+                        <Row label="keyboard reference (baseline)" value={fmt(reference && snapshot?.vvHeight != null
+                            ? resolveWebKeyboardReferenceViewportHeight(reference, {
+                                layoutViewportHeight: snapshot.innerHeight,
+                                currentVisualBottom: snapshot.vvHeight + (snapshot.vvOffsetTop ?? 0),
+                            })
+                            : null)} />
                         <Row label="resolved keyboard inset (focused / blurred)" value={`${focusedInset} / ${unfocusedInset}`} />
                         <Row label="innerHeight − vv.bottom" value={fmt(snapshot.innerHeight - ((snapshot.vvHeight ?? 0) + (snapshot.vvOffsetTop ?? 0)))} />
                         <Row label="maxTouchPoints" value={`${snapshot.maxTouchPoints}`} />

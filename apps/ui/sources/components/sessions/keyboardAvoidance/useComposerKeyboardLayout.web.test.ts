@@ -161,6 +161,59 @@ describe('useComposerKeyboardLayout web visual-viewport integrity', () => {
         expect(hook.getCurrent().keyboardHeightLive.value).toBe(baselineViewportHeight - keyboardViewportHeight);
     });
 
+    it('ignores the dynamic-toolbar overshoot in the visual baseline (Firefox Android, on-device numbers)', async () => {
+        // Measured with the /dev/viewport-geometry probe on Firefox 153 (Android 16, DPR 3.75):
+        // innerHeight is 678 whether the URL toolbar is shown or hidden; the visual bottom is
+        // 742 with the toolbar hidden and 678.1 shown; with the keyboard open the toolbar shows
+        // again and the visual bottom is 380.5. The true keyboard occupancy is 297.5.
+        const fakeWindow = createFakeBrowser(742, 678);
+        (globalThis as Record<string, unknown>).window = fakeWindow;
+        (globalThis as Record<string, unknown>).document = { activeElement: null };
+
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.web');
+        const hook = await renderHook(() => useComposerKeyboardLayout({
+            headerHeight: 100,
+            safeAreaBottom: 0,
+        }));
+
+        // Toolbar visible again at rest, then focus + keyboard.
+        const documentGlobal = globalThis.document as unknown as { activeElement: unknown };
+        documentGlobal.activeElement = { tagName: 'textarea', getAttribute: () => null };
+        act(() => {
+            fakeWindow.visualViewport.height = 678.1;
+            fakeWindow.dispatch('focusin');
+            fakeWindow.visualViewport.dispatch('resize');
+            fakeWindow.visualViewport.height = 380.5;
+            fakeWindow.visualViewport.dispatch('resize');
+        });
+
+        // The baseline must not count the toolbar-hidden overshoot (742); the inset is the true
+        // keyboard occupancy 678 - 380.5 = 297.5, not 742 - 380.5 = 361.5.
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(Math.round(678 - 380.5));
+    });
+
+    it('collapses to a zero inset on content-resizing browsers (layout viewport ends at the keyboard top)', async () => {
+        // Chrome/iOS resize the layout viewport itself for the keyboard; the canvas already ends
+        // at the keyboard top, so any extra inset would leave a band.
+        const fakeWindow = createFakeBrowser(678, 678);
+        (globalThis as Record<string, unknown>).window = fakeWindow;
+        (globalThis as Record<string, unknown>).document = { activeElement: { tagName: 'textarea', getAttribute: () => null } };
+
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.web');
+        const hook = await renderHook(() => useComposerKeyboardLayout({
+            headerHeight: 100,
+            safeAreaBottom: 0,
+        }));
+
+        act(() => {
+            fakeWindow.innerHeight = 380;
+            fakeWindow.visualViewport.height = 380;
+            fakeWindow.visualViewport.dispatch('resize');
+        });
+
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(0);
+    });
+
     it('falls back to window.innerHeight when the scaffold first mounts with the keyboard already open', async () => {
         // No unoccluded visual viewport has ever been observed (e.g. deep-link to the new-session
         // screen with the keyboard still up), so there is no baseline to compare against. The old
