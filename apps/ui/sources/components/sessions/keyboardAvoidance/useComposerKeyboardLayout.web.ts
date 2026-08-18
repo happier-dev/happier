@@ -2,7 +2,11 @@ import * as React from 'react';
 import { useWindowDimensions } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
-import { resolveWebVisualViewportKeyboardInset } from '@/hooks/ui/resolveWebVisualViewportKeyboardInset';
+import {
+    isWebKeyboardEditableElementFocused,
+    isWebMobileLikeViewportWidth,
+    resolveWebVisualViewportKeyboardInset,
+} from '@/hooks/ui/resolveWebVisualViewportKeyboardInset';
 import {
     resolveWebKeyboardReferenceViewportHeight,
     updateWebVisualViewportKeyboardReference,
@@ -17,14 +21,7 @@ import type { ComposerKeyboardLayoutOptions } from './useComposerKeyboardLayout.
 
 function isEditableElementFocused(): boolean {
     if (typeof document === 'undefined') return false;
-    const activeElement = document.activeElement;
-    if (!activeElement) return false;
-    const tagName = activeElement.tagName.toLowerCase();
-    return tagName === 'input' || tagName === 'textarea' || activeElement.getAttribute('contenteditable') === 'true';
-}
-
-function isMobileLikeHost(width: number): boolean {
-    return width < 768;
+    return isWebKeyboardEditableElementFocused(document);
 }
 
 function readVisualViewportKeyboardInset(keyboardReferenceRef: React.MutableRefObject<WebVisualViewportKeyboardReference | null>): number {
@@ -48,7 +45,7 @@ function readVisualViewportKeyboardInset(keyboardReferenceRef: React.MutableRefO
         visualViewportHeight: visualViewport.height,
         visualViewportOffsetTop: visualViewport.offsetTop,
         isEditableElementFocused: isEditableFocused,
-        isMobileLikeHost: isMobileLikeHost(visualViewport.width),
+        isMobileLikeHost: isWebMobileLikeViewportWidth(visualViewport.width),
     });
 }
 

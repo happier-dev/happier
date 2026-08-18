@@ -181,6 +181,12 @@ export default function DevScreen() {
                     onPress={() => router.push('/dev/device-info')}
                 />
                 <Item
+                    title="Viewport Geometry"
+                    subtitle="Live web viewport/keyboard/safe-area probe"
+                    icon={<Icon name="desktop" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/dev/viewport-geometry')}
+                />
+                <Item
                     title="List Components"
                     subtitle="Demo of Item, ItemGroup, and ItemList"
                     icon={<Icon name="list" size={29} color="#007AFF" />}

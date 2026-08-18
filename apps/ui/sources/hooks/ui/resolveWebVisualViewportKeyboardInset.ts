@@ -1,4 +1,17 @@
 export const MIN_WEB_SOFTWARE_KEYBOARD_INSET_PX = 80;
+export const WEB_MOBILE_LIKE_MAX_VIEWPORT_WIDTH_PX = 768;
+
+export function isWebMobileLikeViewportWidth(width: number): boolean {
+    return Number.isFinite(width) && width > 0 && width < WEB_MOBILE_LIKE_MAX_VIEWPORT_WIDTH_PX;
+}
+
+/** True when the focused element can summon the software keyboard on a mobile web host. */
+export function isWebKeyboardEditableElementFocused(doc: Pick<Document, 'activeElement'> | Document): boolean {
+    const activeElement = doc?.activeElement;
+    if (!activeElement) return false;
+    const tagName = (activeElement.tagName ?? '').toLowerCase();
+    return tagName === 'input' || tagName === 'textarea' || activeElement.getAttribute('contenteditable') === 'true';
+}
 
 export type WebVisualViewportKeyboardInsetParams = Readonly<{
     isEditableElementFocused: boolean;
