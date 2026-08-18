@@ -65,6 +65,7 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionAgentInputComposerPersistence } from '@/hooks/session/useSessionAgentInputComposerPersistence';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import {
     captureComposerTransientInputStateForOutboundHandoff,
@@ -6165,8 +6166,14 @@ function SessionViewLoaded({
     // keyboard geometry on mobile web. Native platforms still must clear their insets
     // explicitly at this border.
     const sessionContentSafeAreaBottom = Platform.OS === 'web' ? 0 : safeArea.bottom;
+    // While the software keyboard is open every bottom gap becomes a composer-to-keyboard gap
+    // (the wrapper pads BELOW the composer), so the breathing-room spacing collapses with it.
+    // The unclamped occupancy signal works on both platforms; the clamped composer geometry
+    // inset is ~0 on resizes-content browsers and cannot serve as the open signal.
+    const softwareKeyboardOpen = useKeyboardHeight() > 0;
     const contentPaddingBottom = resolveSessionViewContentBottomSpacing({
         chatBottomSpacing,
+        softwareKeyboardOpen,
         safeAreaBottomPx: sessionContentSafeAreaBottom,
         availableWidthPx: resolveSessionViewAvailableWidth({
             measuredContentWidthPx: measuredContentWidth,

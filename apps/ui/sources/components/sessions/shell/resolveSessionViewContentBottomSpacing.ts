@@ -75,8 +75,11 @@ export function resolveSessionViewContentBottomSpacing(params: Readonly<{
     contentMaxWidthPx: number;
     defaultContentBottomGapPx?: number;
     inputOuterBottomPaddingPx?: number;
+    /** True while the software keyboard is open: every bottom gap is a composer-to-keyboard gap then, so it collapses. */
+    softwareKeyboardOpen?: boolean;
 }>): number {
     if (params.chatBottomSpacing === 'none') return 0;
+    if (params.softwareKeyboardOpen === true) return 0;
 
     const safeAreaBottomPx = Number.isFinite(params.safeAreaBottomPx)
         ? Math.max(0, params.safeAreaBottomPx)

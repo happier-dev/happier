@@ -75,6 +75,30 @@ describe('resolveSessionViewContentBottomSpacing', () => {
         })).toBe(11 + SESSION_VIEW_EDGE_ALIGNED_CONTENT_BOTTOM_GAP_PX - SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX);
     });
 
+    it('collapses the bottom spacing while the software keyboard is open', () => {
+        // The spacing is breathing room below the composer when the keyboard is down; with the
+        // keyboard open it reads as a gap between the composer and the keyboard top (measured
+        // on-device: tabs mode floated the composer 8 CSS px above the keyboard while cockpit
+        // mode — chatBottomSpacing 'none' — sat flush). It must collapse like every other
+        // bottom reservation while the keyboard is open.
+        expect(resolveSessionViewContentBottomSpacing({
+            chatBottomSpacing: 'default',
+            safeAreaBottomPx: 11,
+            availableWidthPx: 752,
+            contentMaxWidthPx: 720,
+            inputOuterBottomPaddingPx: SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
+            softwareKeyboardOpen: true,
+        })).toBe(0);
+
+        expect(resolveSessionViewContentBottomSpacing({
+            chatBottomSpacing: 'default',
+            safeAreaBottomPx: 11,
+            availableWidthPx: 900,
+            contentMaxWidthPx: 720,
+            softwareKeyboardOpen: true,
+        })).toBe(0);
+    });
+
     it('drops the bottom spacing by exactly the AgentInput edge gap when a narrow pane stops using the window-width fallback', () => {
         // Narrow multi-pane (Tauri) surface: the window is wide (1200) but the pane content is narrow (752).
         // First frame (measured width not yet committed) falls back to the window width, which does NOT fill,
