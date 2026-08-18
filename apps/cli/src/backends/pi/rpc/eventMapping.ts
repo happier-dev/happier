@@ -75,6 +75,33 @@ function extractAssistantText(message: unknown): string | null {
   return text;
 }
 
+/**
+ * Extract the authoritative thinking text of a finished assistant message. Pi streams
+ * thinking deltas live, but `message_end.message` is the authoritative snapshot; joining
+ * the thinking blocks here lets the consumer reconcile what the deltas already delivered.
+ * Blocks join by direct concatenation to match the delta stream, which carries no
+ * block-boundary separator either.
+ */
+function extractAssistantThinking(message: unknown): string | null {
+  const record = asRecord(message);
+  if (!record) return null;
+  if (record.role !== 'assistant') return null;
+  const content = record.content;
+  if (!Array.isArray(content)) return null;
+
+  let thinking = '';
+  for (const item of content) {
+    const entry = asRecord(item);
+    if (!entry) continue;
+    if (entry.type !== 'thinking') continue;
+    const chunk = asString(entry.thinking);
+    if (chunk === null) continue;
+    thinking += chunk;
+  }
+
+  return thinking.length > 0 ? thinking : null;
+}
+
 function extractTextFromToolResult(value: unknown): string | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -158,7 +185,30 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     if (!assistantMessageEvent) return [];
     const assistantType = asNonEmptyString(assistantMessageEvent.type);
     if (!assistantType) return [];
-    if (assistantType === 'text_start' || assistantType === 'text_delta' || assistantType === 'text_end') {
+    if (assistantType === 'text_start') {
+      return [];
+    }
+    if (assistantType === 'text_delta') {
+      // Current pi RPC carries the live delta and omits the cumulative `message`.
+      const delta = asString(assistantMessageEvent.delta);
+      if (delta !== null && delta.length > 0) {
+        return [{ type: 'model-output', textDelta: delta }];
+      }
+      // Older pi sent no delta field and still carried the cumulative message.
+      const fullText = extractAssistantText(record.message);
+      if (fullText !== null && fullText.length > 0) {
+        return [{ type: 'model-output', fullText }];
+      }
+      return [];
+    }
+    if (assistantType === 'thinking_delta') {
+      const delta = asString(assistantMessageEvent.delta);
+      if (delta === null || delta.length === 0) return [];
+      return [{ type: 'event', name: 'thinking', payload: { text: delta } }];
+    }
+    if (assistantType === 'text_end') {
+      // The authoritative per-block `content` was already delivered by the deltas; only
+      // older pi's cumulative `message` adds reconciliation value here.
       const fullText = extractAssistantText(record.message);
       if (fullText === null || fullText.length === 0) return [];
       return [{ type: 'model-output', fullText }];
@@ -167,9 +217,16 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
   }
 
   if (type === 'message_end') {
+    const thinking = extractAssistantThinking(record.message);
     const fullText = extractAssistantText(record.message);
-    if (fullText === null || fullText.length === 0) return [];
-    return [{ type: 'model-output', fullText }];
+    const messages: AgentMessage[] = [];
+    if (thinking !== null && thinking.length > 0) {
+      messages.push({ type: 'event', name: 'thinking', payload: { fullText: thinking } });
+    }
+    if (fullText !== null && fullText.length > 0) {
+      messages.push({ type: 'model-output', fullText });
+    }
+    return messages;
   }
 
   if (type === 'tool_execution_start') {

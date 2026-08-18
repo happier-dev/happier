@@ -3,22 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { mapPiRpcEventToAgentMessages } from './eventMapping';
 
 describe('mapPiRpcEventToAgentMessages', () => {
-  it('maps assistant message updates to model-output fullText', () => {
+  it('maps assistant text deltas from message_update to streaming model output', () => {
     const output = mapPiRpcEventToAgentMessages({
       type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: 'hello' },
-      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hello' },
     });
-    expect(output).toEqual([{ type: 'model-output', fullText: 'hello' }]);
+    expect(output).toEqual([{ type: 'model-output', textDelta: 'hello' }]);
   });
 
-  it('preserves leading whitespace in model output text', () => {
+  it('falls back to the cumulative message for message_update events that still carry one', () => {
     const output = mapPiRpcEventToAgentMessages({
       type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: ' world' },
+      assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'hello world' },
       message: { role: 'assistant', content: [{ type: 'text', text: 'hello world' }] },
     });
     expect(output).toEqual([{ type: 'model-output', fullText: 'hello world' }]);
+  });
+
+  it('maps thinking deltas to thinking stream events', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'I should ' },
+    });
+    expect(output).toEqual([{ type: 'event', name: 'thinking', payload: { text: 'I should ' } }]);
   });
 
   it('maps tool execution lifecycle events', () => {
@@ -107,6 +114,52 @@ describe('mapPiRpcEventToAgentMessages', () => {
       message: { role: 'assistant', content: [{ type: 'text', text: 'final' }] },
     });
     expect(output).toEqual([{ type: 'model-output', fullText: 'final' }]);
+  });
+
+  it('emits an authoritative thinking snapshot alongside text on message_end', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'I should greet the user.' },
+          { type: 'text', text: 'Hi!' },
+        ],
+      },
+    });
+    expect(output).toEqual([
+      { type: 'event', name: 'thinking', payload: { fullText: 'I should greet the user.' } },
+      { type: 'model-output', fullText: 'Hi!' },
+    ]);
+  });
+
+  it('emits the thinking snapshot for a thinking-only message_end', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'toolCall', id: 'call_1', name: 'bash', arguments: {} },
+        ],
+      },
+    });
+    expect(output).toEqual([{ type: 'event', name: 'thinking', payload: { fullText: 'plan' } }]);
+  });
+
+  it('joins multiple thinking blocks by concatenation to match the delta stream', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'first block' },
+          { type: 'toolCall', id: 'call_1', name: 'bash', arguments: {} },
+          { type: 'thinking', thinking: 'second block' },
+        ],
+      },
+    });
+    expect(output).toEqual([{ type: 'event', name: 'thinking', payload: { fullText: 'first blocksecond block' } }]);
   });
 
   it('maps agent lifecycle events to status messages and keeps terminal boundaries informational', () => {
