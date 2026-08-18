@@ -64,3 +64,20 @@ export function mergePiContextTelemetryIntoTokens(
 export function buildPiContextTelemetryKeySuffix(telemetry: PiContextTelemetry): string {
   return `:ctx${telemetry.used}/${telemetry.size}`;
 }
+
+/**
+ * Read Pi's live context telemetry from `get_session_stats` response data
+ * (`stats.contextUsage`: the same estimate pi uses for compaction and its footer).
+ * Returns null when absent or incomplete (e.g. `tokens` is null right after compaction).
+ */
+export function parsePiContextTelemetryFromSessionStats(stats: unknown): PiContextTelemetry | null {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return null;
+  const contextUsage = (stats as Record<string, unknown>).contextUsage;
+  if (!contextUsage || typeof contextUsage !== 'object' || Array.isArray(contextUsage)) return null;
+
+  const record = contextUsage as Record<string, unknown>;
+  const used = asFiniteNonNegativeInteger(record.tokens);
+  const size = asFiniteNonNegativeInteger(record.contextWindow);
+  if (used === null || used <= 0 || size === null || size <= 0) return null;
+  return { used, size };
+}

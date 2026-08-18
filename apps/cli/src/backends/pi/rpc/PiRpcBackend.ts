@@ -51,6 +51,7 @@ import { attachPiRpcJsonlLineReader, type PiRpcJsonlLineReader } from './attachP
 import {
   buildPiContextTelemetryKeySuffix,
   mergePiContextTelemetryIntoTokens,
+  parsePiContextTelemetryFromSessionStats,
   parsePiContextTelemetryMarkerLine,
   type PiContextTelemetry,
 } from './piContextTelemetryMarker';
@@ -612,6 +613,8 @@ export class PiRpcBackend implements AgentBackend {
   private lastPublishedUsageKey: string | null = null;
   /** Latest live context telemetry parsed from the bridge extension's stderr markers, if any. */
   private latestContextTelemetry: PiContextTelemetry | null = null;
+  /** Serializes usage-stats publishes so overlapping triggers cannot double-emit. */
+  private usageStatsPublishChain: Promise<void> = Promise.resolve();
   private readonly connectedServiceRuntimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
   private disposed = false;
   /**
@@ -1751,6 +1754,19 @@ export class PiRpcBackend implements AgentBackend {
     this.handlePiAssistantFailureEvent(normalizedEvent);
     this.handlePiAssistantMessageEndTerminalFailureEvent(normalizedEvent);
 
+    // Publish usage/context telemetry the moment an assistant message settles — BEFORE any
+    // tool calls it requested start executing — so a slow tool call shows the fresh context
+    // size on the badge instead of waiting for the whole turn to go idle. Gated on bridge
+    // telemetry being present: only Happier-bound sessions (extension markers flowing) get
+    // the mid-turn publish; plain embedders keep the idle-time cadence without extra
+    // mid-turn RPC traffic.
+    if (normalizedEvent.type === 'message_end' && this.latestContextTelemetry) {
+      const message = asRecord(normalizedEvent.message);
+      if (message?.role === 'assistant') {
+        this.scheduleUsageStatsPublish();
+      }
+    }
+
     if (normalizedEvent.type === 'turn_failed') {
       this.handlePiTurnFailedEvent(normalizedEvent);
       return;
@@ -1785,7 +1801,7 @@ export class PiRpcBackend implements AgentBackend {
         }
       } else {
         this.emitMessage({ type: 'status', status: 'idle' });
-        void this.publishUsageStatsBestEffort();
+        this.scheduleUsageStatsPublish();
       }
     }
 
@@ -1800,6 +1816,16 @@ export class PiRpcBackend implements AgentBackend {
     }
   }
 
+  /** Schedule a serialized usage-stats publish; safe to call from any event path. */
+  private scheduleUsageStatsPublish(): Promise<void> {
+    this.usageStatsPublishChain = this.usageStatsPublishChain
+      .then(() => this.publishUsageStatsBestEffort())
+      .catch(() => {
+        // best-effort; publish errors are already swallowed inside
+      });
+    return this.usageStatsPublishChain;
+  }
+
   private async publishUsageStatsBestEffort(): Promise<void> {
       if (this.disposed) return;
       if (!this.process) return;
@@ -1812,9 +1838,11 @@ export class PiRpcBackend implements AgentBackend {
       const assistantMessagesRaw = stats.assistantMessages;
       const assistantMessages =
         typeof assistantMessagesRaw === 'number' && Number.isFinite(assistantMessagesRaw) ? assistantMessagesRaw : null;
-      // The context-telemetry suffix lets a changed live-context value re-publish even when
-      // the assistant-message counter has not advanced (compaction, retries).
-      const contextTelemetry = this.latestContextTelemetry;
+      // Live context telemetry: prefer pi's own `stats.contextUsage` (the estimate it uses
+      // for compaction); fall back to the bridge extension's stderr marker when stats lack
+      // it (older pi builds). The suffix lets a changed live-context value re-publish even
+      // when the assistant-message counter has not advanced (compaction, retries).
+      const contextTelemetry = parsePiContextTelemetryFromSessionStats(stats) ?? this.latestContextTelemetry;
       const rawKey = (assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId)
         + (contextTelemetry ? buildPiContextTelemetryKeySuffix(contextTelemetry) : '');
       if (this.lastPublishedUsageKey === rawKey) return;
