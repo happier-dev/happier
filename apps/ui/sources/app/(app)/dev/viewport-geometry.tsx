@@ -101,7 +101,26 @@ export default function ViewportGeometryDebug() {
     const [reference, setReference] = React.useState<WebVisualViewportKeyboardReference | null>(null);
     const [focusedInset, setFocusedInset] = React.useState(0);
     const [unfocusedInset, setUnfocusedInset] = React.useState(0);
+    const [fixedRects, setFixedRects] = React.useState<{ zero: number | null; inset: number | null }>({ zero: null, inset: null });
+    const [metaContent, setMetaContent] = React.useState('');
     const referenceRef = React.useRef<WebVisualViewportKeyboardReference | null>(null);
+    const fixedZeroRef = React.useRef<HTMLElement | null>(null);
+    const fixedInsetRef = React.useRef<HTMLElement | null>(null);
+
+    const setViewportMeta = React.useCallback((interactiveWidget: string) => {
+        if (typeof document === 'undefined') return;
+        const meta = document.querySelector('meta[name="viewport"]');
+        const nextBase = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+        const next = `${nextBase}, interactive-widget=${interactiveWidget}`;
+        if (meta) {
+            meta.setAttribute('content', next);
+        } else {
+            const created = document.createElement('meta');
+            created.setAttribute('name', 'viewport');
+            created.setAttribute('content', next);
+            document.head.appendChild(created);
+        }
+    }, []);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -136,6 +155,12 @@ export default function ViewportGeometryDebug() {
                 setFocusedInset(inset(true));
                 setUnfocusedInset(inset(false));
             }
+            setFixedRects({
+                zero: fixedZeroRef.current ? fixedZeroRef.current.getBoundingClientRect().bottom : null,
+                inset: fixedInsetRef.current ? fixedInsetRef.current.getBoundingClientRect().bottom : null,
+            });
+            const meta = document.querySelector('meta[name="viewport"]');
+            setMetaContent(meta?.getAttribute('content') ?? '—');
         };
 
         tick();
@@ -196,12 +221,61 @@ export default function ViewportGeometryDebug() {
                             : null)} />
                         <Row label="resolved keyboard inset (focused / blurred)" value={`${focusedInset} / ${unfocusedInset}`} />
                         <Row label="innerHeight − vv.bottom" value={fmt(snapshot.innerHeight - ((snapshot.vvHeight ?? 0) + (snapshot.vvOffsetTop ?? 0)))} />
+                        <Row label="fixed bottom:0 rect.bottom" value={`${fmt(fixedRects.zero)} (Δvv ${fixedRects.zero != null && snapshot.vvHeight != null ? (fixedRects.zero - (snapshot.vvHeight + (snapshot.vvOffsetTop ?? 0))).toFixed(1) : '—'})`} />
+                        <Row label="fixed bottom:<inset> rect.bottom" value={`${fmt(fixedRects.inset)} (Δvv ${fixedRects.inset != null && snapshot.vvHeight != null ? (fixedRects.inset - (snapshot.vvHeight + (snapshot.vvOffsetTop ?? 0))).toFixed(1) : '—'})`} />
+                        <Row label="viewport meta" value={metaContent.length > 72 ? `${metaContent.slice(0, 72)}…` : metaContent} />
                         <Row label="maxTouchPoints" value={`${snapshot.maxTouchPoints}`} />
                         <Row label="userAgent" value={snapshot.userAgent} />
                         <Row label="html style" value={snapshot.cssHeightAttr || '—'} />
                     </>
                 )}
+                {Platform.OS === 'web' ? (
+                    <View style={{ flexDirection: 'row', gap: 8, margin: 16, flexWrap: 'wrap' }}>
+                        <Text
+                            style={{ color: '#fff', backgroundColor: '#0af', padding: 8, borderRadius: 6, overflow: 'hidden' }}
+                            onPress={() => setViewportMeta('resizes-content')}
+                        >
+                            meta: resizes-content
+                        </Text>
+                        <Text
+                            style={{ color: '#fff', backgroundColor: '#a60', padding: 8, borderRadius: 6, overflow: 'hidden' }}
+                            onPress={() => setViewportMeta('resizes-visual')}
+                        >
+                            meta: resizes-visual
+                        </Text>
+                    </View>
+                ) : null}
             </ScrollView>
+            {Platform.OS === 'web' ? (
+                <>
+                    <div
+                        ref={(node) => { fixedZeroRef.current = node as HTMLElement | null; }}
+                        style={{
+                            position: 'fixed',
+                            left: 0,
+                            bottom: 0,
+                            width: 40,
+                            height: 8,
+                            background: '#0f6',
+                            pointerEvents: 'none',
+                            zIndex: 9999,
+                        }}
+                    />
+                    <div
+                        ref={(node) => { fixedInsetRef.current = node as HTMLElement | null; }}
+                        style={{
+                            position: 'fixed',
+                            left: 40,
+                            bottom: focusedInset,
+                            width: 40,
+                            height: 8,
+                            background: '#f60',
+                            pointerEvents: 'none',
+                            zIndex: 9999,
+                        }}
+                    />
+                </>
+            ) : null}
         </>
     );
 }
