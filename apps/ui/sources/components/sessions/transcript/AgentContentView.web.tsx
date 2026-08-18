@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { resolveWebScaffoldSafeAreaBottom } from './resolveWebSessionContentBottomReservation';
 import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
 
@@ -38,8 +39,16 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({
         layoutBottomInset: bottomChromeHeight,
         safeAreaBottom: safeAreaBottom ?? safeArea.bottom,
     });
+    const bottomChromeKeyboardHeight = useKeyboardHeight();
+    // With the software keyboard open the scaffold translates the whole stack (composer and
+    // the still-mounted floating bar) by the full keyboard inset; shrinking this wrapper by
+    // the bar's height too would double-shift everything one reservation above the visual
+    // viewport bottom (measured on-device: a ~76 CSS px band on Firefox Android). Collapse
+    // the wrapper reservation while the keyboard is up — the scaffold's own geometry still
+    // clears the bar through layoutBottomInset.
+    const bottomChromeReservation = bottomChromeKeyboardHeight > 0 ? 0 : bottomChromeHeight;
     return (
-        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeReservation, backgroundColor: theme.colors.surface.base }}>
             <ComposerKeyboardScaffold
                 testID="agent-content-keyboard-host"
                 mode="session"
