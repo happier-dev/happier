@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
+import { resolveWebScaffoldSafeAreaBottom } from './resolveWebSessionContentBottomReservation';
 import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
 
 interface AgentContentViewProps {
@@ -29,6 +30,14 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({
     // Reserve the floating bar's height inside the session screen (see the native
     // controller for the rationale): the bar overlays content, so the composer is
     // lifted above it here rather than by an in-flow chrome-host reservation.
+    //
+    // On web the safe area is already handled by the visual viewport; adding it to the
+    // scaffold's geometry creates a persistent oversized gap (and a doubled offset when
+    // the software keyboard raises). Only the keyboard inset should lift the composer here.
+    const scaffoldSafeAreaBottom = resolveWebScaffoldSafeAreaBottom({
+        layoutBottomInset: bottomChromeHeight,
+        safeAreaBottom: safeAreaBottom ?? safeArea.bottom,
+    });
     return (
         <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
             <ComposerKeyboardScaffold
@@ -37,7 +46,7 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({
                 contentTestID="agent-content-scroll-region"
                 composerTestID="agent-content-input-footer"
                 layoutBottomInset={bottomChromeHeight}
-                safeAreaBottom={safeAreaBottom ?? safeArea.bottom}
+                safeAreaBottom={scaffoldSafeAreaBottom}
                 headerHeight={headerHeight}
                 contentProps={keyboardDismissOnTapHandlers}
                 composer={input}

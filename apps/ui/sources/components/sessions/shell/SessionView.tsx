@@ -6159,9 +6159,15 @@ function SessionViewLoaded({
             currentWidth === nextWidth ? currentWidth : nextWidth
         ));
     }, [contentWidthSurfaceId, windowWidth]);
+    // On web the browser owns the safe area geometry (the visual viewport already
+    // reflects safe-area and keyboard). Re-adding the same safe-area inset to the
+    // session's bottom spacing leaves an oversized gap below the composer and corrupts
+    // keyboard geometry on mobile web. Native platforms still must clear their insets
+    // explicitly at this border.
+    const sessionContentSafeAreaBottom = Platform.OS === 'web' ? 0 : safeArea.bottom;
     const contentPaddingBottom = resolveSessionViewContentBottomSpacing({
         chatBottomSpacing,
-        safeAreaBottomPx: safeArea.bottom,
+        safeAreaBottomPx: sessionContentSafeAreaBottom,
         availableWidthPx: resolveSessionViewAvailableWidth({
             measuredContentWidthPx: measuredContentWidth,
             windowWidthPx: windowWidth,
@@ -6172,7 +6178,7 @@ function SessionViewLoaded({
             : 0,
         inputOuterBottomPaddingPx: SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
     });
-    const agentContentSafeAreaBottom = chatBottomSpacing === 'none' ? 0 : safeArea.bottom;
+    const agentContentSafeAreaBottom = chatBottomSpacing === 'none' || Platform.OS === 'web' ? 0 : safeArea.bottom;
 
     const main = (
         <>
