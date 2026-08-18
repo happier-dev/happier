@@ -93,3 +93,25 @@ export function resolveWebKeyboardReferenceViewportHeight(
     if (layoutBottom <= 0) return reference;
     return Math.min(reference, layoutBottom);
 }
+
+/**
+ * How much of the window the software keyboard occupies, for VISIBILITY gating (hide bottom
+ * chrome, suppress overlays) — not for geometry. Unlike the clamped geometry reference, this
+ * uses the raw unoccluded baseline: on content-resizing browsers (interactive-widget=
+ * resizes-content, verified on-device) the layout viewport itself shrinks to the keyboard top,
+ * so the clamped inset is ~0 while the keyboard is clearly open; the unclamped drop from the
+ * toolbar-hidden baseline (742) to the shrunken viewport (387) is the honest occupancy signal.
+ * Dynamic-toolbar deltas (64px on Firefox) stay below the software-keyboard floor and read 0.
+ */
+export function resolveWebSoftwareKeyboardOccupancy(
+    state: WebVisualViewportKeyboardReference,
+    currentVisualBottom: number,
+    softwareKeyboardFloorPx: number,
+): number {
+    const baseline = state.maxUnfocusedVisualBottom ?? state.maxLayoutViewportHeight ?? 0;
+    const bottom = normalizePositive(currentVisualBottom);
+    if (baseline <= 0 || bottom === null) return 0;
+    const occupancy = baseline - bottom;
+    if (!Number.isFinite(occupancy) || occupancy < softwareKeyboardFloorPx) return 0;
+    return occupancy;
+}

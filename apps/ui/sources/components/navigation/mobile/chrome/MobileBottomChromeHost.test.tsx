@@ -840,11 +840,24 @@ describe('MobileBottomChromeHost', () => {
         expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
     });
 
-    it('keeps session cockpit chrome mounted while the software keyboard is visible', async () => {
+    it('hides session cockpit chrome while the software keyboard is visible (web has no under-keyboard layer)', async () => {
         pathState.pathname = '/session/session-1';
         searchParamsState.id = 'session-1';
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
         keyboardHeightState.value = 260;
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+    });
+
+    it('shows session cockpit chrome again once the software keyboard closes', async () => {
+        pathState.pathname = '/session/session-1';
+        searchParamsState.id = 'session-1';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        keyboardHeightState.value = 0;
 
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
         const screen = await renderScreen(<MobileBottomChromeHost />);

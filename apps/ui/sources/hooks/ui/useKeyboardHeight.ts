@@ -2,12 +2,14 @@ import * as React from 'react';
 import { Keyboard, Platform, type KeyboardEvent } from 'react-native';
 
 import {
+    MIN_WEB_SOFTWARE_KEYBOARD_INSET_PX,
     isWebKeyboardEditableElementFocused,
     isWebMobileLikeViewportWidth,
     resolveWebVisualViewportKeyboardInset,
 } from './resolveWebVisualViewportKeyboardInset';
 import {
     resolveWebKeyboardReferenceViewportHeight,
+    resolveWebSoftwareKeyboardOccupancy,
     updateWebVisualViewportKeyboardReference,
     type WebVisualViewportKeyboardReference,
 } from './webVisualViewportKeyboardReference';
@@ -22,10 +24,13 @@ export function useKeyboardHeight(): number {
 
     React.useEffect(() => {
         if (Platform.OS === 'web') {
-            // On mobile web, RN Keyboard events never fire; the software keyboard is the visual
-            // viewport shrinkage from its unoccluded baseline (same canonical resolution the
-            // composer scaffold uses — window.innerHeight lies on Firefox Android). Bottom
-            // chrome hides/releases its reservation from this signal.
+            // On mobile web, RN Keyboard events never fire. This hook feeds VISIBILITY gating
+            // (bottom-chrome hiding, popover suppression), so it reports the UNCLAMPED
+            // occupancy from the unoccluded baseline: on content-resizing browsers
+            // (interactive-widget=resizes-content) the layout viewport shrinks to the keyboard
+            // top, the clamped geometry inset is ~0, and only the unclamped drop (742 -> 387
+            // measured on-device) proves the keyboard is open. Geometry consumers use the
+            // composer scaffold's clamped inset instead.
             if (typeof window === 'undefined') return undefined;
             const referenceRef: { current: WebVisualViewportKeyboardReference | null } = { current: null };
             const update = () => {
@@ -36,24 +41,18 @@ export function useKeyboardHeight(): number {
                 }
                 const isEditableFocused = typeof document !== 'undefined'
                     && isWebKeyboardEditableElementFocused(document);
+                const currentVisualBottom = visualViewport.height + visualViewport.offsetTop;
                 const reference = updateWebVisualViewportKeyboardReference(referenceRef.current, {
                     width: visualViewport.width,
-                    visualBottom: visualViewport.height + visualViewport.offsetTop,
+                    visualBottom: currentVisualBottom,
                     layoutViewportHeight: window.innerHeight,
                     isEditableElementFocused: isEditableFocused,
                 });
                 referenceRef.current = reference;
-                const inset = resolveWebVisualViewportKeyboardInset({
-                    layoutViewportHeight: resolveWebKeyboardReferenceViewportHeight(reference, {
-                        layoutViewportHeight: window.innerHeight,
-                        currentVisualBottom: visualViewport.height + visualViewport.offsetTop,
-                    }),
-                    visualViewportHeight: visualViewport.height,
-                    visualViewportOffsetTop: visualViewport.offsetTop,
-                    isEditableElementFocused: isEditableFocused,
-                    isMobileLikeHost: isWebMobileLikeViewportWidth(visualViewport.width),
-                });
-                setHeight((current) => (current === inset ? current : inset));
+                const occupancy = isWebMobileLikeViewportWidth(visualViewport.width)
+                    ? resolveWebSoftwareKeyboardOccupancy(reference, currentVisualBottom, MIN_WEB_SOFTWARE_KEYBOARD_INSET_PX)
+                    : 0;
+                setHeight((current) => (current === occupancy ? current : occupancy));
             };
             update();
             const visualViewport = window.visualViewport;

@@ -285,6 +285,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
             activeCockpitRoute
             && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience })
         ) {
+            // Native keeps the bar mounted under the covering keyboard so it is already there
+            // when the keyboard slides away. Web has no under-keyboard layer: a mounted bar
+            // renders at the keyboard top and wedges itself between the keyboard and the
+            // composer, so on web the keyboard hides the bar outright (and with it the
+            // reservation collapses, restoring the flush-at-keyboard composer).
+            if (softwareKeyboardVisible && Platform.OS === 'web') {
+                return null;
+            }
+
             // Dismiss-start: the session is sliding out but the route hasn't
             // committed yet. Cross-fade to the destination main bar now (the band
             // dissolves with the outgoing cockpit chrome) instead of at slide-end.

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     resolveWebKeyboardReferenceViewportHeight,
+    resolveWebSoftwareKeyboardOccupancy,
     updateWebVisualViewportKeyboardReference,
     type WebVisualViewportKeyboardReference,
 } from './webVisualViewportKeyboardReference';
@@ -70,6 +71,37 @@ describe('updateWebVisualViewportKeyboardReference', () => {
             updateWebVisualViewportKeyboardReference(null, { width: 0, visualBottom: 0, layoutViewportHeight: 0, isEditableElementFocused: false }),
             bounds(0, 0),
         )).toBe(0);
+    });
+});
+
+describe('resolveWebSoftwareKeyboardOccupancy (visibility signal)', () => {
+    it('reports the unclamped occupancy on content-resizing browsers where the inset is 0', () => {
+        // interactive-widget=resizes-content on Firefox Android, verified on-device: layout
+        // viewport shrinks to the keyboard top (387) while the unfocused baseline was 742.
+        // Clamped geometry inset is 0, but the keyboard is clearly open.
+        let state: WebVisualViewportKeyboardReference | null = null;
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 742, false, 678));
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 387, true, 387));
+
+        expect(resolveWebKeyboardReferenceViewportHeight(state, bounds(387, 387))).toBe(387);
+        expect(resolveWebSoftwareKeyboardOccupancy(state, 387, 80)).toBe(355);
+    });
+
+    it('reports the occupancy on visual-resizing browsers too', () => {
+        let state: WebVisualViewportKeyboardReference | null = null;
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 742, false, 678));
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 380.5, true, 678));
+
+        expect(resolveWebSoftwareKeyboardOccupancy(state, 380.5, 80)).toBe(361.5);
+    });
+
+    it('stays 0 for dynamic-toolbar deltas below the software-keyboard floor', () => {
+        // Focus shows the URL toolbar again: 742 -> 678, a 64px drop that is not a keyboard.
+        let state: WebVisualViewportKeyboardReference | null = null;
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 742, false, 742));
+        state = updateWebVisualViewportKeyboardReference(state, read(384, 678, true, 678));
+
+        expect(resolveWebSoftwareKeyboardOccupancy(state, 678, 80)).toBe(0);
     });
 });
 

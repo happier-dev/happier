@@ -119,4 +119,31 @@ describe('useKeyboardHeight on web', () => {
 
         expect(hook.getCurrent()).toBe(0);
     });
+
+    it('signals the open keyboard on content-resizing browsers where the geometry inset is 0', async () => {
+        // interactive-widget=resizes-content (Firefox Android, verified on-device): the layout
+        // viewport shrinks to the keyboard top, so the clamped geometry inset is ~0 — but the
+        // unclamped occupancy from the unfocused baseline (742) to the shrunken viewport (387)
+        // is 355, which visibility consumers (bottom-chrome hiding) need.
+        const windowFake = createFakeBrowser(742, 742);
+        const hook = await loadHook();
+        expect(hook.getCurrent()).toBe(0);
+
+        act(() => {
+            focusEditable(windowFake);
+            windowFake.innerHeight = 387;
+            windowFake.visualViewport.height = 387;
+            windowFake.visualViewport.dispatch('resize');
+        });
+
+        expect(hook.getCurrent()).toBe(355);
+
+        // Toolbar-only deltas stay below the software-keyboard floor.
+        act(() => {
+            windowFake.innerHeight = 678;
+            windowFake.visualViewport.height = 678;
+            windowFake.visualViewport.dispatch('resize');
+        });
+        expect(hook.getCurrent()).toBe(0);
+    });
 });
