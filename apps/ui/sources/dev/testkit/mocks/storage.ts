@@ -93,6 +93,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     } satisfies NonNullable<ReturnType<StorageModule['useSessionOrganizationProjection']>>;

@@ -1,83 +1,28 @@
 // Vitest/node stub for `react-native-gesture-handler`.
 // The real package pulls in React Native internals (`react-native/Libraries/...`) which Vitest can't parse.
+//
+// The chain implementation is owned by the testkit mock so a suite gets the same
+// recorded `__config`/`__handlers` shape whether it mocks the module explicitly
+// (`createGestureHandlerMock`) or falls through to this global alias.
+// Component exports stay host-element strings here: suites relying on this alias
+// query the rendered tree by `'GestureDetector'` / `'GestureHandlerScrollView'`.
 
-type TestGestureCallback = (...args: unknown[]) => void;
+import { createGestureFactories } from './testkit/mocks/gestureHandler';
 
-class TestGestureChain {
-    readonly __config: Record<string, unknown> = {};
-    readonly __handlers: Record<string, TestGestureCallback> = {};
+export type {
+    TestGestureCallback,
+    TestGestureChain,
+    TestGestureHitSlop,
+    TestGestureKind,
+} from './testkit/mocks/gestureHandler';
 
-    minDistance(value: number): this {
-        this.__config.minDistance = value;
-        return this;
-    }
-
-    minDuration(value: number): this {
-        this.__config.minDuration = value;
-        return this;
-    }
-
-    activeOffsetX(value: number | readonly [number, number]): this {
-        this.__config.activeOffsetX = value;
-        return this;
-    }
-
-    activeOffsetY(value: number | readonly [number, number]): this {
-        this.__config.activeOffsetY = value;
-        return this;
-    }
-
-    failOffsetX(value: number | readonly [number, number]): this {
-        this.__config.failOffsetX = value;
-        return this;
-    }
-
-    failOffsetY(value: number | readonly [number, number]): this {
-        this.__config.failOffsetY = value;
-        return this;
-    }
-
-    withTestId(value: string): this {
-        this.__config.testId = value;
-        return this;
-    }
-
-    onBegin(callback: TestGestureCallback): this {
-        this.__handlers.onBegin = callback;
-        return this;
-    }
-
-    onStart(callback: TestGestureCallback): this {
-        this.__handlers.onStart = callback;
-        return this;
-    }
-
-    onUpdate(callback: TestGestureCallback): this {
-        this.__handlers.onUpdate = callback;
-        return this;
-    }
-
-    onEnd(callback: TestGestureCallback): this {
-        this.__handlers.onEnd = callback;
-        return this;
-    }
-
-    onFinalize(callback: TestGestureCallback): this {
-        this.__handlers.onFinalize = callback;
-        return this;
-    }
-
-    runOnJS(): this {
-        return this;
-    }
-}
-
-export const Gesture = {
-    Pan: () => new TestGestureChain(),
-    LongPress: () => new TestGestureChain(),
-};
+export const Gesture = createGestureFactories();
 
 export const GestureDetector = 'GestureDetector';
 
 // Many UI components use gesture-handler's ScrollView for better nested gesture interop.
 export const ScrollView = 'GestureHandlerScrollView';
+
+export const GestureHandlerRootView = 'GestureHandlerRootView';
+
+export const Swipeable = 'Swipeable';

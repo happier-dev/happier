@@ -62,12 +62,17 @@ export type MockComposerKeyboardScaffoldProps = Readonly<{
     contentProps?: Record<string, unknown>;
     contentStyle?: unknown;
     contentTestID?: string;
+    availablePanelMaxHeight?: number;
     harness?: MockComposerKeyboardScaffoldHarness;
+    headerHeight?: number;
+    keyboardLiftSuppressed?: boolean;
     layoutBottomInset?: number;
     layout?: ComposerKeyboardLayout;
     mode: MockComposerKeyboardScaffoldMode;
+    safeAreaTop?: number;
     safeAreaBottom?: number;
     style?: unknown;
+    surface?: 'opaque' | 'transparent';
     testID?: string;
 }>;
 

@@ -21,6 +21,7 @@ export const useAnimatedRef = mock.useAnimatedRef;
 export const useAnimatedStyle = mock.useAnimatedStyle;
 export const useDerivedValue = mock.useDerivedValue;
 export const useSharedValue = mock.useSharedValue;
+export const makeMutable = mock.makeMutable;
 export const withDelay = mock.withDelay;
 export const withRepeat = mock.withRepeat;
 export const withSpring = mock.withSpring;

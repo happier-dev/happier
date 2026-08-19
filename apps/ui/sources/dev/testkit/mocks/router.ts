@@ -36,7 +36,7 @@ export type ExpoRouterMockOptions = Readonly<{
 
 type ExpoRouterMockRouter = {
     push: (value: unknown) => unknown;
-    navigate?: (value: unknown, options?: unknown) => unknown;
+    navigate: (value: unknown, options?: unknown) => unknown;
     back: () => unknown;
     replace: (value: unknown) => unknown;
     dismissTo: (value: unknown) => unknown;
@@ -127,6 +127,7 @@ export function createStackOptionsCapture(): StackOptionsCapture {
 
 export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
     const trackedPush = createTrackedRouterMethod<[unknown], unknown>(options.router?.push);
+    const trackedNavigate = createTrackedRouterMethod<[unknown, unknown?], unknown>(options.router?.navigate);
     const trackedBack = createTrackedRouterMethod<[], unknown>(options.router?.back);
     const trackedReplace = createTrackedRouterMethod<[unknown], unknown>(options.router?.replace);
     const trackedDismissTo = createTrackedRouterMethod<[unknown], unknown>(options.router?.dismissTo);
@@ -134,6 +135,7 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
     const trackedSetParams = createTrackedRouterMethod<[ExpoRouterParams], unknown>(options.router?.setParams);
     const router = Object.assign(options.router ?? {}, {
         push: trackedPush.method,
+        navigate: trackedNavigate.method,
         back: trackedBack.method,
         replace: trackedReplace.method,
         dismissTo: trackedDismissTo.method,
@@ -143,6 +145,7 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
     }) as ExpoRouterMockRouter;
     const spies = {
         push: trackedPush.spy,
+        navigate: trackedNavigate.spy,
         back: trackedBack.spy,
         replace: trackedReplace.spy,
         dismissTo: trackedDismissTo.spy,
@@ -180,6 +183,7 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
     };
     state.router.setParams = setParamsMock as typeof state.router.setParams;
     spies.push.mockName('router.push');
+    spies.navigate.mockName('router.navigate');
     spies.back.mockName('router.back');
     spies.replace.mockName('router.replace');
     spies.dismissTo.mockName('router.dismissTo');

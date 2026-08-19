@@ -97,7 +97,7 @@ export function installNavigationCommonModuleMocks(
         }
 
         return {
-            Typography: { default: () => ({}) },
+            Typography: { default: () => ({}), tabular: () => ({ fontVariant: ['tabular-nums'] }) },
         };
     });
 }

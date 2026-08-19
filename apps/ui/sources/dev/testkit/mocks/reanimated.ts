@@ -44,6 +44,8 @@ export type ReanimatedLayoutAnimationMock = Readonly<{
     stiffnessV?: number;
     dampingV?: number;
     massV?: number;
+    dampingRatioV?: number;
+    easingV?: unknown;
     durationV?: number;
     delayV?: number;
     reduceMotionV?: string;
@@ -61,6 +63,8 @@ function createLayoutAnimationBuilderMock(presetName: string) {
         stiffness: (value: number) => Builder;
         damping: (value: number) => Builder;
         mass: (value: number) => Builder;
+        dampingRatio: (value: number) => Builder;
+        easing: (value: unknown) => Builder;
         duration: (value: number) => Builder;
         delay: (value: number) => Builder;
         reduceMotion: (value: string) => Builder;
@@ -73,6 +77,8 @@ function createLayoutAnimationBuilderMock(presetName: string) {
         stiffness: (value: number): Builder => make({ ...record, stiffnessV: value }),
         damping: (value: number): Builder => make({ ...record, dampingV: value }),
         mass: (value: number): Builder => make({ ...record, massV: value }),
+        dampingRatio: (value: number): Builder => make({ ...record, dampingRatioV: value }),
+        easing: (value: unknown): Builder => make({ ...record, easingV: value }),
         duration: (value: number): Builder => make({ ...record, durationV: value }),
         delay: (value: number): Builder => make({ ...record, delayV: value }),
         reduceMotion: (value: string): Builder => make({ ...record, reduceMotionV: value }),
@@ -89,6 +95,11 @@ export function createReanimatedModuleMock() {
         Text: 'Animated.Text',
         createAnimatedComponent: (component: unknown) => component,
     } as const;
+
+    // Reanimated's non-hook shared-value constructor. Production code uses it for
+    // module-scope null objects (a context default that must still be a real shared
+    // value), so a mock without it is an import-time crash, not a missing assertion.
+    const makeMutable = <T,>(initial: T): ReanimatedSharedValue<T> => ({ value: initial });
 
     const useSharedValue = <T,>(initial: T): ReanimatedSharedValue<T> => {
         const ref = React.useRef<ReanimatedSharedValue<T> | null>(null);
@@ -184,8 +195,16 @@ export function createReanimatedModuleMock() {
         FadeIn: createLayoutAnimationBuilderMock('FadeIn'),
         LinearTransition: createLayoutAnimationBuilderMock('LinearTransition'),
         ReduceMotion,
+        // Reanimated's real `Extrapolation` is a plain enum of string constants; production code
+        // passes one to `interpolate`, which this mock ignores (it returns the range start).
+        Extrapolation: {
+            CLAMP: 'clamp',
+            EXTEND: 'extend',
+            IDENTITY: 'identity',
+        },
         interpolate,
         interpolateColor,
+        makeMutable,
         cancelAnimation: () => {},
         measure,
         runOnJS,
