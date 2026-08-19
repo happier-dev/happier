@@ -965,13 +965,18 @@ export function useCreateNewSession(params: Readonly<{
                 // a failed seed merely leaves the picker as it is today.
                 const preflightModelsForSeed = current.preflightModels;
                 const agentModelConfig = getAgentCore(current.agentType).model;
+                // `getModelOptionsForAgentType` always includes the `default` pseudo-entry, so
+                // "no option besides default" is exactly "no curated static catalog" — the
+                // agents whose picker would otherwise be empty until the runtime publishes.
+                const hasCuratedStaticModels = getModelOptionsForAgentType(current.agentType)
+                    .some((option) => option.value !== 'default');
                 if (
                     preflightModelsForSeed
                     && preflightModelsForSeed.availableModels.length > 0
                     && backendTarget.kind === 'builtInAgent'
                     && agentModelConfig.supportsSelection === true
                     && agentModelConfig.dynamicProbe !== 'static-only'
-                    && getModelOptionsForAgentType(current.agentType).length <= 1
+                    && !hasCuratedStaticModels
                 ) {
                     void sync.publishSessionModelsSeedToMetadata({
                         sessionId: createdSessionId,

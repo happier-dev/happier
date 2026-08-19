@@ -31,12 +31,12 @@ type AgentCoreModelConfig = {
 
 async function setupUseCreateNewSessionHarness(params: Readonly<{
     agentModelConfigByAgentType?: Record<string, AgentCoreModelConfig>;
+    staticModelsByAgentType?: Record<string, readonly { id: string; name: string }[]>;
 }> = {}) {
     const publishModelsSeedSpy = vi.fn(async (..._args: unknown[]) => {});
     const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
     const modalConfirmSpy = vi.fn(async () => false);
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
-    const clearNewSessionDraftSpy = vi.fn();
     const refreshSessionsSpy = vi.fn(async () => {});
     const refreshAutomationsSpy = vi.fn(async () => {});
     const getMachineCapabilitiesSnapshotSpy = vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } }));
@@ -59,23 +59,21 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
             createTextModuleMock({
                 translate: (key: string) => key,
             }),
+        storage: async (importOriginal) => {
+            const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+            return createPartialStorageModuleMock(importOriginal, {});
+        },
     });
+    if (params.staticModelsByAgentType) {
+        vi.doMock('@happier-dev/agents', async (importOriginal) => ({
+            ...(await importOriginal<Record<string, unknown>>()),
+            getAgentStaticModels: vi.fn((agentType: string) => params.staticModelsByAgentType?.[agentType] ?? []),
+        }));
+    }
     vi.doMock('@/modal', () => ({
         Modal: {
             alert: modalAlertSpy,
             confirm: modalConfirmSpy,
-        },
-    }));
-    vi.doMock('@/sync/domains/state/storage', () => ({
-        storage: {
-            getState: () => ({
-                settings: {},
-                machines: { m1: { id: 'm1' } },
-                sessions: {},
-                updateSessionPermissionMode: vi.fn(),
-                updateSessionModelMode: vi.fn(),
-                updateSessionDraft: vi.fn(),
-            }),
         },
     }));
     vi.doMock('@/sync/sync', () => ({
@@ -106,47 +104,6 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
             status: 200,
             json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
         })),
-    }));
-    vi.doMock('@/sync/domains/state/persistence', () => ({
-        clearNewSessionDraft: clearNewSessionDraftSpy,
-        loadChangesCursor: () => null,
-        loadDeviceAnalyticsId: () => null,
-        loadLastChangesCursorByAccountId: () => ({}),
-        loadNewSessionDraft: () => null,
-        loadPendingSettings: () => ({}),
-        loadProfile: () => ({}),
-        loadSessionActionDrafts: () => ({}),
-        loadSessionDrafts: () => ({}),
-        loadSessionLastViewed: () => ({}),
-        loadSessionMaterializedMaxSeqById: () => ({}),
-        loadSessionModelModes: () => ({}),
-        loadSessionModelModeUpdatedAts: () => ({}),
-        loadSessionPermissionModes: () => ({}),
-        loadSessionPermissionModeUpdatedAts: () => ({}),
-        loadSessionReviewCommentsDrafts: () => ({}),
-        loadSettings: () => ({ settings: {}, version: null }),
-        loadThemePreference: () => 'adaptive',
-        saveChangesCursor: vi.fn(),
-        saveDeviceAnalyticsId: vi.fn(),
-        saveLastChangesCursorByAccountId: vi.fn(),
-        saveSettings: vi.fn(),
-        saveNewSessionDraft: vi.fn(),
-        loadLocalSettings: () => ({}),
-        saveLocalSettings: vi.fn(),
-        loadPurchases: () => ({}),
-        savePurchases: vi.fn(),
-        savePendingSettings: vi.fn(),
-        saveProfile: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
-        saveSessionDrafts: vi.fn(),
-        saveSessionLastViewed: vi.fn(),
-        saveSessionMaterializedMaxSeqById: vi.fn(),
-        saveSessionModelModes: vi.fn(),
-        saveSessionModelModeUpdatedAts: vi.fn(),
-        saveSessionPermissionModes: vi.fn(),
-        saveSessionPermissionModeUpdatedAts: vi.fn(),
-        saveSessionReviewCommentsDrafts: vi.fn(),
-        clearPersistence: vi.fn(),
     }));
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({
@@ -380,6 +337,24 @@ describe('useCreateNewSession model list seeding', () => {
         const harness = await setupUseCreateNewSessionHarness({
             agentModelConfigByAgentType: {
                 pi: { dynamicProbe: 'static-only' },
+            },
+        });
+
+        await runCreateSession(harness, {
+            agentType: 'pi',
+            preflightModels: PI_PREFLIGHT_MODELS,
+        });
+
+        expect(harness.publishModelsSeedSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not seed for an agent with exactly one curated static model', async () => {
+        // Pins the eligibility boundary: a single real catalog entry (beyond the always-present
+        // `default` pseudo-entry) already populates the picker, so probe data must not seed over
+        // the curated catalog while waiting for the runtime publish.
+        const harness = await setupUseCreateNewSessionHarness({
+            staticModelsByAgentType: {
+                pi: [{ id: 'solo-model', name: 'Solo Model' }],
             },
         });
 
