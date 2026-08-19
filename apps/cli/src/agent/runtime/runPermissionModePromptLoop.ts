@@ -399,10 +399,28 @@ export async function runPermissionModePromptLoop(opts: {
     let didAttemptProviderSend = false;
     let didConfirmProviderAccepted = false;
     let appliedModelIdForPrompt: string | null = null;
+    // Retiring the replay seed belongs to provider ACCEPTANCE of the prompt the seed
+    // was prefixed to — not to that prompt's turn completing. On the ACP seam the
+    // prompt call stays pending for the whole turn, so gating retirement on its
+    // return let an accepted-then-aborted turn leave the seed live and prefix the
+    // entire carry-over context onto the next message.
+    let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
+    let replaySeedSettlement: Promise<unknown> | null = null;
     const confirmProviderAccepted = (): void => {
       if (didConfirmProviderAccepted) return;
       didConfirmProviderAccepted = true;
+      const settle = pendingReplaySeedSettlement;
+      pendingReplaySeedSettlement = null;
+      // The seed owner reports its own failures and never rejects; the promise is
+      // awaited below so retirement is durable before the next prompt resolves.
+      if (settle) replaySeedSettlement = settle();
       confirmQueuedUserMessageDeliveredToProvider(message, appliedModelIdForPrompt);
+    };
+    const awaitReplaySeedSettlement = async (): Promise<void> => {
+      const settlement = replaySeedSettlement;
+      if (!settlement) return;
+      replaySeedSettlement = null;
+      await settlement;
     };
     try {
       turnInFlight = true;
@@ -478,6 +496,9 @@ export async function runPermissionModePromptLoop(opts: {
         },
       });
       const dispatchMeta = seedResolution.meta;
+      if (seedResolution.seedApplied) {
+        pendingReplaySeedSettlement = seedResolution.settleReplaySeedOnProviderAcceptance;
+      }
       if (opts.shouldExit()) {
         shouldSendReady = false;
         break;
@@ -526,12 +547,10 @@ export async function runPermissionModePromptLoop(opts: {
           await opts.runtime.sendPrompt(providerPrompt);
           confirmProviderAccepted();
         }
-        if (seedResolution.seedApplied) {
-          // Only now does the seed's carry-over context actually sit with the provider,
-          // so this is the only safe point to retire it. Guarded so an ordinary turn
-          // adds no extra await to the dispatch path.
-          await seedResolution.settleReplaySeedOnProviderAcceptance();
-        }
+        // Retirement was already started by `confirmProviderAccepted`; awaiting it here
+        // keeps an ordinary turn's ordering unchanged. An accepted prompt whose turn
+        // then fails skips this line, so the `finally` below awaits it instead.
+        await awaitReplaySeedSettlement();
       };
       if (opts.inputConsumer) {
         const outcome = await opts.inputConsumer.runProviderInputDispatch({
@@ -571,6 +590,10 @@ export async function runPermissionModePromptLoop(opts: {
       }
     } finally {
       turnInFlight = false;
+      // The provider confirmed delivery but the turn then failed, was cancelled, or
+      // the backend was disposed. Retirement is already in flight; drain it here so
+      // the next prompt reads a settled seed instead of prefixing it a second time.
+      await awaitReplaySeedSettlement();
       if (didBeginRuntimeTurn && !opts.shouldExit()) {
         if (suppressFlushTurnFailure) {
           try {

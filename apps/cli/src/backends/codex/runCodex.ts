@@ -737,6 +737,15 @@ export async function runCodex(opts: {
     let session: ApiSessionClient;
     let codexAppServerProviderInputOutcomes: CodexAppServerProviderInputOutcomeBridge | null = null;
     let codexAcpProviderInputOutcomes: CodexAcpProviderInputOutcomeBridge | null = null;
+    // Codex app-server publishes prompt acceptance asynchronously through the runtime's
+    // accepted-prompt callback: its `sendPrompt()` stays pending until the whole turn ends
+    // (appServer/runtime.ts awaits the turn promise after `turn/start` is acknowledged).
+    // A turn that applied a replay seed arms its retirement here so ACCEPTANCE — not turn
+    // completion — retires the seed. Correlating on the prompt's own localIds keeps a
+    // concurrent steer's acceptance from retiring this turn's seed.
+    let armedAppServerReplaySeedRetirement:
+        | Readonly<{ localIds: readonly string[]; retire: () => void }>
+        | null = null;
     let workspaceDirFromMetadata: string | null = null;
     // Permission handler declared here so it can be updated in onSessionSwap callback
     // (assigned later after client setup)
@@ -1865,6 +1874,11 @@ export async function runCodex(opts: {
         });
         codexAppServerRuntime.setOnPromptAcceptedByProvider?.(({ localIds, providerTurnId, appliedModelId }) => {
             const normalizedLocalIds = normalizeProviderPromptLocalIds(localIds ?? []);
+            const armedSeedRetirement = armedAppServerReplaySeedRetirement;
+            if (armedSeedRetirement && normalizedLocalIds.some((id) => armedSeedRetirement.localIds.includes(id))) {
+                armedAppServerReplaySeedRetirement = null;
+                armedSeedRetirement.retire();
+            }
             const publishedExactOutcome = codexAppServerProviderInputOutcomes?.observeAccepted({
                 localIds: normalizedLocalIds,
                 providerTurnId,
@@ -2320,6 +2334,34 @@ export async function runCodex(opts: {
                 let providerTurnSettledBeforeRuntimeAuthRecovery = false;
                 let providerDeliveryLocalIds: string[] = [];
                 const providerDeliveryUserMessageSeq = message.maxUserMessageSeq ?? null;
+                // Retiring the replay seed belongs to Codex ACCEPTING the prompt the seed was
+                // prefixed to — not to that prompt's turn completing. On both remote seams the
+                // send call stays pending for the whole turn, so gating retirement on its return
+                // left an accepted-then-aborted turn with a live seed that prefixed the entire
+                // carry-over context onto the next message. Declared outside the try so the
+                // `finally` can drain a retirement started by a turn that then failed.
+                let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
+                let replaySeedSettlement: Promise<unknown> | null = null;
+                // Unambiguous confirmed delivery only: a send that throws before any acceptance
+                // evidence never reaches this, so the seed stays live for the retry.
+                const retireReplaySeedOnConfirmedDelivery = (): void => {
+                    const settle = pendingReplaySeedSettlement;
+                    if (!settle) return;
+                    pendingReplaySeedSettlement = null;
+                    // The seed owner reports its own failures and never rejects; the promise is
+                    // drained below so retirement is durable before the next prompt resolves.
+                    replaySeedSettlement = settle();
+                };
+                const confirmProviderAcceptedPromptForTurn = (appliedModelId?: string | null): void => {
+                    retireReplaySeedOnConfirmedDelivery();
+                    confirmProviderAcceptedPrompt(message, appliedModelId);
+                };
+                const awaitReplaySeedSettlement = async (): Promise<void> => {
+                    const settlement = replaySeedSettlement;
+                    if (!settlement) return;
+                    replaySeedSettlement = null;
+                    await settlement;
+                };
             try {
                 const localId =
                     typeof message.mode.localId === 'string' && message.mode.localId
@@ -2334,19 +2376,6 @@ export async function runCodex(opts: {
                 const turnToken = session.beginTurnAssistantTextSnapshot({ startSeqExclusive });
                 readyTurnContext = { turnToken, startSeqExclusive };
                 let resolvedProviderDispatch: Readonly<{ text: string; metadata: unknown }> | null = null;
-                // Retiring the replay seed is scoped to Codex actually accepting the prompt it
-                // was prefixed to; every path that bails before acceptance leaves it live.
-                // Null unless a seed was actually applied, so an ordinary turn's dispatch adds
-                // no extra await and its scheduling is untouched.
-                let settleResolvedReplaySeed: (() => Promise<unknown>) | null = null;
-                // Returns null when there is nothing to settle, so the caller adds no await
-                // (and no microtask tick) to an ordinary turn's dispatch path.
-                const settleResolvedReplaySeedIfApplied = (): Promise<unknown> | null => {
-                    const settle = settleResolvedReplaySeed;
-                    if (!settle) return null;
-                    settleResolvedReplaySeed = null;
-                    return settle();
-                };
                 // Prompt finalization runs once per queued message and owns BOTH the provider
                 // prompt text and the dispatch metadata: every Codex send/steer below reads
                 // `metadata` from here, never from `message.mode.promptMetadata` directly, so
@@ -2364,7 +2393,7 @@ export async function runCodex(opts: {
                     });
                     didReplaySeedBootstrap = dispatchResolution.didBootstrap;
                     if (dispatchResolution.seedApplied) {
-                        settleResolvedReplaySeed = dispatchResolution.settleReplaySeedOnProviderAcceptance;
+                        pendingReplaySeedSettlement = dispatchResolution.settleReplaySeedOnProviderAcceptance;
                     }
                     resolvedProviderDispatch = { text: dispatchResolution.text, metadata: dispatchResolution.metadata };
                     return resolvedProviderDispatch;
@@ -2397,8 +2426,10 @@ export async function runCodex(opts: {
                             if (shouldLogAcpDebug) {
                                 logger.debug('[CodexAppServer] steerPrompt complete for queued message while turn is in flight');
                             }
-                            const seedSettlement = settleResolvedReplaySeedIfApplied();
-                            if (seedSettlement) await seedSettlement;
+                            // `steerPrompt` returns once the provider acknowledged the steer, so
+                            // its return is this path's acceptance edge.
+                            retireReplaySeedOnConfirmedDelivery();
+                            await awaitReplaySeedSettlement();
                             continue;
                         } catch (error) {
                             if (!isCodexAppServerNoActiveTurnToSteerError(error)) {
@@ -2616,6 +2647,12 @@ export async function runCodex(opts: {
                         userMessageSeq: message.maxUserMessageSeq ?? null,
                         appliedModelId: appliedModelIdForPrompt,
                     };
+                    if (useCodexAppServer && localIds.length > 0) {
+                        armedAppServerReplaySeedRetirement = {
+                            localIds,
+                            retire: retireReplaySeedOnConfirmedDelivery,
+                        };
+                    }
                     await dispatchProviderInputOrThrow(async () => {
                         if (useCodexAcp) {
                             if (codexRuntime.sendPromptWithMeta) {
@@ -2626,17 +2663,22 @@ export async function runCodex(opts: {
                                         ? providerDispatch.metadata as Record<string, unknown>
                                         : undefined,
                                     onProviderPromptAccepted: () => {
-                                        confirmProviderAcceptedPrompt(message, appliedModelIdForPrompt);
+                                        confirmProviderAcceptedPromptForTurn(appliedModelIdForPrompt);
                                     },
                                 });
                             } else {
                                 await codexRuntime.sendPrompt(promptForProvider, promptOptions);
-                                confirmProviderAcceptedPrompt(message, appliedModelIdForPrompt);
+                                confirmProviderAcceptedPromptForTurn(appliedModelIdForPrompt);
                             }
                         } else {
                             await codexRuntime.sendPrompt(promptForProvider, promptOptions);
                         }
                     });
+                    // A prompt call that returned without throwing is itself unambiguous delivery
+                    // evidence, for the seams that publish no earlier acceptance. Idempotent, so
+                    // it is a no-op once the acceptance edge above already retired the seed.
+                    retireReplaySeedOnConfirmedDelivery();
+                    await awaitReplaySeedSettlement();
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] sendPrompt complete');
                     }
@@ -2713,9 +2755,12 @@ export async function runCodex(opts: {
                     }
                     publishCodexThreadIdToMetadata();
                 }
-                confirmProviderAcceptedPrompt(message, message.mode.model ?? null);
-                const seedSettlement = settleResolvedReplaySeedIfApplied();
-                if (seedSettlement) await seedSettlement;
+                // The `codex-reply`/`codex` MCP tool call spans the whole turn and publishes no
+                // earlier delivery evidence, so its successful return is the earliest UNAMBIGUOUS
+                // acceptance this seam offers. An abort before it returns keeps the seed live —
+                // the documented safety margin, not the completion gate this fix removes.
+                confirmProviderAcceptedPromptForTurn(message.mode.model ?? null);
+                await awaitReplaySeedSettlement();
                 }
             } catch (error) {
                 if (shouldBlockProviderDeliveryOnTurnFailure) {
@@ -2800,6 +2845,11 @@ export async function runCodex(opts: {
                     }
                 }
             } finally {
+                // Codex confirmed delivery but the turn then failed, was cancelled, or the backend
+                // was disposed. Retirement is already in flight; drain it here so the next prompt
+                // reads a settled seed instead of prefixing the carry-over context a second time.
+                await awaitReplaySeedSettlement();
+                armedAppServerReplaySeedRetirement = null;
                 const remoteRuntime = useCodexAcp || useCodexAppServer ? getCodexRemoteRuntime() : null;
                 const hasActiveAppServerProviderTurn = remoteRuntime
                     ? (remoteRuntime.hasActiveProviderTurn?.() ?? remoteRuntime.isTurnInFlight())

@@ -127,12 +127,17 @@ const {
     notifyDaemonConnectedServiceRuntimeAuthFailureMock: vi.fn(),
     providerInputOutcomeObserverMock: vi.fn(),
     recordSessionTurnCompletedMock: vi.fn(async () => undefined),
-    resolveGeminiQueuedPromptWithReplaySeedMock: vi.fn(
-      async (opts: { text: string; didBootstrap: boolean }) => ({
-        text: opts.text,
-        didBootstrap: opts.didBootstrap || true,
-      }),
-    ),
+    resolveGeminiQueuedPromptWithReplaySeedMock: vi.fn<
+      (opts: { text: string; didBootstrap: boolean }) => Promise<{
+        text: string;
+        didBootstrap: boolean;
+        seedApplied?: boolean;
+        settleReplaySeedOnProviderAcceptance?: () => Promise<unknown>;
+      }>
+    >(async (opts) => ({
+      text: opts.text,
+      didBootstrap: opts.didBootstrap || true,
+    })),
     resolveGeminiSystemPromptTextMock: vi.fn(async () => 'fresh system prompt'),
     sendGeminiPromptWithRetryMock: vi.fn<
       (opts: {
@@ -1101,5 +1106,156 @@ describe('runGemini input consumer migration', () => {
       expect.objectContaining({ prompt: expect.stringContaining('exact Gemini interrupt message') }),
     );
     expect(session.blockPendingMessageDelivery).not.toHaveBeenCalled();
+  });
+  it('retires the replay seed once Gemini accepted the prompt even when that turn then aborts', async () => {
+    setFakeSession(createFakeSession());
+
+    const seedPrefix = '<<replay-seed-carry-over>>\n';
+    const settlements: Array<ReturnType<typeof vi.fn>> = [];
+    let seedLive = true;
+    // Mirrors the real owner: a live seed is prefixed onto the prompt and retires only when
+    // its own settlement runs, so a re-prefixed follow-up is the observable double-delivery.
+    const resolveWithLiveSeed = async (opts: { text: string; didBootstrap: boolean }) => {
+      if (!seedLive) return { text: opts.text, didBootstrap: true, seedApplied: false };
+      const settle = vi.fn(async () => {
+        seedLive = false;
+      });
+      settlements.push(settle);
+      return {
+        text: `${seedPrefix}${opts.text}`,
+        didBootstrap: true,
+        seedApplied: true,
+        settleReplaySeedOnProviderAcceptance: settle,
+      };
+    };
+    resolveGeminiQueuedPromptWithReplaySeedMock
+      .mockImplementationOnce(resolveWithLiveSeed)
+      .mockImplementationOnce(resolveWithLiveSeed);
+
+    const mode: GeminiMode = {
+      permissionMode: 'safe-yolo',
+      model: 'gemini-2.5-pro',
+      originalUserMessage: 'seeded visible text',
+      appendSystemPrompt: null,
+      localId: 'local-seeded',
+      replaySeedAllowed: true,
+    };
+    waitForNextInputMock.mockReset();
+    waitForNextInputMock
+      .mockResolvedValueOnce({
+        message: 'seeded prompt text',
+        mode,
+        isolate: false,
+        hash: 'mode-hash-1',
+        userMessageLocalIds: ['local-seeded'],
+        providerAcceptancePending: true,
+      })
+      .mockResolvedValueOnce({
+        message: 'follow-up prompt text',
+        mode: { ...mode, localId: 'local-follow-up' },
+        isolate: false,
+        hash: 'mode-hash-1',
+        userMessageLocalIds: ['local-follow-up'],
+        providerAcceptancePending: true,
+      })
+      .mockResolvedValueOnce(null);
+
+    sendGeminiPromptWithRetryMock.mockReset();
+    sendGeminiPromptWithRetryMock
+      .mockImplementationOnce(async (params) => {
+        params.onProviderPromptAttemptStarted?.();
+        // Gemini accepted the seeded prompt; the turn is aborted only afterwards.
+        params.onProviderPromptAccepted?.();
+        const abortError = new Error('Aborted by user');
+        abortError.name = 'AbortError';
+        throw abortError;
+      })
+      .mockImplementationOnce(async (params) => {
+        params.onProviderPromptAccepted?.();
+        return { kind: 'completed', stopReason: 'end_turn' };
+      });
+
+    const { runGemini } = await import('./runGemini');
+    await expect(runGemini({ credentials })).resolves.toBeUndefined();
+
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0]).toHaveBeenCalledTimes(1);
+    expect(sendGeminiPromptWithRetryMock).toHaveBeenCalledTimes(2);
+    expect(sendGeminiPromptWithRetryMock.mock.calls[0]?.[0]?.prompt).toContain(seedPrefix);
+    expect(sendGeminiPromptWithRetryMock.mock.calls[1]?.[0]?.prompt).not.toContain(seedPrefix);
+  });
+
+  it('keeps the replay seed live when the Gemini send fails before confirming delivery', async () => {
+    setFakeSession(createFakeSession());
+
+    const seedPrefix = '<<replay-seed-carry-over>>\n';
+    const settlements: Array<ReturnType<typeof vi.fn>> = [];
+    let seedLive = true;
+    // Mirrors the real owner: a live seed is prefixed onto the prompt and retires only when
+    // its own settlement runs, so a re-prefixed follow-up is the observable double-delivery.
+    const resolveWithLiveSeed = async (opts: { text: string; didBootstrap: boolean }) => {
+      if (!seedLive) return { text: opts.text, didBootstrap: true, seedApplied: false };
+      const settle = vi.fn(async () => {
+        seedLive = false;
+      });
+      settlements.push(settle);
+      return {
+        text: `${seedPrefix}${opts.text}`,
+        didBootstrap: true,
+        seedApplied: true,
+        settleReplaySeedOnProviderAcceptance: settle,
+      };
+    };
+    resolveGeminiQueuedPromptWithReplaySeedMock
+      .mockImplementationOnce(resolveWithLiveSeed)
+      .mockImplementationOnce(resolveWithLiveSeed);
+
+    const mode: GeminiMode = {
+      permissionMode: 'safe-yolo',
+      model: 'gemini-2.5-pro',
+      originalUserMessage: 'seeded visible text',
+      appendSystemPrompt: null,
+      localId: 'local-undelivered',
+      replaySeedAllowed: true,
+    };
+    waitForNextInputMock.mockReset();
+    waitForNextInputMock
+      .mockResolvedValueOnce({
+        message: 'seeded prompt text',
+        mode,
+        isolate: false,
+        hash: 'mode-hash-1',
+        userMessageLocalIds: ['local-undelivered'],
+        providerAcceptancePending: true,
+      })
+      .mockResolvedValueOnce({
+        message: 'retry prompt text',
+        mode: { ...mode, localId: 'local-retry' },
+        isolate: false,
+        hash: 'mode-hash-1',
+        userMessageLocalIds: ['local-retry'],
+        providerAcceptancePending: true,
+      })
+      .mockResolvedValueOnce(null);
+
+    sendGeminiPromptWithRetryMock.mockReset();
+    sendGeminiPromptWithRetryMock
+      .mockImplementationOnce(async () => {
+        // No acceptance signal: delivery is unproven, so the seed must survive.
+        throw new Error('gemini session/prompt failed');
+      })
+      .mockImplementationOnce(async (params) => {
+        params.onProviderPromptAccepted?.();
+        return { kind: 'completed', stopReason: 'end_turn' };
+      });
+
+    const { runGemini } = await import('./runGemini');
+    await expect(runGemini({ credentials })).resolves.toBeUndefined();
+
+    expect(settlements).toHaveLength(2);
+    expect(settlements[0]).not.toHaveBeenCalled();
+    expect(settlements[1]).toHaveBeenCalledTimes(1);
+    expect(sendGeminiPromptWithRetryMock).toHaveBeenCalledTimes(2);
+    expect(sendGeminiPromptWithRetryMock.mock.calls[1]?.[0]?.prompt).toContain(seedPrefix);
   });
 });

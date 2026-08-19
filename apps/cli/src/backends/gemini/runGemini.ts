@@ -912,8 +912,26 @@ export async function runGemini(opts: {
           }
         : null;
       let appliedModelIdForPrompt: string | null = null;
+      // Retiring the replay seed belongs to provider ACCEPTANCE of the prompt the seed was
+      // prefixed to — not to that prompt's turn completing. `sendGeminiPromptWithRetry`
+      // signals acceptance and only then awaits the whole turn, so gating retirement on the
+      // dispatch's return let an accepted-then-aborted turn leave the seed live and prefix
+      // the entire carry-over context onto the next message.
+      let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
+      let replaySeedSettlement: Promise<unknown> | null = null;
+      const awaitReplaySeedSettlement = async (): Promise<void> => {
+        const settlement = replaySeedSettlement;
+        if (!settlement) return;
+        replaySeedSettlement = null;
+        await settlement;
+      };
       transcriptStream.setCommitProvenance({ kind: 'non_dependent', source: 'external' });
       const confirmProviderAccepted = (): void => {
+        const settle = pendingReplaySeedSettlement;
+        pendingReplaySeedSettlement = null;
+        // The seed owner reports its own failures and never rejects; the promise is awaited
+        // below so retirement is durable before the next prompt resolves.
+        if (settle) replaySeedSettlement = settle();
         if (didConfirmProviderAccepted) return;
         if (!providerOutcomeIdentity) return;
         didConfirmProviderAccepted = providerInputOutcomeBridge?.observeAccepted({
@@ -1050,6 +1068,9 @@ export async function runGemini(opts: {
         });
         didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
         promptToSend = replaySeedResolution.text;
+        if (replaySeedResolution.seedApplied) {
+          pendingReplaySeedSettlement = replaySeedResolution.settleReplaySeedOnProviderAcceptance;
+        }
 
         if (shouldPrependAppendSystemPromptOnNextFreshSessionPrompt) {
           const systemPromptText = await resolveFreshSessionSystemPrompt(
@@ -1096,10 +1117,10 @@ export async function runGemini(opts: {
           error.name = 'AbortError';
           throw error;
         }
-        if (replaySeedResolution.seedApplied) {
-          // Gemini has the prompt, seed included: only now may the seed be retired.
-          await replaySeedResolution.settleReplaySeedOnProviderAcceptance();
-        }
+        // Retirement was already started by `confirmProviderAccepted`; awaiting it here keeps
+        // an ordinary turn's ordering unchanged. An accepted prompt whose turn then fails
+        // skips this line, so the `finally` below awaits it instead.
+        await awaitReplaySeedSettlement();
         promptTurnOutcome = dispatchOutcome.value;
         
         // Mark as not first message after sending prompt
@@ -1140,6 +1161,10 @@ export async function runGemini(opts: {
           });
         }
       } finally {
+        // Gemini confirmed delivery but the turn then failed, was aborted, or the backend was
+        // disposed. Retirement is already in flight; drain it here so the next prompt reads a
+        // settled seed instead of prefixing the whole carry-over context a second time.
+        await awaitReplaySeedSettlement();
         // Metadata updates can arrive while a turn is in-flight. Sync again at turn-end so the
         // next turn observes the latest session-scoped control overrides.
         syncControlsFromMetadata();
