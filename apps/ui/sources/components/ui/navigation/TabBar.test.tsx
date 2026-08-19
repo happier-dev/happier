@@ -131,6 +131,24 @@ describe('TabBar', () => {
         expect(activePills).toHaveLength(1);
     });
 
+    it('renders a trailing accessory beside the tabs without adding a tab', async () => {
+        const { TabBar } = await import('./TabBar');
+
+        const screen = await renderScreen(
+            <TabBar
+                activeTab="sessions"
+                onTabPress={() => {}}
+                trailingAccessory={React.createElement('TrailingAccessory')}
+            />,
+        );
+
+        expect(screen.tree.findAllByType('TrailingAccessory' as never)).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('tabbar-tab-sessions')).toHaveLength(1);
+        expect(screen.findAll((node) => typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('tabbar-tab-')
+            && typeof node.type === 'string')).toHaveLength(4);
+    });
+
     it('hides tab badges when disabled in settings', async () => {
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
         inboxState.hasContent = true;

@@ -18,6 +18,7 @@ import {
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { TabBar, type TabType } from '@/components/ui/navigation/TabBar';
+import { TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useTabState } from '@/hooks/ui/useTabState';
@@ -178,7 +179,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const buildMainChrome = React.useCallback((tab: TabType): BottomChromeItem => ({
         key: 'mainAppTabs',
         signature: `mainAppTabs:${tab}`,
-        node: <TabBar activeTab={tab} onTabPress={handleTabPress} />,
+        node: (
+            <TabBar
+                activeTab={tab}
+                onTabPress={handleTabPress}
+                // Session creation belongs to the sessions surface; settings, inbox
+                // and friends keep the bar as a pure navigation control.
+                trailingAccessory={tab === 'sessions' ? <TabBarNewSessionButton /> : undefined}
+            />
+        ),
     }), [handleTabPress]);
 
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {

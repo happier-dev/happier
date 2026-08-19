@@ -22,6 +22,12 @@ export type { TabType };
 interface TabBarProps {
     activeTab: TabType;
     onTabPress: (tab: TabType) => void;
+    /**
+     * A sibling capsule rendered beside the pill (see `FloatingTabBarSurface`).
+     * It is deliberately not a tab: the bar stays a pure navigation control, and
+     * the caller owns which surfaces offer the action.
+     */
+    trailingAccessory?: React.ReactNode;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -66,7 +72,7 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
+export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: TabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const friendsEnabled = useFriendsEnabled();
@@ -95,7 +101,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     }, [friendsEnabled, inboxEnabled]);
 
     return (
-        <FloatingTabBarSurface bottomInset={insets.bottom}>
+        <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={trailingAccessory}>
             <View style={[styles.innerContainer, { gap: metrics.rowGap }]}>
                 {tabs.map((tab) => {
                     const isActive = activeTab === tab.key;
@@ -123,10 +129,15 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
                                 )}
                             </View>
                             {metrics.showLabels ? (
-                                <Text style={[
-                                    styles.label,
-                                    isActive ? styles.labelActive : styles.labelInactive
-                                ]}>
+                                <Text
+                                    // A wrapped label would grow the bar, and the chrome host
+                                    // publishes that height to the surfaces that pad by it.
+                                    numberOfLines={1}
+                                    style={[
+                                        styles.label,
+                                        isActive ? styles.labelActive : styles.labelInactive
+                                    ]}
+                                >
                                     {tab.label}
                                 </Text>
                             ) : null}

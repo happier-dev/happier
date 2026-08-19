@@ -374,6 +374,22 @@ describe('MobileBottomChromeHost', () => {
         expect(bar.props.activeTab).toBe('sessions');
     });
 
+    it('offers the new-session action beside the tab bar only on the sessions tab', async () => {
+        pathState.pathname = '/';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        expect(screen.tree.findByType('TabBar' as never).props.trailingAccessory).toBeTruthy();
+
+        pathState.pathname = '/settings';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findByType('TabBar' as never).props.trailingAccessory).toBeUndefined();
+    });
+
     it('does not rerender main app tabs for cockpit-only storage updates', async () => {
         pathState.pathname = '/';
 
