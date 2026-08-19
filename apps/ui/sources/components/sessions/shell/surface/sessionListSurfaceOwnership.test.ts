@@ -84,10 +84,23 @@ describe('sessionListSurfaceOwnership', () => {
         });
     });
 
-    it('treats only the phone root route as the data-active phone sessions surface', () => {
-        expect(resolvePhoneRootSessionListSurfaceDataActive('/')).toBe(true);
-        expect(resolvePhoneRootSessionListSurfaceDataActive('/session/session-1')).toBe(false);
-        expect(resolvePhoneRootSessionListSurfaceDataActive('/new')).toBe(false);
+    it('keeps the phone list data-active under an overlay route, which leaves it visible behind', () => {
+        const at = (routePathname: string, surfaceRoutePathname: string, isFocused: boolean) =>
+            resolvePhoneRootSessionListSurfaceDataActive({ routePathname, surfaceRoutePathname, isFocused });
+
+        expect(at('/', '/', true)).toBe(true);
+        // The anchor decides whether this list is the surface at all.
+        expect(at('/session/session-1', '/session/session-1', true)).toBe(false);
+        // A blurred root is inactive — whatever sits above it owns the surface.
+        expect(at('/', '/', false)).toBe(false);
+        // ...but an overlay is the one blur that must NOT deactivate it: `/new` is a transparent
+        // modal, so the list stays fully visible behind it, and deactivating remounts every visible
+        // row. The anchor stays `/` while the overlay is open, which is exactly why the raw route
+        // has to be consulted for the overlay test.
+        expect(at('/new', '/', false)).toBe(true);
+        expect(at('/zen/new', '/', false)).toBe(true);
+        // An overlay above a session route still leaves the phone list off-surface.
+        expect(at('/new', '/session/session-1', false)).toBe(false);
     });
 
     it('stops sidebar interaction under every overlay route, not just the new-session one', () => {

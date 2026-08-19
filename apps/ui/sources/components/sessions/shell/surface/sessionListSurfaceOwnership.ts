@@ -25,8 +25,30 @@ const INACTIVE_SESSION_LIST_SURFACE_OWNERSHIP: SessionListSurfaceOwnership = Obj
     dataActive: false,
 });
 
-export function resolvePhoneRootSessionListSurfaceDataActive(pathname: string): boolean {
-    return pathname === '/';
+/**
+ * Whether the phone root list should keep computing its own data.
+ *
+ * The anchor decides whether this list is the surface at all — it is the route BEHIND any overlay,
+ * so it stays `/` while `/new` is open. Focus then decides whether that surface is live, with one
+ * exception: an overlay route blurs this screen while leaving the list fully visible behind it, and
+ * blur alone must not deactivate it.
+ *
+ * That exception is load-bearing. Deactivating swaps the live pane state for a retained snapshot —
+ * a point-in-time reference the live state has moved past — and the list remounts all 25 visible
+ * rows for an overlay that changed nothing about them. Measured at ~112–172ms of render work on
+ * every composer open.
+ *
+ * Same doctrine `resolveSidebarSessionListSurfaceInteractive` states for the sidebar: under an
+ * overlay the list stays visible and data-active, and only interaction is withheld.
+ */
+export function resolvePhoneRootSessionListSurfaceDataActive(params: Readonly<{
+    surfaceRoutePathname: string;
+    routePathname: string;
+    isFocused: boolean;
+}>): boolean {
+    if (params.surfaceRoutePathname !== '/') return false;
+    if (isOverlaySurfaceRoutePathname(params.routePathname)) return true;
+    return params.isFocused;
 }
 
 /**

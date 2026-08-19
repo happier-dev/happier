@@ -90,6 +90,25 @@ function readEmptyRowStoreState(): SessionListRowStoreState {
     return EMPTY_SESSION_LIST_ROW_STORE_STATE;
 }
 
+/**
+ * One unsubscribed read of this row's store state.
+ *
+ * A row normally inherits its frozen snapshot from the last render where the surface was active.
+ * A row that has never been active has nothing to inherit, so it needs the current value once —
+ * without subscribing, which is the whole point of the freeze.
+ */
+function readSessionListRowStoreStateOnce(input: Readonly<{
+    activeServerId?: string | null;
+    serverId?: string | null;
+    sessionId: string;
+}>): SessionListRowStoreState {
+    const selector = createSessionListRowStoreStateSelector(
+        [{ sessionId: input.sessionId, serverId: input.serverId ?? null }],
+        input.activeServerId,
+    );
+    return selector(storage.getState());
+}
+
 // The subscription set changes constantly (every viewability change while
 // scrolling, and every row at once when the surface goes data-inactive behind a
 // modal). Selecting between a subscribed and an unsubscribed COMPONENT would
@@ -130,13 +149,28 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
         serverId: props.item.serverId,
         sessionId: props.item.session.id,
     });
-    const frozenRowStoreStateRef = React.useRef<SessionListRowStoreState>(EMPTY_SESSION_LIST_ROW_STORE_STATE);
+    // `null` means "this row has never held a live snapshot", which is different from "its live
+    // snapshot is empty" and must not be collapsed into the same value.
+    //
+    // Opening a session deactivates the list while it keeps rendering behind the pushed screen, and
+    // the engine can mount containers during that window — so a row's FIRST render can happen while
+    // the surface is inactive. Such a row has nothing frozen to fall back to, and an inactive row
+    // never reads the store, so it would present an empty snapshot for as long as the surface stays
+    // away. MEASURED as the reported symptom: half-swipe back immediately after opening a session
+    // and the list is blank; wait first and it is populated but scrolled to the top.
+    const frozenRowStoreStateRef = React.useRef<SessionListRowStoreState | null>(null);
     if (props.dataActive) {
         frozenRowStoreStateRef.current = liveRowStoreState;
+    } else if (frozenRowStoreStateRef.current === null) {
+        frozenRowStoreStateRef.current = readSessionListRowStoreStateOnce({
+            activeServerId: props.activeServerId,
+            serverId: props.item.serverId,
+            sessionId: props.item.session.id,
+        });
     }
     const rowStoreState = props.dataActive
         ? liveRowStoreState
-        : frozenRowStoreStateRef.current;
+        : frozenRowStoreStateRef.current ?? EMPTY_SESSION_LIST_ROW_STORE_STATE;
 
     return (
         <SessionListRowModelBoundaryContent

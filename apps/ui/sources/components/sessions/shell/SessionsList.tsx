@@ -836,6 +836,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     const scrollRetention = useSessionListScrollRetention({
         retentionKey,
         scrollToOffset: scrollToRetainedOffset,
+        surfaceActive: surfaceOwnership.dataActive,
     });
 
     // Latest visible render items, kept in a ref so the drag snapshot can be

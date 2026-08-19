@@ -179,6 +179,8 @@ function createBoundaryProps() {
             sessionTagsByKey: {},
             allKnownTags: [],
             pinnedSessionKeys: [],
+            attentionStandingEnabled: false,
+            attentionStandingPolicy: { defaultStanding: false, overridesBySessionKey: {} },
             hasMultipleMachines: false,
             reachableSessionDisplayByKey: {},
             folderViewEnabled: false,
@@ -297,6 +299,46 @@ describe('SessionListRowModelBoundary', () => {
         const screen = await renderScreen(<SessionListRowModelBoundary {...props} />);
 
         expect(screen.findByTestId('session-list-row-boundary:sess_a')).toBeTruthy();
+        expect(reactiveStorageHarness.listenerCount()).toBe(0);
+
+        await screen.unmount();
+    });
+
+    it('shows real row content when the row first mounts while the surface is inactive', async () => {
+        const { SessionListRowModelBoundary } = await import('./SessionListRowModelBoundary');
+        await act(async () => {
+            reactiveStorageHarness.setState({
+                ...reactiveStorageHarness.getState(),
+                sessionListRenderables: {
+                    sess_a: {
+                        ...baseSession,
+                        active: true,
+                        activeAt: 2_000,
+                        thinking: true,
+                        thinkingAt: 2_000,
+                        presence: 'online',
+                        latestTurnStatus: 'in_progress',
+                        latestTurnStatusObservedAt: 2_000,
+                    },
+                },
+            });
+        });
+
+        // Opening a session deactivates the list, and the list keeps rendering behind the pushed
+        // screen. Legend can mount containers during that window, so a row's FIRST render can happen
+        // while the surface is inactive - and an inactive row reads a frozen constant rather than the
+        // store. A row that was never active has nothing frozen yet, so it must fall back to reading
+        // the store once instead of presenting an empty snapshot.
+        const screen = await renderScreen(
+            <SessionListRowModelBoundary
+                {...createBoundaryProps()}
+                dataActive={false}
+                rowStoreSubscriptionEnabled={false}
+            />,
+        );
+
+        expect(screen.findByTestId('session-list-row-boundary:sess_a')?.props.rowModel.session.thinking).toBe(true);
+        // Still no listener: reading once must not re-introduce the subscription this freeze avoids.
         expect(reactiveStorageHarness.listenerCount()).toBe(0);
 
         await screen.unmount();

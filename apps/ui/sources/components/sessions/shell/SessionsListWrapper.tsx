@@ -117,14 +117,23 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
     const pathname = props.pathname;
     const surfaceRoutePathname = props.surfaceRoutePathname;
     const sourceScopeKey = useSessionListPaneSourceScopeKey();
+    // The live route, NOT `props.pathname`: the phone tab renders this wrapper with a hard-coded
+    // `/` so it always represents the root list, and the surface route is the anchor BEHIND any
+    // overlay — so neither prop ever names the overlay that is actually open. Used only to answer
+    // "is an overlay up", which is what keeps a blurred-but-visible list data-active.
+    const liveRoutePathname = usePathname();
     const surfaceOwnership = React.useMemo(
         () => resolveSessionListSurfaceOwnership({
             ownerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
             interactiveOwnerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
             visible: true,
-            dataActive: isFocused && resolvePhoneRootSessionListSurfaceDataActive(surfaceRoutePathname),
+            dataActive: resolvePhoneRootSessionListSurfaceDataActive({
+                surfaceRoutePathname,
+                routePathname: liveRoutePathname,
+                isFocused,
+            }),
         }),
-        [isFocused, surfaceRoutePathname],
+        [isFocused, liveRoutePathname, surfaceRoutePathname],
     );
     const routeActiveSessionId = React.useMemo(() => readSessionIdFromPathname(pathname), [pathname]);
     const foregroundRouteSessionId = React.useMemo(
