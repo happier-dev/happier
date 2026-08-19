@@ -72,6 +72,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
 
     function estimateMessageRowPx(text: string): number {
         const estimate = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => agentText('m1', text),
             item: { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem,
@@ -122,6 +123,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
     // so no group-shaped row can reach an accumulation ceiling here.
     it('never sees a whole tool group as one row, so no group can reach a ceiling', () => {
         const estimate = estimateTranscriptRowHeightFromContent({
+            platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item: {
@@ -134,6 +136,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         expect(estimate).toBeUndefined();
         // One decomposed unit row is a measured cap, orders of magnitude below the former ceiling.
         const unitRowPx = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
             item: {

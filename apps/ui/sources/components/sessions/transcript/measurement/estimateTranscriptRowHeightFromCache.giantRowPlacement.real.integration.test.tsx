@@ -110,6 +110,7 @@ function estimateGiantMarkdownRowPx(): number {
         text: 'x'.repeat(72 * 910),
     } as Message;
     const estimate = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
         toolCallsGroupChromeVariant: 'feed_background',
         getMessageById: () => message,
         item: { kind: 'message', id: 'A', messageId: 'm1' } as TranscriptRowShellItem,

@@ -24,6 +24,7 @@ import { ToolCallsGroupUnitFooterRowWithSessionCommon } from '@/components/sessi
 import { TranscriptLiveMessagesRowShell } from '@/components/sessions/transcript/rowHost/TranscriptLiveMessagesRowShell';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { resolveTranscriptRowPaintedIdentities } from '@/components/sessions/transcript/motion/transcriptRowPaintedIdentities';
+import { resolveTranscriptUtteranceIdentity } from '@/components/sessions/transcript/motion/transcriptFreshnessGate';
 import { TranscriptHotTail } from '@/components/sessions/transcript/segments/TranscriptHotTail';
 import { WebTranscriptSplitFooter } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
@@ -115,6 +116,33 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         sessionId,
         toolChromeCommon,
     } = deps.props;
+    /**
+     * Carry the pending block's painted bubble height to the committed row that will replace it.
+     *
+     * The geometry scope comes from the PENDING row's own signature, so a measurement taken at one
+     * width or font scale can never be served to a row rendered at another — the same scoping the
+     * reconciler's floors use.
+     */
+    // The geometry the pending row was last rendered at. Held in a ref rather than closed over, so
+    // the callback below keeps ONE identity across renders: it lands in the block's `renderMessage`
+    // dependency array, and a fresh arrow per render would rebuild that callback — and with it the
+    // whole pending list — on every parent commit, on the send frame this change exists to protect.
+    const pendingRowGeometryRef = React.useRef<{ widthBucket: string; fontScaleKey: string } | null>(null);
+    const recordPaintedUtteranceBubbleHeight = React.useCallback((measurement: Readonly<{
+        localId: string;
+        bubbleHeightPx: number;
+    }>) => {
+        const identity = resolveTranscriptUtteranceIdentity(measurement.localId);
+        const geometry = pendingRowGeometryRef.current;
+        if (identity === null || geometry === null) return;
+        measurementReconciler.recordPaintedUtteranceBubbleHeight({
+            identity,
+            bubbleHeightPx: measurement.bubbleHeightPx,
+            widthBucket: geometry.widthBucket,
+            fontScaleKey: geometry.fontScaleKey,
+        });
+    }, [measurementReconciler]);
+
     const wrapTranscriptItemForAnchor = React.useCallback((item: ChatTranscriptListItem, node: React.ReactNode) => {
         const signature = buildRowShellSignature(item);
         return (
@@ -153,6 +181,11 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         }
         if (item.kind === 'pending-queue') {
             const createdAt = item.pendingMessages[0]?.createdAt ?? item.discardedMessages[0]?.createdAt ?? 0;
+            const pendingRowSignature = buildRowShellSignature(item);
+            pendingRowGeometryRef.current = {
+                widthBucket: pendingRowSignature.widthBucket,
+                fontScaleKey: pendingRowSignature.fontScaleKey,
+            };
             return wrapTranscriptItemForAnchor(item, (
                 <TranscriptEnterWrapper
                     id={item.id}
@@ -164,6 +197,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                         pendingMessages={item.pendingMessages}
                         discardedMessages={item.discardedMessages}
                         onEditPendingMessage={onEditPendingMessage}
+                        onPaintedUtteranceBubbleMeasured={recordPaintedUtteranceBubbleHeight}
                     />
                 </TranscriptEnterWrapper>
             ));

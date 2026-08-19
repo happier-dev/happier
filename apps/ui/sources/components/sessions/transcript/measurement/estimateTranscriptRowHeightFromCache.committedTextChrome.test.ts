@@ -60,6 +60,7 @@ function textOfLines(lineCount: number): string {
 
 function estimateTextRowPx(kind: 'user-text' | 'agent-text', lineCount: number): number {
     const estimate = estimateTranscriptRowHeightFromContent({
+        platformIsWeb: false,
         toolCallsGroupChromeVariant: 'feed_background',
         getMessageById: () => textMessage(kind, textOfLines(lineCount)),
         item: { kind: 'message', id: 'i1', messageId: 'm1' } as TranscriptRowShellItem,

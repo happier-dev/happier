@@ -10,6 +10,12 @@ import {
     type PendingMessageHeightBearingChrome,
 } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
+import { resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
+
+/** `transcriptMarkdownTextStyle.lineHeight` in the test theme. */
+const LINE_PX = 24;
+/** The head stays fully visible; the collapsed backlog scrolls in the compact strip beneath it. */
+const QUEUE_CAP_PX = resolvePendingQueueHeadMaxHeightPx(LINE_PX) + 80;
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -2107,12 +2113,22 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     /**
-     * D (2026-08-01) — the SEND crossover. A block holding exactly one queued utterance is showing
-     * the message that is about to be replaced by its own committed bubble. Two independent
-     * clippers used to shrink it — the block's compact scroll cap and the per-message line clamp —
-     * and the committed bubble has neither, so the handover measured as a height jump of
-     * +16..+136px on native (`.project/reviews/2026-08-01-send-transition/M-send-transition.md` §6,
-     * 94.25 → 230 for a 258-char message). Clipping is a property of a QUEUE, not of one utterance.
+     * The SEND crossover. A block holding exactly one queued utterance is showing the message that
+     * is about to be replaced by its own committed bubble.
+     *
+     * D (2026-08-01) removed BOTH of the block's clippers for that case — the compact scroll cap and
+     * the per-message line clamp — so the two rows would paint the same height and the handover
+     * could not move the viewport. 2026-08-18 device measurement showed that was the wrong half of
+     * the problem: the crossover moves because the COMMITTED row is placed from a wrap ESTIMATE
+     * that undershoots by whole painted lines (163px for a 236-char send, 379px for a 569-char one,
+     * `.project/reviews/2026-08-18-send-crossover-native/`), and that is now fixed at its own owner —
+     * the committed row inherits this block's measured bubble height.
+     *
+     * So the line clamp stays off (an utterance being sent is never truncated, and a truncated
+     * bubble could not be carried across the crossover), but the block is BOUNDED again — at its own
+     * sole-utterance height rather than the compact queue cap. A short or medium send still paints
+     * in full, so the crossover still moves nothing; a 2000-char one no longer paints ~1.1k px with
+     * no reachable way to shrink it.
      */
     describe('send crossover: one queued utterance paints like its committed bubble', () => {
         const LONG_TEXT = 'x'.repeat(400);
@@ -2130,7 +2146,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             return { id, text: LONG_TEXT, displayText: undefined, createdAt, updatedAt: createdAt, localId: id, rawRecord: {} };
         }
 
-        it('does not clip a single long queued utterance', async () => {
+        it('never truncates the head, and bounds it well above the compact queue cap', async () => {
             settingValues = crossoverSettings();
             const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
             const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -2140,24 +2156,53 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
             const scroll = screen.findByTestId('pendingMessages.scroll');
-            expect(scroll!.props.style?.maxHeight).toBeUndefined();
+            // Its own bound, not the compact queue cap of 80 the settings above supply.
+            expect(scroll!.props.style?.maxHeight).toBe(resolvePendingQueueHeadMaxHeightPx(24));
+            expect(scroll!.props.style?.maxHeight).toBeGreaterThan(80);
             // The committed bubble renders markdown; a clipped preview renders plain clamped text.
             expect(screen.findByType('MarkdownView' as any)).toBeTruthy();
             expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
 
-            // Learning that the content overflows the compact bound must not re-clip it, and must
-            // not offer an expand affordance for content that is already fully painted.
+            // 150px of content is under the head bound, so nothing is hidden and the header offers
+            // nothing to expand.
             await act(async () => {
-                scroll!.props.onContentSizeChange(0, 400);
+                scroll!.props.onContentSizeChange(0, 150);
             });
-            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBeUndefined();
             expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
 
             // The delivery affordance the user reads is unchanged by any of this.
             expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p1')).toBeTruthy();
         });
 
-        it('still clips the block as soon as a second row shares it', async () => {
+        /**
+         * The user-visible half: a very long lone utterance is scrolled inside its bound, and the
+         * header chevron is REACHABLE for it — under the previous rule both the chevron and the
+         * per-message "View more" were gated on the same predicate that turned them off.
+         */
+        it('offers the header expand once a lone utterance overflows its bound', async () => {
+            settingValues = crossoverSettings();
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [longPendingMessage('p1', 0)],
+                discardedMessages: [],
+            }));
+
+            await act(async () => {
+                screen.findByTestId('pendingMessages.scroll')!.props.onContentSizeChange(0, 900);
+            });
+
+            expect(screen.findByTestId('pendingMessages.headerToggle')).toBeTruthy();
+            // Still never truncated — overflow is scrolled, not clamped.
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
+        });
+
+        /**
+         * A second message collapses the ROWS BEHIND the head, never the head itself: the head is the
+         * next message to be processed, so it keeps the shape it will cross over in and its bubble
+         * keeps reporting the painted height the committed row inherits.
+         */
+        it('collapses the backlog behind the head, and keeps the head itself intact', async () => {
             settingValues = crossoverSettings();
             const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
             const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -2166,15 +2211,95 @@ describe('PendingMessagesTranscriptBlock', () => {
                 discardedMessages: [],
             }));
 
-            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBe(80);
-            expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeTruthy();
+            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBe(QUEUE_CAP_PX);
+            // p1 is the head: never clamped, no "View more". p2 is backlog: clamped.
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
             expect(screen.findByTestId('pendingMessages.viewMore:p2')).toBeTruthy();
         });
     });
 
     /**
-     * A QUEUE — two or more rows. One row is the send crossover and is deliberately unclipped; see
-     * the `send crossover` describe above and `pendingQueueContentClipping`.
+     * PRODUCER side of the crossover carry. The committed row inherits the bubble height this block
+     * measures, so exactly one row may publish it: the HEAD, which is the message about to cross
+     * over and the only one painted in full.
+     *
+     * A backlog row must NOT publish: it is line-clamped (not the height its twin will have) and,
+     * once expanded, paints a "View less" Pressable INSIDE the measured bubble that the committed
+     * row never has — an overshoot, and Legend accumulates overshoot into a gap under the tail.
+     */
+    describe('publishing the painted bubble height', () => {
+        function longPending(id: string, createdAt: number) {
+            return {
+                id,
+                text: 'x'.repeat(400),
+                displayText: undefined,
+                createdAt,
+                updatedAt: createdAt,
+                localId: `local-${id}`,
+                rawRecord: {},
+            };
+        }
+
+        async function measureBubbles(pendingMessages: ReturnType<typeof longPending>[]) {
+            const measured: { localId: string; bubbleHeightPx: number }[] = [];
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock as any, {
+                sessionId: 's1',
+                pendingMessages,
+                discardedMessages: [],
+                onPaintedUtteranceBubbleMeasured: (m: { localId: string; bubbleHeightPx: number }) => {
+                    measured.push(m);
+                },
+            }));
+            const publishesLayout: string[] = [];
+            for (const message of pendingMessages) {
+                const bubble = screen.findByTestId(`pendingMessages.message:${message.id}`);
+                // A row that must not publish does not merely return early — it attaches no
+                // `onLayout` at all, so there is no path from its layout to the carried height.
+                if (typeof bubble?.props?.onLayout !== 'function') continue;
+                publishesLayout.push(message.id);
+                await act(async () => {
+                    invokeTestInstanceHandler(
+                        bubble,
+                        'onLayout',
+                        { nativeEvent: { layout: { height: 160 } } },
+                        `pendingMessages.message:${message.id}`,
+                    );
+                });
+            }
+            return { measured, publishesLayout, screen };
+        }
+
+        it('publishes the head bubble, and only the head', async () => {
+            settingValues = {
+                transcriptPendingQueueMaxHeightPx: 80,
+                transcriptPendingQueueExpandedMaxHeightPx: 520,
+                transcriptPendingMessageCollapseThresholdChars: 160,
+                transcriptPendingMessageCollapsedLines: 2,
+            };
+            const { measured, publishesLayout } = await measureBubbles([longPending('p1', 0), longPending('p2', 1)]);
+
+            expect(publishesLayout).toEqual(['p1']);
+            expect(measured).toEqual([{ localId: 'local-p1', bubbleHeightPx: 160 }]);
+        });
+
+        it('publishes a lone utterance, which is always the head', async () => {
+            settingValues = {
+                transcriptPendingQueueMaxHeightPx: 80,
+                transcriptPendingQueueExpandedMaxHeightPx: 520,
+                transcriptPendingMessageCollapseThresholdChars: 160,
+                transcriptPendingMessageCollapsedLines: 2,
+            };
+            const { measured, publishesLayout } = await measureBubbles([longPending('p1', 0)]);
+
+            expect(publishesLayout).toEqual(['p1']);
+            expect(measured).toEqual([{ localId: 'local-p1', bubbleHeightPx: 160 }]);
+        });
+    });
+
+    /**
+     * A QUEUE — two or more rows. The HEAD keeps the crossover shape; only the backlog behind it
+     * collapses. See the `send crossover` describe above and `pendingQueueContentClipping`.
      */
     function queuedPendingMessages() {
         return [
@@ -2183,7 +2308,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         ];
     }
 
-    it('uses an 80px default max-height for the pending queue block', async () => {
+    it('bounds a queue at the head cap plus the compact backlog strip', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -2192,7 +2317,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
         const scroll = screen.findByType('ScrollView');
-        expect(scroll.props.style?.maxHeight).toBe(80);
+        expect(scroll.props.style?.maxHeight).toBe(QUEUE_CAP_PX);
         expect(scroll.props.style?.marginTop).toBe(0);
         expect(scroll.props.contentContainerStyle).toMatchObject({ paddingTop: 6, paddingBottom: 0 });
     });
@@ -2213,7 +2338,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         const headerToggle = screen.findByTestId('pendingMessages.headerToggle');
@@ -2223,7 +2348,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(headerToggleStyle.paddingHorizontal).toBe(0);
         expect(headerToggleStyle.paddingVertical).toBe(0);
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('does not show a header toggle when pending content fits the compact height', async () => {
@@ -2241,7 +2366,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
 
         expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('expands the pending queue from the header toggle without changing the compact default', async () => {
@@ -2258,7 +2383,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
@@ -2281,13 +2406,13 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('resets expanded pending queue state after all pending rows clear', async () => {
@@ -2309,7 +2434,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            scroll!.props.onContentSizeChange(0, 160);
+            scroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
@@ -2327,11 +2452,11 @@ describe('PendingMessagesTranscriptBlock', () => {
         }));
         const nextScroll = screen.findByTestId('pendingMessages.scroll');
         await act(async () => {
-            nextScroll!.props.onContentSizeChange(0, 160);
+            nextScroll!.props.onContentSizeChange(0, QUEUE_CAP_PX + 40);
         });
 
         expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
-        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(QUEUE_CAP_PX);
     });
 
     it('shows the queued affordance instead of a loading spinner for accepted pending rows', async () => {

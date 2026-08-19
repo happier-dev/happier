@@ -1,5 +1,9 @@
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { TranslationKeyNoParams } from '@/text';
+import {
+    isPendingDeliveryProviderEffectPossibleV1,
+    parsePendingDeliveryStatusV1,
+} from '@happier-dev/protocol';
 
 export type PendingMessageVisualStateKind =
     | 'saving'
@@ -131,6 +135,39 @@ export function getPendingDeliveryBlockedReasonPresentation(
 
 export function isPendingMessageProviderDeliveryInFlight(message: PendingMessage): boolean {
     return message.pendingDeliveryStatus === 'server_delivering';
+}
+
+/**
+ * Could this pending row already have had an effect at the provider? Rows that could are never
+ * reorderable, because reordering them would reorder something the provider has already seen.
+ *
+ * Lives here rather than in the block because the SIZE estimate needs the same answer: the reorder
+ * handle is one of the two branches of {@link paintsPendingMessageActionRow}, which is height-bearing.
+ */
+export function isPendingMessageProviderEffectPossible(message: PendingMessage): boolean {
+    const status = parsePendingDeliveryStatusV1({
+        status: message.pendingDeliveryStatus === 'server_delivering'
+            ? 'delivering'
+            : message.pendingDeliveryStatus,
+        reason: message.pendingDeliveryBlockedReason,
+    });
+    return status !== null && isPendingDeliveryProviderEffectPossibleV1(status);
+}
+
+/**
+ * Does a pending message row paint the IN-FLOW action row under its bubble?
+ *
+ * `PendingMessagesTranscriptBlock` renders `isWeb ? <copy/send actions> : canReorder ? <drag
+ * handle> : null` — so a LONE pending message on native paints nothing there, which is exactly the
+ * shape a send creates. This is the single owner of that decision because it is height-bearing:
+ * `estimateTranscriptRowHeightFromCache` modelled the row unconditionally 20px taller than native
+ * paints it, which Legend accumulates into a gap under the tail on every send.
+ */
+export function paintsPendingMessageActionRow(params: Readonly<{
+    platformIsWeb: boolean;
+    canReorderPendingMessages: boolean;
+}>): boolean {
+    return params.platformIsWeb || params.canReorderPendingMessages;
 }
 
 export function getPendingMessageVisualState(

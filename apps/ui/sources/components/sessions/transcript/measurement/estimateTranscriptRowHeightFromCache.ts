@@ -1,8 +1,20 @@
 import {
     getPendingMessageVisualState,
+    isPendingMessageProviderEffectPossible,
+    paintsPendingMessageActionRow,
     resolvePendingMessageHeightBearingChrome,
 } from '@/components/sessions/pending/pendingMessageVisualState';
-import { shouldClipPendingQueueContent } from '@/components/sessions/pending/pendingQueueContentClipping';
+import {
+    PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX,
+    PENDING_QUEUE_SCROLL_PADDING_TOP_PX,
+    resolvePendingMessageGapPx,
+    resolvePendingQueueScrollMaxHeightPx,
+} from '@/components/sessions/pending/pendingQueueContentClipping';
+import { resolveTranscriptUtteranceIdentity } from '@/components/sessions/transcript/motion/transcriptFreshnessGate';
+import { resolveMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
+import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { findStructuredMessageRenderer } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
+import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -55,6 +67,14 @@ import type { TranscriptRowShellItem } from './transcriptRowShellSignature';
 export function estimateTranscriptRowHeightFromCache(params: Readonly<{
     reconciler: TranscriptMeasurementReconciler;
     signature: TranscriptItemHeightValiditySignature;
+    /**
+     * The user utterance this row paints, when the row is the COMMITTED twin of a just-retired
+     * pending row (`resolveCommittedUtteranceIdentityForEstimate`). Serves the bubble height the
+     * pending block already measured for that same utterance, so the crossover frame is placed from
+     * a real measurement instead of the wrap heuristic — see
+     * `TranscriptMeasurementReconciler.recordPaintedUtteranceBubbleHeight`.
+     */
+    committedUtteranceIdentity?: string | null;
 }>): number | undefined {
     const reservation = params.reconciler.resolveReservation(params.signature);
     if (reservation?.kind === 'exact') return reservation.minHeight;
@@ -63,7 +83,88 @@ export function estimateTranscriptRowHeightFromCache(params: Readonly<{
     // cannot silently diverge between the reservation producer and this estimate consumer.
     if (TRANSCRIPT_GROWING_ROW_STATES.has(params.signature.rowState)) return undefined;
     if (reservation) return reservation.minHeight;
-    return params.reconciler.resolveLastMeasuredHeight(params.signature);
+    const lastMeasured = params.reconciler.resolveLastMeasuredHeight(params.signature);
+    if (lastMeasured !== undefined) return lastMeasured;
+    // Ordered strictly after the row's OWN measurement and strictly before the content heuristic:
+    // the carried height is a real measurement of the same painted bubble, so it beats a
+    // prediction, but it is a measurement of a DIFFERENT row, so it never overrides this row's own.
+    return resolveCarriedUtteranceRowHeightPx(params);
+}
+
+/**
+ * `userMessageWrapper.paddingBottom` — the chrome the committed row adds around a bubble the pending
+ * block already painted and measured (`MessageView.tsx`). Everything else in
+ * {@link COMMITTED_USER_TEXT_CHROME_PX} is the bubble's own padding, which is inside that
+ * measurement.
+ *
+ * It is the only such chrome ONLY for a plain text send. The committed bubble can also paint a
+ * structured card, inline images, unavailable-media items, an attachments row, a structured
+ * references row and a discarded label — none of which the pending bubble renders. Those rows are
+ * excluded from the carry at the selector rather than modelled here; see
+ * {@link resolveCommittedUtteranceIdentityForEstimate}.
+ */
+const COMMITTED_USER_WRAPPER_PADDING_BOTTOM_PX = 22;
+
+function resolveCarriedUtteranceRowHeightPx(params: Readonly<{
+    reconciler: TranscriptMeasurementReconciler;
+    signature: TranscriptItemHeightValiditySignature;
+    committedUtteranceIdentity?: string | null;
+}>): number | undefined {
+    const identity = params.committedUtteranceIdentity;
+    if (typeof identity !== 'string' || identity.length === 0) return undefined;
+    const bubbleHeightPx = params.reconciler.resolvePaintedUtteranceBubbleHeight({
+        identity,
+        widthBucket: params.signature.widthBucket,
+        fontScaleKey: params.signature.fontScaleKey,
+    });
+    if (bubbleHeightPx === undefined) return undefined;
+    return bubbleHeightPx + COMMITTED_USER_WRAPPER_PADDING_BOTTOM_PX;
+}
+
+/**
+ * Does the committed row paint chrome AROUND the bubble that the pending block never rendered?
+ *
+ * The carry is only valid while the two chains paint the same box. `MessageView`'s user-text branch
+ * can add a structured card, inline images, unavailable-media items, an attachments row and a
+ * structured references row inside the same bubble — and a structured-only send paints a CARD with
+ * no bubble at all. The pending block renders none of them, so its measurement would undershoot by
+ * the whole media/reference block (~30-170px each).
+ *
+ * Every input here is read through the module that OWNS it — the media meta parser, the references
+ * resolver, the structured registry — rather than re-derived, so a row that starts painting one of
+ * them drops out of the carry automatically instead of being served a stale shape.
+ */
+function committedRowPaintsChromeBeyondTheBubble(
+    message: Extract<Message, { kind: 'user-text' }>,
+): boolean {
+    const media = parseSessionMediaMessageMeta(message.meta);
+    if (media.inlineImages.length > 0 || media.unavailableMedia.length > 0) return true;
+    if (media.legacyAttachments !== undefined && media.legacyAttachments !== null) return true;
+    const envelope = parseHappierMetaEnvelope(message.meta);
+    if (envelope !== null && findStructuredMessageRenderer(envelope.kind) !== null) return true;
+    const text = message.displayText ?? message.text ?? '';
+    return resolveMessageStructuredReferences({ meta: message.meta, text }).length > 0;
+}
+
+/**
+ * The utterance identity a COMMITTED row may inherit a painted bubble height from, or `null`.
+ *
+ * Only a `message` row qualifies: `useTranscriptItemsPipeline` decomposes every `turn` and
+ * `tool-calls-group` item into unit rows before `listData`, so a committed user utterance reaches
+ * the renderer as its own `message` row, and that row's height IS the bubble plus one wrapper
+ * padding. A turn or unit row wraps other content the carried bubble says nothing about — and so
+ * does a bubble carrying media, references or a structured card, which is why those fall back to
+ * the content heuristic instead of being served a measurement of a different shape.
+ */
+export function resolveCommittedUtteranceIdentityForEstimate(
+    item: TranscriptRowShellItem,
+    getMessageById: (messageId: string) => Message | null,
+): string | null {
+    if (item.kind !== 'message') return null;
+    const message = getMessageById(item.messageId);
+    if (message?.kind !== 'user-text') return null;
+    if (committedRowPaintsChromeBeyondTheBubble(message)) return null;
+    return resolveTranscriptUtteranceIdentity(message.localId);
 }
 
 // Conservative text-flow constants for rows never measured in this app run. Estimates
@@ -206,22 +307,37 @@ const ESTIMATE_TOOL_CARD_ROW_PX = 328;
  * notices, and the discarded section. They sit INSIDE the capped scroll box, so for any queue big
  * enough to reach the cap they cannot move the answer at all.
  *
- * D (2026-08-01): the cap is now conditional. A block holding exactly one queued utterance is the
- * SEND crossover and does not clip, so this estimate must follow the same rule from the same owner
- * — see `shouldClipPendingQueueContent`. The per-message line clamp is gated by that same
- * predicate, which is why it has never needed modelling here: it is only ever active for a queue
- * whose content already exceeds the cap.
+ * 2026-08-18: the per-message chrome is now composed from the block's own owner
+ * (`pendingQueueContentClipping`) rather than restated here — the bubble padding, the inter-row gap
+ * (zero under the LAST row) and the scroll cap all come from the same decisions the block paints
+ * from. The per-message line clamp still needs no modelling: it is only ever active for a BACKLOG
+ * row, and any queue with a backlog already exceeds the cap that truncates this sum.
  */
 const PENDING_QUEUE_HEADER_ROW_PX = 14.625;
 /** Header grows a second 12px line when the "Discarded (n)" subtitle is present (`gap: 2`). */
 const PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX = 31;
-const PENDING_QUEUE_SCROLL_PADDING_TOP_PX = 6;
-/** Bubble padding 16 + wrapper bottom padding 8 + always-visible action row 18 + its top margin 2. */
-const PENDING_QUEUE_MESSAGE_CHROME_PX = 44;
-/** `blockedDeliveryNotice`: margins 4+2, paddingVertical 3 ×2, border 1 ×2, 14px text line. */
-const PENDING_QUEUE_MESSAGE_NOTICE_PX = 26;
-/** Same notice with the inline retry `Pressable` (`minHeight: 24`) instead of a text line. */
-const PENDING_QUEUE_MESSAGE_RETRY_NOTICE_PX = 36;
+
+/**
+ * The in-flow action row under a pending bubble: `messageActionContainer.marginTop` 2 +
+ * `IconAction` `padding: 2` ×2 + `Icon size={14}` = 20.
+ *
+ * CONDITIONAL, and that is the correction (2026-08-18). This term used to be folded unconditionally
+ * into the per-message chrome as "always-visible action row 18 + its top margin 2",
+ * but `PendingMessagesTranscriptBlock` paints it as `isWeb ? <actions/> : canReorder ? <handle/> :
+ * null` — so a lone pending message on native paints NOTHING there. The estimate was 20px over the
+ * painted row for every native send (a gap under the tail) and, mirrored, 20px under a web row that
+ * is showing a wait notice. Device confirmation: back-solving a 569-char send's steady pending
+ * height gives `44.625 + 24L`, i.e. the model WITHOUT this term
+ * (`.project/reviews/2026-08-18-send-crossover-native/DEVICE-MEASUREMENT.md`).
+ *
+ * `paintsPendingMessageActionRow` is the block's own predicate, consumed here rather than restated,
+ * so the paint and the estimate cannot diverge again.
+ */
+const PENDING_QUEUE_MESSAGE_ACTION_ROW_PX = 20;
+/** `blockedDeliveryNotice`: margins 4+2, paddingVertical 3 ×2, border 1 ×2, 14px text line = 28. */
+const PENDING_QUEUE_MESSAGE_NOTICE_PX = 28;
+/** Same notice with the inline retry `Pressable` (`minHeight: 24`) instead of a text line = 38. */
+const PENDING_QUEUE_MESSAGE_RETRY_NOTICE_PX = 38;
 /** `nonSteerableNotice` — the one notice rendered OUTSIDE (above) the capped scroll box. */
 const PENDING_QUEUE_TERMINAL_DRAFT_NOTICE_PX = 40;
 /** Discarded section: container margin 4, title 6+14.3, subtitle 4+14.3, list margin 10. */
@@ -232,25 +348,49 @@ const PENDING_QUEUE_DISCARDED_LABEL_PX = 20;
 const PENDING_QUEUE_DISCARDED_REASON_PX = 17;
 const PENDING_QUEUE_SCROLL_MAX_HEIGHT_PX = settingsDefaults.transcriptPendingQueueMaxHeightPx;
 
-function estimatePendingQueueTextPx(message: Pick<PendingMessage, 'text' | 'displayText'>): number {
+/** `transcriptPendingMessageCollapsedLines` account default — the clamp a tombstone always paints. */
+const PENDING_QUEUE_COLLAPSED_LINES = settingsDefaults.transcriptPendingMessageCollapsedLines;
+
+function estimatePendingQueueTextPx(
+    message: Pick<PendingMessage, 'text' | 'displayText'>,
+    maxLines?: number,
+): number {
     // `displayText ?? text` is the string the block renders (`PendingMessagesTranscriptBlock`); a
     // message with a distinct display form is otherwise sized from text it never paints.
     const rendered = (message.displayText ?? message.text) ?? '';
-    return estimateWrappedLineCount(rendered) * transcriptMarkdownTextStyle.lineHeight;
+    const lines = estimateWrappedLineCount(rendered);
+    return (maxLines === undefined ? lines : Math.min(lines, maxLines)) * transcriptMarkdownTextStyle.lineHeight;
 }
 
-function estimatePendingQueueRowPx(item: Extract<TranscriptRowShellItem, { kind: 'pending-queue' }>): number {
+function estimatePendingQueueRowPx(
+    item: Extract<TranscriptRowShellItem, { kind: 'pending-queue' }>,
+    platformIsWeb: boolean,
+): number {
     let scrollContentPx = PENDING_QUEUE_SCROLL_PADDING_TOP_PX;
     let hasTerminalDraftNotice = false;
-    for (const pendingMessage of item.pendingMessages) {
-        scrollContentPx += PENDING_QUEUE_MESSAGE_CHROME_PX + estimatePendingQueueTextPx(pendingMessage);
+    // The block's own predicate for the reorder handle, consumed rather than restated.
+    const actionRowPx = paintsPendingMessageActionRow({
+        platformIsWeb,
+        canReorderPendingMessages: item.pendingMessages.length > 1
+            && !item.pendingMessages.some(isPendingMessageProviderEffectPossible),
+    })
+        ? PENDING_QUEUE_MESSAGE_ACTION_ROW_PX
+        : 0;
+    for (const [index, pendingMessage] of item.pendingMessages.entries()) {
+        scrollContentPx += PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX
+            + resolvePendingMessageGapPx({
+                isLastInScrollContent: index === item.pendingMessages.length - 1 && item.discardedMessages.length === 0,
+            })
+            + actionRowPx
+            + estimatePendingQueueTextPx(pendingMessage);
         // The canonical owner of what chrome a pending row paints. Its session-runtime inputs are
         // not reachable from a pure size estimate, so a `queued_behind_turn` wait notice is NOT
         // modelled — it is absorbed by the cap for any queue that reaches it, and superseded by the
         // row's own onLayout otherwise.
-        // D (2026-08-01) RESIDUAL, stated rather than engineered around: an UNCLIPPED single
-        // utterance no longer has a cap to absorb that notice, so a message queued behind an active
-        // turn estimates 26px short until its own onLayout lands. It is one frame in one
+        // RESIDUAL, stated rather than engineered around: a head under its own bound has no cap to
+        // absorb that notice, so a message queued behind an active turn estimates 20px short
+        // (`queuedReasonNotice`: marginTop 4 + 14px line + marginBottom 2) until its own onLayout
+        // lands, and only while it paints fewer lines than the bound. It is one frame in one
         // runtime-derived state, and `transcriptRowShellSignature` deliberately does not key on that
         // state, so the row's measured height is never deleted because of it. Threading session
         // runtime into a pure size estimate to model a notice onLayout corrects in the same commit
@@ -277,9 +417,16 @@ function estimatePendingQueueRowPx(item: Extract<TranscriptRowShellItem, { kind:
     }
     if (item.discardedMessages.length > 0) {
         scrollContentPx += PENDING_QUEUE_DISCARDED_SECTION_PX;
-        for (const discardedMessage of item.discardedMessages) {
-            scrollContentPx += PENDING_QUEUE_MESSAGE_CHROME_PX
-                + estimatePendingQueueTextPx(discardedMessage)
+        for (const [discardedIndex, discardedMessage] of item.discardedMessages.entries()) {
+            scrollContentPx += PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX
+                + resolvePendingMessageGapPx({
+                    isLastInScrollContent: discardedIndex === item.discardedMessages.length - 1,
+                })
+                // A tombstone is ALWAYS clamped — the block renders it through a plain `Text` with
+                // `numberOfLines={collapsedLines}` and no expand path — so its text term is bounded
+                // where a pending row's is not.
+                + estimatePendingQueueTextPx(discardedMessage, PENDING_QUEUE_COLLAPSED_LINES)
+                + (platformIsWeb ? PENDING_QUEUE_MESSAGE_ACTION_ROW_PX : 0)
                 + PENDING_QUEUE_DISCARDED_LABEL_PX
                 + (discardedMessage.discardedReason ? PENDING_QUEUE_DISCARDED_REASON_PX : 0);
         }
@@ -288,19 +435,18 @@ function estimatePendingQueueRowPx(item: Extract<TranscriptRowShellItem, { kind:
         ? PENDING_QUEUE_HEADER_WITH_SUBTITLE_PX
         : PENDING_QUEUE_HEADER_ROW_PX;
     // NOT a ceiling on a position-bearing value (see C-1 above): this is the block's OWN painted
-    // bound, and only when the block actually clips (`shouldClipPendingQueueContent` is the single
-    // owner of that decision — a disagreement with the renderer is a literal gap or overlap under
-    // the tail). The `ScrollView` carries `maxHeight`, so content past it is scrolled, never
-    // painted. The account default is modelled because a pure estimate cannot read the setting; a
-    // user who raises `transcriptPendingQueueMaxHeightPx` (or expands the queue, which is a
-    // post-measurement interaction) undershoots until that row's next onLayout, instead of
-    // overshooting without end.
-    const scrollBoxPx = shouldClipPendingQueueContent({
+    // bound (`resolvePendingQueueScrollMaxHeightPx` is the single owner of it — a disagreement with
+    // the renderer is a literal gap or overlap under the tail). The `ScrollView` carries
+    // `maxHeight`, so content past it is scrolled, never painted. The account default is modelled
+    // because a pure estimate cannot read the setting; a user who raises
+    // `transcriptPendingQueueMaxHeightPx` (or expands the queue, which is a post-measurement
+    // interaction) undershoots until that row's next onLayout, instead of overshooting without end.
+    const scrollBoxPx = Math.min(scrollContentPx, resolvePendingQueueScrollMaxHeightPx({
         pendingCount: item.pendingMessages.length,
         discardedCount: item.discardedMessages.length,
-    })
-        ? Math.min(scrollContentPx, PENDING_QUEUE_SCROLL_MAX_HEIGHT_PX)
-        : scrollContentPx;
+        queueMaxHeightPx: PENDING_QUEUE_SCROLL_MAX_HEIGHT_PX,
+        lineHeightPx: transcriptMarkdownTextStyle.lineHeight,
+    }));
     return headerPx + (hasTerminalDraftNotice ? PENDING_QUEUE_TERMINAL_DRAFT_NOTICE_PX : 0) + scrollBoxPx;
 }
 
@@ -357,7 +503,7 @@ function resolveToolGroupUnitRowHeights(
  * error; the wrap heuristic below it is, and that one stays flat until it can be device-calibrated.
  */
 /** `userMessageWrapper.paddingBottom` 22 + `userMessageBubble.paddingVertical` 8 x 2 (`MessageView.tsx`). */
-const COMMITTED_USER_TEXT_CHROME_PX = 22 + 8 * 2;
+const COMMITTED_USER_TEXT_CHROME_PX = COMMITTED_USER_WRAPPER_PADDING_BOTTOM_PX + 8 * 2;
 /** `agentMessageContainer.paddingBottom` 22 (`MessageView.tsx`) — the reply paints no bubble. */
 const COMMITTED_AGENT_TEXT_CHROME_PX = 22;
 
@@ -411,6 +557,13 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
      * default-when-omitted parameter on this function ended up exercised only by tests.
      */
     toolCallsGroupChromeVariant: ToolCallsGroupChromeVariant;
+    /**
+     * Whether this client paints the web pending-message chrome. REQUIRED for the same reason
+     * `toolCallsGroupChromeVariant` is: the pending row's in-flow action row is web-only for a lone
+     * message (`paintsPendingMessageActionRow`), and a defaulted parameter is how the previous
+     * 20px estimate/paint split-brain stayed green.
+     */
+    platformIsWeb: boolean;
 }>): number | undefined {
     const { item, toolCallsGroupChromeVariant } = params;
     const unitRowHeights = resolveToolGroupUnitRowHeights(toolCallsGroupChromeVariant);
@@ -418,7 +571,7 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
         return estimateMessagePx(params.getMessageById(item.messageId), toolCallsGroupChromeVariant);
     }
     if (item.kind === 'pending-queue') {
-        return estimatePendingQueueRowPx(item);
+        return estimatePendingQueueRowPx(item, params.platformIsWeb);
     }
     // Per-unit rows, one cap each. They are the ONLY tool-group shape this estimate can be asked
     // about: `useTranscriptItemsPipeline` runs `buildTranscriptTurnUnits` unconditionally over

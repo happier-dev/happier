@@ -4,6 +4,7 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import {
     getPendingMessageVisualState,
+    paintsPendingMessageActionRow,
     resolvePendingMessageHeightBearingChrome,
     type PendingMessageVisualStateKind,
 } from './pendingMessageVisualState';
@@ -477,5 +478,24 @@ describe('resolvePendingMessageHeightBearingChrome', () => {
             iconName: 'clock',
             deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryBlockedReasons.unknown', isUnknown: true },
         })).toBe('blocked-notice');
+    });
+});
+
+/**
+ * Height-bearing, and the reason the pending row's size estimate was 20px over what native painted
+ * on every send: `PendingMessagesTranscriptBlock` renders this as
+ * `isWeb ? <copy/send> : canReorder ? <drag handle> : null`, and a LONE pending message on native —
+ * the shape a send creates — takes neither branch. Both the block and
+ * `estimateTranscriptRowHeightFromCache` read this predicate, so they cannot drift again.
+ */
+describe('pending message in-flow action row', () => {
+    it('is painted on web whether or not the queue can be reordered', () => {
+        expect(paintsPendingMessageActionRow({ platformIsWeb: true, canReorderPendingMessages: false })).toBe(true);
+        expect(paintsPendingMessageActionRow({ platformIsWeb: true, canReorderPendingMessages: true })).toBe(true);
+    });
+
+    it('is painted on native only when the queue can be reordered', () => {
+        expect(paintsPendingMessageActionRow({ platformIsWeb: false, canReorderPendingMessages: true })).toBe(true);
+        expect(paintsPendingMessageActionRow({ platformIsWeb: false, canReorderPendingMessages: false })).toBe(false);
     });
 });

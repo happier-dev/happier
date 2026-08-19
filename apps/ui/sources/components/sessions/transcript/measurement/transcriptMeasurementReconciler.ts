@@ -102,6 +102,46 @@ export type TranscriptMeasurementReconciler = Readonly<{
     }>): void;
 
     /**
+     * R2c. The painted height of ONE user utterance's message bubble, carried ACROSS the two rows
+     * that paint it.
+     *
+     * A send shows the same utterance twice under two different Legend item keys — inside the
+     * `pending-queue` row, then as the committed `msg:<id>` row that replaces it. The committed key
+     * has never been measured, so without this it is placed from
+     * `estimateTranscriptRowHeightFromContent`'s flat wrap heuristic, which undershoots by whole
+     * painted lines (72 modelled chars per line against ~43 really painted at a 402pt viewport).
+     * The transcript is bottom-pinned, so that deficit moves the whole list DOWN on the crossover
+     * frame and back UP one or more frames later when the row's own onLayout lands — measured on
+     * device at 163px for a 236-char send and 379px for a 569-char one
+     * (`.project/reviews/2026-08-18-send-crossover-native/DEVICE-MEASUREMENT.md`).
+     *
+     * The app already holds the answer: the pending block painted that exact bubble, at that exact
+     * width, milliseconds earlier. This carries THAT measurement — not a prediction — so the
+     * committed row's first commit is placed from a real height.
+     *
+     * It is the BUBBLE, never the row: the two presentations wrap different chrome around the same
+     * bubble (the block adds its header, scroll padding and, on web, an action row; the committed
+     * row adds `userMessageWrapper.paddingBottom`), and only the bubble is common to both. Each
+     * consumer composes its own chrome around this value, so neither can encode the other's.
+     *
+     * Geometry-scoped exactly like a floor (`widthBucket|fontScaleKey`): the same utterance at a
+     * different width is a different painted height. Dropped on session change.
+     */
+    recordPaintedUtteranceBubbleHeight(input: Readonly<{
+        identity: string;
+        bubbleHeightPx: number;
+        widthBucket: string;
+        fontScaleKey: string;
+    }>): void;
+
+    /** The carried bubble height for `identity` at this geometry, or `undefined`. */
+    resolvePaintedUtteranceBubbleHeight(input: Readonly<{
+        identity: string;
+        widthBucket: string;
+        fontScaleKey: string;
+    }>): number | undefined;
+
+    /**
      * R3. Coalesced, transaction-gated decision: may the whole-list cache be cleared this commit?
      * Supply a signature pair (the structural delta is computed) OR an explicit `structural: true`
      * for a discrete structural action (e.g. a direct expand/collapse) where no pair is available.
@@ -165,6 +205,16 @@ function isValidHeight(value: number): boolean {
 
 function buildFloorKey(signature: TranscriptItemHeightValiditySignature): string {
     return `${signature.itemId.length}:${signature.itemId}|${signature.widthBucket}|${signature.fontScaleKey}`;
+}
+
+/**
+ * Only utterances still crossing over are ever read back, so this bound exists to stop a long-lived
+ * session accumulating one entry per send, not to express a policy about which sends matter.
+ */
+const MAX_PAINTED_UTTERANCE_BUBBLE_HEIGHTS = 32;
+
+function buildPaintedUtteranceKey(identity: string, widthBucket: string, fontScaleKey: string): string {
+    return `${identity.length}:${identity}|${widthBucket}|${fontScaleKey}`;
 }
 
 /**
@@ -284,6 +334,14 @@ export function createTranscriptMeasurementReconciler(
     // (taking the new, possibly smaller, height) rather than reserving the stale pre-collapse height.
     const floorsByKey = new Map<string, FloorState>();
 
+    /**
+     * Painted bubble heights carried across the pending→committed crossover, keyed by
+     * `identity|widthBucket|fontScaleKey`. Bounded and insertion-ordered: only the utterances
+     * currently in flight can ever be read (a committed row is measured on its first layout and
+     * never consults this again), so the cap is a leak guard, not a policy.
+     */
+    const paintedUtteranceBubbleHeights = new Map<string, number>();
+
     let lastClearedCommitToken: number | null = null;
 
     function resolveFloorReservation(
@@ -369,6 +427,29 @@ export function createTranscriptMeasurementReconciler(
             });
         },
 
+        recordPaintedUtteranceBubbleHeight(input) {
+            const identity = String(input.identity ?? '').trim();
+            if (identity.length === 0 || !isValidHeight(input.bubbleHeightPx)) return;
+            const key = buildPaintedUtteranceKey(identity, input.widthBucket, input.fontScaleKey);
+            // Re-insert so the eviction order tracks recency, not first paint: a queue that keeps
+            // re-measuring one row must not push the utterance a later send is about to commit out.
+            paintedUtteranceBubbleHeights.delete(key);
+            paintedUtteranceBubbleHeights.set(key, Math.trunc(input.bubbleHeightPx));
+            while (paintedUtteranceBubbleHeights.size > MAX_PAINTED_UTTERANCE_BUBBLE_HEIGHTS) {
+                const oldest = paintedUtteranceBubbleHeights.keys().next();
+                if (oldest.done) break;
+                paintedUtteranceBubbleHeights.delete(oldest.value);
+            }
+        },
+
+        resolvePaintedUtteranceBubbleHeight(input) {
+            const identity = String(input.identity ?? '').trim();
+            if (identity.length === 0) return undefined;
+            return paintedUtteranceBubbleHeights.get(
+                buildPaintedUtteranceKey(identity, input.widthBucket, input.fontScaleKey),
+            );
+        },
+
         resetReservationForStructuralChange(input) {
             const floorKey = buildFloorKey(input.signature);
             // Mark reset-pending (null) rather than deleting: a known-but-reset item re-seeds its
@@ -406,6 +487,7 @@ export function createTranscriptMeasurementReconciler(
             // expansion), so a stale entry can never mis-apply, and a re-entered row reserves its real
             // height on warm open. Clearing it here would defeat warm-open reservation.
             floorsByKey.clear();
+            paintedUtteranceBubbleHeights.clear();
             lastClearedCommitToken = null;
         },
     };
