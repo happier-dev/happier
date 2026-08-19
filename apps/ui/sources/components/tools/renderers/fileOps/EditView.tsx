@@ -10,44 +10,55 @@ import { Text } from '@/components/ui/text/Text';
 
 const TEXT_ARROW = '→';
 
-function extractEditStrings(input: any): { old: string; next: string; filePath: string | null } {
-    // 1) ACP nested format: tool.input.toolCall.content[0]
-    if (input?.toolCall?.content?.[0]) {
-        const content = input.toolCall.content[0];
-        return {
-            old: content.oldText || content.old_string || '',
-            next: content.newText || content.new_string || '',
-            filePath: typeof content.file_path === 'string'
-                ? content.file_path
-                : typeof content.filePath === 'string'
-                    ? content.filePath
-                    : null,
-        };
-    }
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
 
-    // 2) ACP array format: tool.input.input[0]
-    if (Array.isArray(input?.input) && input.input[0]) {
-        const content = input.input[0];
-        return {
-            old: content.oldText || content.old_string || '',
-            next: content.newText || content.new_string || '',
-            filePath: typeof content.file_path === 'string'
-                ? content.file_path
-                : typeof content.filePath === 'string'
-                    ? content.filePath
-                    : null,
-        };
+function extractDiffItem(value: unknown): Record<string, unknown> | null {
+    const record = asRecord(Array.isArray(value) ? value[0] : value);
+    if (!record) return null;
+    if (record.type === 'diff' || 'oldText' in record || 'old_string' in record || 'newText' in record || 'new_string' in record) {
+        return record;
     }
+    return null;
+}
 
-    // 3) Flat formats
+function extractResultDiff(result: unknown): Record<string, unknown> | null {
+    if (Array.isArray(result)) return extractDiffItem(result);
+    const record = asRecord(result);
+    if (!record) return null;
+    return extractDiffItem(record)
+        ?? extractDiffItem(record.output)
+        ?? extractDiffItem(record.content)
+        ?? extractDiffItem(record.result)
+        ?? extractDiffItem(asRecord(record._raw)?.output);
+}
+
+function readString(record: Record<string, unknown> | null, keys: readonly string[]): string | null {
+    for (const key of keys) {
+        if (typeof record?.[key] === 'string') return record[key];
+    }
+    return null;
+}
+
+function extractEditStrings(input: unknown, result: unknown): { old: string; next: string; filePath: string | null } {
+    const inputRecord = asRecord(input);
+    const toolCallRecord = asRecord(inputRecord?.toolCall);
+    const inputDiff = extractDiffItem(toolCallRecord?.content)
+        ?? extractDiffItem(inputRecord?.input)
+        ?? inputRecord;
+    const resultDiff = extractResultDiff(result);
     return {
-        old: input?.oldText || input?.old_string || '',
-        next: input?.newText || input?.new_string || '',
-        filePath: typeof input?.file_path === 'string'
-            ? input.file_path
-            : typeof input?.filePath === 'string'
-                ? input.filePath
-                : null,
+        old: readString(inputDiff, ['oldText', 'old_string'])
+            ?? readString(resultDiff, ['oldText', 'old_string'])
+            ?? '',
+        next: readString(inputDiff, ['newText', 'new_string'])
+            ?? readString(resultDiff, ['newText', 'new_string'])
+            ?? '',
+        filePath: readString(inputDiff, ['path', 'file_path', 'filePath'])
+            ?? readString(resultDiff, ['path', 'file_path', 'filePath']),
     };
 }
 
@@ -66,7 +77,7 @@ function truncateOneLine(text: string, maxChars: number): string {
 export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     
-    const extracted = extractEditStrings(tool.input);
+    const extracted = extractEditStrings(tool.input, tool.result);
     const oldString = trimIdent(extracted.old || '');
     const newString = trimIdent(extracted.next || '');
     const filePath = extracted.filePath;

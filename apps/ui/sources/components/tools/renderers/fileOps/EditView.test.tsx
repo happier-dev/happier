@@ -24,6 +24,35 @@ installFileOpsRendererCommonModuleMocks({
 });
 
 describe('EditView', () => {
+    it('renders a late ACP diff carried by the completed tool result', async () => {
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
+        const { EditView } = await import('./EditView');
+
+        const tool = makeToolCall({
+            name: 'Edit',
+            state: 'completed',
+            input: { file_path: '/tmp/input.ts' },
+            result: {
+                output: [{
+                    type: 'diff',
+                    path: '/tmp/late.ts',
+                    oldText: 'const value = 1;',
+                    newText: 'const value = 2;',
+                }],
+            },
+        });
+
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
+
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                filePath: '/tmp/input.ts',
+                oldText: 'const value = 1;',
+                newText: 'const value = 2;',
+            }),
+        );
+    });
+
     it('truncates long edit strings by default', async () => {
         fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');

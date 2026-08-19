@@ -6,6 +6,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 const TEXT_ELLIPSIS = '…';
 
@@ -42,7 +43,13 @@ function truncateLines(text: string, maxLines: number): { text: string; truncate
 export const ReadView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
     const extracted = extractReadContent(tool.result);
-    if (!extracted) return null;
+    if (!extracted) {
+        return (
+            <ToolSectionView>
+                <Text style={styles.unavailable}>{t('tools.workflowActivityView.unavailable')}</Text>
+            </ToolSectionView>
+        );
+    }
 
     // Protect the UI from extremely large reads; keep `_raw` for debugging.
     const maxLines = detailLevel === 'full' ? 400 : 20;
@@ -68,5 +75,8 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
+    },
+    unavailable: {
+        color: theme.colors.text.secondary,
     },
 }));
