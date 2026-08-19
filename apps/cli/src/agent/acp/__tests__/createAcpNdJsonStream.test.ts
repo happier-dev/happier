@@ -74,4 +74,41 @@ describe('createAcpNdJsonStream', () => {
       '{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}\n',
     ]);
   });
+
+  it('reports transport custody only after the underlying write succeeds', async () => {
+    let releaseWrite!: () => void;
+    const writeAccepted = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const observed: unknown[] = [];
+    const output = new WritableStream<Uint8Array>({
+      async write() {
+        await writeAccepted;
+      },
+    });
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const stream = createAcpNdJsonStream(output, input, {
+      onMessageWritten: (message) => {
+        observed.push(message);
+      },
+    });
+    const message = {
+      jsonrpc: '2.0' as const,
+      id: 2,
+      method: 'session/prompt',
+      params: { sessionId: 'cursor-session', prompt: [] },
+    };
+
+    const write = stream.writable.getWriter().write(message);
+    await Promise.resolve();
+    expect(observed).toEqual([]);
+
+    releaseWrite();
+    await write;
+    expect(observed).toEqual([message]);
+  });
 });

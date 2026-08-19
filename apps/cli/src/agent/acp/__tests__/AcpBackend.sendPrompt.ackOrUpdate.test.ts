@@ -340,13 +340,10 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
     });
   }, 20_000);
 
-  it('does not apply a generic prompt liveness timeout by default', async () => {
+  it('accepts transport custody without waiting for a prompt response by default', async () => {
     await withTempDir('happier-acp-sendprompt-no-default-liveness-timeout-', async (dir) => {
       const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
       let backendForCleanup: AcpBackend | undefined;
-      let sendPromptSettled = false;
-      let sendPromptError: unknown;
-
       try {
         const backend = new AcpBackend({
           agentName: 'test',
@@ -358,28 +355,11 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         backendForCleanup = backend;
 
         const started = await backend.startSession();
-        vi.useFakeTimers();
-        const sendPromptPromise = backend
-          .sendPrompt(started.sessionId, 'hi')
-          .then(
-            () => {
-              sendPromptSettled = true;
-            },
-            (error) => {
-              sendPromptSettled = true;
-              sendPromptError = error;
-            },
-          );
-
-        await vi.advanceTimersByTimeAsync(31_000);
-        expect(sendPromptSettled).toBe(false);
-        expect(sendPromptError).toBeUndefined();
-
-        vi.useRealTimers();
-        await backend.dispose().catch(() => {});
-        void sendPromptPromise;
+        await expect(Promise.race([
+          backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
+          delay(500).then(() => 'timeout' as const),
+        ])).resolves.toBe('resolved');
       } finally {
-        vi.useRealTimers();
         await backendForCleanup?.dispose().catch(() => {});
       }
     });
@@ -429,7 +409,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
     });
   }, 20_000);
 
-  it('rejects when neither a prompt ACK nor a first session/update arrives', async () => {
+  it('does not let the legacy liveness timeout overturn proven transport custody', async () => {
     await withTempDir('happier-acp-sendprompt-no-ack-no-update-', async (dir) => {
       const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
       let backendForCleanup: AcpBackend | undefined;
@@ -447,7 +427,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         backendForCleanup = backend;
 
         const started = await backend.startSession();
-        await expect(backend.sendPrompt(started.sessionId, 'hi')).rejects.toThrow(/prompt ack|first session\/update|liveness/i);
+        await expect(backend.sendPrompt(started.sessionId, 'hi')).resolves.toBeUndefined();
       } finally {
         envScope.restore();
         await backendForCleanup?.dispose().catch(() => {});

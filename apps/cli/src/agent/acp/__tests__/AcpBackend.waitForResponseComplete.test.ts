@@ -1130,9 +1130,10 @@ describe('AcpBackend.waitForResponseComplete', () => {
         await backend.sendPrompt(started.sessionId, 'hi');
 
         const waiting = backend.waitForResponseComplete(5_000);
+        const rejected = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
         await backend.cancel(started.sessionId);
 
-        await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+        await rejected;
         expect(readDispatchedPromptTurnGeneration(backend)).toBeNull();
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
@@ -1415,6 +1416,9 @@ describe('AcpBackend.waitForResponseComplete', () => {
 
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'hi');
+        await vi.waitFor(() => {
+          expect(chunks).toEqual(['first update before terminal path']);
+        });
         await backend.cancel(started.sessionId);
 
         await new Promise((resolve) => setTimeout(resolve, 180));

@@ -12,7 +12,7 @@ class DestroyedWriteStream extends Writable {
 }
 
 describe('nodeToWebStreams', () => {
-  it('treats destroyed stdin write errors as benign (resolves write)', async () => {
+  it('rejects a destroyed active stdin write so custody is not fabricated', async () => {
     const stdin = new DestroyedWriteStream();
     stdin.destroy();
 
@@ -20,7 +20,9 @@ describe('nodeToWebStreams', () => {
     const { writable } = nodeToWebStreams(stdin, stdout);
 
     const writer = writable.getWriter();
-    await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+    await expect(writer.write(new Uint8Array([1, 2, 3]))).rejects.toMatchObject({
+      code: 'ERR_STREAM_DESTROYED',
+    });
     writer.releaseLock();
   });
 });

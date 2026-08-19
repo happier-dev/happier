@@ -1236,7 +1236,11 @@ export class AcpBackend implements AgentBackend {
     });
 
     // Create ndJSON stream for ACP
-    const stream = createAcpNdJsonStream(writable, filteredReadable);
+    const stream = createAcpNdJsonStream(writable, filteredReadable, {
+      onMessageWritten: (message) => {
+        this.observeAcpTransportMessageWritten(message);
+      },
+    });
 
     // Create client handlers. The generic connection owner registers these on the public SDK app API.
     const clientHandlers: AcpClientConnectionHandlers = {
@@ -2481,11 +2485,48 @@ export class AcpBackend implements AgentBackend {
   private sawSessionUpdateSincePrompt = false;
   private sawAssistantMessageSincePrompt = false;
   private firstSessionUpdateSincePromptResolver: (() => void) | null = null;
+  private promptTransportWriteWaiters: Array<{
+    sessionId: string;
+    resolve: () => void;
+  }> = [];
   private responseCompletionTimeoutMs: number | null = null;
   private responseCompletionTimeout: NodeJS.Timeout | null = null;
   private responseCompletionTimeoutRejecter: (() => void) | null = null;
   private pendingPromptResponseTurnGeneration: number | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
+
+  private observeAcpTransportMessageWritten(message: unknown): void {
+    const record = asRecord(message);
+    if (record?.method !== 'session/prompt') return;
+    const params = asRecord(record.params);
+    const sessionId = typeof params?.sessionId === 'string' ? params.sessionId : null;
+    if (!sessionId) return;
+    const waiterIndex = this.promptTransportWriteWaiters.findIndex(
+      (waiter) => waiter.sessionId === sessionId,
+    );
+    if (waiterIndex < 0) return;
+    const [waiter] = this.promptTransportWriteWaiters.splice(waiterIndex, 1);
+    waiter?.resolve();
+  }
+
+  private createAcpPromptTransportWriteReceipt(sessionId: string): Readonly<{
+    written: Promise<void>;
+    cancel: () => void;
+  }> {
+    let waiter!: { sessionId: string; resolve: () => void };
+    const written = new Promise<void>((resolve) => {
+      waiter = { sessionId, resolve };
+      this.promptTransportWriteWaiters.push(waiter);
+    });
+    return {
+      written,
+      cancel: () => {
+        const index = this.promptTransportWriteWaiters.indexOf(waiter);
+        if (index >= 0) this.promptTransportWriteWaiters.splice(index, 1);
+      },
+    };
+  }
+
   private clearResponseCompletionTimeout(): void {
     if (this.responseCompletionTimeout) {
       clearTimeout(this.responseCompletionTimeout);
@@ -2905,13 +2946,19 @@ export class AcpBackend implements AgentBackend {
       };
 
       const firstUpdateSentinel = Symbol('acp-first-session-update');
+      const promptTransportWriteSentinel = Symbol('acp-prompt-transport-write');
       const promptLivenessTimeoutSentinel = Symbol('acp-prompt-liveness-timeout');
       const firstSessionUpdateSincePrompt = new Promise<typeof firstUpdateSentinel>((resolve) => {
         this.firstSessionUpdateSincePromptResolver = () => resolve(firstUpdateSentinel);
       });
+      const promptTransportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
+      const promptTransportWrite = promptTransportWriteReceipt.written.then(
+        () => promptTransportWriteSentinel,
+      );
       const promptLivenessTimeoutMs = resolvePromptLivenessTimeoutMs(this.transport);
       let promptLivenessTimeout: ReturnType<typeof setTimeout> | null = null;
       const promptLivenessRaceItems: Array<Promise<unknown>> = [
+        promptTransportWrite,
         firstSessionUpdateSincePrompt,
       ];
       if (promptLivenessTimeoutMs !== null) {
@@ -2956,6 +3003,7 @@ export class AcpBackend implements AgentBackend {
         kind: 'exact_final_response',
         response,
       })).catch((error: unknown) => {
+        promptTransportWriteReceipt.cancel();
         promptErrorHandled = true;
         handlePromptError(error);
         throw toAcpPromptSubmissionPhaseError('effect_may_have_occurred', error);
@@ -2981,25 +3029,51 @@ export class AcpBackend implements AgentBackend {
       }
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
 
+      const scheduleNoUpdateCompletionIfNeeded = (): void => {
+        if (
+          !this.waitingForResponse
+          || this.toolCalls.activeSize > 0
+          || this.sawSessionUpdateSincePrompt
+        ) return;
+        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
+        if (noUpdatesTimeoutMs === null) return;
+        const graceMs = Math.max(100, noUpdatesTimeoutMs);
+        this.postPromptCompletionIdleTimeout = setTimeout(() => {
+          this.postPromptCompletionIdleTimeout = null;
+          if (turnGeneration !== this.turnGeneration) return;
+          if (this.responseCompletionError) return;
+          if (!this.waitingForResponse) return;
+          if (this.sawSessionUpdateSincePrompt) return;
+          if (this.toolCalls.activeSize > 0) return;
+          const exitCode = this.process?.exitCode;
+          if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
+            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
+            return;
+          }
+          const signalCode = this.process?.signalCode;
+          if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
+            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
+            return;
+          }
+          this.emitIdleStatus();
+        }, graceMs);
+      };
+
       if (promptResponseOrFirstUpdate === promptLivenessTimeoutSentinel) {
         this.firstSessionUpdateSincePromptResolver = null;
+        promptTransportWriteReceipt.cancel();
         throw new AcpPromptSubmissionPhaseError(
           'effect_may_have_occurred',
           new Error(`Timeout waiting for prompt ACK or first session/update after ${promptLivenessTimeoutMs ?? 'disabled'}ms`),
         );
       }
 
-      if (promptResponseOrFirstUpdate === firstUpdateSentinel) {
-        if (!this.waitingForResponse || this.isTurnGenerationClosed(turnGeneration)) {
-          return await finalResponseEvidence;
-        }
-        // ACP agents commonly ACK `session/prompt` immediately, but some will start sending
-        // `session/update` traffic before the prompt RPC resolves. Treat the first update as
-        // proof of liveness so higher-level runtimes can proceed to waitForResponseComplete().
+      const observePendingPromptResponse = (): void => {
         this.pendingPromptResponseTurnGeneration = turnGeneration;
         void promptPromise
           .then((res) => {
-            this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+            const completedTurn = this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+            if (!completedTurn) scheduleNoUpdateCompletionIfNeeded();
           })
           .catch(() => {
             if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
@@ -3009,6 +3083,22 @@ export class AcpBackend implements AgentBackend {
             // finalResponseEvidence is the sole prompt-error disposition owner. This
             // branch only clears prompt-response bookkeeping after the raw RPC rejects.
           });
+      };
+
+      if (promptResponseOrFirstUpdate === promptTransportWriteSentinel) {
+        this.firstSessionUpdateSincePromptResolver = null;
+        observePendingPromptResponse();
+        return { kind: 'accepted_without_exact_final_response' };
+      }
+
+      if (promptResponseOrFirstUpdate === firstUpdateSentinel) {
+        if (!this.waitingForResponse || this.isTurnGenerationClosed(turnGeneration)) {
+          return await finalResponseEvidence;
+        }
+        // ACP agents commonly ACK `session/prompt` immediately, but some will start sending
+        // `session/update` traffic before the prompt RPC resolves. Treat the first update as
+        // proof of liveness so higher-level runtimes can proceed to waitForResponseComplete().
+        observePendingPromptResponse();
         return {
           kind: 'effect_may_have_occurred',
           finalResponseEvidence,
@@ -3019,6 +3109,7 @@ export class AcpBackend implements AgentBackend {
       if (this.firstSessionUpdateSincePromptResolver) {
         this.firstSessionUpdateSincePromptResolver = null;
       }
+      promptTransportWriteReceipt.cancel();
 
       const promptFinalEvidence = promptResponseOrFirstUpdate as AcpPromptExactFinalResponseEvidence;
       const promptResponse = promptFinalEvidence.response;
@@ -3042,44 +3133,7 @@ export class AcpBackend implements AgentBackend {
       //
       // Guard: only emit when we are still waiting (i.e. no idle was already observed), there are
       // no active tool calls, and we have *not yet observed any session/update traffic* for this prompt.
-      if (this.waitingForResponse && this.toolCalls.activeSize === 0 && this.sawSessionUpdateSincePrompt === false) {
-        // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
-        // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
-        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
-        if (noUpdatesTimeoutMs === null) {
-          return {
-            kind: 'exact_final_response',
-            response: promptResponse as PromptResponse,
-          };
-        }
-        // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
-        // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
-        // to reduce flakes and avoid incorrectly treating a failed turn as complete.
-        const graceMs = Math.max(100, noUpdatesTimeoutMs);
-
-        this.postPromptCompletionIdleTimeout = setTimeout(() => {
-          this.postPromptCompletionIdleTimeout = null;
-          if (turnGeneration !== this.turnGeneration) return;
-          if (this.responseCompletionError) return;
-          if (!this.waitingForResponse) return;
-          if (this.sawSessionUpdateSincePrompt) return;
-          if (this.toolCalls.activeSize > 0) return;
-          // If the subprocess has already exited (but the exit handler hasn't run yet),
-          // prefer surfacing the exit as a response completion error instead of declaring
-          // the turn complete.
-          const exitCode = this.process?.exitCode;
-          if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
-            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
-            return;
-          }
-          const signalCode = this.process?.signalCode;
-          if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
-            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
-            return;
-          }
-          this.emitIdleStatus();
-        }, graceMs);
-      }
+      scheduleNoUpdateCompletionIfNeeded();
 
       return {
         kind: 'exact_final_response',
@@ -3116,7 +3170,42 @@ export class AcpBackend implements AgentBackend {
 
     // Intentionally do not toggle `waitingForResponse` or tool-call counters here.
     // This method is used for in-flight steering while a primary prompt is already running.
-    await this.connection.peer.prompt(promptRequest);
+    const turnGeneration = this.turnGeneration;
+    const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
+    const transportWriteSentinel = Symbol('acp-steer-transport-write');
+    const promptPromise = this.connection.peer.prompt(promptRequest);
+    let outcome: PromptResponse | typeof transportWriteSentinel;
+    try {
+      outcome = await Promise.race([
+        promptPromise,
+        transportWriteReceipt.written.then(
+          (): typeof transportWriteSentinel => transportWriteSentinel,
+        ),
+      ]);
+    } catch (error) {
+      transportWriteReceipt.cancel();
+      throw error;
+    }
+    if (outcome !== transportWriteSentinel) {
+      transportWriteReceipt.cancel();
+      this.handlePromptResponseForTurn(
+        outcome as PromptResponse,
+        turnGeneration,
+        () => {},
+      );
+      return;
+    }
+    void promptPromise.then(
+      (response) => {
+        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+      },
+      (error: unknown) => {
+        if (this.disposed || !this.waitingForResponse) return;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        this.failPendingResponseWait(normalizedError);
+        this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
+      },
+    );
   }
 
   async setSessionMode(sessionId: SessionId, modeId: string): Promise<void> {

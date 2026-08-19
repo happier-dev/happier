@@ -84,6 +84,65 @@ describe('AcpBackend prompt submission evidence', () => {
     }
   });
 
+  it('returns accepted evidence when the prompt transport write succeeds before the turn response', async () => {
+    const backend = createBackend();
+    let resolvePrompt!: (response: PromptResponse) => void;
+    const promptResponse = new Promise<PromptResponse>((resolve) => {
+      resolvePrompt = resolve;
+    });
+    const internals = backend as unknown as {
+      observeAcpTransportMessageWritten(message: unknown): void;
+    };
+    installPromptPeer(backend, () => {
+      internals.observeAcpTransportMessageWritten({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'session/prompt',
+        params: { sessionId: 'test-session', prompt: [] },
+      });
+      return promptResponse;
+    });
+
+    try {
+      await expect(backend.sendPromptWithEvidence('test-session', 'hello')).resolves.toEqual({
+        kind: 'accepted_without_exact_final_response',
+      });
+    } finally {
+      resolvePrompt({ stopReason: 'end_turn' });
+      await backend.dispose();
+    }
+  });
+
+  it('returns from an in-flight steer when its transport write succeeds', async () => {
+    const backend = createBackend();
+    let resolvePrompt!: (response: PromptResponse) => void;
+    const promptResponse = new Promise<PromptResponse>((resolve) => {
+      resolvePrompt = resolve;
+    });
+    const internals = backend as unknown as {
+      observeAcpTransportMessageWritten(message: unknown): void;
+    };
+    installPromptPeer(backend, () => {
+      internals.observeAcpTransportMessageWritten({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'session/prompt',
+        params: { sessionId: 'test-session', prompt: [] },
+      });
+      return promptResponse;
+    });
+
+    try {
+      await expect(Promise.race([
+        backend.sendSteerPrompt('test-session', 'follow up').then(() => 'written' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 25)),
+      ])).resolves.toBe('written');
+    } finally {
+      resolvePrompt({ stopReason: 'end_turn' });
+      await backend.dispose();
+    }
+  });
+
   it('keeps cancellation pending until the raw prompt RPC settles and rejects an overlapping prompt', async () => {
     const backend = createBackend();
     let settleFirstPrompt!: (response: PromptResponse) => void;
