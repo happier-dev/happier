@@ -81,6 +81,7 @@ model Account {
     SessionPendingMessage  SessionPendingMessage[]
     SessionFolderAssignment SessionFolderAssignment[]
     SessionPin             SessionPin[]
+    SessionAttentionStanding SessionAttentionStanding[]
     SessionOrganizationFolder SessionOrganizationFolder[]
     SessionOrganizationTag SessionOrganizationTag[]
     SessionTagAssignment   SessionTagAssignment[]
@@ -375,6 +376,7 @@ model Session {
     accountChanges    AccountChange[]    @relation("AccountChangeSession")
     sessionFolderAssignments SessionFolderAssignment[]
     sessionPins       SessionPin[]
+    sessionAttentionStandings SessionAttentionStanding[]
     sessionTagAssignments SessionTagAssignment[]
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
@@ -513,6 +515,22 @@ model SessionPin {
 
     @@unique([accountId, sessionId])
     @@index([accountId, sortKey])
+    @@index([sessionId])
+}
+
+model SessionAttentionStanding {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    standing  Boolean
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
+    @@index([accountId, standing])
     @@index([sessionId])
 }
 

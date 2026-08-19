@@ -12,6 +12,7 @@ import {
     type ImportLegacySessionOrganizationResponse,
     type MoveSessionFolderAssignmentsResponse,
     type ReorderSessionOrganizationRequest,
+    type SetSessionAttentionStandingRequest,
     type SetSessionPinRequest,
     type SetSessionTagAssignmentsRequest,
     type UpsertSessionOrganizationLabelRequest,
@@ -36,6 +37,7 @@ import {
 } from "./changes";
 import { hashSessionOrganizationKey } from "./hashKeys";
 import {
+    mapSessionAttentionStanding,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationPin,
@@ -354,6 +356,66 @@ export async function setSessionPin(params: Readonly<{
     request: SetSessionPinRequest;
 }>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
     return await inTx(async (tx) => await setSessionPinInTx(tx, params));
+}
+
+/**
+ * Writes the account-scoped attention standing override for one session.
+ *
+ * `standing: null` clears the override so the account default applies again; that clear path
+ * deliberately skips the visibility guard (mirroring pin removal) so an account can always drop
+ * state it owns, even for a session that is no longer visible or has been archived.
+ */
+export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAttentionStandingRequest;
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+    if (params.request.standing === null) {
+        await tx.sessionAttentionStanding.deleteMany({
+            where: { accountId: params.accountId, sessionId: params.sessionId },
+        });
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId,
+            scope: "attentionStandings",
+            sessionIds: [params.sessionId],
+        });
+        return { standing: null };
+    }
+
+    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
+        accountId: params.accountId,
+        sessionId: params.sessionId,
+    });
+    if (!visible) {
+        return { error: "session-not-found" };
+    }
+
+    const standing = await tx.sessionAttentionStanding.upsert({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        create: {
+            accountId: params.accountId,
+            sessionId: params.sessionId,
+            standing: params.request.standing,
+        },
+        update: { standing: params.request.standing },
+        select: { sessionId: true, standing: true, updatedAt: true },
+    });
+
+    await markSessionOrganizationChanged(tx, {
+        accountId: params.accountId,
+        scope: "attentionStandings",
+        sessionIds: [params.sessionId],
+    });
+
+    return { standing: mapSessionAttentionStanding(standing) };
+}
+
+export async function setSessionAttentionStanding(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAttentionStandingRequest;
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+    return await inTx(async (tx) => await setSessionAttentionStandingInTx(tx, params));
 }
 
 export async function upsertSessionOrganizationFolderInTx(tx: SessionOrganizationTx, params: Readonly<{

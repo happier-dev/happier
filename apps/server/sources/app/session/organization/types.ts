@@ -8,6 +8,12 @@ export interface SessionOrganizationPinRecord {
     readonly pinnedAt: Date;
 }
 
+export interface SessionAttentionStandingRecord {
+    readonly sessionId: string;
+    readonly standing: boolean;
+    readonly updatedAt: Date;
+}
+
 export interface SessionOrganizationFolderRecord {
     readonly id: string;
     readonly folderKey: string;

@@ -17,9 +17,12 @@ import {
   SessionOrganizationContentEnvelopeSchema,
   SessionOrganizationFolderSchema,
   SessionOrganizationLabelSchema,
+  SessionAttentionStandingSchema,
   SessionOrganizationSnapshotRequestSchema,
   SessionOrganizationSnapshotResponseSchema,
   SessionOrganizationTagSchema,
+  SetSessionAttentionStandingRequestSchema,
+  SetSessionAttentionStandingResponseSchema,
   SetSessionFolderAssignmentRequestSchema,
   SetSessionPinRequestSchema,
   SetSessionTagAssignmentsRequestSchema,
@@ -149,6 +152,59 @@ describe('session organization protocol contracts', () => {
     expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: { ...baseSnapshot, version: 1 } }).snapshot.version).toBe(1);
     expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: { ...baseSnapshot, version: 12 } }).snapshot.version).toBe(12);
     expect(SessionOrganizationSnapshotResponseSchema.safeParse({ snapshot: { ...baseSnapshot, schemaVersion: 2, version: 1 } }).success).toBe(false);
+  });
+
+  it('rejects unknown snapshot and response keys', () => {
+    const baseSnapshot = {
+      schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+      version: 3,
+      pins: [],
+      folders: [],
+      folderAssignments: [],
+      tags: [],
+      tagAssignments: [],
+      orderEntries: [],
+      labels: [],
+    };
+
+    expect(SessionOrganizationSnapshotResponseSchema.safeParse({ snapshot: baseSnapshot }).success).toBe(true);
+    expect(SessionOrganizationSnapshotResponseSchema.safeParse({
+      snapshot: { ...baseSnapshot, futureSnapshotField: [{ sessionId: 'session_1' }] },
+    }).success).toBe(false);
+    expect(SessionOrganizationSnapshotResponseSchema.safeParse({
+      snapshot: baseSnapshot,
+      futureResponseField: { cursor: 'abc' },
+    }).success).toBe(false);
+  });
+
+  it('carries attention standings through the snapshot and its set mutation', () => {
+    const request = SessionOrganizationSnapshotRequestSchema.parse({});
+    expect(request.includeAttentionStandings).toBe(false);
+    expect(SessionOrganizationSnapshotRequestSchema.parse({ includeAttentionStandings: true }).includeAttentionStandings).toBe(true);
+
+    const standing = SessionAttentionStandingSchema.parse({ sessionId: 'session_1', standing: true, updatedAt: 10 });
+    expect(standing).toEqual({ sessionId: 'session_1', standing: true, updatedAt: 10 });
+
+    const response = SessionOrganizationSnapshotResponseSchema.parse({
+      snapshot: {
+        schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+        version: 4,
+        pins: [],
+        folders: [],
+        folderAssignments: [],
+        tags: [],
+        tagAssignments: [],
+        orderEntries: [],
+        labels: [],
+        attentionStandings: [standing],
+      },
+    });
+    expect(response.snapshot.attentionStandings).toEqual([standing]);
+
+    expect(SetSessionAttentionStandingRequestSchema.parse({ standing: false })).toEqual({ standing: false });
+    expect(SetSessionAttentionStandingRequestSchema.parse({ standing: null })).toEqual({ standing: null });
+    expect(SetSessionAttentionStandingResponseSchema.parse({ standing: null })).toEqual({ standing: null });
+    expect(SetSessionAttentionStandingResponseSchema.parse({ standing }).standing).toEqual(standing);
   });
 
   it('defines mutations for pins, folder delete defaults, tags, assignments, and ordering', () => {

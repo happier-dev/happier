@@ -7,6 +7,7 @@ import { db } from "@/storage/db";
 import { createV2SessionListVisibilityWhere } from "@/app/api/routes/session/v2SessionListRows";
 import {
     createSessionOrganizationSnapshot,
+    mapSessionAttentionStanding,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationOrderEntry,
@@ -127,6 +128,7 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
         tagAssignments,
         orderEntries,
         labels,
+        attentionStandings,
     ] = await Promise.all([
         db.sessionOrganizationCheckpoint.findUnique({
             where: { accountId: params.accountId },
@@ -211,6 +213,16 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
                 },
             })
             : Promise.resolve([]),
+        params.request.includeAttentionStandings
+            ? db.sessionAttentionStanding.findMany({
+                where: {
+                    accountId: params.accountId,
+                    session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId),
+                },
+                orderBy: { sessionId: "asc" },
+                select: { sessionId: true, standing: true, updatedAt: true },
+            })
+            : Promise.resolve(null),
     ]);
 
     const groupedTagAssignments = new Map<string, string[]>();
@@ -235,5 +247,6 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
         tagAssignments: [...groupedTagAssignments.entries()].map(([sessionId, tagIds]) => ({ sessionId, tagIds })),
         orderEntries: validOrderEntries.map(mapSessionOrganizationOrderEntry),
         labels: labels.map(mapSessionOrganizationLabel),
+        ...(attentionStandings ? { attentionStandings: attentionStandings.map(mapSessionAttentionStanding) } : {}),
     });
 }

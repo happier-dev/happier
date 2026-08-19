@@ -1,4 +1,5 @@
 import {
+    type SessionAttentionStanding,
     type SessionFolderAssignment,
     type SessionOrganizationFolder,
     type SessionOrganizationLabel,
@@ -11,6 +12,7 @@ import {
 
 import { parseSessionOrganizationDisplayEnvelope } from "./contentEnvelope";
 import type {
+    SessionAttentionStandingRecord,
     SessionOrganizationFolderRecord,
     SessionOrganizationLabelRecord,
     SessionOrganizationOrderEntryRecord,
@@ -23,6 +25,14 @@ export function mapSessionOrganizationPin(row: SessionOrganizationPinRecord): Se
         sessionId: row.sessionId,
         sortKey: row.sortKey,
         pinnedAt: row.pinnedAt.getTime(),
+    };
+}
+
+export function mapSessionAttentionStanding(row: SessionAttentionStandingRecord): SessionAttentionStanding {
+    return {
+        sessionId: row.sessionId,
+        standing: row.standing,
+        updatedAt: row.updatedAt.getTime(),
     };
 }
 
@@ -85,6 +95,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
     tagAssignments: SessionTagAssignment[];
     orderEntries: SessionOrganizationOrderEntry[];
     labels: SessionOrganizationLabel[];
+    attentionStandings?: SessionAttentionStanding[];
 }>): SessionOrganizationSnapshot {
     return {
         schemaVersion: 1,
@@ -96,5 +107,6 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
         tagAssignments: params.tagAssignments,
         orderEntries: params.orderEntries,
         labels: params.labels,
+        ...(params.attentionStandings ? { attentionStandings: params.attentionStandings } : {}),
     };
 }

@@ -108,6 +108,15 @@ export {
 } from './pins.js';
 
 export {
+  SessionAttentionStandingSchema,
+  SetSessionAttentionStandingRequestSchema,
+  SetSessionAttentionStandingResponseSchema,
+  type SessionAttentionStanding,
+  type SetSessionAttentionStandingRequest,
+  type SetSessionAttentionStandingResponse,
+} from './standings.js';
+
+export {
   SessionOrganizationSnapshotRequestSchema,
   SessionOrganizationSnapshotResponseSchema,
   SessionOrganizationSnapshotSchema,

@@ -18,6 +18,8 @@ import {
     ReorderSessionOrganizationResponseSchema,
     SessionOrganizationSnapshotRequestSchema,
     SessionOrganizationSnapshotResponseSchema,
+    SetSessionAttentionStandingRequestSchema,
+    SetSessionAttentionStandingResponseSchema,
     SetSessionFolderAssignmentRequestSchema,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinRequestSchema,
@@ -40,6 +42,7 @@ import {
     deleteSessionOrganizationTag,
     importLegacySessionOrganization,
     moveSessionFolderAssignments,
+    setSessionAttentionStanding,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
@@ -116,6 +119,7 @@ function buildSnapshotRequestFromQuery(query: unknown): unknown {
         "includeLabels",
         "includeAllFolderAssignments",
         "includeAllTagAssignments",
+        "includeAttentionStandings",
     ]) {
         if (!addOptionalBooleanQueryField(request, key, record[key])) return { [key]: invalidQueryValue };
     }
@@ -194,6 +198,49 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 return reply.code(404).send({ error: "Session not found" });
             }
             return reply.code(409).send({ error: result.error });
+        }
+
+        return reply.send(result);
+    });
+
+    app.put("/v2/session-organization/attention-standings/:sessionId", {
+        preHandler: app.authenticate,
+        schema: {
+            params: sessionIdParamsSchema,
+            body: SetSessionAttentionStandingRequestSchema,
+            response: {
+                200: SetSessionAttentionStandingResponseSchema,
+                400: z.object({ error: z.literal("invalid-session-attention-standing") }),
+                404: z.object({ error: z.literal("Session not found") }),
+            },
+        },
+    }, async (request, reply) => {
+        const parsedParams = sessionIdParamsSchema.safeParse(request.params);
+        const parsedBody = SetSessionAttentionStandingRequestSchema.safeParse(request.body);
+        if (!parsedParams.success || !parsedBody.success) {
+            return reply.code(400).send({ error: "invalid-session-attention-standing" });
+        }
+
+        const visible = parsedBody.data.standing === null
+            ? await canAccessSyncedSessionForOrganization({
+                accountId: request.userId,
+                sessionId: parsedParams.data.sessionId,
+            })
+            : await canAccessVisibleUnarchivedSessionForOrganization({
+                accountId: request.userId,
+                sessionId: parsedParams.data.sessionId,
+            });
+        if (!visible) {
+            return reply.code(404).send({ error: "Session not found" });
+        }
+
+        const result = await setSessionAttentionStanding({
+            accountId: request.userId,
+            sessionId: parsedParams.data.sessionId,
+            request: parsedBody.data,
+        });
+        if ("error" in result) {
+            return reply.code(404).send({ error: "Session not found" });
         }
 
         return reply.send(result);
