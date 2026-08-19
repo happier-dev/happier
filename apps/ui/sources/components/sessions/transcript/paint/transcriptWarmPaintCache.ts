@@ -13,8 +13,21 @@ type TranscriptWarmPaintRecord = Readonly<{
 type TranscriptWarmPaintStore = Map<string, TranscriptWarmPaintRecord>;
 
 const TRANSCRIPT_WARM_PAINT_CACHE_GLOBAL_KEY = '__HAPPIER_TRANSCRIPT_WARM_PAINT_CACHE__';
-const TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS = 16;
-const TRANSCRIPT_WARM_PAINT_CACHE_TTL_MS = 10 * 60 * 1000;
+/**
+ * A record is four scalars and a session id, so the cap exists only to stop unbounded growth —
+ * not to ration anything. At 16 it rationed: swiping through a session list evicted the very
+ * sessions being swiped between, and each eviction costs a full first-paint placeholder on the
+ * next visit. Hundreds of records are still a few tens of kilobytes.
+ */
+const TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS = 256;
+
+/**
+ * Staleness is decided by the CONTENT check below, not by age: a record that no longer describes
+ * the transcript cannot match however fresh it is, and one that still describes it is still true
+ * however old. This bound exists so a long-lived process eventually forgets sessions the reader
+ * has abandoned, which is a memory concern rather than a correctness one.
+ */
+const TRANSCRIPT_WARM_PAINT_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 function getStore(): TranscriptWarmPaintStore {
     const root = globalThis as unknown as Record<string, unknown>;
@@ -137,11 +150,19 @@ export function hasTranscriptWarmStablePaint(params: Readonly<{
         return false;
     }
 
-    const matches =
-        record.committedMessagesCount === committedMessagesCount &&
-        record.items === items &&
-        record.latestCommittedActivityKey === latestCommittedActivityKey;
-    return matches;
+    // Warmth answers "has this transcript's geometry already been measured", and APPENDED
+    // messages do not invalidate that — the measured rows are still the rows above the new
+    // ones, and revealing through them is exactly the stale-while-revalidate behaviour the
+    // transcript already has. Requiring an identical signature meant any message arriving in a
+    // live agent session dropped the next open back to the slow first-paint placeholder, which
+    // is the common case rather than the edge case.
+    //
+    // Shrinking is different and is refused: a tail reset, a fork or a retention eviction can
+    // leave fewer rows than were measured, so the geometry may describe rows that are gone.
+    if (record.latestCommittedActivityKey === latestCommittedActivityKey) {
+        return record.committedMessagesCount === committedMessagesCount && record.items === items;
+    }
+    return committedMessagesCount >= record.committedMessagesCount && items >= record.items;
 }
 
 export function __resetTranscriptWarmPaintCacheForTests(): void {
