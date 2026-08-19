@@ -35,17 +35,31 @@ function stableSerialize(value: unknown): string {
         .join(',')}}`;
 }
 
+/**
+ * The one ordering used by every list inside a snapshot signature.
+ *
+ * Code point order, NOT `localeCompare`. A signature needs a deterministic total order;
+ * `localeCompare` supplies a locale-dependent one, so the same snapshot could sign
+ * differently on two devices. It is also a native collator call per comparison, which
+ * showed up as 65ms of self time inside `arrayPrototypeSort` on the session-open path
+ * (measured 2026-08-18). All three orderings below shared that defect and had three
+ * copies of the same comparison shape; this is the single owner for both.
+ */
+function compareSignatureKey(left: string, right: string): number {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+}
+
 export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
     if (!snapshot.repo.isRepo) {
         return 'not-scm-repo';
     }
 
     const entries = [...snapshot.entries]
-        .sort((left, right) => {
-            const pathOrder = left.path.localeCompare(right.path);
-            if (pathOrder !== 0) return pathOrder;
-            return (left.previousPath ?? '').localeCompare(right.previousPath ?? '');
-        })
+        .sort((left, right) => (
+            compareSignatureKey(left.path, right.path)
+            || compareSignatureKey(left.previousPath ?? '', right.previousPath ?? '')
+        ))
         .map((entry) => ({
             path: entry.path,
             previousPath: entry.previousPath,
@@ -58,13 +72,12 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
         }));
 
     const remotes = [...(snapshot.repo.remotes ?? [])]
-        .sort((left, right) => left.name.localeCompare(right.name));
+        .sort((left, right) => compareSignatureKey(left.name, right.name));
     const worktrees = [...(snapshot.repo.worktrees ?? [])]
-        .sort((left, right) => {
-            const pathOrder = left.path.localeCompare(right.path);
-            if (pathOrder !== 0) return pathOrder;
-            return (left.branch ?? '').localeCompare(right.branch ?? '');
-        });
+        .sort((left, right) => (
+            compareSignatureKey(left.path, right.path)
+            || compareSignatureKey(left.branch ?? '', right.branch ?? '')
+        ));
 
     return stableSerialize({
         repo: {

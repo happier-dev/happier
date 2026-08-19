@@ -145,6 +145,41 @@ describe('buildSnapshotSignature', () => {
       buildSnapshotSignature({ ...first, entries: [...first.entries].reverse() }),
     );
   });
+
+  it('orders entries by code point, so the signature does not depend on the device locale', () => {
+    // The signature is a canonical identity, and it was ordered with `localeCompare` —
+    // whose result is locale-DEPENDENT. Under a collating locale "a.txt" sorts before
+    // "B.txt"; by code point "B.txt" (0x42) comes first. That made the "same" snapshot
+    // capable of producing two different signatures on two devices, and it put a slow
+    // native collator on the session-open path (measured 2026-08-18: 65ms of self time
+    // inside `arrayPrototypeSort` during a session open).
+    //
+    // A signature needs A deterministic total order, not a human-friendly one.
+    const entry = (path: string) => ({
+      path,
+      previousPath: null,
+      kind: 'modified' as const,
+      includeStatus: 'included' as const,
+      pendingStatus: 'modified' as const,
+      hasIncludedDelta: true,
+      hasPendingDelta: false,
+      stats: {
+        includedAdded: 1,
+        includedRemoved: 0,
+        pendingAdded: 0,
+        pendingRemoved: 0,
+        isBinary: false,
+      },
+    });
+    const base = snapshot();
+    const signature = buildSnapshotSignature({
+      ...base,
+      entries: [entry('a.txt'), entry('B.txt')] as never,
+    });
+
+    // Code point order puts the uppercase path first; a collating locale would not.
+    expect(signature.indexOf('B.txt')).toBeLessThan(signature.indexOf('a.txt'));
+  });
 });
 
 
