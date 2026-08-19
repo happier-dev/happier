@@ -28,7 +28,7 @@ import {
   stringifyConfigValue,
 } from './cursorModelConfigParsing';
 
-function sanitizeCursorModelScopedConfigOption(option: SessionConfigOption): SessionConfigOption {
+export function sanitizeCursorModelScopedConfigOption(option: SessionConfigOption): SessionConfigOption {
   const controlId = modelConfigOptionControlId(option);
   const canonicalOption: SessionConfigOption = controlId && controlId !== option.id
     ? {

@@ -1,4 +1,5 @@
 import type { SessionConfigOption } from '@/agent/acp/AcpBackend';
+import { sanitizeCursorModelScopedConfigOption } from '@/backends/cursor/acp/cursorModelConfigProjection';
 import type { CursorSessionModelsFromConfigOptions } from '@/backends/cursor/acp/cursorModelConfigTypes';
 
 import type { CursorAvailableModel } from './schemas';
@@ -9,7 +10,8 @@ function mergeOptions(
 ): ReadonlyArray<SessionConfigOption> | undefined {
   const merged: SessionConfigOption[] = [];
   const seen = new Set<string>();
-  for (const option of [...(primary ?? []), ...(secondary ?? [])]) {
+  for (const rawOption of [...(primary ?? []), ...(secondary ?? [])]) {
+    const option = sanitizeCursorModelScopedConfigOption(rawOption);
     if (!option.id.trim() || seen.has(option.id)) continue;
     seen.add(option.id);
     merged.push(option);
@@ -27,12 +29,11 @@ export function projectCursorAvailableModels(params: Readonly<{
   for (const model of params.proprietaryModels) {
     if (indexById.has(model.value)) continue;
     indexById.set(model.value, models.length);
+    const modelOptions = mergeOptions(model.configOptions, undefined);
     models.push({
       id: model.value,
       name: model.name,
-      ...(model.configOptions && model.configOptions.length > 0
-        ? { modelOptions: model.configOptions }
-        : {}),
+      ...(modelOptions ? { modelOptions } : {}),
     });
   }
 
