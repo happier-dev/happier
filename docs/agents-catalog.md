@@ -159,6 +159,15 @@ active producer with its consumer gated off — the published list is silently d
 that flag is a user-visible change: the app switches to the dynamic row builder, which carries less
 per-model metadata than the static one, so audit what the dynamic path drops before flipping.
 
+Dynamic providers whose runtime starts lazily (Pi starts its process on the first prompt) publish
+`sessionModelsV1` only after that first prompt, so the in-session model picker would offer nothing
+but the current model and freeform custom until then. To close that window, the new-session screen
+seeds the server-persisted `sessionModelsV1` from the wizard's own preflight probe at spawn
+(`sync.publishSessionModelsSeedToMetadata`, wired in `useCreateNewSession`). The seed is
+deliberately seed-only: if the runtime has already published for this session, the write is a
+no-op, and the runtime re-publish stays authoritative. It only applies to `dynamicProbe !==
+'static-only'` agents with no curated static list, and to built-in-agents spawns (not ACP custom).
+
 A provider with both surfaces needs **one owner** for the model list. Claude's is
 `apps/cli/src/backends/claude/models/resolveClaudeModelCatalog.ts`: the preflight probe adapter and
 the in-session `sessionModelsV1` publisher both read it, so the two pickers cannot disagree about

@@ -49,6 +49,8 @@ import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orches
 import { sessionGoalClear, sessionGoalSet } from '@/sync/ops/sessionGoals';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
+import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
+import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
@@ -241,6 +243,12 @@ export function useCreateNewSession(params: Readonly<{
      * dropped when the user leaves the chip attached.
      */
     sourceContext?: SessionSpawnSourceContextV1 | null;
+    /**
+     * Wizard preflight model list for the selected backend target. After a successful spawn it
+     * seeds `sessionModelsV1` for dynamic-probe agents without a static catalog (e.g. Pi), whose
+     * in-session picker would otherwise stay empty until the runtime publishes on first prompt.
+     */
+    preflightModels?: PreflightModelList | null;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
 }> {
@@ -947,6 +955,31 @@ export function useCreateNewSession(params: Readonly<{
                 storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
                 if (getAgentCore(current.agentType).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
                     storage.getState().updateSessionModelMode(result.sessionId, current.modelMode);
+                }
+
+                // Seed the session's model list from the wizard probe. Providers without a static
+                // catalog publish `sessionModelsV1` only once their runtime starts (first prompt),
+                // so without this seed the in-session model picker offers nothing but the current
+                // model, "Use CLI settings", and freeform custom until then. Best-effort and
+                // seed-only: the runtime publish stays authoritative, a lost race is a no-op, and
+                // a failed seed merely leaves the picker as it is today.
+                const preflightModelsForSeed = current.preflightModels;
+                const agentModelConfig = getAgentCore(current.agentType).model;
+                if (
+                    preflightModelsForSeed
+                    && preflightModelsForSeed.availableModels.length > 0
+                    && backendTarget.kind === 'builtInAgent'
+                    && agentModelConfig.supportsSelection === true
+                    && agentModelConfig.dynamicProbe !== 'static-only'
+                    && getModelOptionsForAgentType(current.agentType).length <= 1
+                ) {
+                    void sync.publishSessionModelsSeedToMetadata({
+                        sessionId: createdSessionId,
+                        agentId: current.agentType,
+                        currentModelId: spawnModelId ?? 'default',
+                        availableModels: preflightModelsForSeed.availableModels,
+                        updatedAt: spawnPermissionModeUpdatedAt,
+                    }).catch(() => undefined);
                 }
 
                 if (!postSpawnFollowUpError && opts?.afterCreated) {
