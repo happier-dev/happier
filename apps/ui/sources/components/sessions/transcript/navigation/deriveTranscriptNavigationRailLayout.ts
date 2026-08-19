@@ -32,6 +32,20 @@ export type DeriveTranscriptNavigationRailLayoutInput = Readonly<{
 }>;
 
 const DEFAULT_MIN_PANE_WIDTH_PX = 864;
+
+/**
+ * Whether the rail can appear on this platform AT ALL.
+ *
+ * Exported so the remote-history backfill can ask the same question this layout owner
+ * answers, instead of re-deriving "web only" somewhere else and drifting from it. Native
+ * reaches transcript navigation through the phone cockpit pane, which mounts its own
+ * consumer when the reader opens it.
+ */
+export function isTranscriptNavigationRailSupportedPlatform(
+    platformOS: TranscriptNavigationRailPlatformOS,
+): boolean {
+    return platformOS === 'web';
+}
 const DEFAULT_RAIL_WIDTH_PX = 24;
 const DEFAULT_GUTTER_SPACING_PX = 8;
 const DEFAULT_MARKER_HEIGHT_PX = 4;
@@ -86,7 +100,7 @@ export function deriveTranscriptNavigationRailLayout(
         viewportOffsetTopPx,
     } as const;
 
-    if (input.platformOS !== 'web') {
+    if (!isTranscriptNavigationRailSupportedPlatform(input.platformOS)) {
         return { ...base, hiddenReason: 'native-platform', visible: false };
     }
     if (entryCount < 2) {
