@@ -4,6 +4,7 @@ import {
   type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { Credentials } from '@/persistence';
@@ -11,11 +12,19 @@ import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 
+/**
+ * `unsupported` is a statement about CAPABILITY — this Session cannot be resumed
+ * this way, or the machine's daemon does not carry the operation at all — and it
+ * shapes the recovery a caller offers. A machine that ACCEPTED the request and
+ * then failed at it is a different fact, and collapsing the two reported a
+ * transient `ENOTEMPTY` from the machine's own resume work as a permanent
+ * incapability. `resume_failed` is that attempt failing; retrying it is sound.
+ */
 export type InactiveSessionResumeResult =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      code: 'session_archived' | 'unsupported' | 'timeout';
+      code: 'session_archived' | 'unsupported' | 'resume_failed' | 'timeout';
       message: string;
     }>;
 
@@ -87,6 +96,20 @@ function buildMachineResumeRequest(
  * Explicit CLI-user-action seam for inactive parent-session delivery.
  * Persisted queue/usage/marker reconstruction has no reference to this service.
  */
+/**
+ * The only thrown failure that is a capability statement is a daemon that does
+ * not carry the spawn method at all. A timeout is its own outcome; everything
+ * else is transport or machine work that failed after the request went out.
+ */
+function resolveThrownResumeFailureCode(
+  error: unknown,
+  code: unknown,
+): 'unsupported' | 'resume_failed' | 'timeout' {
+  if (code === 'MACHINE_RPC_TIMEOUT') return 'timeout';
+  if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) return 'unsupported';
+  return 'resume_failed';
+}
+
 export async function requestInactiveSessionResume(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
@@ -168,12 +191,22 @@ export async function requestInactiveSessionResume(params: Readonly<{
       !response
       || typeof response !== 'object'
       || (response as { type?: unknown }).type !== 'success'
-      || responseSessionId !== params.sessionId
     ) {
+      // The machine received the request and answered that it did not start the
+      // Session. Whatever it names — a filesystem error, a busy resource, a
+      // spawn that died — is this attempt failing, never a capability this
+      // Session lacks.
       const message = response && typeof response === 'object' && typeof (response as { errorMessage?: unknown }).errorMessage === 'string'
         ? (response as { errorMessage: string }).errorMessage
         : 'Inactive session resume was rejected; pending custody was retained';
-      return { ok: false, code: 'unsupported', message };
+      return { ok: false, code: 'resume_failed', message };
+    }
+    if (responseSessionId !== params.sessionId) {
+      return {
+        ok: false,
+        code: 'unsupported',
+        message: 'Inactive session resume answered for a different session; pending custody was retained',
+      };
     }
     if (!readinessSpawnNonce) {
       return { ok: true };
@@ -211,7 +244,9 @@ export async function requestInactiveSessionResume(params: Readonly<{
         ok: false,
         code: ready.type === 'error' && ready.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
           ? 'timeout'
-          : 'unsupported',
+          // Readiness is resolved only after the machine accepted the spawn, so
+          // anything short of it is the started attempt failing.
+          : 'resume_failed',
         message: ready.type === 'error'
           ? ready.errorMessage
           : 'Inactive session readiness resolved to a different session',
@@ -223,7 +258,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
     const message = error instanceof Error ? error.message : 'Inactive session resume failed; pending custody was retained';
     return {
       ok: false,
-      code: errorCode === 'MACHINE_RPC_TIMEOUT' ? 'timeout' : 'unsupported',
+      code: resolveThrownResumeFailureCode(error, errorCode),
       message,
     };
   }

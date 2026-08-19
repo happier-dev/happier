@@ -45,7 +45,13 @@ export type SendSessionMessageResult =
   | Readonly<{ ok: true; sessionId: string; localId: string; waited: boolean; suppressed?: true }>
   | Readonly<{
       ok: false;
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'unsupported' | 'timeout' | 'wait_failed';
+      /**
+       * `resume_failed` comes from the inactive-session resume seam and means the
+       * machine took the request and did not start the Session. It is distinct
+       * from `unsupported`, which claims this Session or daemon cannot do it at
+       * all — see `InactiveSessionResumeResult`.
+       */
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'unsupported' | 'resume_failed' | 'timeout' | 'wait_failed';
       candidates?: string[];
       message?: string;
     }>;
