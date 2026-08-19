@@ -51,6 +51,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionListIdentityDisplay, setSessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
+    const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
     const [sessionListWorkingPlacementMode, setSessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
     const [workspacePathDisplayModeV1, setWorkspacePathDisplayModeV1] = useSettingMutable('workspacePathDisplayModeV1');
     const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
@@ -60,6 +61,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [mobileWorkspaceExperience, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
+    const [cockpitSwipeNavigationEnabled, setCockpitSwipeNavigationEnabled] = useSettingMutable('sessionCockpitSwipeNavigationEnabled');
     const [sessionListOrderingModeV1, setSessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
     const [sessionListFolderSortModeV1, setSessionListFolderSortModeV1] = useLocalSettingMutable('sessionListFolderSortModeV1');
     const [sessionsRightPaneDefaultOpen, setSessionsRightPaneDefaultOpen] = useLocalSettingMutable('sessionsRightPaneDefaultOpen');
@@ -258,6 +260,10 @@ export default React.memo(function SessionSettingsScreen() {
     }, [setSessionListActiveColorMode]);
 
     const normalizedSessionListAttentionPromotionMode = normalizeSessionListAttentionPromotionMode(sessionListAttentionPromotionMode);
+    // Standing only reaches the list through the attention promotion lane, so with
+    // "Sessions needing attention" left in normal position this switch would change
+    // nothing. Lock it and name the prerequisite instead of letting it lie.
+    const sessionListAttentionStandingUnavailable = normalizedSessionListAttentionPromotionMode === 'off';
     const sessionListAttentionPromotionModeItems = React.useMemo(() => [
         {
             id: 'off',
@@ -846,6 +852,27 @@ export default React.memo(function SessionSettingsScreen() {
                     items={sessionListAttentionPromotionModeItems}
                     onSelect={handleSessionListAttentionPromotionModeSelect}
                 />
+                <Item
+                    testID="settings-session-attentionStandingDefault-item"
+                    title={t('settingsSession.sessionList.attentionStandingDefaultTitle')}
+                    subtitle={sessionListAttentionStandingUnavailable
+                        ? t('settingsSession.sessionList.attentionStandingDefaultUnavailableSubtitle')
+                        : sessionListAttentionStandingDefault === true
+                            ? t('settingsSession.sessionList.attentionStandingDefaultEnabledSubtitle')
+                            : t('settingsSession.sessionList.attentionStandingDefaultDisabledSubtitle')}
+                    icon={<Icon name="bookmark" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-attentionStandingDefault-toggle"
+                            value={sessionListAttentionStandingDefault === true}
+                            onValueChange={(next) => setSessionListAttentionStandingDefault(Boolean(next))}
+                            disabled={sessionListAttentionStandingUnavailable}
+                        />
+                    }
+                    disabled={sessionListAttentionStandingUnavailable}
+                    showChevron={false}
+                    onPress={() => setSessionListAttentionStandingDefault(sessionListAttentionStandingDefault !== true)}
+                />
                 <DropdownMenu
                     open={openSessionListWorkingPlacementModeMenu}
                     onOpenChange={setOpenSessionListWorkingPlacementModeMenu}
@@ -912,6 +939,23 @@ export default React.memo(function SessionSettingsScreen() {
                     showChevron={false}
                     onPress={() => setMobileWorkspaceExperience(mobileWorkspaceExperience === 'classic' ? 'cockpit' : 'classic')}
                     testID="settings-session-mobileWorkspaceExperience-trigger"
+                />
+                <Item
+                    title={t('settingsSession.cockpitSwipeNavigation.title')}
+                    subtitle={cockpitSwipeNavigationEnabled !== false
+                        ? t('settingsSession.cockpitSwipeNavigation.enabledSubtitle')
+                        : t('settingsSession.cockpitSwipeNavigation.disabledSubtitle')}
+                    icon={<Icon name="arrows-left-right" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-cockpitSwipeNavigation-switch"
+                            value={cockpitSwipeNavigationEnabled !== false}
+                            onValueChange={(next) => setCockpitSwipeNavigationEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setCockpitSwipeNavigationEnabled(cockpitSwipeNavigationEnabled === false)}
+                    testID="settings-session-cockpitSwipeNavigation-trigger"
                 />
             </ItemGroup>
 

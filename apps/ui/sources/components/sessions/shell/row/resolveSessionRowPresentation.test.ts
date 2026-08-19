@@ -132,6 +132,75 @@ describe('resolveSessionRowPresentation', () => {
         }).statusTextKey).toBeUndefined();
     });
 
+    it('explains a standing row that has nothing else to say', () => {
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            standing: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'standing',
+            titleTone: 'quiet',
+            secondaryLine: 'status',
+            statusTextKey: 'status.keptInAttention',
+        });
+    });
+
+    it('lets every real attention signal outrank standing', () => {
+        expect(resolveSessionRowPresentation({
+            attentionState: 'unread',
+            standing: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'unread',
+            titleTone: 'emphasized',
+            secondaryLine: 'path',
+        });
+        expect(resolveSessionRowPresentation({
+            attentionState: 'working',
+            standing: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+        });
+    });
+
+    it('leaves a quiet row untouched when it is not standing', () => {
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            standing: false,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'none',
+            titleTone: 'quiet',
+            secondaryLine: 'path',
+        });
+    });
+
+    it('still names the standing state on a minimal row that draws no status line', () => {
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            standing: true,
+            density: 'minimal',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'standing',
+            titleTone: 'quiet',
+            secondaryLine: 'none',
+            statusTextKey: 'status.keptInAttention',
+        });
+    });
+
     it('keeps blocked active work visible when the row prefers a path subtitle', () => {
         expect(resolveSessionRowPresentation({
             attentionState: 'permission_required',

@@ -72,6 +72,11 @@ function resolveSessionRowAttentionIndicatorColorRole(input: Readonly<{
         case 'permission':
         case 'action':
             return 'warning';
+        // Attention standing explains a row that is only in the band because the
+        // person put it there. It takes the same muted ink as the sentence beside
+        // it — every other marker matches its own status text — so the line reads
+        // as one quiet utterance rather than a signal.
+        case 'standing':
         case 'none':
             return 'secondary';
     }

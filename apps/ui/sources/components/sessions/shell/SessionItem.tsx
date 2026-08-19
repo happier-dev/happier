@@ -107,6 +107,8 @@ type SessionItemBaseProps = Readonly<{
     showServerBadge?: boolean;
     pinned?: boolean;
     onTogglePinned?: (() => void) | null;
+    attentionStandingEnabled?: boolean;
+    attentionStanding?: boolean;
     tags?: readonly string[];
     allKnownTags?: readonly string[];
     onSetTags?: ((newTags: string[]) => void) | null;
@@ -616,6 +618,8 @@ const SessionItemContent = React.memo(
         showServerBadge,
         pinned,
         onTogglePinned,
+        attentionStandingEnabled,
+        attentionStanding,
         tags,
         allKnownTags,
         onSetTags,
@@ -700,8 +704,18 @@ const SessionItemContent = React.memo(
                 currentUserId: currentUserId ?? null,
                 isConnected: sessionStatus.isConnected,
                 isPinned: Boolean(pinned),
+                attentionStandingEnabled: Boolean(attentionStandingEnabled),
+                attentionStanding: Boolean(attentionStanding),
             }),
-            [currentUserId, pinned, resolvedSession, serverId, sessionStatus.isConnected],
+            [
+                attentionStanding,
+                attentionStandingEnabled,
+                currentUserId,
+                pinned,
+                resolvedSession,
+                serverId,
+                sessionStatus.isConnected,
+            ],
         );
         const isMinimal = Boolean(compact && compactMinimal);
         const canArchiveSession = sessionActionTarget.canArchive;
@@ -1654,6 +1668,8 @@ function SessionItemFromRowModel(props: SessionItemProps & { rowModel: SessionLi
             currentUserId={itemProps.currentUserId ?? rowModel.currentUserId}
             showServerBadge={itemProps.showServerBadge ?? rowModel.showServerBadge}
             pinned={itemProps.pinned ?? rowModel.isPinned}
+            attentionStandingEnabled={itemProps.attentionStandingEnabled ?? rowModel.attentionStandingEnabled}
+            attentionStanding={itemProps.attentionStanding ?? rowModel.isAttentionStanding}
             tags={itemProps.tags ?? [...rowModel.tags]}
             allKnownTags={itemProps.allKnownTags ?? [...rowModel.allKnownTags]}
             tagsEnabled={itemProps.tagsEnabled ?? rowModel.tagsEnabled}

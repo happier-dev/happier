@@ -527,8 +527,19 @@ function computeVisibleSessionListIndexUnmeasured(
         selectedServerIds: params.presentation.selectedServerIds,
     });
 
+    // Promoted rows left the remainder before it was filtered, so the same
+    // hide-inactive filter runs over the promoted band. Every earned attention
+    // reason stamps `keepVisibleWhenInactive` and passes through untouched;
+    // only a row standing purely by the account default is hidden here, like
+    // any other inactive row.
+    const attentionItems = attentionPromotion
+        ? (params.hideInactiveSessions
+            ? filterHiddenInactiveSessionListIndexItems(attentionPromotion.attentionItems, params.resolveSessionRow)
+            : attentionPromotion.attentionItems)
+        : [];
+
     const result = [
-        ...(attentionPromotion?.attentionItems ?? []),
+        ...attentionItems,
         ...(workingPlacement?.workingItems ?? []),
         ...(pinnedHeader ? [pinnedHeader, ...pinnedOrdered] : []),
         ...remainderPresented,

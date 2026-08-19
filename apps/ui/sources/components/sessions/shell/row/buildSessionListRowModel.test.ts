@@ -147,6 +147,8 @@ function createSettings(
         sessionTagsByKey: {},
         allKnownTags: [],
         pinnedSessionKeys: [],
+        attentionStandingEnabled: false,
+        attentionStandingPolicy: { defaultStanding: false, overridesBySessionKey: {} },
         hasMultipleMachines: false,
         reachableSessionDisplayByKey: {},
         folderViewEnabled: true,
@@ -404,6 +406,48 @@ describe('buildSessionListRowModel', () => {
 
         expect(model.attention.rowState).toBe('failed');
         expect(model.workingIndicatorPaused).toBe(false);
+    });
+
+    it('explains a session the person kept in the attention band', () => {
+        const model = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('s1'), {
+                groupKind: 'attention',
+                attentionPromotionReason: 'standing',
+            }),
+            state: {},
+            dataIndex: 0,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            settings: createSettings({ runtimeNowMs: NOW_MS }),
+        });
+
+        // The session was read and nothing is running in it, so the row must not
+        // borrow an unread/working signal to justify its place in the band — it
+        // says why it is there and stays visually quiet.
+        expect(model.attention.rowState).toBe('quiet');
+        expect(model.presentation.attentionIndicator).toBe('standing');
+        expect(model.presentation.secondaryLine).toBe('status');
+        expect(model.presentation.statusTextKey).toBe('status.keptInAttention');
+        expect(model.presentation.titleTone).toBe('quiet');
+    });
+
+    it('does not present standing for a row promoted for any other reason', () => {
+        const model = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('s1'), {
+                groupKind: 'attention',
+                attentionPromotionReason: 'unread',
+            }),
+            state: {},
+            dataIndex: 0,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            settings: createSettings({ runtimeNowMs: NOW_MS }),
+        });
+
+        expect(model.presentation.attentionIndicator).toBe('none');
+        expect(model.presentation.statusTextKey).toBeUndefined();
     });
 
     it('presents background activity with the normal working indicator and precise neutral secondary copy', () => {

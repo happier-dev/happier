@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useMachine } from '@/sync/domains/state/storage';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
@@ -20,7 +20,7 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
     permissionRequests: readonly PendingPermissionRequest[];
     userActionRequests: readonly PendingPermissionRequest[];
 }>) {
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const machineId = readDisplayMachineIdForSession({
         sessionId: props.session.id,
         metadata: props.session.metadata ?? null,
@@ -52,7 +52,7 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
                 sessionTitle={getSessionName(props.session)}
                 machineLabel={getMachineDisplayName(machine)}
                 pathLabel={displayPath ? formatPathRelativeToHome(displayPath, props.session.metadata?.homeDir ?? undefined) : null}
-                onOpenSession={() => router.push(`/session/${props.session.id}`)}
+                onOpenSession={() => { void navigateToSession(props.session.id); }}
             />
 
             <View style={styles.items}>

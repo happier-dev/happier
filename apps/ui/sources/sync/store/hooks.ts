@@ -39,6 +39,7 @@ import {
   resolveSessionReadableSeq,
 } from '../domains/session/readCursor/resolveSessionReadableSeq';
 import { resolveSessionWorkspacePath } from '../domains/session/resolveSessionWorkspacePath';
+import { resolveSessionMachineId } from '../domains/session/directSessions/resolveSessionMachineId';
 import { buildSessionMetadataStabilitySignature } from '../domains/session/metadata/sessionMetadataStability';
 import {
   buildSessionOrganizationProjection,
@@ -335,6 +336,7 @@ export function useSessionOrganizationProjection(serverId: string | null | undef
       folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,
       tagsByTagKey: state.sessionOrganizationTagsByTagKey,
       tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
+      attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
       orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
       labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     })),
@@ -799,6 +801,26 @@ export function useSessionMessagesVersion(sessionId: string, enabled: boolean = 
 
 export function useSessionMetadata(sessionId: string): Session['metadata'] | null {
   return getStorage()((state) => state.sessions[sessionId]?.metadata ?? null);
+}
+
+/**
+ * The session's machine id, as a PRIMITIVE.
+ *
+ * Same reason as {@link useSessionInteractionSource}: a caller that only needs "which machine does
+ * this session live on" must not subscribe to the whole `Session` record — nor to `metadata`, which
+ * is an object the sync layer replaces wholesale on a push and so re-renders a `useShallow` /
+ * reference-compared subscriber for every unrelated field it carries. A string compares by value, so
+ * the subscription fires exactly when the answer changes.
+ *
+ * `resolveSessionMachineId` stays the one place that decides where the id lives — including the
+ * linked direct-session fallback, which a hand-rolled `metadata.machineId` read silently misses.
+ *
+ * V-1 (2026-08-18): the agent-transition divider row held `useSession(id)` purely to read this one
+ * string. It is a transcript row, so a live turn rewrote the record under it — MEASURED at 1 render
+ * per unrelated session write, and 0 once it reads this instead.
+ */
+export function useSessionMachineId(sessionId: string): string | null {
+  return getStorage()((state) => resolveSessionMachineId(state.sessions[sessionId]?.metadata ?? null));
 }
 
 export type SessionInteractionSource = Readonly<{

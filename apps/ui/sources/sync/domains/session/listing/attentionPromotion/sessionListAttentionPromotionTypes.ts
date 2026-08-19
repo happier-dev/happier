@@ -17,7 +17,8 @@ export type SessionListAttentionPromotionReason =
     | 'permission_required'
     | 'failed'
     | 'ready'
-    | 'unread';
+    | 'unread'
+    | 'standing';
 
 export function normalizeSessionListAttentionPromotionMode(value: unknown): SessionListAttentionPromotionMode {
     return normalizeSessionListPlacementMode(value);

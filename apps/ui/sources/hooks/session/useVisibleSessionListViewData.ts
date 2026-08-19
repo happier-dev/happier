@@ -19,7 +19,6 @@ import {
 } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import { filterSessionListViewDataByStorageKind } from '@/sync/domains/session/listing/filterSessionListViewDataByStorageKind';
 import {
-    normalizeSessionListAttentionPromotionMode,
     normalizeSessionListWorkingPlacementMode,
     type SessionListAttentionPromotionMode,
     type SessionListAttentionPromotionOptions,
@@ -39,11 +38,13 @@ import {
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { normalizeSessionFolders } from '@/sync/domains/session/folders';
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { fetchAndApplySessionFolderAssignments } from '@/sync/ops/sessionOrganization';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
+import { useSessionAttentionStandingInputs } from './useSessionAttentionStandingInputs';
 import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
 
 const EMPTY_SESSION_LIST_GROUP_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
@@ -68,6 +69,7 @@ export type VisibleSessionListViewDataOptions = Readonly<{
 type SessionListDataState = Readonly<{
     hideInactiveSessions: boolean;
     pinnedSessionKeysV1: ReadonlyArray<string>;
+    sessionAttentionStandingPolicy: SessionAttentionStandingPolicy;
     sessionListAttentionPromotionMode: SessionListAttentionPromotionMode;
     sessionListWorkingPlacementMode: SessionListWorkingPlacementMode;
     sessionListFolderSortModeV1: SessionListFolderSortModeV1;
@@ -207,6 +209,7 @@ function buildVisibleSessionListIndexForState(
             ? {
                 mode: state.sessionListAttentionPromotionMode,
                 retainedPlacements: options.retainedAttentionPlacements,
+                standingPolicy: state.sessionAttentionStandingPolicy,
             }
             : DISABLED_ATTENTION_PROMOTION_OPTIONS,
         workingPlacement: state.sessionListWorkingPlacementMode !== 'off'
@@ -265,6 +268,11 @@ function collectRetainedAttentionPlacements(params: Readonly<{
     for (const item of params.previousVisible) {
         if (item.type !== 'session') continue;
         if (item.groupKind !== 'attention' && !item.attentionPromotionReason) continue;
+        // Standing is the user's own instruction, so removing it must take
+        // effect immediately. Retention exists to stop a row the user is
+        // READING from sliding away under them; retaining a standing row would
+        // instead pin it in the band until they navigate elsewhere.
+        if (item.attentionPromotionReason === 'standing') continue;
         if (item.session.id !== activeSessionId) continue;
         const key = buildSessionListSessionKey(item);
         const reason = item.attentionPromotionReason;
@@ -487,7 +495,6 @@ function useSessionListDataState(
     const activeData = useSessionListViewData();
     const openApprovalSessionIdList = useOpenApprovalSessionIds();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-    const sessionListAttentionPromotionMode = normalizeSessionListAttentionPromotionMode(useSetting('sessionListAttentionPromotionModeV1'));
     const sessionListWorkingPlacementMode = normalizeSessionListWorkingPlacementMode(useSetting('sessionListWorkingPlacementModeV1'));
     const sessionListFolderSortModeV1 = normalizeSessionListFolderSortModeV1(useLocalSetting('sessionListFolderSortModeV1'));
     const sessionListOrderingModeV1 = normalizeSessionListOrderingModeV1(useSetting('sessionListOrderingModeV1'));
@@ -501,6 +508,11 @@ function useSessionListDataState(
         projection: organizationProjection,
     }), [organizationProjection, selection.activeServerId]);
     const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1;
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
+    const sessionAttentionStandingPolicy = attentionStanding.policy;
+    const sessionListAttentionPromotionMode = attentionStanding.promotionMode;
     const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
     const sessionFolderAssignmentsBySessionKey = organizationListViewState.sessionFolderAssignmentsBySessionKey;
     const groupOrder = organizationListViewState.sessionListGroupOrderV1 ?? EMPTY_SESSION_LIST_GROUP_ORDER;
@@ -627,6 +639,7 @@ function useSessionListDataState(
     return React.useMemo(() => ({
         hideInactiveSessions,
         pinnedSessionKeysV1,
+        sessionAttentionStandingPolicy,
         sessionListAttentionPromotionMode,
         sessionListWorkingPlacementMode,
         sessionListFolderSortModeV1,
@@ -650,6 +663,7 @@ function useSessionListDataState(
         normalizedGroupOrder,
         normalizedWorkspaceOrder,
         pinnedSessionKeysV1,
+        sessionAttentionStandingPolicy,
         sessionListAttentionPromotionMode,
         sessionListWorkingPlacementMode,
         sessionListFolderSortModeV1,

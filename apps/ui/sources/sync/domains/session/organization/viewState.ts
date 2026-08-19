@@ -14,6 +14,7 @@ export type SessionOrganizationListViewState = Readonly<{
     sessionFoldersV1: SessionFoldersV1;
     sessionFolderAssignmentsBySessionKey: Record<string, string | null>;
     sessionTagsV1: Record<string, readonly string[]>;
+    attentionStandingOverridesBySessionKey: Record<string, boolean>;
     sessionListGroupOrderV1: Record<string, readonly string[]>;
     sessionWorkspaceOrderV1: SessionWorkspaceOrderV1;
     workspaceLabelsV1: Record<string, string>;
@@ -176,6 +177,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             sessionFoldersV1: { v: 1, folders: [] },
             sessionFolderAssignmentsBySessionKey: {},
             sessionTagsV1: {},
+            attentionStandingOverridesBySessionKey: {},
             sessionListGroupOrderV1: {},
             sessionWorkspaceOrderV1: {},
             workspaceLabelsV1: {},
@@ -188,6 +190,12 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         Object.entries(projection.tagAssignmentsBySessionId).map(([sessionId, tagIds]) => [
             buildServerSessionKey(serverId, sessionId),
             tagIds.map((tagId) => tagLabelsById[tagId] ?? tagId),
+        ]),
+    );
+    const attentionStandingOverridesBySessionKey = Object.fromEntries(
+        Object.entries(projection.attentionStandingsBySessionId).map(([sessionId, standing]) => [
+            buildServerSessionKey(serverId, sessionId),
+            standing.standing,
         ]),
     );
     const sessionFolderAssignmentsBySessionKey = Object.fromEntries(
@@ -254,6 +262,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         sessionFoldersV1: { v: 1, folders },
         sessionFolderAssignmentsBySessionKey,
         sessionTagsV1,
+        attentionStandingOverridesBySessionKey,
         sessionListGroupOrderV1,
         sessionWorkspaceOrderV1,
         workspaceLabelsV1,

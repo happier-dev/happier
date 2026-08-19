@@ -56,6 +56,7 @@ describe('sessionOrganizationApi', () => {
                 includeLabels: true,
                 includeAllFolderAssignments: true,
                 includeAllTagAssignments: true,
+                includeAttentionStandings: true,
                 assignmentSessionIds: ['s1', 's2'],
                 folderIds: ['folder-a'],
                 tagIds: ['tag-a'],
@@ -80,6 +81,7 @@ describe('sessionOrganizationApi', () => {
         expect(requestUrl.searchParams.get('includeLabels')).toBe('true');
         expect(requestUrl.searchParams.get('includeAllFolderAssignments')).toBe('true');
         expect(requestUrl.searchParams.get('includeAllTagAssignments')).toBe('true');
+        expect(requestUrl.searchParams.get('includeAttentionStandings')).toBe('true');
         expect(requestUrl.searchParams.get('assignmentSessionIds')).toBe('s1,s2');
         expect(requestUrl.searchParams.get('folderIds')).toBe('folder-a');
         expect(requestUrl.searchParams.get('tagIds')).toBe('tag-a');
@@ -111,6 +113,33 @@ describe('sessionOrganizationApi', () => {
             init: expect.objectContaining({
                 method: 'PUT',
                 body: JSON.stringify({ tagIds: ['tag-a', 'tag-b'] }),
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer token-a',
+                    'Content-Type': 'application/json',
+                }),
+            }),
+        });
+    });
+
+    it('clears an attention standing override through the canonical standing route', async () => {
+        const { setSessionAttentionStanding } = await import('./sessionOrganizationApi');
+        mocks.runtimeFetchWithServerReachability.mockResolvedValueOnce(jsonResponse({ standing: null }));
+
+        const response = await setSessionAttentionStanding({
+            credentials,
+            serverUrl: 'https://row-server.example.test/api/',
+            sessionId: 's1',
+            request: { standing: null },
+        });
+
+        expect(response).toEqual({ standing: null });
+        expect(mocks.runtimeFetchWithServerReachability).toHaveBeenCalledWith({
+            serverUrl: 'https://row-server.example.test/api',
+            token: 'token-a',
+            url: 'https://row-server.example.test/api/v2/session-organization/attention-standings/s1',
+            init: expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({ standing: null }),
                 headers: expect.objectContaining({
                     Authorization: 'Bearer token-a',
                     'Content-Type': 'application/json',

@@ -19,6 +19,7 @@ let sessionHydrated = true;
 let sessionIsConnected = true;
 let localDevModeEnabled = false;
 const routerPushSpy = vi.fn();
+const routerNavigateSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const safeRouterBackSpy = vi.fn();
 const readMachineTargetForSessionSpy = vi.fn();
@@ -51,8 +52,10 @@ const sessionOrganizationOps = vi.hoisted(() => ({
     setSessionPin: vi.fn(async () => undefined),
     setSessionTagAssignments: vi.fn(async () => undefined),
     setSessionFolderAssignment: vi.fn(async () => undefined),
+    sessionSetAttentionStandingWithServerScope: vi.fn(async () => ({ success: true })),
 }));
 let hideInactiveSessions = false;
+let sessionListAttentionPromotionMode: string | null = null;
 let pinnedSessionKeysV1: unknown = null;
 let sessionTagsV1: unknown = null;
 let sessionFoldersV1: unknown = null;
@@ -122,6 +125,7 @@ const hydrateSpy = vi.fn((sessionId: string, _tag: string, options?: { serverId?
 const routerMock = createExpoRouterMock({
     router: {
         push: routerPushSpy,
+        navigate: routerNavigateSpy,
         back: routerBackSpy,
         replace: vi.fn(),
         setParams: vi.fn(),
@@ -187,6 +191,9 @@ installSessionRouteCommonModuleMocks({
                     }
                     if (key === 'sessionFoldersV1') {
                         return sessionFoldersV1;
+                    }
+                    if (key === 'sessionListAttentionPromotionModeV1') {
+                        return sessionListAttentionPromotionMode;
                     }
                     return null;
                 },
@@ -304,6 +311,7 @@ vi.mock('@/sync/ops/sessionOrganization', () => ({
     setSessionPin: sessionOrganizationOps.setSessionPin,
     setSessionTagLabels: sessionOrganizationOps.setSessionTagAssignments,
     setSessionFolderAssignment: sessionOrganizationOps.setSessionFolderAssignment,
+    sessionSetAttentionStandingWithServerScope: sessionOrganizationOps.sessionSetAttentionStandingWithServerScope,
 }));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
     useSessionExecutionRunsSupported: (sessionId: string) => useSessionExecutionRunsSupportedSpy(sessionId),
@@ -413,6 +421,7 @@ describe('/session/[id]/info', () => {
         sessionIsConnected = true;
         localDevModeEnabled = false;
         routerPushSpy.mockReset();
+        routerNavigateSpy.mockReset();
         routerBackSpy.mockReset();
         safeRouterBackSpy.mockReset();
         readMachineTargetForSessionSpy.mockReset();
@@ -434,6 +443,8 @@ describe('/session/[id]/info', () => {
         openMoveSheetSpy.mockClear();
         openMoveSheetSpy.mockResolvedValue(null);
         setSessionFolderAssignmentSpy.mockClear();
+        sessionListAttentionPromotionMode = null;
+        sessionOrganizationOps.sessionSetAttentionStandingWithServerScope.mockClear();
         sessionOrganizationOps.setSessionPin.mockClear();
         sessionOrganizationOps.setSessionTagAssignments.mockClear();
         sessionOrganizationOps.setSessionFolderAssignment.mockClear();
@@ -527,6 +538,7 @@ describe('/session/[id]/info', () => {
             folderAssignmentsBySessionId: {},
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
             ...overrides,
@@ -747,7 +759,7 @@ describe('/session/[id]/info', () => {
 
         const helperParams = completeSessionForkNavigationSpy.mock.calls[0]?.[0] as any;
         helperParams.navigate('next-child');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b', expect.any(Object));
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -1361,6 +1373,101 @@ describe('/session/[id]/info', () => {
             sessionId: 'session-1',
             tags: ['urgent', 'review'],
         });
+    });
+
+    it('surfaces the attention standing action from the session view quick actions', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionListAttentionPromotionMode = 'global';
+        resetSessionOrganizationProjection();
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            owner: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('session-info-session-clear-attention-standing')).toBeNull();
+        await screen.pressByTestIdAsync('session-info-session-set-attention-standing');
+
+        expect(sessionOrganizationOps.sessionSetAttentionStandingWithServerScope).toHaveBeenCalledWith(
+            'session-1',
+            true,
+            { serverId: 'server-b' },
+        );
+    });
+
+    it('offers to remove a stored standing session from Needs attention', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionListAttentionPromotionMode = 'global';
+        resetSessionOrganizationProjection({
+            attentionStandingsBySessionId: {
+                'session-1': { sessionId: 'session-1', standing: true, updatedAt: 5 },
+            },
+        });
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            owner: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('session-info-session-set-attention-standing')).toBeNull();
+        await screen.pressByTestIdAsync('session-info-session-clear-attention-standing');
+
+        expect(sessionOrganizationOps.sessionSetAttentionStandingWithServerScope).toHaveBeenCalledWith(
+            'session-1',
+            false,
+            { serverId: 'server-b' },
+        );
+    });
+
+    it('hides the attention standing action while the attention band is off', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionListAttentionPromotionMode = 'off';
+        resetSessionOrganizationProjection({
+            attentionStandingsBySessionId: {
+                'session-1': { sessionId: 'session-1', standing: true, updatedAt: 5 },
+            },
+        });
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            owner: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('session-info-session-set-attention-standing')).toBeNull();
+        expect(screen.findByTestId('session-info-session-clear-attention-standing')).toBeNull();
     });
 
     it('surfaces move-to-folder from the session view when folder targets match the session workspace', async () => {

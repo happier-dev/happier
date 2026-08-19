@@ -5,12 +5,12 @@ import type { SessionOrganizationProjection } from './types';
 /**
  * Rebuilds the organization snapshot that the store currently holds for one server.
  *
- * The session list cannot paint pinned rows, folders, or manual order without organization
- * state, so a boot that has none must either wait for the round trip or show a list it will
- * immediately have to rearrange. Projecting the live state back into the canonical snapshot
- * shape is what lets the warm cache persist it: the same value the server sends, described by
- * the same protocol schema, applied on the next boot through the one owner of organization
- * state (`applySessionOrganizationSnapshot`).
+ * The session list cannot paint pinned rows, folders, manual order, or the sessions the user
+ * keeps in Needs attention without organization state, so a boot that has none must either
+ * wait for the round trip or show a list it will immediately have to rearrange. Projecting the
+ * live state back into the canonical snapshot shape is what lets the warm cache persist it: the
+ * same value the server sends, described by the same protocol schema, applied on the next boot
+ * through the one owner of organization state (`applySessionOrganizationSnapshot`).
  *
  * Returns `null` whenever the projection is not a complete snapshot the protocol can express —
  * no observed version yet, or a schema version this build does not speak. Callers persist
@@ -44,5 +44,6 @@ export function buildSessionOrganizationSnapshotFromProjection(
             .map(([sessionId, tagIds]) => ({ sessionId, tagIds: [...tagIds] })),
         orderEntries: Object.values(projection.orderEntriesByScopeKey).flatMap((entries) => [...entries]),
         labels: Object.values(projection.labelsByLabelKey),
+        attentionStandings: Object.values(projection.attentionStandingsBySessionId),
     };
 }

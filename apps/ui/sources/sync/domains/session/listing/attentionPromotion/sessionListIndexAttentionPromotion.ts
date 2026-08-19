@@ -1,5 +1,6 @@
 import { t } from '@/text';
 
+import type { SessionAttentionStandingPolicy } from '../../organization/attentionStanding';
 import type { SessionListIndexItem } from '../sessionListIndex';
 import { resolveSessionRowForIndexItem, type ResolveSessionListIndexRow } from '../sessionListIndexSessionRows';
 import type { SessionListRenderableSession } from '../sessionListRenderable';
@@ -37,6 +38,7 @@ type PlacementCandidate<Reason extends PlacementReason> = Readonly<{
     originalIndex: number;
     retainedIndex: number | null;
     retainedWorking?: boolean;
+    explicitStanding?: boolean;
 }>;
 
 type SessionRunEntry = Readonly<{
@@ -54,6 +56,7 @@ type PlacementLane<Reason extends PlacementReason> = Readonly<{
         retainedKeyRanks: ReadonlyMap<string, number>;
         retainedAttentionReasons: ReadonlyMap<string, SessionListAttentionPromotionReason>;
         retainedWorkingKeys: ReadonlySet<string>;
+        standingPolicy: SessionAttentionStandingPolicy | undefined;
         resolveSessionRow: ResolveSessionListIndexRow;
         nowMs: number;
     }>) => PlacementCandidate<Reason> | null;
@@ -68,6 +71,9 @@ const ATTENTION_REASON_PRIORITY: Readonly<Record<SessionListAttentionPromotionRe
     failed: 2,
     ready: 3,
     unread: 4,
+    // Standing is the floor of the band: it only reaches sessions whose own
+    // signals place them nowhere, so it always sorts behind every earned reason.
+    standing: 5,
 };
 
 function normalizeRetainedKeys(retained: ReadonlySet<string> | ReadonlyArray<string> | null | undefined): ReadonlySet<string> {
@@ -138,6 +144,7 @@ function resolveAttentionCandidate(params: Readonly<{
     retainedKeyRanks: ReadonlyMap<string, number>;
     retainedAttentionReasons: ReadonlyMap<string, SessionListAttentionPromotionReason>;
     retainedWorkingKeys: ReadonlySet<string>;
+    standingPolicy: SessionAttentionStandingPolicy | undefined;
     resolveSessionRow: ResolveSessionListIndexRow;
     nowMs: number;
 }>): PlacementCandidate<SessionListAttentionPromotionReason> | null {
@@ -149,6 +156,7 @@ function resolveAttentionCandidate(params: Readonly<{
         session: row,
         sessionKey: key,
         retainedWorkingSessionKeys: params.retainedWorkingKeys,
+        standingPolicy: params.standingPolicy,
         nowMs: params.nowMs,
     });
     const reason = placement.kind === 'none'
@@ -171,6 +179,7 @@ function resolveAttentionCandidate(params: Readonly<{
             : resolveSessionListPlacementTimestampForReason(row, resolvedReason) ?? 0,
         originalIndex: params.originalIndex,
         retainedIndex: params.retainedKeyRanks.get(key) ?? null,
+        explicitStanding: placement.kind === 'standing' && placement.explicitStanding,
     };
 }
 
@@ -206,12 +215,24 @@ function resolveWorkingCandidate(params: Readonly<{
     };
 }
 
+/**
+ * Whether promotion exempts the row from "Hide inactive sessions". Every
+ * earned attention reason does: the session itself is asking for the user.
+ * Standing only does when the user asked for THIS session — standing derived
+ * from the account default would otherwise turn that filter into a no-op for
+ * every quiet session. Promotion never clears an exemption the row already
+ * carries for its own reasons (a stopped session held visible, say).
+ */
+function keepAttentionCandidateVisibleWhenInactive(candidate: PlacementCandidate<SessionListAttentionPromotionReason>): boolean {
+    return candidate.reason !== 'standing' || candidate.explicitStanding === true;
+}
+
 function createGlobalAttentionSessionItem(candidate: PlacementCandidate<SessionListAttentionPromotionReason>): SessionIndexItem {
     return {
         ...candidate.item,
         groupKey: ATTENTION_PROMOTION_GROUP_KEY_V1,
         groupKind: 'attention',
-        keepVisibleWhenInactive: true,
+        ...(keepAttentionCandidateVisibleWhenInactive(candidate) ? { keepVisibleWhenInactive: true } : {}),
         attentionPromotionReason: candidate.reason,
         workingPlacementReason: undefined,
         variant: 'default',
@@ -221,7 +242,7 @@ function createGlobalAttentionSessionItem(candidate: PlacementCandidate<SessionL
 function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<SessionListAttentionPromotionReason>): SessionIndexItem {
     return {
         ...candidate.item,
-        keepVisibleWhenInactive: true,
+        ...(keepAttentionCandidateVisibleWhenInactive(candidate) ? { keepVisibleWhenInactive: true } : {}),
         attentionPromotionReason: candidate.reason,
         workingPlacementReason: undefined,
     };
@@ -293,6 +314,7 @@ function buildSessionListIndexGlobalPlacement<Reason extends PlacementReason>(pa
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
     retainedAttentionReasons?: ReadonlyMap<string, SessionListAttentionPromotionReason>;
     retainedWorkingKeys?: SessionListWorkingRetentionKeySource;
+    standingPolicy?: SessionAttentionStandingPolicy;
     resolveSessionRow: ResolveSessionListIndexRow;
     lane: PlacementLane<Reason>;
     header: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -315,6 +337,7 @@ function buildSessionListIndexGlobalPlacement<Reason extends PlacementReason>(pa
             retainedKeyRanks,
             retainedAttentionReasons: params.retainedAttentionReasons ?? EMPTY_RETAINED_ATTENTION_REASONS,
             retainedWorkingKeys,
+            standingPolicy: params.standingPolicy,
             resolveSessionRow: params.resolveSessionRow,
             nowMs: params.nowMs,
         });
@@ -352,6 +375,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(params: Re
     retainedKeyRanks: ReadonlyMap<string, number>;
     retainedAttentionReasons: ReadonlyMap<string, SessionListAttentionPromotionReason>;
     retainedWorkingKeys: ReadonlySet<string>;
+    standingPolicy: SessionAttentionStandingPolicy | undefined;
     resolveSessionRow: ResolveSessionListIndexRow;
     lane: PlacementLane<Reason>;
     nowMs: number;
@@ -368,6 +392,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(params: Re
             retainedKeyRanks: params.retainedKeyRanks,
             retainedAttentionReasons: params.retainedAttentionReasons,
             retainedWorkingKeys: params.retainedWorkingKeys,
+            standingPolicy: params.standingPolicy,
             resolveSessionRow: params.resolveSessionRow,
             nowMs: params.nowMs,
         });
@@ -399,6 +424,7 @@ function applySessionListIndexPlacementWithinGroups<Reason extends PlacementReas
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
     retainedAttentionReasons?: ReadonlyMap<string, SessionListAttentionPromotionReason>;
     retainedWorkingKeys?: SessionListWorkingRetentionKeySource;
+    standingPolicy?: SessionAttentionStandingPolicy;
     resolveSessionRow: ResolveSessionListIndexRow;
     lane: PlacementLane<Reason>;
     nowMs: number;
@@ -422,6 +448,7 @@ function applySessionListIndexPlacementWithinGroups<Reason extends PlacementReas
             retainedKeyRanks,
             retainedAttentionReasons: params.retainedAttentionReasons ?? EMPTY_RETAINED_ATTENTION_REASONS,
             retainedWorkingKeys,
+            standingPolicy: params.standingPolicy,
             resolveSessionRow: params.resolveSessionRow,
             lane: params.lane,
             nowMs: params.nowMs,
@@ -459,6 +486,7 @@ export function buildSessionListIndexAttentionPromotion(params: Readonly<{
         source: params.source,
         retainedKeys: retained.keys,
         retainedAttentionReasons: retained.reasons,
+        standingPolicy: params.options.standingPolicy,
         resolveSessionRow: params.resolveSessionRow,
         lane: ATTENTION_LANE,
         nowMs: params.nowMs,
@@ -526,6 +554,7 @@ export function applySessionListIndexAttentionPromotionWithinGroups(params: Read
         source: params.source,
         retainedKeys: retained.keys,
         retainedAttentionReasons: retained.reasons,
+        standingPolicy: params.options.standingPolicy,
         resolveSessionRow: params.resolveSessionRow,
         lane: ATTENTION_LANE,
         nowMs: params.nowMs,

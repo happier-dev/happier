@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
+import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import {
     buildCachedSessionListRowModel,
     createSessionListRowModelsCache,
 } from './buildSessionListRowModels';
+import { sessionTagKey } from '../sessionTagUtils';
 import type {
     SessionListRowPresentationSettings,
     SessionListRowStateSnapshot,
@@ -55,6 +57,7 @@ function createRenderable(
 
 function createSessionItem(
     session: SessionListRenderableSession,
+    overrides: Partial<Extract<SessionListViewItem, { type: 'session' }>> = {},
 ): Extract<SessionListViewItem, { type: 'session' }> {
     return {
         type: 'session',
@@ -64,6 +67,7 @@ function createSessionItem(
         groupKind: 'project',
         serverId: 'server-a',
         serverName: 'Server A',
+        ...overrides,
     };
 }
 
@@ -87,6 +91,8 @@ function createSettings(
         sessionTagsByKey: {},
         allKnownTags: [],
         pinnedSessionKeys: [],
+        attentionStandingEnabled: false,
+        attentionStandingPolicy: { defaultStanding: false, overridesBySessionKey: {} },
         hasMultipleMachines: false,
         reachableSessionDisplayByKey: {},
         folderViewEnabled: true,
@@ -148,5 +154,109 @@ describe('buildCachedSessionListRowModel', () => {
         });
 
         expect(second).toBe(first);
+    });
+
+    // A placement reason changes without any other input changing: promotion
+    // within a group keeps the row's group, session and snapshot exactly as they
+    // were, so a signature that ignores the reason hands back the row the person
+    // just changed.
+    it('rebuilds a row when its attention placement reason changes', () => {
+        const cache = createSessionListRowModelsCache();
+        const session = createRenderable('s1');
+        const settings = createSettings();
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+
+        const standing = buildCachedSessionListRowModel({
+            item: createSessionItem(session, { attentionPromotionReason: 'standing' }),
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings,
+            cache,
+        });
+        expect(standing.presentation.attentionIndicator).toBe('standing');
+
+        const removed = buildCachedSessionListRowModel({
+            item: createSessionItem(session),
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings,
+            cache,
+        });
+
+        expect(removed.presentation.attentionIndicator).toBe('none');
+    });
+
+    // The action menu reads `isAttentionStanding`, which is resolved from the
+    // SETTINGS policy rather than from the item — so a cache key that only
+    // watches the item hands back the row the person just changed, and the menu
+    // keeps offering "Keep in Needs attention" after they pressed it.
+    it('rebuilds a row when the attention standing policy changes', () => {
+        const cache = createSessionListRowModelsCache();
+        const session = createRenderable('s1');
+        const item = createSessionItem(session);
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+        const rowKey = sessionTagKey(String(item.serverId), String(session.id));
+
+        const before = buildCachedSessionListRowModel({
+            item,
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings: createSettings({ attentionStandingEnabled: true }),
+            cache,
+        });
+        expect(before.isAttentionStanding).toBe(false);
+
+        const after = buildCachedSessionListRowModel({
+            item,
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings: createSettings({
+                attentionStandingEnabled: true,
+                attentionStandingPolicy: {
+                    defaultStanding: false,
+                    overridesBySessionKey: { [rowKey]: true },
+                },
+            }),
+            cache,
+        });
+
+        expect(after.isAttentionStanding).toBe(true);
+    });
+
+    it('rebuilds a row when its working placement reason changes', () => {
+        const cache = createSessionListRowModelsCache();
+        const session = createRenderable('s1', {
+            active: true,
+            activeAt: NOW_MS - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - 1_000,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: NOW_MS - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - 1_000,
+        });
+        const settings = createSettings();
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+
+        const retained = buildCachedSessionListRowModel({
+            item: createSessionItem(session, { groupKind: 'working', workingPlacementReason: 'working-retained' }),
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings,
+            cache,
+        });
+        expect(retained.workingIndicatorPaused).toBe(true);
+
+        const live = buildCachedSessionListRowModel({
+            item: createSessionItem(session, { groupKind: 'working', workingPlacementReason: 'working' }),
+            snapshot: EMPTY_ROW_STATE,
+            dataIndex: 0,
+            adjacency,
+            settings,
+            cache,
+        });
+
+        expect(live.workingIndicatorPaused).toBe(false);
     });
 });

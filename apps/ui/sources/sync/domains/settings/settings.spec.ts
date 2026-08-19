@@ -659,9 +659,12 @@ describe('settings', () => {
             expect((parsed as any).agentInputHistoryScope).toBe('perSession');
         });
 
+        // Replay is the only fork strategy an Agent without native fork support
+        // has, so leaving it off by default removed the fork affordance
+        // entirely for those Agents. It is a product decision, pinned here.
         it('defaults app-level replay resume settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).sessionReplayEnabled).toBe(false);
+            expect((parsed as any).sessionReplayEnabled).toBe(true);
             expect((parsed as any).sessionReplayStrategy).toBe('recent_messages');
             expect((parsed as any).sessionReplayRecentMessagesCount).toBeGreaterThan(0);
             expect((parsed as any).sessionReplaySummaryRunnerV1).toBe(null);

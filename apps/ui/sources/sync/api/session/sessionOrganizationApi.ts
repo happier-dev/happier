@@ -17,6 +17,7 @@ import {
     SessionFolderAssignmentListResponseSchema,
     SessionOrganizationSnapshotRequestSchema,
     SessionOrganizationSnapshotResponseSchema,
+    SetSessionAttentionStandingResponseSchema,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinResponseSchema,
     SetSessionTagAssignmentsResponseSchema,
@@ -40,6 +41,8 @@ import {
     type SessionFolderAssignmentListResponse,
     type SessionOrganizationSnapshotRequest,
     type SessionOrganizationSnapshotResponse,
+    type SetSessionAttentionStandingRequest,
+    type SetSessionAttentionStandingResponse,
     type SetSessionFolderAssignmentRequest,
     type SetSessionFolderAssignmentResponse,
     type SetSessionPinRequest,
@@ -171,6 +174,7 @@ function buildSnapshotQuery(request: Partial<SessionOrganizationSnapshotRequest>
     appendBooleanParam(params, 'includeLabels', request.includeLabels);
     appendBooleanParam(params, 'includeAllFolderAssignments', request.includeAllFolderAssignments);
     appendBooleanParam(params, 'includeAllTagAssignments', request.includeAllTagAssignments);
+    appendBooleanParam(params, 'includeAttentionStandings', request.includeAttentionStandings);
     appendArrayParam(params, 'assignmentSessionIds', request.assignmentSessionIds);
     appendArrayParam(params, 'folderIds', request.folderIds);
     appendArrayParam(params, 'tagIds', request.tagIds);
@@ -238,6 +242,25 @@ export async function setSessionPin(params: Readonly<{
         },
     });
     return parseJsonResponse(response, SetSessionPinResponseSchema, 'Failed to set session pin');
+}
+
+export async function setSessionAttentionStanding(params: Readonly<{
+    credentials: AuthCredentials;
+    serverUrl?: string;
+    sessionId: string;
+    request: SetSessionAttentionStandingRequest;
+}>): Promise<SetSessionAttentionStandingResponse> {
+    const response = await fetchSessionOrganizationRoute({
+        credentials: params.credentials,
+        serverUrl: params.serverUrl,
+        path: `${SESSION_ORGANIZATION_ROUTE}/attention-standings/${encodeURIComponent(params.sessionId)}`,
+        init: {
+            method: 'PUT',
+            headers: authHeaders(params.credentials),
+            body: JSON.stringify(params.request),
+        },
+    });
+    return parseJsonResponse(response, SetSessionAttentionStandingResponseSchema, 'Failed to set session attention standing');
 }
 
 export async function reorderSessionOrganization(params: Readonly<{

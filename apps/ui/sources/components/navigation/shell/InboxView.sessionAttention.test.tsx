@@ -8,6 +8,7 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
+const navigateSpy = vi.fn();
 const storageState = {
     profile: { id: 'me' },
     sessionMessages: {
@@ -87,7 +88,7 @@ installNavigationShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
-            router: { push: pushSpy },
+            router: { push: pushSpy, navigate: navigateSpy },
         });
         return routerMock.module;
     },
@@ -269,7 +270,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle, testID }: any) => React.createElement('Item', { title, subtitle, testID }),
+    Item: ({ title, subtitle, testID, onPress }: any) => React.createElement('Item', { title, subtitle, testID, onPress }),
 }));
 
 vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
@@ -330,6 +331,7 @@ function collectText(node: renderer.ReactTestRenderer): string[] {
 describe('InboxView session attention', () => {
     beforeEach(() => {
         pushSpy.mockReset();
+        navigateSpy.mockReset();
     });
 
     it('renders actionable grouped session attention with machine and path context', async () => {
@@ -506,5 +508,15 @@ describe('InboxView session attention', () => {
         const items = tree!.findAllByType('Item');
         expect(items.some((item) => item.props.title === 'Unread session')).toBe(true);
         expect(items.some((item) => item.props.title === 'Shared session')).toBe(false);
+
+        // Opening from the inbox goes through the canonical session navigator, so the session route
+        // stays singular instead of stacking a second `/session/<id>` entry behind the list.
+        const unread = items.find((item) => item.props.title === 'Unread session');
+        await renderer.act(async () => {
+            unread!.props.onPress();
+        });
+        expect(pushSpy).not.toHaveBeenCalledWith('/session/session-unread');
+        expect(navigateSpy).toHaveBeenCalledWith('/session/session-unread', expect.any(Object));
+        expect(navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 });

@@ -7,6 +7,7 @@ import type {
 import { buildSessionListRowModel } from './buildSessionListRowModel';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import { areSessionListRenderablesEqual } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { sessionTagKey } from '../sessionTagUtils';
 
@@ -45,6 +46,8 @@ type StablePresentationSettingsRefs = Readonly<{
     sessionTagsByKey: SessionListRowPresentationSettings['sessionTagsByKey'];
     allKnownTags: SessionListRowPresentationSettings['allKnownTags'];
     pinnedSessionKeys: SessionListRowPresentationSettings['pinnedSessionKeys'];
+    attentionStandingEnabled: SessionListRowPresentationSettings['attentionStandingEnabled'];
+    attentionStandingPolicy: SessionListRowPresentationSettings['attentionStandingPolicy'];
     hasMultipleMachines: SessionListRowPresentationSettings['hasMultipleMachines'];
     reachableSessionDisplayByKey: SessionListRowPresentationSettings['reachableSessionDisplayByKey'];
     folderViewEnabled: SessionListRowPresentationSettings['folderViewEnabled'];
@@ -110,6 +113,8 @@ function buildStablePresentationSettingsRefs(
         sessionTagsByKey: settings.sessionTagsByKey,
         allKnownTags: settings.allKnownTags,
         pinnedSessionKeys: settings.pinnedSessionKeys,
+        attentionStandingEnabled: settings.attentionStandingEnabled,
+        attentionStandingPolicy: settings.attentionStandingPolicy,
         hasMultipleMachines: settings.hasMultipleMachines,
         reachableSessionDisplayByKey: settings.reachableSessionDisplayByKey,
         folderViewEnabled: settings.folderViewEnabled,
@@ -137,6 +142,8 @@ function areStablePresentationSettingsRefsEqual(
         && previous.sessionTagsByKey === next.sessionTagsByKey
         && previous.allKnownTags === next.allKnownTags
         && previous.pinnedSessionKeys === next.pinnedSessionKeys
+        && previous.attentionStandingEnabled === next.attentionStandingEnabled
+        && previous.attentionStandingPolicy === next.attentionStandingPolicy
         && previous.hasMultipleMachines === next.hasMultipleMachines
         && previous.reachableSessionDisplayByKey === next.reachableSessionDisplayByKey
         && previous.folderViewEnabled === next.folderViewEnabled
@@ -164,6 +171,11 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, item.folderDepth);
     appendSignaturePart(parts, item.pinned === true ? 1 : 0);
     appendSignaturePart(parts, (item as SessionListRowSessionItem & { selected?: boolean }).selected === true ? 1 : 0);
+    // Placement reasons decide what the row SAYS about itself (why it is in the
+    // attention band, whether its working indicator is paused), and promotion
+    // within a group changes them while leaving every other input identical.
+    appendSignaturePart(parts, item.attentionPromotionReason);
+    appendSignaturePart(parts, item.workingPlacementReason);
     appendSignaturePart(parts, item.variant);
     appendSignaturePart(parts, item.serverId);
     appendSignaturePart(parts, item.serverName);
@@ -186,6 +198,12 @@ function buildInputSignature(input: Readonly<{
     appendSignatureList(parts, rowTags);
     appendSignatureList(parts, settings.allKnownTags);
     appendSignaturePart(parts, settings.pinnedSessionKeys.includes(rowKey) ? 1 : 0);
+    // Standing is resolved per row (an explicit override beats the account
+    // default), so the signature carries the RESOLVED value rather than the
+    // policy: a row whose standing did not change must not rebuild when an
+    // unrelated session's override lands.
+    appendSignaturePart(parts, settings.attentionStandingEnabled ? 1 : 0);
+    appendSignaturePart(parts, resolveSessionAttentionStanding(settings.attentionStandingPolicy, rowKey) ? 1 : 0);
     appendSignaturePart(parts, settings.hasMultipleMachines ? 1 : 0);
     appendSignaturePart(parts, reachableDisplay?.workspaceSubtitle);
     appendSignaturePart(parts, reachableDisplay?.machineLabel);

@@ -26,6 +26,24 @@ function makeRenderableSession(id: string, overrides: Partial<SessionListRendera
     };
 }
 
+function makeOrganizationProjection(
+    attentionStandingsBySessionId: SessionOrganizationProjection['attentionStandingsBySessionId'],
+): SessionOrganizationProjection {
+    return {
+        schemaVersion: 1,
+        version: 1,
+        pinnedSessionIds: [],
+        pinsBySessionId: {},
+        foldersById: {},
+        folderAssignmentsBySessionId: {},
+        tagsById: {},
+        tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId,
+        labelsByLabelKey: {},
+        orderEntriesByScopeKey: {},
+    };
+}
+
 const sourceData = vi.hoisted(() => ({
     activeData: [
         {
@@ -48,6 +66,7 @@ const sourceData = vi.hoisted(() => ({
     sessionListViewDataByServerIdSelections: [] as ReadonlyArray<string>[],
     hideInactiveSessions: false,
     sessionListAttentionPromotionMode: 'off' as 'off' | 'global' | 'withinGroups',
+    sessionListAttentionStandingDefault: false,
     sessionListWorkingPlacementMode: 'off' as 'off' | 'global' | 'withinGroups',
     sessionListOrderingModeV1: 'custom' as 'custom' | 'created' | 'updated',
     sessionListSectionModeV1: 'activity' as 'activity' | 'single',
@@ -94,6 +113,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             useSetting: (key: string) => {
                 if (key === 'hideInactiveSessions') return sourceData.hideInactiveSessions;
                 if (key === 'sessionListAttentionPromotionModeV1') return sourceData.sessionListAttentionPromotionMode;
+                if (key === 'sessionListAttentionStandingDefaultV1') return sourceData.sessionListAttentionStandingDefault;
                 if (key === 'sessionListWorkingPlacementModeV1') return sourceData.sessionListWorkingPlacementMode;
                 if (key === 'sessionListOrderingModeV1') return sourceData.sessionListOrderingModeV1;
                 if (key === 'sessionListSectionModeV1') return sourceData.sessionListSectionModeV1;
@@ -164,6 +184,7 @@ describe('useVisibleSessionListViewData', () => {
     afterEach(async () => {
         sourceData.hideInactiveSessions = false;
         sourceData.sessionListAttentionPromotionMode = 'off';
+        sourceData.sessionListAttentionStandingDefault = false;
         sourceData.sessionListWorkingPlacementMode = 'off';
         sourceData.sessionListOrderingModeV1 = 'custom';
         sourceData.sessionListSectionModeV1 = 'activity';
@@ -288,6 +309,7 @@ describe('useVisibleSessionListViewData', () => {
             folderAssignmentsBySessionId: {},
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
                 'server-a:group:server:server-a:active:project:repo': [
@@ -841,6 +863,7 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
                 'server-a:group:server:server-a:active:project:repo': [
@@ -1186,6 +1209,7 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
                 'server-a:group:server:server-a:active:project:repo': [
@@ -1703,6 +1727,114 @@ describe('useVisibleSessionListViewData', () => {
         await hook.unmount();
     });
 
+    it('keeps a read standing session in the attention band behind the sessions that earned it', async () => {
+        sourceData.sessionListAttentionPromotionMode = 'global';
+        sourceData.activeData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey: 'server:server-a:day:2026-05-04',
+                serverId: 'server-a',
+            },
+            {
+                type: 'session',
+                session: makeRenderableSession('standing-session', { seq: 4, lastViewedSessionSeq: 4 }),
+                section: 'inactive',
+                groupKey: 'server:server-a:day:2026-05-04',
+                groupKind: 'date',
+                serverId: 'server-a',
+            },
+            {
+                type: 'session',
+                session: makeRenderableSession('unread-session', {
+                    seq: 9,
+                    lastViewedSessionSeq: 4,
+                    hasUnreadMessages: true,
+                    unreadSince: 20,
+                }),
+                section: 'inactive',
+                groupKey: 'server:server-a:day:2026-05-04',
+                groupKind: 'date',
+                serverId: 'server-a',
+            },
+            {
+                type: 'session',
+                session: makeRenderableSession('quiet-session', { seq: 4, lastViewedSessionSeq: 4 }),
+                section: 'inactive',
+                groupKey: 'server:server-a:day:2026-05-04',
+                groupKind: 'date',
+                serverId: 'server-a',
+            },
+        ];
+        sourceData.sessionOrganizationProjection = makeOrganizationProjection({
+            'standing-session': { sessionId: 'standing-session', standing: true, updatedAt: 10 },
+        });
+
+        const { useVisibleSessionListViewData } = await import('./useVisibleSessionListViewData');
+        const hook = await renderHook(() => useVisibleSessionListViewData());
+
+        expect(hook.getCurrent()?.map((item) => item.type === 'header'
+            ? `header:${item.headerKind ?? 'unknown'}`
+            : `session:${item.session.id}:${item.attentionPromotionReason ?? 'none'}`
+        )).toEqual([
+            'header:attention',
+            'session:unread-session:unread',
+            'session:standing-session:standing',
+            'header:date',
+            'session:quiet-session:none',
+        ]);
+        await hook.unmount();
+    });
+
+    it('drops the session being viewed out of the attention band as soon as its standing is removed', async () => {
+        sourceData.sessionListAttentionPromotionMode = 'global';
+        sourceData.activeData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey: 'server:server-a:day:2026-05-04',
+                serverId: 'server-a',
+            },
+            {
+                type: 'session',
+                session: makeRenderableSession('standing-session', { seq: 4, lastViewedSessionSeq: 4 }),
+                section: 'inactive',
+                groupKey: 'server:server-a:day:2026-05-04',
+                groupKind: 'date',
+                serverId: 'server-a',
+            },
+        ];
+        sourceData.sessionOrganizationProjection = makeOrganizationProjection({
+            'standing-session': { sessionId: 'standing-session', standing: true, updatedAt: 10 },
+        });
+
+        const { useVisibleSessionListViewData } = await import('./useVisibleSessionListViewData');
+        const hook = await renderHook(() => useVisibleSessionListViewData('all', { activeSessionId: 'standing-session' }));
+
+        expect(hook.getCurrent()?.map((item) => item.type === 'header'
+            ? `header:${item.headerKind ?? 'unknown'}`
+            : `session:${item.session.id}:${item.attentionPromotionReason ?? 'none'}`
+        )).toEqual([
+            'header:attention',
+            'session:standing-session:standing',
+        ]);
+
+        sourceData.sessionOrganizationProjection = makeOrganizationProjection({
+            'standing-session': { sessionId: 'standing-session', standing: false, updatedAt: 20 },
+        });
+
+        expect((await hook.rerender())?.map((item) => item.type === 'header'
+            ? `header:${item.headerKind ?? 'unknown'}`
+            : `session:${item.session.id}:${item.attentionPromotionReason ?? 'none'}`
+        )).toEqual([
+            'header:date',
+            'session:standing-session:none',
+        ]);
+        await hook.unmount();
+    });
+
     it('retains visible working rows across active session switches while local runtime freshness is stale', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
@@ -2061,6 +2193,7 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
                 'server-a:group:server:server-a:active:project:repo': [
@@ -2171,6 +2304,7 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
                 'server-a:group:server:server-a:active:project:repo': [

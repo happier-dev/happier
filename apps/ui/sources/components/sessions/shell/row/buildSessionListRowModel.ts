@@ -6,6 +6,7 @@ import {
     resolveSessionListSecondaryLineMode,
 } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { resolveSessionReadableSeq } from '@/sync/domains/session/readCursor/resolveSessionReadableSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -340,6 +341,11 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     const rowAttentionState = presentsRetainedWorking
         ? 'working'
         : derivedRowAttentionState;
+    // Attention standing is the person's own instruction to keep a read, idle
+    // session in the band. It comes off the placement reason and stays OUT of the
+    // attention state on purpose: the session has nothing new in it, so the row
+    // must not take an unread title or badge — it only says why it is still here.
+    const presentsAttentionStanding = item.attentionPromotionReason === 'standing';
     const secondaryLineGroupKind = item.groupKind === 'folder' ? 'project' : item.groupKind;
     const secondaryLineMode = resolveSessionListSecondaryLineMode({ groupKind: secondaryLineGroupKind });
     const { subtitle, subtitleEllipsizeMode } = resolveRowSubtitle({
@@ -353,6 +359,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         requestedSecondaryLineMode: secondaryLineMode,
         hasPathSubtitle: subtitle.trim().length > 0,
         workingRetained: presentsRetainedWorking,
+        standing: presentsAttentionStanding,
         backgroundActive: status.state === 'background_active',
     });
     // Absent unless the person asked for it (R-8): the row model always carries the field so a host
@@ -368,6 +375,9 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     const nextRuntimeFreshnessAtMs = resolveNextRuntimeFreshnessAtMs(resolvedSession, settings.runtimeNowMs);
     const isArchived = resolvedSession.archivedAt != null;
     const isPinned = item.pinned === true || settings.pinnedSessionKeys.includes(rowKey);
+    // The STORED instruction, resolved through the policy owner, never the placement reason: a
+    // standing session that is currently placed for being unread must still offer to be removed.
+    const isAttentionStanding = resolveSessionAttentionStanding(settings.attentionStandingPolicy, rowKey);
     const title = getSessionName(resolvedSession);
 
     return {
@@ -417,6 +427,8 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         },
         isSelected: (item as SessionListRowSessionItem & { selected?: boolean }).selected === true,
         isPinned,
+        isAttentionStanding,
+        attentionStandingEnabled: settings.attentionStandingEnabled,
         isArchived,
         isActive: resolvedSession.active === true,
         hasUnreadMessages,

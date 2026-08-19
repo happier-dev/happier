@@ -5,6 +5,7 @@ import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { SessionPending } from '@/sync/store/domains/pending';
 import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import type { SessionRowAttentionState, SessionRowDensity, SessionRowPresentation } from './resolveSessionRowPresentation';
 
 export type SessionListRowSessionItem = Extract<SessionListViewItem, { type: 'session' }>;
@@ -55,6 +56,16 @@ export type SessionListRowPresentationSettings = Readonly<{
     sessionTagsByKey: Readonly<Record<string, readonly string[]>>;
     allKnownTags: readonly string[];
     pinnedSessionKeys: readonly string[];
+    /**
+     * Whether the Keep in Needs attention action is reachable at all: with the attention band off
+     * there is nothing for a kept session to be held in.
+     */
+    attentionStandingEnabled: boolean;
+    /**
+     * Account default plus per-session overrides. Carried as the policy rather than a resolved key
+     * list because a `true` default would make that list every session minus the explicit exceptions.
+     */
+    attentionStandingPolicy: SessionAttentionStandingPolicy;
     hasMultipleMachines: boolean;
     reachableSessionDisplayByKey: Readonly<Record<string, {
         workspaceSubtitle?: string;
@@ -102,6 +113,13 @@ export type SessionListRowModel = Readonly<{
     adjacency: Readonly<{ isFirst: boolean; isLast: boolean; isSingle: boolean }>;
     isSelected: boolean;
     isPinned: boolean;
+    /**
+     * The STORED standing for this session, not the reason it currently sits in the band. A standing
+     * session that is also unread is placed for being unread, and its menu must still offer to
+     * remove it from Needs attention.
+     */
+    isAttentionStanding: boolean;
+    attentionStandingEnabled: boolean;
     isArchived: boolean;
     isActive: boolean;
     hasUnreadMessages: boolean;

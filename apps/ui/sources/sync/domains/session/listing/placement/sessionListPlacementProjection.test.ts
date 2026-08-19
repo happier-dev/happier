@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
+import type { SessionAttentionStandingPolicy } from '../../organization/attentionStanding';
 import type { SessionListRenderableSession } from '../sessionListRenderable';
 import { projectSessionListPlacement } from './sessionListPlacementProjection';
 
@@ -60,6 +61,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'working',
             timestamp: null,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -86,6 +88,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'working',
             timestamp: null,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -112,6 +115,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'working',
             timestamp: null,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -211,6 +215,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'working',
             timestamp: null,
             retainedWorking: true,
+            explicitStanding: false,
         });
     });
 
@@ -237,6 +242,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'failed',
             timestamp: 100,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -259,6 +265,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'failed',
             timestamp: 1_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -277,6 +284,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'action_required',
             timestamp: 2_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -297,6 +305,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'unread',
             timestamp: 7_390,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -317,6 +326,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'ready',
             timestamp: 7_400,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -339,6 +349,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'failed',
             timestamp: 1_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
 
         expect(projectSessionListPlacement({
@@ -359,6 +370,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'none',
             timestamp: null,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -382,6 +394,7 @@ describe('projectSessionListPlacement', () => {
             kind: 'failed',
             timestamp: 1_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 });
@@ -403,6 +416,7 @@ describe('unread placement ordering key', () => {
             kind: 'unread',
             timestamp: 4_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
 
         // The same row after another message lands: the key must not move.
@@ -413,6 +427,7 @@ describe('unread placement ordering key', () => {
             kind: 'unread',
             timestamp: 4_000,
             retainedWorking: false,
+            explicitStanding: false,
         });
     });
 
@@ -429,6 +444,105 @@ describe('unread placement ordering key', () => {
             kind: 'unread',
             timestamp: 7_390,
             retainedWorking: false,
+            explicitStanding: false,
+        });
+    });
+});
+
+describe('attention standing placement floor', () => {
+    const standingPolicy: SessionAttentionStandingPolicy = {
+        defaultStanding: false,
+        overridesBySessionKey: { 'server-a:s1': true },
+    };
+    const readIdleSession = makeSession({
+        seq: 10,
+        lastViewedSessionSeq: 10,
+        hasUnreadMessages: false,
+        updatedAt: 5_000,
+        meaningfulActivityAt: 5_000,
+    });
+
+    it('places a read idle standing session on the attention floor', () => {
+        expect(projectSessionListPlacement({
+            nowMs: 10_000,
+            session: readIdleSession,
+            sessionKey: 'server-a:s1',
+            standingPolicy,
+        })).toEqual({
+            kind: 'standing',
+            timestamp: null,
+            retainedWorking: false,
+            explicitStanding: true,
+        });
+    });
+
+    it('marks standing that comes only from the account default as not explicit', () => {
+        expect(projectSessionListPlacement({
+            nowMs: 10_000,
+            session: readIdleSession,
+            sessionKey: 'server-a:s1',
+            standingPolicy: { defaultStanding: true, overridesBySessionKey: {} },
+        })).toEqual({
+            kind: 'standing',
+            timestamp: null,
+            retainedWorking: false,
+            explicitStanding: false,
+        });
+    });
+
+    it('keeps unread placement authoritative over the standing floor', () => {
+        expect(projectSessionListPlacement({
+            nowMs: 10_000,
+            session: {
+                ...readIdleSession,
+                seq: 11,
+                hasUnreadMessages: true,
+                unreadSince: 4_000,
+            },
+            sessionKey: 'server-a:s1',
+            standingPolicy,
+        })).toEqual({
+            kind: 'unread',
+            timestamp: 4_000,
+            retainedWorking: false,
+            explicitStanding: false,
+        });
+    });
+
+    it('keeps working placement authoritative over the standing floor', () => {
+        expect(projectSessionListPlacement({
+            nowMs: 10_000,
+            session: {
+                ...readIdleSession,
+                active: true,
+                presence: 'online',
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 9_000,
+            },
+            sessionKey: 'server-a:s1',
+            standingPolicy,
+        })).toEqual({
+            kind: 'working',
+            timestamp: null,
+            retainedWorking: false,
+            explicitStanding: false,
+        });
+    });
+
+    it('keeps an explicitly removed session off the floor while the account default stands', () => {
+        expect(projectSessionListPlacement({
+            nowMs: 10_000,
+            session: readIdleSession,
+            sessionKey: 'server-a:s1',
+            standingPolicy: {
+                defaultStanding: true,
+                overridesBySessionKey: { 'server-a:s1': false },
+            },
+        })).toEqual({
+            kind: 'none',
+            timestamp: null,
+            retainedWorking: false,
+            explicitStanding: false,
         });
     });
 });

@@ -10,6 +10,7 @@ describe('createSessionListOrganizationSnapshotRequest', () => {
             includeLabels: true,
             includeAllFolderAssignments: true,
             includeAllTagAssignments: true,
+            includeAttentionStandings: true,
         });
     });
 });

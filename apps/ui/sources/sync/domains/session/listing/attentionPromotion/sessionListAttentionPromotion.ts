@@ -1,3 +1,4 @@
+import type { SessionAttentionStandingPolicy } from '../../organization/attentionStanding';
 import {
     normalizeSessionListAttentionPromotionMode,
     normalizeSessionListWorkingPlacementMode,
@@ -16,6 +17,7 @@ export type SessionListRetainedAttentionPlacement = Readonly<{
 export type SessionListAttentionPromotionOptions = Readonly<{
     mode: SessionListAttentionPromotionMode;
     retainedPlacements?: ReadonlyArray<SessionListRetainedAttentionPlacement> | null;
+    standingPolicy?: SessionAttentionStandingPolicy;
 }>;
 
 export type SessionListWorkingPlacementOptions = Readonly<{

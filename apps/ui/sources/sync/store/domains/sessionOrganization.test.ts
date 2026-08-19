@@ -36,6 +36,7 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
         tagAssignments: input.tagAssignments ?? [],
         orderEntries: input.orderEntries ?? [],
         labels: input.labels ?? [],
+        attentionStandings: input.attentionStandings,
     };
 }
 
@@ -202,6 +203,61 @@ describe('createSessionOrganizationDomain', () => {
             [buildSessionOrganizationOrderScopeKey({ serverId: 'srv-a', scopeKind: 'workspace', scopeKey: 'workspace-a' })]: [
                 { scopeKind: 'workspace', scopeKey: 'workspace-a', itemKind: 'workspace', itemKey: 'workspace-a:/repo', sortKey: 'a' },
             ],
+        });
+    });
+    it('restores the previous attention standing when an optimistic write is rolled back', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: true, updatedAt: 1 }],
+        }));
+
+        const recordId = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, updatedAt: 2 });
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey[buildSessionOrganizationServerKey('srv-a', 's1')])
+            .toEqual({ sessionId: 's1', standing: false, updatedAt: 2 });
+
+        harness.get().rollbackSessionOrganizationOptimistic(recordId);
+
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey).toEqual({
+            [buildSessionOrganizationServerKey('srv-a', 's1')]: { sessionId: 's1', standing: true, updatedAt: 1 },
+        });
+    });
+
+    it('lands snapshot attention standings and keeps them when a later snapshot omits the field', () => {
+        const harness = createHarness();
+        const recordId = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, updatedAt: 1 });
+        harness.get().commitSessionOrganizationOptimistic(recordId);
+
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            version: 2,
+            attentionStandings: [{ sessionId: 's1', standing: true, updatedAt: 5 }],
+        }));
+
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey).toEqual({
+            [buildSessionOrganizationServerKey('srv-a', 's1')]: { sessionId: 's1', standing: true, updatedAt: 5 },
+        });
+
+        // The snapshot only carries standings when the request asked for them, so an
+        // omitted field means "not fetched" rather than "no standings".
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 3 }));
+
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey).toEqual({
+            [buildSessionOrganizationServerKey('srv-a', 's1')]: { sessionId: 's1', standing: true, updatedAt: 5 },
+        });
+    });
+
+    it('clears attention standings for one server without touching another server', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: true, updatedAt: 1 }],
+        }));
+        harness.get().applySessionOrganizationSnapshot('srv-b', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: true, updatedAt: 2 }],
+        }));
+
+        harness.get().clearSessionOrganizationForServer('srv-a');
+
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey).toEqual({
+            [buildSessionOrganizationServerKey('srv-b', 's1')]: { sessionId: 's1', standing: true, updatedAt: 2 },
         });
     });
 });

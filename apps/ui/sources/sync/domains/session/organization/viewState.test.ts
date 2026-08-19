@@ -19,6 +19,7 @@ function projection(overrides: Partial<SessionOrganizationProjection>): SessionO
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
         ...overrides,
@@ -79,6 +80,23 @@ describe('buildSessionOrganizationListViewState', () => {
         });
         expect(state.sessionWorkspaceOrderV1).toEqual({
             [buildSessionWorkspaceOrderScopeKey('server-a')]: ['workspace:repo-a', 'workspace:repo-b'],
+        });
+    });
+
+    it('maps server-backed attention standings to session-key overrides the placement policy can resolve', () => {
+        const state = buildSessionOrganizationListViewState({
+            serverId: 'server-a',
+            projection: projection({
+                attentionStandingsBySessionId: {
+                    s1: { sessionId: 's1', standing: true, updatedAt: 20 },
+                    s2: { sessionId: 's2', standing: false, updatedAt: 21 },
+                },
+            }),
+        });
+
+        expect(state.attentionStandingOverridesBySessionKey).toEqual({
+            'server-a:s1': true,
+            'server-a:s2': false,
         });
     });
 

@@ -19,6 +19,8 @@ import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
 import { useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { layout } from '@/components/ui/layout/layout';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { Header } from '@/components/navigation/Header';
@@ -83,6 +85,7 @@ function HeaderTitleTablet() {
 
 export const InboxView = React.memo(({}: InboxViewProps) => {
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const friendRequests = useFriendRequests();
     const requestedFriends = useRequestedFriends();
     const feedItems = useFeedItems();
@@ -226,7 +229,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                                 key={session.id}
                                 title={getSessionName(session)}
                                 subtitle={getSessionSubtitle(session)}
-                                onPress={() => router.push(`/session/${session.id}`)}
+                                onPress={() => { void navigateToSession(session.id); }}
                             />
                         ))}
                     </ItemGroup>

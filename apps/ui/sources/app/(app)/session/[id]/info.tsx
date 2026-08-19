@@ -36,6 +36,7 @@ import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecu
 import { Text } from '@/components/ui/text/Text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -61,6 +62,8 @@ import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/se
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { completeSessionForkNavigation } from '@/components/sessions/transcript/forkContext/completeSessionForkNavigation';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
+import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
@@ -72,7 +75,11 @@ import {
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNPIN_ID,
 } from '@/components/sessions/actions/sessionActionIds';
-import { listVisibleSessionActionIds, resolveSessionReadStateActionId } from '@/components/sessions/actions/sessionActionAvailability';
+import {
+    listVisibleSessionActionIds,
+    resolveSessionAttentionStandingActionId,
+    resolveSessionReadStateActionId,
+} from '@/components/sessions/actions/sessionActionAvailability';
 import { createSessionActionInfoItemProps } from '@/components/sessions/actions/sessionActionPresentation';
 import { getTagsForSession, sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { useSessionListMoveSheet } from '@/components/sessions/shell/move-sheet/useSessionListMoveSheet';
@@ -318,14 +325,18 @@ function SessionInfoVolatileDetailItems({
     );
 }
 
-function SessionInfoReadStateActionItem({
+function SessionInfoAttentionActionItems({
     sessionId,
     scopedMutationServerId,
     isPinnedSession,
+    attentionStandingEnabled,
+    attentionStanding,
 }: Readonly<{
     sessionId: string;
     scopedMutationServerId: string | null;
     isPinnedSession: boolean;
+    attentionStandingEnabled: boolean;
+    attentionStanding: boolean;
 }>) {
     const { theme } = useUnistyles();
     const session = useSession(sessionId);
@@ -337,9 +348,12 @@ function SessionInfoReadStateActionItem({
             currentUserId: !session.accessLevel && typeof session.owner === 'string' ? session.owner : null,
             isConnected: session.active === true,
             isPinned: isPinnedSession,
+            attentionStandingEnabled,
+            attentionStanding,
         });
-    }, [isPinnedSession, scopedMutationServerId, session]);
+    }, [attentionStanding, attentionStandingEnabled, isPinnedSession, scopedMutationServerId, session]);
     const readStateActionId = target ? resolveSessionReadStateActionId(target) : null;
+    const attentionStandingActionId = target ? resolveSessionAttentionStandingActionId(target) : null;
     const readStateInfoItem = React.useMemo(() => {
         if (!readStateActionId) return null;
         return createSessionActionInfoItemProps({
@@ -347,6 +361,13 @@ function SessionInfoReadStateActionItem({
             iconColor: theme.colors.accent.blue,
         });
     }, [readStateActionId, theme.colors.accent.blue]);
+    const attentionStandingInfoItem = React.useMemo(() => {
+        if (!attentionStandingActionId) return null;
+        return createSessionActionInfoItemProps({
+            actionId: attentionStandingActionId,
+            iconColor: theme.colors.accent.blue,
+        });
+    }, [attentionStandingActionId, theme.colors.accent.blue]);
     const handleReadStateAction = useCallback(async () => {
         if (!target || !readStateActionId) return;
         await executeSessionAction({
@@ -354,15 +375,33 @@ function SessionInfoReadStateActionItem({
             target,
         });
     }, [readStateActionId, target]);
+    const handleAttentionStandingAction = useCallback(async () => {
+        if (!target || !attentionStandingActionId) return;
+        await executeSessionAction({
+            actionId: attentionStandingActionId,
+            target,
+        });
+    }, [attentionStandingActionId, target]);
     const [updatingReadState, performReadStateAction] = useHappyAction(handleReadStateAction);
+    const [updatingAttentionStanding, performAttentionStandingAction] = useHappyAction(handleAttentionStandingAction);
 
-    if (!readStateInfoItem) return null;
     return (
-        <Item
-            {...readStateInfoItem}
-            onPress={performReadStateAction}
-            loading={updatingReadState}
-        />
+        <>
+            {readStateInfoItem ? (
+                <Item
+                    {...readStateInfoItem}
+                    onPress={performReadStateAction}
+                    loading={updatingReadState}
+                />
+            ) : null}
+            {attentionStandingInfoItem ? (
+                <Item
+                    {...attentionStandingInfoItem}
+                    onPress={performAttentionStandingAction}
+                    loading={updatingAttentionStanding}
+                />
+            ) : null}
+        </>
     );
 }
 
@@ -443,6 +482,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
     const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
     const sessionName = getSessionName(session);
@@ -488,10 +528,10 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             openSession: (childSessionId) => completeSessionForkNavigation({
                 childSessionId,
                 parentSessionId: session.id,
-                navigate: (targetSessionId) => router.push(routeScope.buildHref(targetSessionId) as any),
+                navigate: (targetSessionId) => { void navigateToSession(targetSessionId, { serverId: routeScope.serverId }); },
             }),
         }),
-        [routeScope, router, session.id],
+        [navigateToSession, routeScope, session.id],
     );
 
     const forkActionEnabled = React.useMemo(() => {
@@ -503,8 +543,8 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [actionsSettingsV1]);
 
     const forkSupported = React.useMemo(() => {
-        return canForkConversation({ session, replayEnabled: sessionReplayEnabled }) === true;
-    }, [session, sessionReplayEnabled]);
+        return canForkConversation({ session, replayEnabled: sessionReplayEnabled, agentSwitchingEnabled }) === true;
+    }, [agentSwitchingEnabled, session, sessionReplayEnabled]);
     const handoffActionSpec = React.useMemo(() => getActionSpec('session.handoff'), []);
     const handoffActionEnabled = React.useMemo(() => {
         return isActionEnabledInState(
@@ -641,6 +681,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         sessionSettingsKey &&
         organizationListViewState.pinnedSessionKeysV1.includes(sessionSettingsKey),
     );
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
+    const attentionStandingEnabled = attentionStanding.actionEnabled && sessionSettingsKey != null;
+    const isAttentionStandingSession = sessionSettingsKey != null
+        && resolveSessionAttentionStanding(attentionStanding.policy, sessionSettingsKey);
     const sessionActionTarget = React.useMemo(
         () => createSessionActionTarget({
             session,
@@ -648,8 +694,17 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             currentUserId: !session.accessLevel && typeof session.owner === 'string' ? session.owner : null,
             isConnected: sessionStatus.isConnected,
             isPinned: isPinnedSession,
+            attentionStandingEnabled,
+            attentionStanding: isAttentionStandingSession,
         }),
-        [isPinnedSession, scopedMutationServerId, session, sessionStatus.isConnected],
+        [
+            attentionStandingEnabled,
+            isAttentionStandingSession,
+            isPinnedSession,
+            scopedMutationServerId,
+            session,
+            sessionStatus.isConnected,
+        ],
     );
     const canArchiveSession = sessionActionTarget.canArchive;
     const canDeleteSession = sessionActionTarget.canDelete;
@@ -850,7 +905,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             executionRunsEnabled: executionRunsEnabled === true,
             agentSwitchingEnabled,
             navigateToSession: (childSessionId) => {
-                router.push(routeScope.buildHref(childSessionId) as any);
+                void navigateToSession(childSessionId, { serverId: routeScope.serverId });
             },
             navigateToNewSession: (route) => {
                 router.push(route as any);
@@ -1096,10 +1151,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             loading={handingOffSession}
                         />
                     )}
-                    <SessionInfoReadStateActionItem
+                    <SessionInfoAttentionActionItems
                         sessionId={session.id}
                         scopedMutationServerId={scopedMutationServerId}
                         isPinnedSession={isPinnedSession}
+                        attentionStandingEnabled={attentionStandingEnabled}
+                        attentionStanding={isAttentionStandingSession}
                     />
                     {!isArchivedSession && sessionSettingsKey && pinInfoItemProps ? (
                         <Item

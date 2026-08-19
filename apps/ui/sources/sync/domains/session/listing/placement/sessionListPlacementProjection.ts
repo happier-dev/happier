@@ -2,6 +2,10 @@ import {
     deriveSessionRuntimePresentationState,
     resolveNextSessionRuntimePresentationFreshnessAtMs,
 } from '../../attention/deriveSessionRuntimePresentationState';
+import {
+    resolveSessionAttentionStandingSource,
+    type SessionAttentionStandingPolicy,
+} from '../../organization/attentionStanding';
 import type { SessionListAttentionPromotionReason } from '../attentionPromotion/sessionListAttentionPromotionTypes';
 import { isSessionListReadyForReview } from '../sessionListReadyForReview';
 import type { SessionListRenderableSession } from '../sessionListRenderable';
@@ -30,6 +34,13 @@ export type SessionListPlacementProjection = Readonly<{
     kind: SessionListPlacementKind;
     timestamp: number | null;
     retainedWorking: boolean;
+    /**
+     * Only meaningful for a 'standing' placement: true when the user asked for
+     * THIS session to stay in the band, false when standing comes from the
+     * account default. Explicit intent outranks "Hide inactive sessions"; a
+     * blanket default must not silently disable that filter.
+     */
+    explicitStanding: boolean;
 }>;
 
 export function projectSessionListPlacement(params: Readonly<{
@@ -37,6 +48,7 @@ export function projectSessionListPlacement(params: Readonly<{
     nowMs: number;
     sessionKey?: string | null;
     retainedWorkingSessionKeys?: SessionListWorkingRetentionKeySource;
+    standingPolicy?: SessionAttentionStandingPolicy;
 }>): SessionListPlacementProjection {
     const runtimeStatus = deriveSessionRuntimePresentationState(params.session, params.nowMs);
     if (runtimeStatus.freshActionRequired) {
@@ -64,15 +76,27 @@ export function projectSessionListPlacement(params: Readonly<{
         return createPlacement('unread', resolveSessionListPlacementTimestampForReason(params.session, 'unread'));
     }
 
+    const sessionKey = params.sessionKey ?? normalizeSessionListPlacementKey(null, params.session.id);
     const retainedWorking = shouldRetainSessionListWorkingPlacement({
         session: params.session,
-        sessionKey: params.sessionKey ?? normalizeSessionListPlacementKey(null, params.session.id),
+        sessionKey,
         retainedKeys: normalizeSessionListWorkingRetentionKeys(params.retainedWorkingSessionKeys),
         nowMs: params.nowMs,
     });
-    return retainedWorking
-        ? { kind: 'working', timestamp: null, retainedWorking: true }
-        : { kind: 'none', timestamp: null, retainedWorking: false };
+    if (retainedWorking) {
+        return { kind: 'working', timestamp: null, retainedWorking: true, explicitStanding: false };
+    }
+    // Attention standing is a FLOOR, never an override: it only reaches a
+    // session whose own signals place it nowhere, so a read session the user
+    // asked to keep stays in the band while unread/ready/working/failed
+    // placements keep their own reason and ordering key.
+    const standingSource = params.standingPolicy && sessionKey
+        ? resolveSessionAttentionStandingSource(params.standingPolicy, sessionKey)
+        : 'none';
+    if (standingSource !== 'none') {
+        return { kind: 'standing', timestamp: null, retainedWorking: false, explicitStanding: standingSource === 'override' };
+    }
+    return { kind: 'none', timestamp: null, retainedWorking: false, explicitStanding: false };
 }
 
 /**
@@ -155,6 +179,8 @@ export function resolveSessionListPlacementTimestampForReason(
             );
         case 'unread':
             return resolveSessionListUnreadPlacementTimestamp(session);
+        case 'standing':
+            return null;
     }
 }
 
@@ -199,7 +225,7 @@ function createPlacement(
     kind: Exclude<SessionListPlacementKind, 'none'>,
     timestamp: number | null,
 ): SessionListPlacementProjection {
-    return { kind, timestamp, retainedWorking: false };
+    return { kind, timestamp, retainedWorking: false, explicitStanding: false };
 }
 
 function normalizePlacementTimestamp(...values: readonly unknown[]): number | null {

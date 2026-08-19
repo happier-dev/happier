@@ -1,4 +1,5 @@
 import type {
+    SessionAttentionStanding,
     SessionOrganizationFolder,
     SessionOrganizationLabel,
     SessionOrganizationOrderEntry,
@@ -18,6 +19,7 @@ export type NormalizedSessionOrganizationState = Readonly<{
     folderAssignmentsBySessionKey: Readonly<Record<string, SessionOrganizationFolderAssignmentValue>>;
     tagsByTagKey: Readonly<Record<string, SessionOrganizationTag>>;
     tagAssignmentsBySessionKey: Readonly<Record<string, readonly string[]>>;
+    attentionStandingsBySessionKey: Readonly<Record<string, SessionAttentionStanding>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;
@@ -44,6 +46,7 @@ export type SessionOrganizationProjection = Readonly<{
     folderAssignmentsBySessionId: Readonly<Record<string, SessionOrganizationFolderAssignmentValue>>;
     tagsById: Readonly<Record<string, SessionOrganizationTag>>;
     tagAssignmentsBySessionId: Readonly<Record<string, readonly string[]>>;
+    attentionStandingsBySessionId: Readonly<Record<string, SessionAttentionStanding>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;

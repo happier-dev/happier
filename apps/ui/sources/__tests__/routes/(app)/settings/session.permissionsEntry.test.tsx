@@ -109,6 +109,7 @@ describe('Session settings (Permissions entry)', () => {
             ['settingsSession.sessionList.workspaceMachineSubtitlesTitle', 'settingsSession.rootGroups.rowDetails.title'],
             ['settingsSession.sessionList.workingStatusAnimatedTextTitle', 'settingsSession.rootGroups.activitySignals.title'],
             ['settingsSession.sessionList.attentionPromotionModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.sessionList.attentionStandingDefaultTitle', 'settingsSession.rootGroups.activitySignals.title'],
             ['settingsSession.sessionList.workingPlacementModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
             ['settingsSession.sessionList.workingIndicatorTitle', 'settingsSession.rootGroups.activitySignals.title'],
             ['settingsSession.mobileWorkspaceExperience.title', 'settingsSession.rootGroups.mobileLayout.title'],

@@ -276,6 +276,8 @@ function createSessionRowModel(overrides: Partial<SessionListRowModel> = {}): Se
         adjacency: { isFirst: true, isLast: true, isSingle: true },
         isSelected: true,
         isPinned: true,
+        isAttentionStanding: false,
+        attentionStandingEnabled: false,
         isArchived: false,
         isActive: true,
         hasUnreadMessages: false,

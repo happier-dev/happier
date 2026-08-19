@@ -1,4 +1,9 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+    HappierReplayRecentMessagesCountSchema,
+    HappierReplayWritableMaxSeedCharsSchema,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 function bucketCount(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
@@ -64,7 +69,8 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
     sessionReplayRecentMessagesCount: {
-        schema: z.number(),
+        // Bounds come from the one Replay-budget owner in the Protocol.
+        schema: HappierReplayRecentMessagesCountSchema,
         default: 250,
         description: 'Number of recent transcript messages included in app-level replay context',
         storageScope: 'account',
@@ -78,7 +84,10 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         },
     },
     sessionReplayMaxSeedChars: {
-        schema: z.number(),
+        // Bounds come from the one Replay-budget owner in the Protocol. Below
+        // the floor the seed builder correctly produces nothing, so an
+        // unbounded schema could store a budget that silently turns Replay off.
+        schema: HappierReplayWritableMaxSeedCharsSchema,
         default: 120_000,
         description: 'Maximum character budget for replay seed prompts (best-effort; oldest items dropped first)',
         storageScope: 'account',
@@ -194,6 +203,13 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Preferred mobile session workspace experience mode',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionCockpitSwipeNavigationEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Allow a horizontal swipe in the mobile cockpit bottom band to move to the previous/next session in the list order last seen',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     terminalConnectLegacySecretExportEnabled: {
         schema: z.boolean(),

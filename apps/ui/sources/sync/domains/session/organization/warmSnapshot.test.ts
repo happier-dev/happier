@@ -46,6 +46,10 @@ function buildNormalizedState(
         tagAssignmentsBySessionKey: {
             [`${SERVER_ID}:s1`]: ['t1'],
         },
+        attentionStandingsBySessionKey: {
+            [`${SERVER_ID}:s1`]: { sessionId: 's1', standing: true, updatedAt: 20 },
+            [`${SERVER_ID}:s2`]: { sessionId: 's2', standing: false, updatedAt: 21 },
+        },
         orderEntriesByScopeKey: {
             [`${SERVER_ID}:group:pinned`]: [
                 { scopeKind: 'group', scopeKey: 'pinned', itemKind: 'session', itemKey: 's1', sortKey: '00000001' },
@@ -83,7 +87,22 @@ describe('buildSessionOrganizationSnapshotFromProjection', () => {
                 { scopeKind: 'group', scopeKey: 'pinned', itemKind: 'session', itemKey: 's1', sortKey: '00000001' },
             ],
             labels: [expect.objectContaining({ labelKind: 'group', scopeKey: 'pinned' })],
+            attentionStandings: [
+                { sessionId: 's1', standing: true, updatedAt: 20 },
+                { sessionId: 's2', standing: false, updatedAt: 21 },
+            ],
         });
+    });
+
+    it('carries both polarities of an attention standing so a warm boot repaints the same attention section', () => {
+        const projection = buildSessionOrganizationProjection(buildNormalizedState(), SERVER_ID);
+
+        const snapshot = buildSessionOrganizationSnapshotFromProjection(projection);
+
+        expect(snapshot?.attentionStandings).toEqual([
+            { sessionId: 's1', standing: true, updatedAt: 20 },
+            { sessionId: 's2', standing: false, updatedAt: 21 },
+        ]);
     });
 
     it('omits unassigned sessions instead of persisting an assignment the protocol cannot express', () => {
