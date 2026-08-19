@@ -4341,6 +4341,10 @@ export const pt: TranslationStructure = {
     openClassicView: 'Abrir visualização clássica',
     tabs: 'Abas',
   },
+    previousSession: 'Sessão anterior',
+    nextSession: 'Próxima sessão',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' de ' + total,
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Mudaste para ' + name + ', ' + position + ' de ' + total,
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -7976,13 +7980,18 @@ settingsSession: {
               listOrganization: { title: 'Organização da lista de sessões', footer: 'Controle ordenação, agrupamento, seções, sessões inativas e padrões do painel no desktop.' },
               rowDetails: { title: 'Detalhes das linhas de sessão', footer: 'Escolha quais rótulos e detalhes visuais aparecem em cada linha de sessão.' },
               activitySignals: { title: 'Sinais de atividade e status', footer: 'Controle como sessões ativas, em execução e que precisam de atenção são destacadas.' },
-              mobileLayout: { title: 'Layout móvel da sessão', footer: 'Escolha o layout de telefone usado dentro das sessões.' },
+              mobileLayout: { title: 'Layout móvel da sessão', footer: 'Escolha o layout de telefone usado dentro das sessões. No modo cockpit, deslizar para a esquerda ou para a direita sobre a barra inferior vai para a próxima sessão ou a anterior, na ordem da lista que você viu por último.' },
               agentPersonalization: { title: 'Instruções de prompt do agente', footer: 'Controle instruções que pedem aos agentes para nomear sessões e sugerir respostas.' },
           },
           composer: {
               title: 'Compositor e envio',
               entrySubtitle: 'Enter para enviar, histórico, aparência do compositor e envio com agente ocupado.',
           },
+	      cockpitSwipeNavigation: {
+	          title: 'Deslizar entre sessões',
+	          enabledSubtitle: 'Deslize sobre a barra inferior para trocar de sessão',
+	          disabledSubtitle: 'Deslizes na barra inferior não trocam de sessão',
+	      },
           providerLimits: {
               title: 'Limites e uso do provedor',
               entrySubtitle: 'Recuperação de limite de uso e medidor de uso ao lado do compositor.',

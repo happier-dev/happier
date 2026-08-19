@@ -29,8 +29,15 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
 import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import {
+    isNewSessionFloatingComposerPresentation,
+    resolveNewSessionRoutePresentation,
+} from '@/components/sessions/new/navigation/newSessionPresentation';
+import { useSetting } from '@/sync/domains/state/storage';
 
 const DESKTOP_PET_OVERLAY_SCREEN_OPTIONS = { headerShown: false } as const;
+// Module-scope so the options callback hands the navigator the same object on every render.
+const NEW_SESSION_TRANSPARENT_CONTENT_STYLE = { backgroundColor: 'transparent' } as const;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
 const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
     animation: 'none',
@@ -113,6 +120,21 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const { theme } = useUnistyles();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
+
+    // `/new` renders either the bare composer (simple) or the profile wizard, and the two want
+    // different native presentations. A native stack reads `modalPresentationStyle` at present time
+    // and ignores later changes, so the decision has to be made HERE, before the push — it cannot be
+    // made inside the screen. `useEnhancedSessionWizard` is the whole predicate: `wizardSections` is
+    // null whenever it is false (see `buildNewSessionScreenVariantModel`).
+    const newSessionVariant = useSetting('useEnhancedSessionWizard') ? 'wizard' : 'simple';
+    const newSessionPresentation = resolveNewSessionRoutePresentation({
+        variant: newSessionVariant,
+        platformOs: Platform.OS,
+    });
+    const newSessionRendersFloatingComposer = isNewSessionFloatingComposerPresentation({
+        variant: newSessionVariant,
+        platformOs: Platform.OS,
+    });
 
     // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
@@ -539,10 +561,35 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 name="new/index"
                 options={({ navigation }) => {
                     const canDismissWithGesture = canDismissNewSessionWithGesture(navigation);
+                    if (newSessionRendersFloatingComposer) {
+                        return {
+                            // The composer paints its own backdrop and owns its own close control,
+                            // so the navigator contributes no chrome at all.
+                            headerShown: false,
+                            presentation: newSessionPresentation,
+                            // No native transition at all: the screen owns both directions in
+                            // Reanimated. UIKit's cross-dissolve is the only modal transition whose
+                            // timing tracks the presentation, but its duration is not settable
+                            // (`animationDuration` is inert for every modal presentation), and it
+                            // was too slow and too soft to read as a composer arriving. Owning it
+                            // buys the snap and the slide; the mistiming that made a JS entrance
+                            // unusable before is solved by starting it from the composer's first
+                            // layout rather than from mount.
+                            animation: 'none',
+                            // native-stack already omits its own opaque background for the two
+                            // transparent presentations, but `createAppStackScreenOptions` supplies
+                            // `surface.base` for every screen and is applied after it.
+                            contentStyle: NEW_SESSION_TRANSPARENT_CONTENT_STYLE,
+                            // `UIModalPresentationOverFullScreen` has no sheet presentation
+                            // controller, so there is no interactive pull-to-dismiss to enable.
+                            gestureEnabled: false,
+                            fullScreenGestureEnabled: false,
+                        };
+                    }
                     return {
                         headerShown: true,
                         headerBackTitle: t('common.cancel'),
-                        presentation: Platform.OS === 'ios' ? 'pageSheet' : 'modal',
+                        presentation: newSessionPresentation,
                         // Expo Router's web modal closes its Vaul drawer before calling goBack().
                         // With a direct /new entry there is no route to pop, so keep the drawer open
                         // and use the explicit close affordance's deterministic fallback instead.

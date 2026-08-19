@@ -137,7 +137,7 @@ vi.mock('@/components/navigation/Header', () => {
 });
 
 vi.mock('@/constants/Typography', () => {
-    return { Typography: { default: () => ({}), eyebrow: () => ({}), header: () => ({}), keyHint: () => ({}) } };
+    return { Typography: { default: () => ({}), eyebrow: () => ({}), header: () => ({}), keyHint: () => ({}), tabular: () => ({}) } };
 });
 
 vi.mock('@/text', async () => {
@@ -497,8 +497,23 @@ describe('RootLayout native freeze policy', () => {
 
             const newSessionRoute = screens.find((node) => node.props?.name === 'new/index');
             expect(newSessionRoute).toBeTruthy();
-            expect(resolveScreenOptions(newSessionRoute!).presentation).toBe('pageSheet');
-            expect(resolveScreenOptions(newSessionRoute!).sheetAllowedDetents).toBeUndefined();
+            const newSessionOptions = resolveScreenOptions(newSessionRoute!);
+            // Default account settings leave `useEnhancedSessionWizard` false, so /new renders the
+            // simple composer. It is presented as a NON-CONTAINED transparent modal — the only
+            // presentation family for which native-stack omits its opaque `contentStyle` background,
+            // and the one that keeps the screen on the same popover-measurement branch as the sheet
+            // it replaces. The per-variant matrix is covered by `newSessionPresentation.test.ts`;
+            // this asserts the layout actually wires the resolver's output through.
+            expect(newSessionOptions.presentation).toBe('transparentModal');
+            expect(newSessionOptions.sheetAllowedDetents).toBeUndefined();
+            // The composer owns its own backdrop, entrance and close control, so the navigator must
+            // contribute no chrome and no transition of its own.
+            expect(newSessionOptions.headerShown).toBe(false);
+            // No native transition: the screen owns both directions in Reanimated so the entrance
+            // can be snappy and can actually slide. UIKit's modal cross-dissolve is the only
+            // correctly-timed alternative and its duration is not settable.
+            expect(newSessionOptions.animation).toBe('none');
+            expect(newSessionOptions.contentStyle).toEqual({ backgroundColor: 'transparent' });
 
             for (const routeName of [
                 'new/index',

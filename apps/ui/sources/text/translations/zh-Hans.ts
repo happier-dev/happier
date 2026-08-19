@@ -4106,6 +4106,10 @@ export const zhHans: TranslationStructure = {
     openClassicView: '打开经典视图',
     tabs: '标签页',
   },
+    previousSession: '上一个会话',
+    nextSession: '下一个会话',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => '第 ' + position + ' 个，共 ' + total + ' 个',
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => '已切换到 ' + name + '，第 ' + position + ' 个，共 ' + total + ' 个',
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -7614,6 +7618,11 @@ settingsSession: {
             rowDetails: {
                 title: '会话行详情',
                 footer: '选择每个会话行显示哪些标签和视觉详情。',
+	    cockpitSwipeNavigation: {
+	        title: '滑动切换会话',
+	        enabledSubtitle: '在底部栏左右滑动即可切换会话',
+	        disabledSubtitle: '在底部栏滑动不会切换会话',
+	    },
             },
             activitySignals: {
                 title: '活动与状态信号',

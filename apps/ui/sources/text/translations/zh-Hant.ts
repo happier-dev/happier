@@ -3860,6 +3860,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         openClassicView: '開啟傳統檢視',
         tabs: '分頁',
     },
+        previousSession: '上一個工作階段',
+        nextSession: '下一個工作階段',
+        sessionPosition: ({ position, total }: { position: number; total: number }) => '第 ' + position + ' 個，共 ' + total + ' 個',
+        switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => '已切換至 ' + name + '，第 ' + position + ' 個，共 ' + total + ' 個',
 
     settingsAppearance: {
       tabBarAppearance: {
@@ -6613,13 +6617,18 @@ settingsSession: {
             listOrganization: { title: '工作階段列表組織', footer: '控制排序、分組、區段、非活躍工作階段和桌面窗格預設值。' },
             rowDetails: { title: '工作階段列詳細資料', footer: '選擇每個工作階段列顯示哪些標籤和視覺詳細資料。' },
             activitySignals: { title: '活動與狀態訊號', footer: '控制如何突出顯示活躍、執行中和需要注意的工作階段。' },
-            mobileLayout: { title: '行動版工作階段版面', footer: '選擇工作階段內使用的手機版面。' },
+            mobileLayout: { title: '行動版工作階段版面', footer: '選擇工作階段內使用的手機版面。在駕駛艙模式下，在底部列左右滑動會依你最後看到的清單順序切換到下一個或上一個工作階段。' },
             agentPersonalization: { title: '代理提示詞指示', footer: '控制要求代理命名工作階段並建議回覆的提示詞指示。' },
         },
         composer: {
             title: '輸入與傳送',
             entrySubtitle: 'Enter 傳送、歷史記錄、輸入列外觀，以及代理忙碌時的傳送行為。',
         },
+	        cockpitSwipeNavigation: {
+	            title: '滑動切換工作階段',
+	            enabledSubtitle: '在底部列左右滑動即可切換工作階段',
+	            disabledSubtitle: '在底部列滑動不會切換工作階段',
+	        },
         providerLimits: {
             title: '提供者限制和用量',
             entrySubtitle: '用量限制恢復和輸入列旁的提供者用量指示器。',

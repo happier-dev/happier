@@ -221,6 +221,16 @@ describe('SessionCockpitShell', () => {
         navigationEventsState.addListener.mockClear();
     });
 
+    it('answers a lateral swipe with one container transform over the whole session tree', async () => {
+        const screen = await renderScreen(<SharedShellDismissHarness />);
+
+        // Header, transcript and composer all recede together, and exactly once: the
+        // motion belongs to this seam, not to SessionView or any surface below it.
+        const swipeContainers = screen.tree.findAllByProps({ testID: 'session-cockpit-swipe-content' } as never);
+        expect(swipeContainers).toHaveLength(1);
+        expect(swipeContainers[0]?.findByType('SessionCockpitTabNavigator' as never)).toBeTruthy();
+    });
+
     it('signals dismiss start, cancel, and unmount cleanup from the shared shell', async () => {
         const screen = await renderScreen(<SharedShellDismissHarness />);
 

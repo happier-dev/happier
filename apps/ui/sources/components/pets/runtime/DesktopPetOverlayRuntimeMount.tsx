@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { useRouter } from 'expo-router';
 
 import {
     resolveDesktopPetOverlayGeometry,
@@ -18,6 +17,7 @@ import {
 } from '@/components/pets/state/usePetCompanionActivityState';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { useLocalSettings, useSettings } from '@/sync/domains/state/storage';
@@ -44,15 +44,13 @@ function shouldShowDesktopPetOverlay(params: Readonly<{
 }
 
 function useDesktopPetOverlayMainWindowRequests(): void {
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
-            openSession: (sessionId) => {
-                router.push((`/session/${sessionId}`) as never);
-            },
+            openSession: (sessionId) => navigateToSession(sessionId),
         }),
-        [router],
+        [navigateToSession],
     );
 
     React.useEffect(() => {

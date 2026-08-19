@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildVisibleSessionNavigationEntries } from '@/keyboard/sessions';
+import { buildVisibleSessionNavigationEntries } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 import {
     buildSessionListSelectionKey,

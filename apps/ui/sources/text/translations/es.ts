@@ -4216,6 +4216,10 @@ export const es: TranslationStructure = {
     openClassicView: 'Abrir vista clásica',
     tabs: 'Pestañas',
   },
+    previousSession: 'Sesión anterior',
+    nextSession: 'Sesión siguiente',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' de ' + total,
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Has cambiado a ' + name + ', ' + position + ' de ' + total,
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -7853,6 +7857,11 @@ settingsSession: {
               rowDetails: {
                   title: 'Detalles de las filas de sesión',
                   footer: 'Elige qué etiquetas y detalles visuales aparecen en cada fila de sesión.',
+	      cockpitSwipeNavigation: {
+	          title: 'Deslizar entre sesiones',
+	          enabledSubtitle: 'Desliza sobre la barra inferior para cambiar de sesión',
+	          disabledSubtitle: 'Los deslizamientos en la barra inferior no cambian de sesión',
+	      },
               },
               activitySignals: {
                   title: 'Señales de actividad y estado',

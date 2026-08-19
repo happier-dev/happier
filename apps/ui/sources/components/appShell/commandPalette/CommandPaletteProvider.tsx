@@ -71,11 +71,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
-            openSession: (sessionId) => {
-                router.push((`/session/${sessionId}`) as any);
-            },
+            openSession: (sessionId) => navigateToSession(sessionId),
         }),
-        [router],
+        [navigateToSession],
     );
     const keyboardPlatform = useMemo(resolveKeyboardPlatform, []);
     const shortcutLabels = useMemo(

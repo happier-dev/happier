@@ -4251,6 +4251,10 @@ export const pl: TranslationStructure = {
     openClassicView: 'Otwórz widok klasyczny',
     tabs: 'Karty',
   },
+    previousSession: 'Poprzednia sesja',
+    nextSession: 'Następna sesja',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' z ' + total,
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Przełączono na ' + name + ', ' + position + ' z ' + total,
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -7857,13 +7861,18 @@ settingsSession: {
               listOrganization: { title: 'Organizacja listy sesji', footer: 'Kontroluj kolejność, grupowanie, sekcje, nieaktywne sesje i domyślny panel na komputerze.' },
               rowDetails: { title: 'Szczegóły wierszy sesji', footer: 'Wybierz, które etykiety i szczegóły wizualne pojawiają się w każdym wierszu sesji.' },
               activitySignals: { title: 'Sygnały aktywności i stanu', footer: 'Kontroluj, jak wyróżniane są sesje aktywne, pracujące i wymagające uwagi.' },
-              mobileLayout: { title: 'Układ sesji na telefonie', footer: 'Wybierz układ telefonu używany wewnątrz sesji.' },
+              mobileLayout: { title: 'Układ sesji na telefonie', footer: 'Wybierz układ telefonu używany wewnątrz sesji. W trybie kokpitu przesunięcie w lewo lub w prawo po dolnym pasku przechodzi do następnej lub poprzedniej sesji w ostatnio widzianej kolejności listy.' },
               agentPersonalization: { title: 'Instrukcje promptu dla agenta', footer: 'Kontroluj instrukcje, które proszą agentów o nazywanie sesji i sugerowanie odpowiedzi.' },
           },
           composer: {
               title: 'Kompozytor i wysyłanie',
               entrySubtitle: 'Enter do wysyłania, historia, wygląd kompozytora i wysyłanie, gdy agent pracuje.',
           },
+	      cockpitSwipeNavigation: {
+	          title: 'Przesuwanie między sesjami',
+	          enabledSubtitle: 'Przesuń po dolnym pasku, aby zmienić sesję',
+	          disabledSubtitle: 'Przesunięcia po dolnym pasku nie zmieniają sesji',
+	      },
           providerLimits: {
               title: 'Limity i użycie dostawcy',
               entrySubtitle: 'Odzyskiwanie po limitach użycia i wskaźnik użycia obok kompozytora.',

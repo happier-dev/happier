@@ -607,7 +607,7 @@ describe('voice tool handlers', () => {
       scope: 'device',
       refreshAuth: refreshFromActiveServer,
     });
-    expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
+    expect(routerNavigate).toHaveBeenCalledWith('/session/s_other?serverId=server-b', expect.any(Object));
   });
 
   it('switches server before starting an execution run when targeting a session from another server cache', async () => {

@@ -32,7 +32,10 @@ const mockSettings = {
     },
 };
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

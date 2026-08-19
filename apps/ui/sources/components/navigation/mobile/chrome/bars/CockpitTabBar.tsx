@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +11,8 @@ import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+
+import { resolveSessionLateralSwipeTabRowOpacity } from '../lateralSwipe/sessionLateralSwipeMotion';
 
 const styles = StyleSheet.create((theme) => ({
     innerContainer: {
@@ -73,16 +76,50 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
     tabs: readonly CockpitTabBarTabDefinition<TSurface>[];
     tabTestIdPrefix: string;
     onSurfacePress: (surface: TSurface) => void;
+    /**
+     * Readout painted over the tab row while a lateral swipe is under the finger.
+     * Both layers fade from the SAME `progress`, and the readout is absolute, so the
+     * capsule keeps its tab-derived width for the whole gesture instead of resizing.
+     */
+    swipeReadout?: Readonly<{
+        progress: SharedValue<number>;
+        /** The gesture's second axis; floors the dim so an open picker fully clears the row. */
+        browseProgress: SharedValue<number>;
+        node: React.ReactNode;
+    }>;
+    /**
+     * Actions that belong to the BAND rather than to any one tab — today, the lateral
+     * session swipe's non-gesture equivalent.
+     *
+     * They are attached to every tab because a tab is the only thing here a screen
+     * reader can focus: the band's own container is `pointerEvents="box-none"` and is
+     * not an accessibility element, so actions placed on it would never reach the
+     * VoiceOver rotor or the TalkBack context menu. `SessionItem` uses the same shape —
+     * actions ride the row's existing `Pressable` rather than a new element — so this
+     * adds no resting pixels and no extra focus stop.
+     */
+    bandAccessibilityActions?: readonly Readonly<{ name: string; label: string }>[];
+    onBandAccessibilityAction?: (actionName: string) => void;
 }>;
 
 export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    // Idle stand-in so the row's animated style is unconditional: a bar that swapped
+    // between `View` and `Animated.View` would remount its tabs.
+    const idleProgress = useSharedValue(0);
+    const idleBrowseProgress = useSharedValue(0);
+    const rowProgress = props.swipeReadout?.progress ?? idleProgress;
+    const rowBrowseProgress = props.swipeReadout?.browseProgress ?? idleBrowseProgress;
+    const rowStyle = useAnimatedStyle(
+        () => ({ opacity: resolveSessionLateralSwipeTabRowOpacity(rowProgress.value, rowBrowseProgress.value) }),
+        [rowBrowseProgress, rowProgress],
+    );
 
     return (
         <FloatingTabBarSurface testID={props.barTestId} bottomInset={insets.bottom} opaqueBand>
-            <View style={[styles.innerContainer, { gap: metrics.rowGap }]}>
+            <Animated.View style={[styles.innerContainer, { gap: metrics.rowGap }, rowStyle]}>
                 {props.tabs.map((tab) => {
                     const active = tab.id === props.activeSurface;
                     const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
@@ -95,6 +132,17 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                             testID={`${props.tabTestIdPrefix}${tab.id}`}
                             onPress={() => props.onSurfacePress(tab.id)}
                             hitSlop={8}
+                            // The visible label is optional (`tabBarShowLabels` defaults off), so the
+                            // accessible name has to come from the definition rather than from a child
+                            // Text that may not be rendered — otherwise the default bar is a row of
+                            // unnamed buttons to a screen reader.
+                            accessibilityRole="tab"
+                            accessibilityLabel={tab.label}
+                            accessibilityState={{ selected: active }}
+                            accessibilityActions={props.bandAccessibilityActions}
+                            onAccessibilityAction={props.onBandAccessibilityAction
+                                ? (event) => props.onBandAccessibilityAction?.(event.nativeEvent.actionName)
+                                : undefined}
                             style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
                         >
                             {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
@@ -110,7 +158,8 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                         </Pressable>
                     );
                 })}
-            </View>
+            </Animated.View>
+            {props.swipeReadout?.node ?? null}
         </FloatingTabBarSurface>
     );
 }

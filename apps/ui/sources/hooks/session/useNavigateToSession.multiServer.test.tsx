@@ -26,6 +26,7 @@ installSessionHooksCommonModuleMocks({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ refreshFromActiveServer: refreshFromActiveServerSpy }),
+    getCurrentAuth: () => ({ refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
@@ -161,5 +162,55 @@ describe('useNavigateToSession (multi-server)', () => {
             refreshAuth: expect.any(Function),
         });
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_789?serverId=server-cached', expect.any(Object));
+    });
+
+    it('carries extra route params onto the session href', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
+
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+
+        let navigateToSession: ReturnType<typeof useNavigateToSession> | null = null;
+        function Probe() {
+            navigateToSession = useNavigateToSession();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            await navigateToSession!('sess_jump', { query: { jumpSeq: 42 } });
+        });
+
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_jump?jumpSeq=42', expect.any(Object));
+        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+    });
+
+    it('navigates singularly from the imperative entry shape too', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockResolvedValue(true);
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
+
+        const { navigateToSessionRoute } = await import('./navigateToSessionRoute');
+        const navigate = vi.fn();
+
+        navigateToSessionRoute({
+            router: { navigate } as never,
+            sessionId: 'sess_imperative',
+            serverId: 'server-imperative',
+            refreshAuth: refreshFromActiveServerSpy,
+        });
+
+        expect(navigate).toHaveBeenCalledWith('/session/sess_imperative?serverId=server-imperative', expect.any(Object));
+        expect(navigate.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'server-imperative',
+            scope: 'device',
+            refreshAuth: refreshFromActiveServerSpy,
+        });
     });
 });

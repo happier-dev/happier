@@ -1,4 +1,4 @@
-import { buildServerScopedSessionKey, type VisibleSessionNavigationEntry } from '@/keyboard/sessions';
+import { buildServerScopedSessionKey, type VisibleSessionNavigationEntry } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 export type SessionListSelectionKeyInput = Readonly<{
     sessionId: string;

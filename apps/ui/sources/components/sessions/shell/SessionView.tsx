@@ -2266,7 +2266,6 @@ function SessionViewLoaded({
     });
     const applyLocalSettings = useApplyLocalSettings();
     const router = useRouter();
-    const pathname = usePathname();
     const safeArea = useSafeAreaInsets();
     const directSessionLink = directSessionRuntime.directSessionLink;
     const isLandscape = useIsLandscape();
@@ -3852,9 +3851,11 @@ function SessionViewLoaded({
     const actionExecutor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
-            openSession: (sid) => {
-                router.push(buildSessionHref(sid) as any);
-            },
+            // The route's own server is the fallback the canonical navigator cannot know about: a
+            // child session absent from every list cache still belongs to the server we are on.
+            openSession: (sid) => navigateToSession(sid, {
+                serverId: resolveServerIdForSessionIdFromLocalCache(sid) ?? sessionRouteServerId,
+            }),
         }),
         [buildSessionHref, router]
     );

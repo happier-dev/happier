@@ -4016,6 +4016,10 @@ export const ca: TranslationStructure = {
         openClassicView: 'Obre la vista clàssica',
         tabs: 'Pestanyes',
     },
+        previousSession: 'Sessió anterior',
+        nextSession: 'Sessió següent',
+        sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' de ' + total,
+        switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Has canviat a ' + name + ', ' + position + ' de ' + total,
 
     settingsAppearance: {
       tabBarAppearance: {
@@ -7417,6 +7421,11 @@ settingsSession: {
                 rowDetails: {
                     title: 'Detalls de les files de sessió',
                     footer: 'Tria quines etiquetes i detalls visuals apareixen a cada fila de sessió.',
+	            cockpitSwipeNavigation: {
+	                title: 'Llisca entre sessions',
+	                enabledSubtitle: 'Llisca sobre la barra inferior per canviar de sessió',
+	                disabledSubtitle: 'Els lliscaments a la barra inferior no canvien de sessió',
+	            },
                 },
                 activitySignals: {
                     title: 'Senyals d’activitat i estat',

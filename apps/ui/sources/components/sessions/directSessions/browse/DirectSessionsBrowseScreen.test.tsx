@@ -38,6 +38,7 @@ const linkEnsureSpy = vi.hoisted(() => vi.fn(async () => ({
     created: true,
 })));
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerNavigateSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const profileMock = vi.hoisted(() => ({
     connectedServicesV2: [
@@ -58,7 +59,7 @@ let machinesState = [
 ];
 
 const expoRouterMock = createExpoRouterMock({
-    router: { push: routerPushSpy },
+    router: { push: routerPushSpy, navigate: routerNavigateSpy },
 });
 
 installNewSessionComponentsCommonModuleMocks({
@@ -163,6 +164,7 @@ describe('DirectSessionsBrowseScreen', () => {
         candidatesListSpy.mockClear();
         linkEnsureSpy.mockClear();
         routerPushSpy.mockClear();
+        routerNavigateSpy.mockClear();
         modalAlertSpy.mockClear();
     });
 
@@ -442,7 +444,8 @@ describe('DirectSessionsBrowseScreen', () => {
             codexBackendMode: 'appServer',
             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
         });
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/happy-session-1', expect.any(Object));
+        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('switches to the codex connected-service source before linking', async () => {

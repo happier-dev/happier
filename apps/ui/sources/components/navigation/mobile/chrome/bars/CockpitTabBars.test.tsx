@@ -17,6 +17,20 @@ let openTabsBadgeEnabled = true;
 const themeState = vi.hoisted(() => ({
     textPrimaryColor: '#111111',
 }));
+type LateralTarget = { sessionId: string; title: string; position: number; total: number } | null;
+const lateralNavigationState = vi.hoisted(() => ({
+    previous: null as LateralTarget,
+    next: null as LateralTarget,
+    navigate: vi.fn(),
+}));
+
+vi.mock('../lateralSwipe/useSessionCockpitLateralNavigation', () => ({
+    useSessionCockpitLateralNavigation: () => ({
+        previous: lateralNavigationState.previous,
+        next: lateralNavigationState.next,
+        navigate: lateralNavigationState.navigate,
+    }),
+}));
 
 installNavigationCommonModuleMocks({
     reactNative: async () => {
@@ -93,6 +107,67 @@ describe('cockpit tab bars', () => {
         scmState = null;
         gitBadgeMode = 'changedFiles';
         openTabsBadgeEnabled = true;
+    });
+
+    it('offers the lateral step as an accessibility action on every cockpit tab', async () => {
+        // The band's own container is `pointerEvents="box-none"` and is not an accessibility
+        // element, so actions placed there never reach the VoiceOver rotor or the TalkBack
+        // context menu. A tab is the only focusable thing in the band, so the actions ride
+        // the tabs — the same shape `SessionItem` uses for its row actions.
+        //
+        // The bar's contract here is PLACEMENT: given navigable neighbours, expose named
+        // actions on focusable elements. Resolving those neighbours belongs to
+        // `useSessionCockpitLateralNavigation` and is proven in its own suite, so it is
+        // stubbed rather than dragged in through the whole storage surface.
+        lateralNavigationState.previous = { sessionId: 'sess_0', title: 'Previous', position: 1, total: 3 };
+        lateralNavigationState.next = { sessionId: 'sess_2', title: 'Next', position: 3, total: 3 };
+
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        const tabs = screen.tree.root.findAll((node) => (
+            typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('session-cockpit-tab-')
+            && Array.isArray(node.props?.accessibilityActions)
+        ));
+        expect(tabs.length).toBeGreaterThan(0);
+        for (const tab of tabs) {
+            expect((tab.props.accessibilityActions as Array<{ name: string }>).map((a) => a.name))
+                .toEqual(['previousSession', 'nextSession']);
+            // An action is only operable if the element carrying it is also named.
+            expect(typeof tab.props.accessibilityLabel).toBe('string');
+        }
+    });
+
+    it('offers no lateral accessibility action when there is no neighbour to step to', async () => {
+        lateralNavigationState.previous = null;
+        lateralNavigationState.next = null;
+
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={true}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        const tabsWithActions = screen.tree.root.findAll((node) => (
+            typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('session-cockpit-tab-')
+            && node.props?.accessibilityActions !== undefined
+        ));
+        expect(tabsWithActions).toHaveLength(0);
     });
 
     it('keeps the active pill linked to CSS variable theme colors', async () => {

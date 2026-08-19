@@ -4558,6 +4558,10 @@ export const it: TranslationStructure = {
     openClassicView: 'Apri vista classica',
     tabs: 'Schede',
   },
+    previousSession: 'Sessione precedente',
+    nextSession: 'Sessione successiva',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' di ' + total,
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Passaggio a ' + name + ', ' + position + ' di ' + total,
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -8182,13 +8186,18 @@ settingsSession: {
               listOrganization: { title: 'Organizzazione elenco sessioni', footer: 'Controlla ordine, raggruppamento, sezioni, sessioni inattive e pannello desktop predefinito.' },
               rowDetails: { title: 'Dettagli righe sessione', footer: 'Scegli quali etichette e dettagli visivi compaiono in ogni riga della sessione.' },
               activitySignals: { title: 'Segnali di attività e stato', footer: 'Controlla come vengono evidenziate le sessioni attive, in esecuzione e che richiedono attenzione.' },
-              mobileLayout: { title: 'Layout sessione mobile', footer: 'Scegli il layout per telefono usato dentro le sessioni.' },
+              mobileLayout: { title: 'Layout sessione mobile', footer: 'Scegli il layout per telefono usato dentro le sessioni. In modalità cockpit, scorrendo a sinistra o a destra sulla barra in basso passi alla sessione successiva o precedente, nell’ordine della lista visto per ultimo.' },
               agentPersonalization: { title: 'Istruzioni prompt per l’agente', footer: 'Controlla le istruzioni che chiedono agli agenti di nominare le sessioni e suggerire risposte.' },
           },
           composer: {
               title: 'Compositore e invio',
               entrySubtitle: 'Invio con Enter, cronologia, aspetto del compositore e invio mentre l’agente è occupato.',
           },
+	      cockpitSwipeNavigation: {
+	          title: 'Scorri tra le sessioni',
+	          enabledSubtitle: 'Scorri sulla barra in basso per cambiare sessione',
+	          disabledSubtitle: 'Gli scorrimenti sulla barra in basso non cambiano sessione',
+	      },
           providerLimits: {
               title: 'Limiti e uso provider',
               entrySubtitle: 'Recupero dai limiti d’uso e indicatore di utilizzo accanto al compositore.',

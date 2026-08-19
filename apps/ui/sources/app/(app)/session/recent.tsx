@@ -12,6 +12,10 @@ import { layout } from '@/components/ui/layout/layout';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Pressable } from 'react-native';
 import { t } from '@/text';
+import { useIsFocused } from '@react-navigation/native';
+import { useSessionListPaneSourceScopeKey } from '@/components/sessions/shell/surface/sessionListPaneRetention';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
+import type { SessionListLikeItem } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 interface SessionHistoryItem {
     type: 'session' | 'date-header';
@@ -165,10 +169,36 @@ export default function SessionHistory() {
     const allSessions = useAllSessions();
     const navigateToSession = useNavigateToSession();
     
+    const isFocused = useIsFocused();
+    const sourceScopeKey = useSessionListPaneSourceScopeKey();
+
     const groupedItems = React.useMemo(() => {
         return groupSessionsByDate(allSessions);
     }, [allSessions]);
-    
+
+    // These rows carry the session record, not a list row, so the owning server has to be lifted
+    // off `session.serverId` explicitly; without it every captured key would be unscoped and the
+    // session route — which is always server-scoped — would never anchor on one.
+    const sessionNavigationItems = React.useMemo<SessionListLikeItem[]>(
+        () => groupedItems.map((item) => (
+            item.type === 'session' && item.session
+                ? {
+                    type: 'session',
+                    serverId: item.session.serverId,
+                    session: { id: item.session.id },
+                }
+                : { type: item.type }
+        )),
+        [groupedItems],
+    );
+    useSessionNavigationCursorPublisher({
+        active: isFocused,
+        origin: 'recent',
+        sourceScopeKey,
+        storageKind: 'all',
+        items: sessionNavigationItems,
+    });
+
     const renderItem = React.useCallback(({ item, index }: { item: SessionHistoryItem, index: number }) => {
         if (item.type === 'date-header') {
             return (

@@ -59,6 +59,7 @@ import {
     type SessionFolderViewModeV1,
 } from '../sessionFolderShellTypes';
 import { getAllKnownTags } from '../sessionTagUtils';
+import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
 import { useSessionListFocusedFolderState } from './useSessionListFocusedFolderState';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import {
@@ -208,6 +209,9 @@ export function useSessionListViewState({
     const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
     const sessionTagsV1 = organizationListViewState.sessionTagsV1 as Record<string, string[]>;
     const sessionFolderAssignmentsBySessionKey = organizationListViewState.sessionFolderAssignmentsBySessionKey;
+    const attentionStanding = useSessionAttentionStandingInputs(
+        organizationListViewState.attentionStandingOverridesBySessionKey,
+    );
     const pinnedKeyList = Array.isArray(organizationListViewState.pinnedSessionKeysV1)
         ? organizationListViewState.pinnedSessionKeysV1
         : EMPTY_SESSION_KEYS;
@@ -506,6 +510,8 @@ export function useSessionListViewState({
         pinnedKeyList,
         pinnedKeySet,
         setPinnedSessionKeysV1,
+        attentionStandingEnabled: attentionStanding.actionEnabled,
+        attentionStandingPolicy: attentionStanding.policy,
         sessionMruOrderV1,
         setSessionMruOrderV1,
         sessionListGroupOrderV1,

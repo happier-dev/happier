@@ -3936,6 +3936,10 @@ export const fr: TranslationStructure = {
         openClassicView: 'Ouvrir la vue classique',
         tabs: 'Onglets',
     },
+        previousSession: 'Session précédente',
+        nextSession: 'Session suivante',
+        sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' sur ' + total,
+        switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Passage à ' + name + ', ' + position + ' sur ' + total,
 
     settingsAppearance: {
       tabBarAppearance: {
@@ -7407,6 +7411,11 @@ settingsSession: {
               rowDetails: {
                   title: 'Détails des lignes de session',
                   footer: 'Choisis quels libellés et détails visuels apparaissent sur chaque ligne de session.',
+	          cockpitSwipeNavigation: {
+	              title: 'Balayer entre les sessions',
+	              enabledSubtitle: 'Balaie la barre du bas pour changer de session',
+	              disabledSubtitle: 'Les balayages sur la barre du bas restent dans la session',
+	          },
               },
               activitySignals: {
                   title: 'Signaux d’activité et de statut',

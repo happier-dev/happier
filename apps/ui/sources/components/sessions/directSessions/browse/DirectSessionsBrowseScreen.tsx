@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { ScrollView } from 'react-native';
 import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
-import { useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
@@ -80,7 +81,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
     const interaction: DirectSessionsBrowseInteraction = props.interaction ?? 'openSession';
     const lockScope = props.lockScope ?? null;
     const locked = Boolean(lockScope);
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const { theme } = useUnistyles() as { theme: AppTheme };
     const styles = stylesheet;
     const machines = useAllMachines();
@@ -260,13 +261,13 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                 Modal.alert(t('common.error'), result.error);
                 return;
             }
-            router.push(`/session/${result.sessionId}` as any);
+            await navigateToSession(result.sessionId);
         } catch (linkError) {
             Modal.alert(t('common.error'), linkError instanceof Error ? linkError.message : t('directSessions.browseLinkFailed'));
         } finally {
             setLinkingSessionId(null);
         }
-    }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
+    }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, navigateToSession, props, selectedProviderId, selectedSource]);
 
     return (
         <PopoverScope boundaryRef={popoverBoundaryRef}>

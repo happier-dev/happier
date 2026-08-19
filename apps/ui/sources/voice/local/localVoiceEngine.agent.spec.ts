@@ -1655,6 +1655,6 @@ describe('local voice engine agent behavior', () => {
         await stopPromise;
 
         expect(setActiveServerAndSwitch).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'server-b' }));
-        expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
+        expect(routerNavigate).toHaveBeenCalledWith('/session/s_other?serverId=server-b', expect.any(Object));
     });
 });

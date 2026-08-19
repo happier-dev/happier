@@ -123,7 +123,7 @@ describe('openSessionForVoiceTool', () => {
       scope: 'device',
       refreshAuth: refreshFromActiveServer,
     });
-    expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
+    expect(routerNavigate).toHaveBeenCalledWith('/session/s_other?serverId=server-b', expect.any(Object));
     expect(result).toMatchObject({
       ok: true,
       sessionId: 's_other',

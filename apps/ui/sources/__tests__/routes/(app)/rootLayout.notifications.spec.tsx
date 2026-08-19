@@ -41,6 +41,7 @@ const mockState = await vi.hoisted(async () => {
         pendingNotificationNavValue: null as { serverUrl: string; route: string } | null,
         pendingTerminalConnectValue: null as { publicKeyB64Url: string; serverUrl: string } | null,
         pushSpy: vi.fn(),
+        navigateSpy: vi.fn(),
         serverProfilesValue: [] as { id: string; serverUrl: string }[],
         tabActiveServerId: null as string | null,
         sessionAllowSpy: vi.fn((..._args: unknown[]) => Promise.resolve()),
@@ -76,6 +77,7 @@ installRootLayoutRouteCommonModuleMocks({
             segments: ['(app)'],
             router: {
                 push: mockState.pushSpy,
+                navigate: mockState.navigateSpy,
                 replace: vi.fn(),
                 back: vi.fn(),
                 setParams: vi.fn(),
@@ -220,6 +222,7 @@ afterEach(async () => {
     await mockState.lastUnmount?.();
     mockState.lastUnmount = null;
     mockState.pushSpy.mockClear();
+    mockState.navigateSpy.mockClear();
     mockState.upsertActivateAndSwitchServerSpy.mockReset();
     mockState.setActiveServerAndSwitchSpy.mockReset();
     mockState.clearPendingTerminalConnectSpy.mockClear();
@@ -454,7 +457,8 @@ describe('App RootLayout notifications', () => {
         await renderRootLayout();
 
         expect(mockState.sessionAllowSpy).toHaveBeenCalledWith('s_allow', 'p_allow', undefined, undefined, 'approved');
-        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_allow');
+        expect(mockState.navigateSpy).toHaveBeenCalledWith('/session/s_allow', expect.any(Object));
+        expect(mockState.navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('switches to a saved inactive server and performs permission allow when notification action is pressed', async () => {
@@ -492,7 +496,8 @@ describe('App RootLayout notifications', () => {
             refreshAuth: expect.any(Function),
         });
         expect(mockState.sessionAllowSpy).toHaveBeenCalledWith('s_allow_2', 'p_allow_2', undefined, undefined, 'approved');
-        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_allow_2');
+        expect(mockState.navigateSpy).toHaveBeenCalledWith('/session/s_allow_2', expect.any(Object));
+        expect(mockState.navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('does not perform permission allow when notification action is pressed without serverUrl', async () => {
@@ -687,6 +692,7 @@ describe('App RootLayout notifications', () => {
         await renderRootLayout();
 
         expect(mockState.sessionDenySpy).toHaveBeenCalledWith('s_deny', 'p_deny', undefined, undefined, 'denied', 'Denied from notification');
-        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_deny');
+        expect(mockState.navigateSpy).toHaveBeenCalledWith('/session/s_deny', expect.any(Object));
+        expect(mockState.navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 });

@@ -21,6 +21,8 @@ import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
 import { useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { layout } from '@/components/ui/layout/layout';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { Header } from '@/components/navigation/Header';
@@ -108,6 +110,7 @@ function HeaderRightTablet() {
 }
 
 export const FriendsView = React.memo(({}: FriendsViewProps) => {
+    const navigateToSession = useNavigateToSession();
     const router = useRouter();
     const friends = useAcceptedFriends();
     const friendRequests = useFriendRequests();
@@ -270,7 +273,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                                     key={session.id}
                                     title={title}
                                     subtitle={subtitle}
-                                    onPress={() => router.push(`/session/${session.id}`)}
+                                    onPress={() => { void navigateToSession(session.id); }}
                                 />
                             );
                         })}

@@ -48,43 +48,57 @@ vi.mock('@react-navigation/native', () => ({
     ),
 }));
 
-vi.mock('@react-navigation/bottom-tabs', () => ({
-    createBottomTabNavigator: () => ({
-        Navigator: ({ children, screenOptions, tabBar }: {
-            children?: React.ReactNode;
-            screenOptions?: Record<string, unknown>;
-            tabBar?: (props: {
-                state: { index: number; routes: Array<{ key: string; name: string }> };
-                navigation: {
-                    emit: () => { defaultPrevented: boolean };
-                    navigate: (name: string) => void;
-                };
-            }) => React.ReactNode;
-        }) => {
-            navigatorState.screenOptions = screenOptions ?? null;
-            const routes = ['chat', 'browse', 'git', 'navigation', 'tabs', 'terminal'].map((name) => ({ key: name, name }));
-            return React.createElement('BottomTabNavigator', { screenOptions }, [
-                React.createElement(React.Fragment, { key: 'screens' }, children),
-                React.createElement(React.Fragment, { key: 'tab-bar' }, tabBar?.({
-                    state: { index: 0, routes },
+// Models the one navigator contract this suite depends on: `initialRouteName` seeds the
+// active route at MOUNT and is ignored on every later render, so only `navigation.navigate`
+// (or a fresh mount) can move it. Without that fidelity a stale active route is invisible here.
+vi.mock('@react-navigation/bottom-tabs', () => {
+    const NavigateContext = React.createContext<(name: string) => void>(() => {});
+
+    return {
+        createBottomTabNavigator: () => ({
+            Navigator: ({ children, initialRouteName, screenOptions, tabBar }: {
+                children?: React.ReactNode;
+                initialRouteName?: string;
+                screenOptions?: Record<string, unknown>;
+                tabBar?: (props: {
+                    state: { index: number; routes: Array<{ key: string; name: string }> };
                     navigation: {
-                        emit: () => ({ defaultPrevented: false }),
-                        navigate: () => {},
-                    },
-                })),
-            ]);
-        },
-        Screen: ({ children, name, options }: {
-            children?: (props: { navigation: { navigate: () => void } }) => React.ReactNode;
-            name: string;
-            options?: Record<string, unknown>;
-        }) => {
-            return React.createElement('BottomTabScreen', { name, options }, typeof children === 'function'
-                ? children({ navigation: { navigate: () => {} } })
-                : children);
-        },
-    }),
-}));
+                        emit: () => { defaultPrevented: boolean };
+                        navigate: (name: string) => void;
+                    };
+                }) => React.ReactNode;
+            }) => {
+                navigatorState.screenOptions = screenOptions ?? null;
+                const [activeRouteName, setActiveRouteName] = React.useState(initialRouteName ?? null);
+                const routes = ['chat', 'browse', 'git', 'navigation', 'tabs', 'terminal'].map((name) => ({ key: name, name }));
+                return React.createElement(
+                    NavigateContext.Provider,
+                    { value: setActiveRouteName },
+                    React.createElement('BottomTabNavigator', { screenOptions, activeRouteName }, [
+                        React.createElement(React.Fragment, { key: 'screens' }, children),
+                        React.createElement(React.Fragment, { key: 'tab-bar' }, tabBar?.({
+                            state: { index: 0, routes },
+                            navigation: {
+                                emit: () => ({ defaultPrevented: false }),
+                                navigate: setActiveRouteName,
+                            },
+                        })),
+                    ]),
+                );
+            },
+            Screen: ({ children, name, options }: {
+                children?: (props: { navigation: { navigate: (target: string) => void } }) => React.ReactNode;
+                name: string;
+                options?: Record<string, unknown>;
+            }) => {
+                const navigate = React.useContext(NavigateContext);
+                return React.createElement('BottomTabScreen', { name, options }, typeof children === 'function'
+                    ? children({ navigation: { navigate } })
+                    : children);
+            },
+        }),
+    };
+});
 
 vi.mock('./SessionCockpitSurfaceScreen', () => ({
     SessionCockpitSurfaceScreen: (props: Record<string, unknown>) =>
@@ -186,7 +200,9 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             />,
         );
 
-        navigatorState.surfaceSwitchers[0]?.('navigation');
+        await act(async () => {
+            navigatorState.surfaceSwitchers[0]?.('navigation');
+        });
 
         expect(navigatorState.localSettingReads).not.toContain('sessionLastMobileSurfaceBySessionId');
         expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'navigation' }]);
@@ -268,5 +284,42 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
+    });
+});
+
+describe('SessionCockpitTabNavigator session switching', () => {
+    beforeEach(() => {
+        navigatorState.registeredChrome = null;
+        navigatorState.localSettingReads = [];
+        navigatorState.persistedSurfaces = [];
+        navigatorState.surfaceSwitchers = [];
+        navigationFocusState.setFocused(true);
+    });
+
+    it('opens the destination session on its own initial surface instead of the previous session active surface', async () => {
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+        const renderNavigator = (sessionId: string, initialSurface: 'chat' | 'terminal') => (
+            <SessionCockpitTabNavigator
+                initialSurface={initialSurface}
+                scopeId={`session:${sessionId}`}
+                sessionId={sessionId}
+                terminalTabAvailable
+            />
+        );
+
+        // `useNavigateToSession` navigates singularly, so the session route never remounts:
+        // a session swap arrives as a prop change on a navigator that already has state.
+        const screen = await renderScreen(renderNavigator('s1', 'chat'));
+        expect(screen.findByType('BottomTabNavigator').props.activeRouteName).toBe('chat');
+
+        await act(async () => {
+            navigatorState.surfaceSwitchers[0]?.('git');
+        });
+        expect(screen.findByType('BottomTabNavigator').props.activeRouteName).toBe('git');
+
+        await screen.update(renderNavigator('s2', 'terminal'));
+
+        expect(screen.findByType('BottomTabNavigator').props.activeRouteName).toBe('terminal');
+        expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'git' }]);
     });
 });

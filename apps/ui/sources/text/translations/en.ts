@@ -3934,6 +3934,10 @@ export const en = {
         openClassicView: 'Open classic view',
         tabs: 'Tabs',
     },
+        previousSession: 'Previous session',
+        nextSession: 'Next session',
+        sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' of ' + total,
+        switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Switched to ' + name + ', ' + position + ' of ' + total,
 
     settingsAppearance: {
       tabBarAppearance: {
@@ -7418,6 +7422,11 @@ settingsSession: {
                   title: 'Agent prompt instructions',
                   footer: 'Control prompt instructions that ask agents to name sessions and suggest replies.',
               },
+	          cockpitSwipeNavigation: {
+	              title: 'Swipe between sessions',
+	              enabledSubtitle: 'Swipe across the bottom bar to change session',
+	              disabledSubtitle: 'Bottom-bar swipes stay inside the current session',
+	          },
           },
           composer: {
               title: 'Composer and sending',

@@ -17,6 +17,10 @@ import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/
 import { sessionUnarchiveWithServerScope } from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useIsFocused } from '@react-navigation/native';
+import { useSessionListPaneSourceScopeKey } from '@/components/sessions/shell/surface/sessionListPaneRetention';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
+import type { SessionListLikeItem } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 type ArchivedScreenSession = Session | (SessionListRenderableSession & { serverId?: string });
 
@@ -138,6 +142,8 @@ export default function ArchivedSessionsScreen() {
     const safeArea = useSafeAreaInsets();
     const { theme } = useUnistyles();
     const navigateToSession = useNavigateToSession();
+    const isFocused = useIsFocused();
+    const sourceScopeKey = useSessionListPaneSourceScopeKey();
     const allSessions = useAllSessions();
     const sessionListViewDataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
@@ -236,6 +242,25 @@ export default function ArchivedSessionsScreen() {
 
         return nextSections;
     }, [archivedSessions, hiddenInactiveSessions]);
+
+    // The rows this screen opens, in render order. `serverId` lives on the session record here
+    // rather than on a list row, so it is mapped across explicitly — an unscoped key would not
+    // match the session route it has to anchor on.
+    const sessionNavigationItems = React.useMemo<SessionListLikeItem[]>(
+        () => sections.flatMap((section) => section.data.map((session) => ({
+            type: 'session',
+            serverId: normalizeServerId(session.serverId) ?? undefined,
+            session: { id: session.id },
+        }))),
+        [sections],
+    );
+    useSessionNavigationCursorPublisher({
+        active: isFocused,
+        origin: 'archived',
+        sourceScopeKey,
+        storageKind: 'all',
+        items: sessionNavigationItems,
+    });
 
     const handleUnarchive = React.useCallback((session: ArchivedScreenSession) => {
         const serverId = typeof session.serverId === 'string' && session.serverId.trim()

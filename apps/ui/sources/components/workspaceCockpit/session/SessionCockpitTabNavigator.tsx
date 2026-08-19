@@ -69,8 +69,15 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
         persistSessionLastMobileSurface(props.sessionId, surface);
     }, [persistSessionLastMobileSurface, props.sessionId]);
 
+    // The session route is navigated singularly (`useNavigateToSession` reuses the route key),
+    // so a session -> session move never remounts this screen. Without keying, the nested
+    // navigator keeps the previous session's state: `initialRouteName` is honoured only at mount,
+    // so session B would open on session A's surface, and `backBehavior="history"` would inherit
+    // session A's tab history. Keying on the session makes the navigator's identity match the
+    // session its state belongs to. It also *reduces* mounted work: only the destination surface
+    // mounts, instead of every surface session A had lazily mounted re-rendering with B's props.
     return (
-        <NavigationIndependentTree>
+        <NavigationIndependentTree key={props.sessionId}>
             <NavigationContainer linking={DISABLED_NAVIGATION_LINKING}>
                 <Tab.Navigator
                     backBehavior="history"

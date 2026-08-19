@@ -13,6 +13,7 @@ import {
     setPendingNotificationAction,
 } from '@/sync/domains/pending/pendingNotificationAction';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
+import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
 
 import { isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
 
@@ -85,7 +86,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                     } catch {
                         // best-effort; navigation still proceeds
                     }
-                    router.push(`/session/${encodeURIComponent(pendingAction.sessionId)}`);
+                    navigateToSessionRoute({ router, sessionId: pendingAction.sessionId, refreshAuth: refreshAuthRef.current });
                 })(), { tag: 'RootLayout.pendingNotificationAction' });
                 return;
             }
@@ -189,7 +190,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                             } catch {
                                 // best-effort
                             }
-                            router.push(`/session/${encodeURIComponent(actionSessionId)}`);
+                            navigateToSessionRoute({ router, sessionId: actionSessionId, refreshAuth: refreshAuthRef.current });
                         } catch {
                             // keep pending notification action as fallback
                         }
@@ -259,7 +260,7 @@ export function useNotificationResponseRouting(params: Readonly<{
                     } catch {
                         // best-effort
                     }
-                    router.push(`/session/${encodeURIComponent(actionSessionId)}`);
+                    navigateToSessionRoute({ router, sessionId: actionSessionId, refreshAuth: refreshAuthRef.current });
                 })(), { tag: 'RootLayout.notificationAction.activeServer' });
                 return;
             }

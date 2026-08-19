@@ -4505,6 +4505,10 @@ localTailscale: {
     openClassicView: 'クラシック表示を開く',
     tabs: 'タブ',
   },
+    previousSession: '前のセッション',
+    nextSession: '次のセッション',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => total + ' 件中 ' + position + ' 件目',
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => name + ' に切り替えました（' + total + ' 件中 ' + position + ' 件目）',
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -8102,13 +8106,18 @@ settingsSession: {
             listOrganization: { title: 'セッションリストの整理', footer: '並び順、グループ化、セクション、非アクティブなセッション、デスクトップペインの既定値を制御します。' },
             rowDetails: { title: 'セッション行の詳細', footer: '各セッション行に表示するラベルと視覚的な詳細を選びます。' },
             activitySignals: { title: 'アクティビティとステータスの表示', footer: 'アクティブ、作業中、注意が必要なセッションをどのように目立たせるかを制御します。' },
-            mobileLayout: { title: 'モバイルのセッションレイアウト', footer: 'セッション内で使う電話向けレイアウトを選びます。' },
+            mobileLayout: { title: 'モバイルのセッションレイアウト', footer: 'セッション内で使う電話向けレイアウトを選びます。コックピットでは、下部バーを左右にスワイプすると、最後に見た一覧の順序で次または前のセッションに移動します。' },
             agentPersonalization: { title: 'エージェントのプロンプト指示', footer: 'エージェントにセッション名や返信候補を提案させる指示を制御します。' },
         },
         composer: {
             title: '入力と送信',
             entrySubtitle: 'Enter で送信、履歴、入力欄の外観、実行中の送信動作。',
         },
+	    cockpitSwipeNavigation: {
+	        title: 'スワイプでセッションを切り替え',
+	        enabledSubtitle: '下部バーを左右にスワイプしてセッションを切り替えます',
+	        disabledSubtitle: '下部バーのスワイプではセッションを切り替えません',
+	    },
         providerLimits: {
             title: 'プロバイダー制限と使用量',
             entrySubtitle: '使用制限からの回復とコンポーザー横の使用量ゲージ。',

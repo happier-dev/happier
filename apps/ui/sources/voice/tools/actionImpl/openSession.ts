@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { router } from 'expo-router';
+import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
 import { resolveVoiceSessionIdFromTitle, resolveVoiceSessionRef } from './sessionReference';
 import { setPrimaryActionSessionId } from './sessionTargets';
 
@@ -84,11 +85,12 @@ export async function openSessionForVoiceTool(params: Readonly<{
   await setPrimaryActionSessionId({ sessionId, updateLastFocused: true });
 
   try {
-    router.navigate(`/session/${sessionId}` as any, {
-      dangerouslySingular() {
-        return 'session';
-      },
-    } as any);
+    navigateToSessionRoute({
+      router,
+      sessionId,
+      serverId: targetServerId,
+      refreshAuth: getCurrentAuth()?.refreshFromActiveServer ?? null,
+    });
   } catch {
     // best-effort
   }

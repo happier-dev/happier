@@ -176,6 +176,7 @@ vi.mock('@react-navigation/native', () => ({
 }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
+    getCurrentAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
     ChatHeaderView: (props: any) => {
@@ -385,6 +386,7 @@ describe('SessionView info navigation', () => {
             folderAssignmentsBySessionId: {},
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
         };
@@ -551,7 +553,7 @@ describe('SessionView info navigation', () => {
 
         capturedOpenSessionSpy('child-session-1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2', expect.any(Object));
     });
 
     it('does not eagerly hydrate discovered subagent sidechains from the session shell or header', async () => {

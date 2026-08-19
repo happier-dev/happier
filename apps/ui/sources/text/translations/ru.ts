@@ -4178,6 +4178,10 @@ export const ru: TranslationStructure = {
     openClassicView: 'Открыть классический вид',
     tabs: 'Вкладки',
   },
+    previousSession: 'Предыдущая сессия',
+    nextSession: 'Следующая сессия',
+    sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' из ' + total,
+    switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Переход к ' + name + ', ' + position + ' из ' + total,
 
   settingsAppearance: {
     tabBarAppearance: {
@@ -7841,13 +7845,18 @@ settingsSession: {
             listOrganization: { title: 'Организация списка сессий', footer: 'Настройте порядок, группировку, разделы, неактивные сессии и стандартную панель на компьютере.' },
             rowDetails: { title: 'Детали строк сессий', footer: 'Выберите, какие метки и визуальные детали показываются в каждой строке сессии.' },
             activitySignals: { title: 'Сигналы активности и статуса', footer: 'Настройте, как выделяются активные, выполняющиеся и требующие внимания сессии.' },
-            mobileLayout: { title: 'Мобильная компоновка сессии', footer: 'Выберите компоновку телефона, используемую внутри сессий.' },
+            mobileLayout: { title: 'Мобильная компоновка сессии', footer: 'Выберите компоновку телефона, используемую внутри сессий. В режиме кокпита свайп влево или вправо по нижней панели переходит к следующей или предыдущей сессии в последнем увиденном порядке списка.' },
             agentPersonalization: { title: 'Инструкции prompt для агента', footer: 'Настройте инструкции, которые просят агентов называть сессии и предлагать ответы.' },
         },
         composer: {
             title: 'Ввод и отправка',
             entrySubtitle: 'Отправка по Enter, история, внешний вид ввода и отправка, когда агент занят.',
         },
+	    cockpitSwipeNavigation: {
+	        title: 'Свайп между сессиями',
+	        enabledSubtitle: 'Проведите по нижней панели, чтобы сменить сессию',
+	        disabledSubtitle: 'Свайпы по нижней панели не меняют сессию',
+	    },
         providerLimits: {
             title: 'Лимиты и использование провайдера',
             entrySubtitle: 'Восстановление после лимитов и индикатор использования рядом с вводом.',
