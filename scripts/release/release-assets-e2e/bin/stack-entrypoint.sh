@@ -119,6 +119,9 @@ setup_args=(
 
 if [[ -n "$HSTACK_HAPPIER_REPO" ]]; then
   setup_args+=( "--happier-repo=$HSTACK_HAPPIER_REPO" )
+  # Bind-mounted repos are owned by the host user; git refuses to read them inside the container
+  # (dubious ownership), which breaks the `git clone <repo>` in hstack setup. Trust them here.
+  git config --global --add safe.directory '*' 2>/dev/null || true
 fi
 
 if [[ "$HSTACK_E2E_WITH_UI" != "1" ]]; then
@@ -218,11 +221,20 @@ kill_phase1_no_ui_supervisor() {
 
 kill_phase1_server_light() {
   # If the phase1 supervisor is killed abruptly, the server-light process can linger and keep the port busy.
+  # Match on `main.light.ts` (stable across invocations): dev uses `--import tsx .../main.light.ts`,
+  # from-source uses `tsx --tsconfig ... ./sources/main.light.ts`. The old `--import tsx ./sources/main.light.ts`
+  # pattern missed the from-source invocation, leaving port 3005 occupied and tripping phase2's topology guard
+  # (ESERVERTOPOLOGYUNOWNED: healthy-unowned + --restart).
   local pids_raw
   local pids
-  pids_raw="$(ps -eo pid,args -ww | awk '/--import tsx \.\/sources\/main\.light\.ts/ {print $1}' || true)"
+  pids_raw="$(ps -eo pid,args -ww | awk '/main\.light\.ts/ {print $1}' || true)"
   pids="$(echo "$pids_raw" | tr '\n' ' ' | xargs echo 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
+    # Fall back to an anchored pkill (procps) if ps parsing missed it.
+    if pkill -9 -f 'main\.light\.ts' >/dev/null 2>&1; then
+      echo "[stack] killing phase1 server-light (pkill fallback)"
+      sleep 1
+    fi
     return 0
   fi
   echo "[stack] killing phase1 server-light: $pids"
