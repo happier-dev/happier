@@ -16,6 +16,7 @@ import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
+import { selectSessionTurnProjectionIds } from './selectSessionTurnProjectionIds';
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -73,6 +74,71 @@ function buildRequestedMessageRoleWhere(roles: readonly SessionMessageRole[]): P
             { messageRole: concreteRoleFilter },
             { messageRole: null },
         ],
+    };
+}
+
+/**
+ * The columns the message listing returns, and the row -> wire mapping.
+ *
+ * Extracted so the turn projection reuses the EXACT listing shape rather than restating it:
+ * two copies of a response mapping is how a field silently appears on one path and not the
+ * other.
+ */
+const SESSION_MESSAGE_LIST_SELECT = {
+    id: true,
+    seq: true,
+    localId: true,
+    sidechainId: true,
+    messageRole: true,
+    content: true,
+    createdAt: true,
+    updatedAt: true,
+    sourceCreatedAt: true,
+    sourceUpdatedAt: true,
+    transcriptObservationProvenance: true,
+    deliveryResolution: true,
+} as const;
+
+type SessionMessageListRow = Readonly<{
+    id: string;
+    seq: number;
+    localId: string | null;
+    sidechainId: string | null;
+    messageRole: string | null;
+    content: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+    sourceCreatedAt: Date | null;
+    sourceUpdatedAt: Date | null;
+    transcriptObservationProvenance: unknown;
+    deliveryResolution: unknown;
+}>;
+
+function serializeSessionMessageListRow(v: SessionMessageListRow) {
+    return {
+        id: v.id,
+        seq: v.seq,
+        content: v.content,
+        localId: v.localId,
+        ...(typeof v.sidechainId === "string" && v.sidechainId ? { sidechainId: v.sidechainId } : {}),
+        ...(() => {
+            const messageRole = parseSessionMessageRole(v.messageRole);
+            return messageRole ? { messageRole } : {};
+        })(),
+        createdAt: v.createdAt.getTime(),
+        updatedAt: v.updatedAt.getTime(),
+        ...(v.sourceCreatedAt ? { sourceCreatedAt: v.sourceCreatedAt.getTime() } : {}),
+        ...(v.sourceUpdatedAt ? { sourceUpdatedAt: v.sourceUpdatedAt.getTime() } : {}),
+        ...(() => {
+            const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(
+                v.transcriptObservationProvenance,
+            );
+            return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
+        })(),
+        ...(() => {
+            const resolution = SessionMessageDeliveryResolutionV1Schema.safeParse(v.deliveryResolution);
+            return resolution.success ? { deliveryResolution: resolution.data } : {};
+        })(),
     };
 }
 
@@ -175,7 +241,22 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 afterSeq: z.coerce.number().int().min(0).optional(),
                 role: SessionMessageRoleSchema.optional(),
                 roles: z.string().optional(),
+                projection: z.enum(["turns"]).optional(),
             }).superRefine((value, ctx) => {
+                if (value.projection === "turns" && value.afterSeq !== undefined) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "projection=turns pages backwards only",
+                    });
+                }
+                if (value.projection === "turns" && value.scope === "all") {
+                    // A turn is an ordering within ONE chain; interleaving chains would pair a
+                    // prompt with a reply from a different conversation.
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "projection=turns requires a single chain scope",
+                    });
+                }
                 if (value.beforeSeq !== undefined && value.afterSeq !== undefined) {
                     ctx.addIssue({
                         code: z.ZodIssueCode.custom,
@@ -206,6 +287,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                   afterSeq?: number;
                   role?: unknown;
                   roles?: unknown;
+                  projection?: unknown;
               }>
             | undefined;
         const { limit = 150, beforeSeq, afterSeq } = query ?? {};
@@ -237,6 +319,47 @@ export function registerSessionMessageRoutes(app: Fastify) {
             catchupFollowupFetchesCounter.inc({ type: 'session-messages-afterSeq' });
         }
 
+        // TURN PROJECTION: one row per prompt plus the last reply of each turn.
+        //
+        // The rail that consumes this only ever shows a prompt and the last reply beneath it, so
+        // fetching every reply row and discarding all but one made an agent-heavy session
+        // transfer and DECRYPT hundreds of rows to keep a handful (measured on device
+        // 2026-08-18: 630 messages for a transcript that needed 48). The selection runs in the
+        // database; the rows themselves are still hydrated and serialised by the ordinary path
+        // below, so this can change which rows come back and nothing about their shape.
+        if (query?.projection === "turns") {
+            const turnIds = await selectSessionTurnProjectionIds({
+                sessionId,
+                sidechainId: scope === "sidechain" ? sidechainId : null,
+                beforeSeq: beforeSeq ?? null,
+                // One extra turn, so `hasMore` is observed rather than guessed.
+                turnLimit: limit + 1,
+            });
+            const turnRows = turnIds.length === 0 ? [] : await db.sessionMessage.findMany({
+                where: { id: { in: turnIds } },
+                orderBy: { seq: 'desc' },
+                select: SESSION_MESSAGE_LIST_SELECT,
+            });
+            // `limit` counts TURNS, so the extra turn is trimmed by prompt, not by row.
+            const promptSeqsNewestFirst = turnRows
+                .filter((row) => row.messageRole === null || row.messageRole === "user")
+                .map((row) => row.seq);
+            const hasMoreTurns = promptSeqsNewestFirst.length > limit;
+            const oldestKeptPromptSeq = hasMoreTurns
+                ? promptSeqsNewestFirst[limit - 1] ?? null
+                : promptSeqsNewestFirst[promptSeqsNewestFirst.length - 1] ?? null;
+            const keptRows = hasMoreTurns && oldestKeptPromptSeq !== null
+                ? turnRows.filter((row) => row.seq >= oldestKeptPromptSeq)
+                : turnRows;
+
+            return reply.send({
+                messages: keptRows.map(serializeSessionMessageListRow),
+                hasMore: hasMoreTurns,
+                nextBeforeSeq: hasMoreTurns ? oldestKeptPromptSeq : null,
+                nextAfterSeq: null,
+            });
+        }
+
         const where: Prisma.SessionMessageWhereInput = { sessionId };
         if (scope === "main") where.sidechainId = null;
         if (scope === "sidechain") where.sidechainId = sidechainId;
@@ -253,20 +376,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
             where,
             orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
             take: limit + 1,
-            select: {
-                id: true,
-                seq: true,
-                localId: true,
-                sidechainId: true,
-                messageRole: true,
-                content: true,
-                createdAt: true,
-                updatedAt: true,
-                sourceCreatedAt: true,
-                sourceUpdatedAt: true,
-                transcriptObservationProvenance: true,
-                deliveryResolution: true,
-            }
+            select: SESSION_MESSAGE_LIST_SELECT,
         });
 
         const hasMore = messages.length > limit;
@@ -289,31 +399,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 : null;
 
         return reply.send({
-            messages: resultMessages.map((v) => ({
-                id: v.id,
-                seq: v.seq,
-                content: v.content,
-                localId: v.localId,
-                ...(typeof v.sidechainId === "string" && v.sidechainId ? { sidechainId: v.sidechainId } : {}),
-                ...(() => {
-                    const messageRole = parseSessionMessageRole(v.messageRole);
-                    return messageRole ? { messageRole } : {};
-                })(),
-                createdAt: v.createdAt.getTime(),
-                updatedAt: v.updatedAt.getTime(),
-                ...(v.sourceCreatedAt ? { sourceCreatedAt: v.sourceCreatedAt.getTime() } : {}),
-                ...(v.sourceUpdatedAt ? { sourceUpdatedAt: v.sourceUpdatedAt.getTime() } : {}),
-                ...(() => {
-                    const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(
-                        v.transcriptObservationProvenance,
-                    );
-                    return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
-                })(),
-                ...(() => {
-                    const resolution = SessionMessageDeliveryResolutionV1Schema.safeParse(v.deliveryResolution);
-                    return resolution.success ? { deliveryResolution: resolution.data } : {};
-                })(),
-            })),
+            messages: resultMessages.map(serializeSessionMessageListRow),
             hasMore,
             nextBeforeSeq,
             nextAfterSeq,

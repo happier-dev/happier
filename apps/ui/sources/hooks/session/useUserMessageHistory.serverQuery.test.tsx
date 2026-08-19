@@ -17,6 +17,7 @@ import {
 
 const fetchUserMessageHistoryPageMock = vi.hoisted(() => vi.fn());
 const roleQuerySupportedState = vi.hoisted(() => ({ supported: true }));
+const turnProjectionSupportedState = vi.hoisted(() => ({ supported: false }));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -36,6 +37,7 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
                 session: {
                     messages: {
                         role: roleQuerySupportedState.supported,
+                        turns: turnProjectionSupportedState.supported,
                     },
                 },
             },
@@ -57,6 +59,7 @@ describe('useUserMessageHistory server role query', () => {
         vi.clearAllMocks();
         resetUserMessageHistoryRemoteEntriesForTests();
         roleQuerySupportedState.supported = true;
+        turnProjectionSupportedState.supported = false;
         storage.setState((state) => ({
             ...state,
             profileScope: { serverId: 'server-1', accountId: 'account-1' },
@@ -393,6 +396,47 @@ describe('useUserMessageHistory server role query', () => {
         await hook.unmount();
     });
 
+    it('asks for the turn projection when the server advertises it', async () => {
+        // The projection returns every prompt plus the LAST reply of its turn, which is exactly
+        // the row set the rail renders. Asking for it is what stops paging whole transcripts to
+        // keep a handful of rows.
+        turnProjectionSupportedState.supported = true;
+        const hook = await renderHook(() =>
+            useUserMessageHistory({ scope: 'perSession', sessionId: 's1', maxEntries: 20 }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().warmup();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalled();
+        const options = fetchUserMessageHistoryPageMock.mock.calls[0]?.[1];
+        expect(options?.turnProjection).toBe(true);
+        await hook.unmount();
+    });
+
+    it('never asks an older server for a projection it does not advertise', async () => {
+        // An unknown query parameter is IGNORED rather than rejected, so a server without the
+        // capability would quietly answer with the ordinary listing — a different row set than
+        // the caller believes it requested. The flag must therefore be capability-gated, not
+        // sent hopefully.
+        turnProjectionSupportedState.supported = false;
+        const hook = await renderHook(() =>
+            useUserMessageHistory({ scope: 'perSession', sessionId: 's1', maxEntries: 20 }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().warmup();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalled();
+        const options = fetchUserMessageHistoryPageMock.mock.calls[0]?.[1];
+        expect(options?.turnProjection ?? false).toBe(false);
+        await hook.unmount();
+    });
+
     it('does not query old servers without session message role capability', async () => {
         roleQuerySupportedState.supported = false;
         const hook = await renderHook(() =>
@@ -655,6 +699,7 @@ describe('useUserMessageHistory server role query', () => {
         expect(hook.getCurrent().moveUp('draft')).toBe('newer prompt');
 
         roleQuerySupportedState.supported = true;
+        turnProjectionSupportedState.supported = false;
         fetchUserMessageHistoryPageMock.mockResolvedValue({
             status: 'loaded',
             rows: [],

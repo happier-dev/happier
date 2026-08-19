@@ -49,7 +49,13 @@ export function resolveServerFeaturePayload(
             Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, patch));
         }
     }
-    Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, { session: { messages: { role: true } } }));
+    // `turns` advertises the turn projection on the message listing: one row per prompt plus the
+    // last reply of each turn, so a client rendering prompt-and-reply anchors stops paging whole
+    // transcripts to keep a handful of rows. Clients that do not know the key keep using `role`.
+    Object.assign(
+        mergedCapabilities,
+        mergeDeep(mergedCapabilities, { session: { messages: { role: true, turns: true } } }),
+    );
 
     const parsed = featuresSchema.safeParse({ features: mergedFeatures, capabilities: mergedCapabilities });
     if (!parsed.success) {

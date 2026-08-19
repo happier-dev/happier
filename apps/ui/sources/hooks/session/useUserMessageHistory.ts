@@ -201,6 +201,7 @@ function requestRemoteHistoryPage(params: Readonly<{
     cacheKey: string | null;
     initialBeforeSeq: number | null;
     sessionId: string | null;
+    turnProjection: boolean;
 }>): void {
     if (!params.cacheKey || !params.sessionId) return;
     const record = readRemoteHistoryRecord(params.cacheKey, params.initialBeforeSeq);
@@ -216,6 +217,7 @@ function requestRemoteHistoryPage(params: Readonly<{
     remoteHistoryInFlightCursorKeys.add(cursorKey);
     void sync.fetchUserMessageHistoryPage(params.sessionId, {
         limit: USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+        ...(params.turnProjection ? { turnProjection: true } : {}),
         ...(beforeSeq !== null ? { beforeSeq } : {}),
     // A rejected call (unresolvable server scope, transport throw) is the same transport failure
     // the page fetcher already reports as `error`, and gets the same retry floor; letting the
@@ -273,6 +275,18 @@ export function resetUserMessageHistoryRemoteEntriesForTests(): void {
 
 function isSessionMessageRoleQuerySupported(features: FeaturesResponse | null | undefined): boolean {
     return features?.capabilities?.session?.messages?.role === true;
+}
+
+/**
+ * The server returns one row per prompt plus the LAST reply of that turn — exactly what the
+ * rail renders — instead of every reply row.
+ *
+ * Strictly capability-gated: an unknown query parameter is IGNORED rather than rejected, so an
+ * older server would quietly answer with the ordinary listing, which is a different row set
+ * than the caller asked for.
+ */
+function isSessionMessageTurnProjectionSupported(features: FeaturesResponse | null | undefined): boolean {
+    return features?.capabilities?.session?.messages?.turns === true;
 }
 
 function mergeHistoryEntries(params: Readonly<{
@@ -337,6 +351,8 @@ export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
     });
     const roleQuerySupported = serverFeaturesSnapshot.status === 'ready'
         && isSessionMessageRoleQuerySupported(serverFeaturesSnapshot.features);
+    const turnProjectionSupported = serverFeaturesSnapshot.status === 'ready'
+        && isSessionMessageTurnProjectionSupported(serverFeaturesSnapshot.features);
     const initialBeforeSeq = normalizeRemoteHistoryBeforeSeq(opts.initialBeforeSeq);
     const cacheKey = buildRemoteHistoryCacheKey({
         accountId: activeScope?.accountId ?? null,
@@ -355,8 +371,9 @@ export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
             cacheKey,
             initialBeforeSeq,
             sessionId: opts.sessionId,
+            turnProjection: turnProjectionSupported,
         });
-    }, [cacheKey, initialBeforeSeq, opts.sessionId]);
+    }, [cacheKey, initialBeforeSeq, opts.sessionId, turnProjectionSupported]);
 
     return React.useMemo(() => ({
         ...state,
@@ -380,6 +397,8 @@ export function useUserMessageHistory(opts: {
     });
     const roleQuerySupported = serverFeaturesSnapshot.status === 'ready'
         && isSessionMessageRoleQuerySupported(serverFeaturesSnapshot.features);
+    const turnProjectionSupported = serverFeaturesSnapshot.status === 'ready'
+        && isSessionMessageTurnProjectionSupported(serverFeaturesSnapshot.features);
     const remoteHistoryState = useUserMessageHistoryRemoteEntries({
         enabled: opts.scope === 'perSession',
         initialBeforeSeq: null,
