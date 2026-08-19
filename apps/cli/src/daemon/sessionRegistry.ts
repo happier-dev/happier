@@ -112,6 +112,31 @@ export type WriteSessionMarkerOptions = Readonly<{
   preserveTerminalHostHealth?: boolean;
 }>;
 
+/**
+ * A replay seed is the user's prior conversation in cleartext. The marker mirrors the
+ * session metadata reported at startup and then carries that snapshot verbatim for the
+ * whole process lifetime, so mirroring the seed would leave the plaintext of an e2ee
+ * Session in a temp file long after the provider consumed it — and long after the
+ * Session-metadata owner retired its own copy.
+ *
+ * No marker reader consumes the seed: readers take `flavor`, terminal state, resume
+ * bindings and connected-service snapshots. Retirement itself belongs to the seed's
+ * canonical owner in `agent/runtime/replaySeed/replaySeedV1.ts`, and this blanks the
+ * mirror the same way that owner does — `seedText: ''`, identity fields intact —
+ * rather than dropping `replaySeedV1` or the marker file.
+ */
+function withoutMirroredReplaySeedText(metadata: unknown): unknown {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+  const seed = (metadata as { replaySeedV1?: unknown }).replaySeedV1;
+  if (!seed || typeof seed !== 'object' || Array.isArray(seed)) return metadata;
+  const seedText = (seed as { seedText?: unknown }).seedText;
+  if (typeof seedText !== 'string' || seedText.length === 0) return metadata;
+  return {
+    ...(metadata as Record<string, unknown>),
+    replaySeedV1: { ...(seed as Record<string, unknown>), seedText: '' },
+  };
+}
+
 async function writeSessionMarkerUnlocked(
   marker: Omit<DaemonSessionMarker, 'createdAt' | 'updatedAt' | 'happyHomeDir'> & { createdAt?: number; updatedAt?: number },
   options: WriteSessionMarkerOptions = {},
@@ -159,6 +184,9 @@ async function writeSessionMarkerUnlocked(
       ? { connectedServiceRestartIntent: preservedConnectedServiceRestartIntent }
       : {}),
     ...(preservedTerminalHostHealth ? { terminalHostHealth: preservedTerminalHostHealth } : {}),
+    ...(marker.metadata === undefined
+      ? {}
+      : { metadata: withoutMirroredReplaySeedText(marker.metadata) }),
     happyHomeDir: configuration.happyHomeDir,
     createdAt: marker.createdAt ?? createdAtFromDisk ?? now,
     updatedAt: now,

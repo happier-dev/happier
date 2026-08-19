@@ -809,4 +809,92 @@ describe('sessionRegistry', () => {
     expect(markers[0].respawn).not.toHaveProperty('experimentalCodexResume');
   });
 
+
+  it('never mirrors replay seed text into the on-disk session marker', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+    const seedText = `REPLAY-SEED-${'x'.repeat(4096)}`;
+
+    await writeSessionMarker({
+      pid: 12399,
+      happySessionId: 'sess-replay-seeded',
+      startedBy: 'daemon',
+      cwd: '/tmp/project',
+      metadata: {
+        hostPid: 12399,
+        flavor: 'cursor',
+        replaySeedV1: {
+          v: 1,
+          seedText,
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 12,
+          createdAtMs: 1,
+        },
+      },
+    });
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    // The seed is the user's prior conversation in cleartext. The Session row is
+    // e2ee, so mirroring it into a temp file would publish what the Session hides.
+    expect(markers[0].metadata.replaySeedV1.seedText).toBe('');
+    // Blanked exactly the way the Session-metadata owner retires a seed: the
+    // identity fields, and every other mirrored field, survive.
+    expect(markers[0].metadata.replaySeedV1).toMatchObject({
+      v: 1,
+      sourceSessionId: 'source-session',
+      sourceCutoffSeqInclusive: 12,
+    });
+    expect(markers[0].metadata.flavor).toBe('cursor');
+
+    const raw = readFileSync(
+      join(configuration.happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12399.json'),
+      'utf-8',
+    );
+    expect(raw).not.toContain(seedText);
+  });
+
+  it('blanks a replay seed that an older marker already mirrored to disk', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers, updateSessionMarkerActiveTurn } = await import('./sessionRegistry');
+    const seedText = `REPLAY-SEED-${'y'.repeat(4096)}`;
+    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions');
+    const filePath = join(dir, 'pid-12400.json');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        pid: 12400,
+        happySessionId: 'sess-stale-seed',
+        happyHomeDir: configuration.happyHomeDir,
+        createdAt: 1,
+        updatedAt: 1,
+        startedBy: 'daemon',
+        metadata: {
+          hostPid: 12400,
+          replaySeedV1: {
+            v: 1,
+            seedText,
+            sourceSessionId: 'source-session',
+            sourceCutoffSeqInclusive: 12,
+            createdAtMs: 1,
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    await updateSessionMarkerActiveTurn({
+      pid: 12400,
+      sessionId: 'sess-stale-seed',
+      activeTurnId: 'turn-1',
+    });
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    expect(markers[0].activeTurnId).toBe('turn-1');
+    expect(markers[0].metadata.replaySeedV1.seedText).toBe('');
+    expect(readFileSync(filePath, 'utf-8')).not.toContain(seedText);
+  });
+
 });
