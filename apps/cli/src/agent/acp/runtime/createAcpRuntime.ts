@@ -1268,6 +1268,11 @@ export function createAcpRuntime(params: {
           if (!deltaRaw && fullText) {
             if (fullText.startsWith(accumulatedResponse)) {
               deltaRaw = fullText.slice(accumulatedResponse.length);
+            } else if (accumulatedResponse && accumulatedResponse.endsWith(fullText)) {
+              // Per-message authoritative snapshot (e.g. pi message_end) after this message's text
+              // was already streamed as deltas: the accumulated prefix belongs to earlier messages
+              // in the turn, so the snapshot delivers nothing new and must not be re-emitted.
+              deltaRaw = '';
             } else {
               // Defensive: if a provider restarts and sends a divergent fullText, restart accumulation.
               accumulatedResponse = '';
