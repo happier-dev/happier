@@ -234,6 +234,28 @@ async function executePinAction(params: Readonly<{
     });
 }
 
+async function executeAttentionStandingAction(params: Readonly<{
+    actionId: typeof SESSION_BULK_ACTION_IDS.setAttentionStanding | typeof SESSION_BULK_ACTION_IDS.clearAttentionStanding;
+    targets: readonly SessionBulkActionTarget[];
+    context: SessionBulkActionExecutionContext;
+}>): Promise<SessionBulkActionExecutionResult> {
+    const setSessionAttentionStanding = requireOperation(
+        params.context.setSessionAttentionStanding,
+        'setSessionAttentionStanding',
+    );
+    const standing = params.actionId === SESSION_BULK_ACTION_IDS.setAttentionStanding;
+
+    return executeNetworkTargets({
+        actionId: params.actionId,
+        targets: params.targets,
+        context: params.context,
+        runTarget: async (target) => {
+            await setSessionAttentionStanding({ target, standing });
+            return createTargetResult(target, 'succeeded');
+        },
+    });
+}
+
 async function executeTagAction(params: Readonly<{
     action: Extract<SessionBulkActionRequest, { tags: readonly string[] }>;
     targets: readonly SessionBulkActionTarget[];
@@ -489,6 +511,13 @@ export async function executeSessionBulkAction(params: Readonly<{
         case SESSION_BULK_ACTION_IDS.pin:
         case SESSION_BULK_ACTION_IDS.unpin:
             return executePinAction({
+                actionId: params.action.id,
+                targets: params.targets,
+                context: params.context,
+            });
+        case SESSION_BULK_ACTION_IDS.setAttentionStanding:
+        case SESSION_BULK_ACTION_IDS.clearAttentionStanding:
+            return executeAttentionStandingAction({
                 actionId: params.action.id,
                 targets: params.targets,
                 context: params.context,

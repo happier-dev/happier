@@ -6276,6 +6276,8 @@ export const pt: TranslationStructure = {
     workingSectionTitle: 'Trabalhando',
     hideInactiveSessions: 'Ocultar sessões inativas',
     showInactiveSessions: 'Mostrar sessões inativas',
+        selectionKeepInAttention: 'Manter em Precisa de atenção',
+        selectionRemoveFromAttention: 'Remover de Precisa de atenção',
   },
 
   directSessions: {

@@ -22,7 +22,14 @@ export type SessionActionId =
     | 'ui.session.pin'
     | 'ui.session.unpin'
     | 'ui.session.tags.edit'
-    | 'ui.session.move-to-folder';
+    | 'ui.session.move-to-folder'
+    | 'ui.session.set-attention-standing'
+    | 'ui.session.clear-attention-standing';
+
+export type SessionAttentionStandingAction =
+    | { kind: 'set-standing'; visible: true; targetStanding: true }
+    | { kind: 'clear-standing'; visible: true; targetStanding: false }
+    | { kind: 'none'; visible: false };
 
 export type SessionActionSession = Session | SessionListRenderableSession;
 
@@ -43,6 +50,7 @@ export type SessionActionTarget = Readonly<{
     canResume: boolean;
     canDelete: boolean;
     readStateAction: SessionReadStateAction;
+    attentionStandingAction: SessionAttentionStandingAction;
 }>;
 
 export type SessionActionOperationResult = Readonly<{
@@ -89,6 +97,11 @@ export type SessionActionExecutionOperations = Readonly<{
     moveToFolder?: (
         target: SessionActionTarget,
         input?: Readonly<{ folderId?: string | null }>,
+    ) => void | SessionActionOperationResult | Promise<void | SessionActionOperationResult>;
+    setAttentionStanding?: (
+        sessionId: string,
+        standing: boolean,
+        opts?: Readonly<{ serverId?: string | null }>,
     ) => void | SessionActionOperationResult | Promise<void | SessionActionOperationResult>;
     setManualReadState?: (
         sessionId: string,

@@ -5164,6 +5164,8 @@ export const ru: TranslationStructure = {
         selectionSetTagsPromptTitle: 'Задать теги',
         selectionTagsPromptMessage: 'Разделяйте теги запятыми.',
         selectionTagsPlaceholder: 'тег-один, тег-два',
+        selectionKeepInAttention: 'Оставить в «Требует внимания»',
+        selectionRemoveFromAttention: 'Убрать из «Требует внимания»',
         selectionCancelA11yLabel: 'Отменить выбор сессий',
         selectionProgress: ({ completed, total }: { completed: number; total: number }) => `${completed} of ${total} complete`,
         selectionCancelRunningA11yLabel: 'Отменить действие с выбранными сессиями',

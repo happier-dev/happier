@@ -10,9 +10,17 @@ export const SESSION_ACTION_PIN_ID = 'ui.session.pin';
 export const SESSION_ACTION_UNPIN_ID = 'ui.session.unpin';
 export const SESSION_ACTION_EDIT_TAGS_ID = 'ui.session.tags.edit';
 export const SESSION_ACTION_MOVE_TO_FOLDER_ID = 'ui.session.move-to-folder';
+export const SESSION_ACTION_SET_ATTENTION_STANDING_ID = 'ui.session.set-attention-standing';
+export const SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID = 'ui.session.clear-attention-standing';
 
 export function resolveManualReadStateFromSessionActionId(actionId: string): 'read' | 'unread' | null {
     if (actionId === SESSION_ACTION_MARK_READ_ID) return 'read';
     if (actionId === SESSION_ACTION_MARK_UNREAD_ID) return 'unread';
+    return null;
+}
+
+export function resolveAttentionStandingFromSessionActionId(actionId: string): boolean | null {
+    if (actionId === SESSION_ACTION_SET_ATTENTION_STANDING_ID) return true;
+    if (actionId === SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID) return false;
     return null;
 }

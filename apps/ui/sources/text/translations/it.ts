@@ -6497,6 +6497,8 @@ export const it: TranslationStructure = {
     workingSectionTitle: 'In lavorazione',
     hideInactiveSessions: 'Nascondi sessioni inattive',
     showInactiveSessions: 'Mostra sessioni inattive',
+        selectionKeepInAttention: 'Mantieni in Richiede attenzione',
+        selectionRemoveFromAttention: 'Rimuovi da Richiede attenzione',
   },
 
   directSessions: {

@@ -7,6 +7,8 @@ export const SESSION_BULK_ACTION_IDS = {
     unarchive: 'ui.session.unarchive',
     markRead: 'ui.session.mark-read',
     markUnread: 'ui.session.mark-unread',
+    setAttentionStanding: 'ui.session.set-attention-standing',
+    clearAttentionStanding: 'ui.session.clear-attention-standing',
     pin: 'ui.session.pin',
     unpin: 'ui.session.unpin',
     tagsAdd: 'ui.session.tags.add',
@@ -28,6 +30,8 @@ export type SessionBulkActionRequest =
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.unarchive }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.markRead }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.markUnread }>
+    | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.setAttentionStanding }>
+    | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.clearAttentionStanding }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.pin }>
     | Readonly<{ id: typeof SESSION_BULK_ACTION_IDS.unpin }>
     | Readonly<{ id: SessionBulkTagActionId; tags: readonly string[] }>
@@ -47,6 +51,7 @@ export type SessionBulkActionTarget = Readonly<{
     pinned?: boolean;
     tags?: readonly string[];
     readState?: SessionBulkReadState;
+    standing?: boolean;
 }>;
 
 export type SessionBulkMutationResult = Readonly<{
@@ -76,6 +81,13 @@ export type SessionBulkPinOperation = (
     params: Readonly<{
         target: SessionBulkActionTarget;
         pinned: boolean;
+    }>,
+) => Promise<void>;
+
+export type SessionBulkAttentionStandingOperation = (
+    params: Readonly<{
+        target: SessionBulkActionTarget;
+        standing: boolean;
     }>,
 ) => Promise<void>;
 
@@ -124,6 +136,7 @@ export type SessionBulkActionExecutionContext = Readonly<{
     onProgress?: SessionBulkActionProgressListener;
 
     setSessionPin?: SessionBulkPinOperation;
+    setSessionAttentionStanding?: SessionBulkAttentionStandingOperation;
     setSessionTagAssignments?: SessionBulkTagAssignmentOperation;
 
     hideInactiveSessions?: boolean;

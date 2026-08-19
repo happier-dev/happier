@@ -6158,6 +6158,8 @@ export const es: TranslationStructure = {
     workingSectionTitle: 'Trabajando',
     hideInactiveSessions: 'Ocultar sesiones inactivas',
     showInactiveSessions: 'Mostrar sesiones inactivas',
+        selectionKeepInAttention: 'Mantener en Requiere atención',
+        selectionRemoveFromAttention: 'Quitar de Requiere atención',
   },
 
   directSessions: {

@@ -6,6 +6,7 @@ import { t } from '@/text';
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -13,6 +14,7 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
@@ -38,6 +40,24 @@ describe('session action presentation', () => {
         expect(getSessionActionMetadata(SESSION_BULK_ACTION_IDS.markRead)).toBe(getSessionActionMetadata(SESSION_ACTION_MARK_READ_ID));
     });
 
+    it('describes the attention standing pair with its own info copy', () => {
+        const setStandingProps = createSessionActionInfoItemProps({
+            actionId: SESSION_ACTION_SET_ATTENTION_STANDING_ID,
+            iconColor: '#fff',
+        });
+        const clearStandingProps = createSessionActionInfoItemProps({
+            actionId: SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+            iconColor: '#fff',
+        });
+
+        expect(setStandingProps?.title).toBe(t('sessionInfo.keepInAttention'));
+        expect(setStandingProps?.subtitle).toBe(t('sessionInfo.keepInAttentionSubtitle'));
+        expect(clearStandingProps?.title).toBe(t('sessionInfo.removeFromAttention'));
+        expect(clearStandingProps?.subtitle).toBe(t('sessionInfo.removeFromAttentionSubtitle'));
+        expect(getSessionActionMetadata(SESSION_BULK_ACTION_IDS.setAttentionStanding))
+            .toBe(getSessionActionMetadata(SESSION_ACTION_SET_ATTENTION_STANDING_ID));
+    });
+
     it('keeps UI-local session action ids out of the protocol action namespace', () => {
         const protocolActionIds = new Set<string>(ACTION_IDS);
         const uiSessionActionIds = [
@@ -52,6 +72,8 @@ describe('session action presentation', () => {
             SESSION_ACTION_UNPIN_ID,
             SESSION_ACTION_EDIT_TAGS_ID,
             SESSION_ACTION_MOVE_TO_FOLDER_ID,
+            SESSION_ACTION_SET_ATTENTION_STANDING_ID,
+            SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
             ...Object.values(SESSION_BULK_ACTION_IDS),
         ];
 

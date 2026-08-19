@@ -6175,6 +6175,8 @@ export const pl: TranslationStructure = {
     workingSectionTitle: 'Pracuje',
     hideInactiveSessions: 'Ukryj nieaktywne sesje',
     showInactiveSessions: 'Pokaż nieaktywne sesje',
+        selectionKeepInAttention: 'Zostaw w sekcji Wymaga uwagi',
+        selectionRemoveFromAttention: 'Usuń z sekcji Wymaga uwagi',
   },
 
   directSessions: {

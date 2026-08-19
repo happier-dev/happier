@@ -5795,6 +5795,8 @@ export const en = {
         browseSourceCodexUserHome: 'My Codex home',
         browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
         browseSourceClaudeDefault: 'Default Claude config',
+        selectionKeepInAttention: 'Keep in Needs attention',
+        selectionRemoveFromAttention: 'Remove from Needs attention',
         browseSourceOpenCodeDefault: 'Default OpenCode server',
         browseCandidates: 'Available sessions',
         browseNoMachines: 'No machines are available for direct sessions yet.',

@@ -4,6 +4,7 @@ import type { TranslationKeyNoParams } from '@/text';
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -12,6 +13,7 @@ import {
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_UNPIN_ID,
@@ -91,6 +93,16 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     [SESSION_ACTION_MOVE_TO_FOLDER_ID]: {
         titleKey: 'sessionsList.moveToFolder',
         icon: 'folder',
+    },
+    [SESSION_ACTION_SET_ATTENTION_STANDING_ID]: {
+        titleKey: 'sessionInfo.keepInAttention',
+        subtitleKey: 'sessionInfo.keepInAttentionSubtitle',
+        icon: 'bell',
+    },
+    [SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID]: {
+        titleKey: 'sessionInfo.removeFromAttention',
+        subtitleKey: 'sessionInfo.removeFromAttentionSubtitle',
+        icon: 'bell-slash',
     },
     [SESSION_BULK_ACTION_IDS.tagsAdd]: {
         titleKey: 'sessionsList.selectionAddTags',

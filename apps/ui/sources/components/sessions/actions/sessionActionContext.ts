@@ -9,7 +9,23 @@ import {
     type SessionMetadata as ResumeSessionMetadata,
 } from '@/agents/runtime/resumeCapabilities';
 
-import type { SessionActionSession, SessionActionTarget } from './sessionActionTypes';
+import type { SessionActionSession, SessionActionTarget, SessionAttentionStandingAction } from './sessionActionTypes';
+
+export function resolveSessionAttentionStandingAction(params: Readonly<{
+    session: SessionActionSession;
+    enabled: boolean;
+    standing: boolean;
+}>): SessionAttentionStandingAction {
+    if (!params.enabled) {
+        return { kind: 'none', visible: false };
+    }
+    if (params.session.accessLevel === 'view') {
+        return { kind: 'none', visible: false };
+    }
+    return params.standing
+        ? { kind: 'clear-standing', visible: true, targetStanding: false }
+        : { kind: 'set-standing', visible: true, targetStanding: true };
+}
 
 export function createSessionActionTarget(params: Readonly<{
     session: SessionActionSession;
@@ -17,6 +33,8 @@ export function createSessionActionTarget(params: Readonly<{
     currentUserId?: string | null;
     isConnected?: boolean;
     isPinned?: boolean;
+    attentionStandingEnabled?: boolean;
+    attentionStanding?: boolean;
     resumeCapabilityOptions?: ResumeCapabilityOptions;
 }>): SessionActionTarget {
     const session = params.session;
@@ -69,5 +87,12 @@ export function createSessionActionTarget(params: Readonly<{
         readStateAction: isArchived
             ? { kind: 'none', visible: false }
             : resolveSessionReadStateAction(session),
+        attentionStandingAction: isArchived
+            ? { kind: 'none', visible: false }
+            : resolveSessionAttentionStandingAction({
+                session,
+                enabled: params.attentionStandingEnabled === true,
+                standing: params.attentionStanding === true,
+            }),
     };
 }

@@ -18,6 +18,7 @@ type InstallSessionActionsCommonModuleMocksOptions = Readonly<{
 
 const sessionActionsModuleState = vi.hoisted(() => ({
     routerPushSpy: vi.fn(),
+    routerNavigateSpy: vi.fn(),
     options: {
         modal: undefined as SessionActionsModuleFactory | undefined,
         reactNative: undefined as SessionActionsModuleFactory | undefined,
@@ -30,6 +31,7 @@ const sessionActionsModuleState = vi.hoisted(() => ({
 
 export function resetSessionActionsCommonModuleMockState() {
     sessionActionsModuleState.routerPushSpy.mockClear();
+    sessionActionsModuleState.routerNavigateSpy.mockClear();
 }
 
 export function installSessionActionsCommonModuleMocks(
@@ -98,6 +100,7 @@ export function installSessionActionsCommonModuleMocks(
         const routerMock = createExpoRouterMock({
             router: {
                 push: sessionActionsModuleState.routerPushSpy,
+                navigate: sessionActionsModuleState.routerNavigateSpy,
             },
         });
         return routerMock.module;

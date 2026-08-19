@@ -7,11 +7,13 @@ import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/at
 import { createSessionActionTarget } from './sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
 } from './sessionActionIds';
 import { listVisibleSessionActionIds } from './sessionActionAvailability';
@@ -76,6 +78,52 @@ describe('session action availability', () => {
             .not.toContain(SESSION_ACTION_RESUME_ID);
         expect(listVisibleSessionActionIds({ target: nonResumableTarget, surface: 'sessionHeader' }))
             .not.toContain(SESSION_ACTION_RESUME_ID);
+    });
+
+    it('offers exactly one attention standing action while placement standing is reachable', () => {
+        const createStandingTarget = (params: Readonly<{
+            attentionStandingEnabled?: boolean;
+            attentionStanding?: boolean;
+            overrides?: Partial<Session>;
+        }>) => createSessionActionTarget({
+            session: createOwnedRawSession(params.overrides),
+            currentUserId: 'current_user',
+            isConnected: false,
+            attentionStandingEnabled: params.attentionStandingEnabled,
+            attentionStanding: params.attentionStanding,
+        });
+
+        const setStandingTarget = createStandingTarget({ attentionStandingEnabled: true, attentionStanding: false });
+        const clearStandingTarget = createStandingTarget({ attentionStandingEnabled: true, attentionStanding: true });
+        const promotionOffTarget = createStandingTarget({ attentionStanding: true });
+        const archivedTarget = createStandingTarget({
+            attentionStandingEnabled: true,
+            attentionStanding: false,
+            overrides: { archivedAt: 1_700 },
+        });
+        const viewOnlyTarget = createStandingTarget({
+            attentionStandingEnabled: true,
+            attentionStanding: false,
+            overrides: { owner: 'other_user', accessLevel: 'view' },
+        });
+
+        expect(listVisibleSessionActionIds({ target: setStandingTarget, surface: 'rowMenu' })
+            .filter((id) => id !== SESSION_ACTION_MOVE_TO_FOLDER_ID)).toEqual([
+            SESSION_ACTION_MARK_UNREAD_ID,
+            SESSION_ACTION_SET_ATTENTION_STANDING_ID,
+            SESSION_ACTION_RENAME_ID,
+            SESSION_ACTION_ARCHIVE_ID,
+        ]);
+        expect(listVisibleSessionActionIds({ target: clearStandingTarget, surface: 'sessionInfo' }))
+            .toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+        expect(listVisibleSessionActionIds({ target: clearStandingTarget, surface: 'sessionInfo' }))
+            .not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+
+        for (const target of [promotionOffTarget, archivedTarget, viewOnlyTarget]) {
+            const ids = listVisibleSessionActionIds({ target, surface: 'sessionInfo' });
+            expect(ids).not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+            expect(ids).not.toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+        }
     });
 
     it('keeps a created-but-unregistered row non-working and hides Stop without terminal-host evidence', () => {

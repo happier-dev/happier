@@ -6417,6 +6417,8 @@ localTailscale: {
     workingSectionTitle: '処理中',
     hideInactiveSessions: '非アクティブなセッションを非表示',
     showInactiveSessions: '非アクティブなセッションを表示',
+        selectionKeepInAttention: '「確認が必要」に残す',
+        selectionRemoveFromAttention: '「確認が必要」から外す',
   },
 
   directSessions: {

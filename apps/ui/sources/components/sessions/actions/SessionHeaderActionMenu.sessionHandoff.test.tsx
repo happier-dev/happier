@@ -26,6 +26,22 @@ const resolveServerIdForSessionIdFromLocalCacheMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const usePreferredServerIdForSessionMock = vi.hoisted(() => vi.fn());
 const fireAndForgetMock = vi.hoisted(() => vi.fn());
+
+/**
+ * `fireAndForget` is an app-wide utility, so a suite cannot assume its own work is the only
+ * caller. Production tags every call; select by that tag rather than by position.
+ */
+function findFireAndForgetByTag(tag: string): Promise<void> {
+    const call = fireAndForgetMock.mock.calls.find(
+        (candidate) => (candidate[1] as { tag?: string } | undefined)?.tag === tag,
+    );
+    if (!call) {
+        throw new Error(`no fireAndForget call tagged ${tag}; saw: ${fireAndForgetMock.mock.calls
+            .map((candidate) => (candidate[1] as { tag?: string } | undefined)?.tag ?? '<untagged>')
+            .join(', ')}`);
+    }
+    return call[0] as Promise<void>;
+}
 const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
 const buildActionDraftInputMock = vi.hoisted(() => vi.fn());
 const teleportVoiceAgentToSessionRootMock = vi.hoisted(() => vi.fn());
@@ -455,8 +471,10 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     expect(resumeListener).toHaveBeenCalledTimes(1);
     expect(otherSessionListener).not.toHaveBeenCalled();
-    expect(fireAndForgetMock).toHaveBeenCalledTimes(1);
-    const resumeAction = fireAndForgetMock.mock.calls[0]?.[0] as Promise<void>;
+    // Selected by the tag production already stamps, not by call index: `fireAndForget` is a
+    // shared utility and unrelated background work (e.g. `Sync.pruneStaleInstanceChangesCursors`)
+    // legitimately shares it, so an index or a total-count assertion is a false contract.
+    const resumeAction = findFireAndForgetByTag('SessionHeaderActionMenu.execute.sessionResume');
     let settled = false;
     void resumeAction.then(
       () => {
@@ -498,7 +516,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       await flushHookEffects();
     });
 
-    const resumeAction = fireAndForgetMock.mock.calls[0]?.[0] as Promise<void>;
+    const resumeAction = findFireAndForgetByTag('SessionHeaderActionMenu.execute.sessionResume');
     await expect(resumeAction).rejects.toThrow();
     expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'session.resumeFailed');
   });
@@ -552,7 +570,11 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const helperParams = completeSessionForkNavigationMock.mock.calls[0]?.[0] as any;
     helperParams.navigate('sess_next');
-    expect(sessionActionsModuleState.routerPushSpy).toHaveBeenCalledWith('/session/sess_next');
+    // The canonical opener now carries the resolved server scope in the href; asserting the bare
+    // path would pin the pre-migration shape.
+    expect(String(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[0])).toContain('/session/sess_next');
+    expect(String(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[0])).toContain('serverId=');
+    expect(sessionActionsModuleState.routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
   });
 
   it('keeps the closed trigger stable when only the session sequence changes', async () => {

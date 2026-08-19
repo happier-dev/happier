@@ -96,6 +96,51 @@ describe('listSessionBulkActionDescriptors', () => {
         expect(actionIds).not.toContain(SESSION_BULK_ACTION_IDS.unarchive);
     });
 
+    it('exposes the attention standing pair only for selected targets carrying a standing', () => {
+        const descriptors = listSessionBulkActionDescriptors({
+            targets: [
+                {
+                    key: 'session-standing',
+                    sessionId: 'session-standing',
+                    readState: 'read',
+                    standing: true,
+                },
+                {
+                    key: 'session-not-standing',
+                    sessionId: 'session-not-standing',
+                    readState: 'read',
+                    standing: false,
+                },
+            ],
+            tagsEnabled: false,
+            moveEnabled: false,
+        });
+
+        expect(descriptors.map((descriptor) => descriptor.id)).toEqual([
+            SESSION_BULK_ACTION_IDS.markUnread,
+            SESSION_BULK_ACTION_IDS.setAttentionStanding,
+            SESSION_BULK_ACTION_IDS.clearAttentionStanding,
+            SESSION_BULK_ACTION_IDS.pin,
+        ]);
+
+        const withoutStanding = listSessionBulkActionDescriptors({
+            targets: [
+                {
+                    key: 'session-unknown-standing',
+                    sessionId: 'session-unknown-standing',
+                    readState: 'read',
+                },
+            ],
+            tagsEnabled: false,
+            moveEnabled: false,
+        });
+
+        expect(withoutStanding.map((descriptor) => descriptor.id))
+            .not.toContain(SESSION_BULK_ACTION_IDS.setAttentionStanding);
+        expect(withoutStanding.map((descriptor) => descriptor.id))
+            .not.toContain(SESSION_BULK_ACTION_IDS.clearAttentionStanding);
+    });
+
     it('does not expose read-state actions when selected targets have no available read state', () => {
         const descriptors = listSessionBulkActionDescriptors({
             targets: [

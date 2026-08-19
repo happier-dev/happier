@@ -2,8 +2,8 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { getActionSpec } from '@happier-dev/protocol';
-import { useRouter } from 'expo-router';
 
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { storage } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -19,16 +19,14 @@ import { useSessionActionFieldOptions } from './useSessionActionFieldOptions';
 
 export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draft: SessionActionDraft }>) {
   const { theme } = useUnistyles();
-  const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const spec = getActionSpec(props.draft.actionId as any);
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
-      openSession: (sessionId) => {
-        router.push((`/session/${sessionId}`) as any);
-      },
+      openSession: (sessionId) => navigateToSession(sessionId),
     }),
-    [router],
+    [navigateToSession],
   );
 
   const input: Record<string, unknown> = props.draft.input ?? {};

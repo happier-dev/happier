@@ -5784,6 +5784,8 @@ export const fr: TranslationStructure = {
         workingSectionTitle: 'En cours',
         hideInactiveSessions: 'Masquer les sessions inactives',
         showInactiveSessions: 'Afficher les sessions inactives',
+        selectionKeepInAttention: 'Garder dans Nécessite ton attention',
+        selectionRemoveFromAttention: 'Retirer de Nécessite ton attention',
     },
 
     directSessions: {

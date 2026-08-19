@@ -7,11 +7,13 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { createSessionActionTarget } from './sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
@@ -166,6 +168,24 @@ describe('executeSessionAction', () => {
 
         expect(setManualReadState).toHaveBeenCalledWith('session_1', 'read', { serverId: 'server_1' });
         expect(renameSession).toHaveBeenCalledWith('session_1', 'New title', { serverId: 'server_1' });
+    });
+
+    it('writes an explicit attention standing through the injected operation seam', async () => {
+        const setAttentionStanding = vi.fn(async () => undefined);
+
+        await executeSessionAction({
+            actionId: SESSION_ACTION_SET_ATTENTION_STANDING_ID,
+            target: createTarget(),
+            context: { operations: { setAttentionStanding } },
+        });
+        await executeSessionAction({
+            actionId: SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+            target: createTarget(),
+            context: { operations: { setAttentionStanding } },
+        });
+
+        expect(setAttentionStanding).toHaveBeenNthCalledWith(1, 'session_1', true, { serverId: 'server_1' });
+        expect(setAttentionStanding).toHaveBeenNthCalledWith(2, 'session_1', false, { serverId: 'server_1' });
     });
 
     it('throws HappyError when a single-target operation reports failure', async () => {

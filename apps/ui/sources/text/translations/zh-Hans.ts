@@ -5955,6 +5955,8 @@ export const zhHans: TranslationStructure = {
     workingSectionTitle: '正在工作',
     hideInactiveSessions: '隐藏非活动会话',
     showInactiveSessions: '显示非活动会话',
+        selectionKeepInAttention: '保留在需要注意',
+        selectionRemoveFromAttention: '从需要注意中移除',
   },
 
   directSessions: {

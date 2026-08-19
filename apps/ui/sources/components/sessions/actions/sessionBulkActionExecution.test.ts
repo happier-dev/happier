@@ -32,6 +32,8 @@ describe('executeSessionBulkAction', () => {
             { id: SESSION_BULK_ACTION_IDS.unarchive },
             { id: SESSION_BULK_ACTION_IDS.markRead },
             { id: SESSION_BULK_ACTION_IDS.markUnread },
+            { id: SESSION_BULK_ACTION_IDS.setAttentionStanding },
+            { id: SESSION_BULK_ACTION_IDS.clearAttentionStanding },
             { id: SESSION_BULK_ACTION_IDS.pin },
             { id: SESSION_BULK_ACTION_IDS.unpin },
             { id: SESSION_BULK_ACTION_IDS.tagsAdd, tags: ['important'] },
@@ -354,6 +356,29 @@ describe('executeSessionBulkAction', () => {
         expect(result.succeeded).toHaveLength(2);
         expect(snapshots.at(-1)).toEqual({ succeeded: 2, failed: 0, running: 0, queued: 0 });
         expect(snapshots.some((snapshot) => snapshot.running === 1)).toBe(true);
+    });
+
+    it('writes an explicit attention standing for every selected target', async () => {
+        const setSessionAttentionStanding = vi.fn(async () => undefined);
+
+        const result = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.clearAttentionStanding },
+            targets: [
+                target({ key: 'server-a:s1', sessionId: 's1', standing: true }),
+                target({ key: 'server-a:s2', sessionId: 's2', standing: false }),
+            ],
+            context: { setSessionAttentionStanding },
+        });
+
+        expect(setSessionAttentionStanding).toHaveBeenNthCalledWith(1, {
+            target: expect.objectContaining({ sessionId: 's1' }),
+            standing: false,
+        });
+        expect(setSessionAttentionStanding).toHaveBeenNthCalledWith(2, {
+            target: expect.objectContaining({ sessionId: 's2' }),
+            standing: false,
+        });
+        expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-a:s2']);
     });
 
     it('skips read-state actions for targets whose read state is unavailable', async () => {

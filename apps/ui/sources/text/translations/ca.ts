@@ -5798,6 +5798,8 @@ deps: {
         workingSectionTitle: 'Treballant',
         hideInactiveSessions: 'Amaga sessions inactives',
         showInactiveSessions: 'Mostra sessions inactives',
+        selectionKeepInAttention: 'Mantén a Requereix atenció',
+        selectionRemoveFromAttention: 'Treu de Requereix atenció',
     },
 
     directSessions: {
