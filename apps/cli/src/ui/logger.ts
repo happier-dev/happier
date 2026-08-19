@@ -40,6 +40,64 @@ function readStringPropertyBestEffort(value: object, key: 'message' | 'name' | '
   }
 }
 
+/**
+ * An Error carries no enumerable own properties, so `JSON.stringify` renders it
+ * as `{}`. A top-level Error argument was already unwrapped by hand at each
+ * serialization site, but the shape these are actually logged in — an Error
+ * CARRIED by an object, `{ pid, error }` — reached the log file as
+ * `{"pid":95632,"error":{}}`, which is a failure report with the failure removed.
+ * Errors are therefore described here, at the boundary, once, at any depth.
+ */
+function isErrorLikeForLog(value: unknown): value is object {
+  if (value instanceof Error) return true
+  if (!value || typeof value !== 'object') return false
+  try {
+    // Cross-realm Errors fail `instanceof`, so shape is the only usable test.
+    return 'stack' in value && 'message' in value
+  } catch {
+    return false
+  }
+}
+
+function readUnknownPropertyBestEffort(value: object, key: 'code' | 'cause'): unknown {
+  try {
+    return (value as Record<string, unknown>)[key]
+  } catch {
+    return undefined
+  }
+}
+
+function describeErrorForLog(error: object): Record<string, unknown> {
+  const name = readStringPropertyBestEffort(error, 'name')
+  const message = readStringPropertyBestEffort(error, 'message')
+  // `stack` normally opens with `name: message`, but a cross-realm or trimmed
+  // Error may carry only one of the three, so each is emitted on its own.
+  const stack = readStringPropertyBestEffort(error, 'stack')
+  const code = readUnknownPropertyBestEffort(error, 'code')
+  const cause = readUnknownPropertyBestEffort(error, 'cause')
+  return {
+    ...(name ? { name } : {}),
+    ...(message ? { message } : {}),
+    ...(stack ? { stack } : {}),
+    ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
+    ...(cause === undefined ? {} : { cause }),
+  }
+}
+
+/**
+ * One replacer per `JSON.stringify` call: the seen-set has to be scoped to the
+ * call, or a cause chain that loops back would be dropped from later logs.
+ */
+function createErrorAwareLogReplacer(): (key: string, value: unknown) => unknown {
+  const seen = new WeakSet<object>()
+  return (_key, value) => {
+    if (!isErrorLikeForLog(value)) return value
+    if (seen.has(value)) return '[Circular error]'
+    seen.add(value)
+    return describeErrorForLog(value)
+  }
+}
+
 function formatFatalErrorForLog(error: unknown): string {
   try {
     let detail: string
@@ -348,6 +406,16 @@ class Logger {
         return truncatedArray
       }
 
+      if (isErrorLikeForLog(obj)) {
+        if (visited.has(obj)) return '[Circular]'
+        visited.add(obj)
+        const described: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(describeErrorForLog(obj))) {
+          described[key] = truncateStrings(value)
+        }
+        return described
+      }
+
       if (obj && typeof obj === 'object') {
         if (visited.has(obj)) return '[Circular]'
         visited.add(obj)
@@ -485,7 +553,7 @@ class Logger {
             if (typeof a === 'object') {
               // Check for Error-like objects (cross-realm Errors where instanceof fails)
               if (a && 'stack' in (a as object)) return (a as Error).stack || String(a)
-              try { return JSON.stringify(a, null, 2) } catch { return String(a) }
+              try { return JSON.stringify(a, createErrorAwareLogReplacer(), 2) } catch { return String(a) }
             }
             return String(a)
           }).join(' ')}`,
@@ -503,9 +571,9 @@ class Logger {
       if (typeof arg === 'string') return arg
       if (arg instanceof Error) return arg.stack || arg.message
       try {
-        return JSON.stringify(arg)
+        return JSON.stringify(arg, createErrorAwareLogReplacer())
       } catch {
-        // Circular references, cross-realm Error objects, BigInt, etc.
+        // Circular references, BigInt, exotic getters, etc.
         if (arg && typeof arg === 'object' && 'stack' in arg) return (arg as Error).stack || String(arg)
         return String(arg)
       }

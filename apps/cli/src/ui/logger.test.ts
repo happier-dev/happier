@@ -169,6 +169,50 @@ describe('logger', () => {
         expect(content).toContain('boom');
     });
 
+    it('writes a NESTED Error with its message and code instead of "{}"', async () => {
+        // The observed defect: every daemon failure logged as `{ pid, error }`
+        // reached the log file as `{"pid":95632,"error":{}}`, because an Error
+        // carries no enumerable own properties for `JSON.stringify` to find. The
+        // top-level case was already handled; the carrying object — which is how
+        // these are actually logged — was not, and root-causing a permanently
+        // broken stop path cost a lane real time for exactly that reason.
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const error = Object.assign(new Error('directory not empty'), { code: 'ENOTEMPTY' });
+        logger.debug('[TEST] nested error serialization', { pid: 95632, error });
+        logger.debugLargeJson('[TEST] nested error in large json', { pid: 95632, error });
+        logger.flushSync();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).not.toContain('"error":{}');
+        for (const marker of ['[TEST] nested error serialization', '[TEST] nested error in large json']) {
+            const line = content.split(marker)[1] ?? '';
+            expect(line).toContain('directory not empty');
+            expect(line).toContain('ENOTEMPTY');
+            expect(line).toContain('95632');
+        }
+    });
+
+    it('does not throw when a nested error causes a cycle', async () => {
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const error: Error & { cause?: unknown } = new Error('looping');
+        error.cause = error;
+
+        expect(() => {
+            logger.debug('[TEST] nested cyclic error', { pid: 1, error });
+        }).not.toThrow();
+        logger.flushSync();
+
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] nested cyclic error');
+        expect(content).toContain('looping');
+    });
+
     it('does not throw when debugLargeJson receives circular objects', async () => {
         process.env.DEBUG = '1';
 
