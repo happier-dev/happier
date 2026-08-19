@@ -647,6 +647,8 @@ export type TranscriptLifecycleHost = Readonly<{
     ): void;
     resetMountSettle(input?: Readonly<{ reason?: 'session-change' | 'unmount' }>): void;
     sampleMountSettle(input: Readonly<{ sessionId: string; nowMs: number }>): void;
+    /** Delay until quiescence could next be declared; see the coordinator for semantics. */
+    nextMountSettleCheckDelayMs(nowMs: number): number | null;
 }>;
 
 export function createTranscriptLifecycleHost(options: Readonly<{
@@ -1029,6 +1031,9 @@ export function createTranscriptLifecycleHost(options: Readonly<{
         },
         sampleMountSettle(input) {
             mountSettle.sample(input);
+        },
+        nextMountSettleCheckDelayMs(nowMs) {
+            return mountSettle.nextSettleCheckDelayMs(nowMs);
         },
     };
 }
