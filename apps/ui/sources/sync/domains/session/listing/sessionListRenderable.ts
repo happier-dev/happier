@@ -388,6 +388,15 @@ export function preserveSessionListRenderableStaleFields(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
+    // A projection pass re-derives every renderable, so an unchanged session still arrives as a
+    // fresh object. Handing that object on defeats identity all the way up the session list: the
+    // row is rebuilt around it, then the array, then the whole list re-renders. Returning the
+    // previous renderable when nothing changed is what keeps those reuse checks working — measured
+    // on an idle list, ~4000 field-identical rebuilds per 12s, 99.8% of which changed nothing.
+    // `areSessionListRenderablesEqual` is the canonical full-field comparison (it already covers
+    // seq, timestamps and metadata contents), so this adds no second notion of "unchanged".
+    if (previous && areSessionListRenderablesEqual(previous, next)) return previous;
+
     const preserveMetadata = next.metadata == null && previous?.metadata != null;
     const preserveMetadataUnavailable =
         !preserveMetadata

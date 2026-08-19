@@ -108,8 +108,22 @@ function canReuseSession(
 function rehydrateSession(
     item: Extract<SessionListIndexItem, { type: 'session' }>,
     sourceItem: SessionListViewItem | null | undefined,
+    previousItem: SessionListViewItem | null | undefined,
 ): Extract<SessionListViewItem, { type: 'session' }> | null {
     if (sourceItem?.type !== 'session') return null;
+    // The previously BUILT row is the baseline that can actually match: it already carries this
+    // index's grouping and placement. The source row is pre-grouping, so once attention promotion,
+    // pinning or a variant applies it can never match — measured at a 16% hit rate, paying a
+    // full field comparison to fail. Checking `previous` first also subsumes the separate
+    // previous-vs-rebuilt comparison this function used to be followed by, so the row's field list
+    // is compared by one function instead of two that had drifted apart.
+    if (
+        previousItem?.type === 'session'
+        && previousItem.session === sourceItem.session
+        && canReuseSession(item, previousItem)
+    ) {
+        return previousItem;
+    }
     if (canReuseSession(item, sourceItem)) {
         return sourceItem;
     }
@@ -167,31 +181,6 @@ function areHeaderRowsEquivalent(
         && areNullableValuesEqual(previous.machine, next.machine);
 }
 
-/**
- * Every declared field of a session row. The session payload is compared by identity
- * because the store preserves the renderable of a session it did not change; a session
- * that did change arrives as a new object and correctly defeats reuse here.
- */
-function areSessionRowsEquivalent(
-    previous: Extract<SessionListViewItem, { type: 'session' }>,
-    next: Extract<SessionListViewItem, { type: 'session' }>,
-): boolean {
-    if (previous === next) return true;
-    return previous.session === next.session
-        && areNullableValuesEqual(previous.section, next.section)
-        && areNullableValuesEqual(previous.groupKey, next.groupKey)
-        && areNullableValuesEqual(previous.groupKind, next.groupKind)
-        && areNullableValuesEqual(previous.folderId, next.folderId)
-        && areNullableValuesEqual(previous.folderDepth, next.folderDepth)
-        && (previous.pinned === true) === (next.pinned === true)
-        && areNullableValuesEqual(previous.attentionPromotionReason, next.attentionPromotionReason)
-        && areNullableValuesEqual(previous.workingPlacementReason, next.workingPlacementReason)
-        && areNullableValuesEqual(previous.variant, next.variant)
-        && areNullableValuesEqual(previous.serverId, next.serverId)
-        && areNullableValuesEqual(previous.serverName, next.serverName)
-        && areNullableValuesEqual(previous.workspace, next.workspace);
-}
-
 function buildPreviousItemsByNodeId(
     previous: ReadonlyArray<SessionListViewItem> | null | undefined,
 ): Map<string, SessionListViewItem> | null {
@@ -209,14 +198,6 @@ function reuseHeaderRow(
 ): Extract<SessionListViewItem, { type: 'header' }> {
     if (previousItem?.type !== 'header') return header;
     return areHeaderRowsEquivalent(previousItem, header) ? previousItem : header;
-}
-
-function reuseSessionRow(
-    previousItem: SessionListViewItem | undefined,
-    session: Extract<SessionListViewItem, { type: 'session' }>,
-): Extract<SessionListViewItem, { type: 'session' }> {
-    if (previousItem?.type !== 'session') return session;
-    return areSessionRowsEquivalent(previousItem, session) ? previousItem : session;
 }
 
 function hasSameSessionListViewItems(
@@ -249,8 +230,8 @@ export function buildSessionListViewDataFromIndex(
             out.push(reuseHeaderRow(previousItem, rehydrateHeader(item, sourceItem)));
             continue;
         }
-        const session = rehydrateSession(item, sourceItem);
-        if (session) out.push(reuseSessionRow(previousItem, session));
+        const session = rehydrateSession(item, sourceItem, previousItem);
+        if (session) out.push(session);
     }
     if (params.previous && hasSameSessionListViewItems(params.previous, out)) {
         return params.previous as SessionListViewItem[];

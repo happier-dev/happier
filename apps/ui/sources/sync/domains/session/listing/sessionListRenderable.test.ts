@@ -93,6 +93,57 @@ describe('derivePendingRequestFlagsFromAgentState', () => {
 });
 
 describe('preserveSessionListRenderableStaleFields', () => {
+    it('reuses the previous metadata object when the rebuilt one is field-identical', () => {
+        // Metadata is re-derived on every projection pass. When nothing in it changed, handing back
+        // a fresh-but-equal object silently defeats identity all the way up: the session object is
+        // rebuilt around it, so the list row is rebuilt, so the list array is rebuilt, so the whole
+        // list re-renders. Measured on an idle list: ~4000 field-identical metadata rebuilds per 12s,
+        // 99.8% of which changed nothing.
+        const metadataFields = {
+            path: '/repo',
+            homeDir: '/home/user',
+            host: 'host-a',
+            machineId: 'machine-a',
+            flavor: 'codex',
+        };
+        const previous = buildRenderable({
+            id: 's_identity',
+            metadata: { ...metadataFields },
+            metadataVersion: 7,
+        });
+        const rebuiltButEqual = buildRenderable({
+            id: 's_identity',
+            metadata: { ...metadataFields },
+            metadataVersion: 7,
+        });
+        expect(rebuiltButEqual.metadata).not.toBe(previous.metadata);
+
+        const result = preserveSessionListRenderableStaleFields(previous, rebuiltButEqual);
+
+        // Identity, not equality, is the contract — and the whole renderable is reused, not just
+        // its metadata, because that is what the row/array reuse checks upstream compare.
+        expect(result).toBe(previous);
+        expect(result.metadata).toBe(previous.metadata);
+    });
+
+    it('takes the new metadata object when a field actually changed', () => {
+        const previous = buildRenderable({
+            id: 's_changed',
+            metadata: { path: '/repo', flavor: 'codex' },
+            metadataVersion: 7,
+        });
+        const changed = buildRenderable({
+            id: 's_changed',
+            metadata: { path: '/repo', flavor: 'claude' },
+            metadataVersion: 8,
+        });
+
+        const result = preserveSessionListRenderableStaleFields(previous, changed);
+
+        expect(result.metadata).toBe(changed.metadata);
+        expect(result.metadata?.flavor).toBe('claude');
+    });
+
     it('keeps metadata-unavailable settled state across placeholder replacements', () => {
         const previous = buildRenderable({
             id: 's_unavailable',
