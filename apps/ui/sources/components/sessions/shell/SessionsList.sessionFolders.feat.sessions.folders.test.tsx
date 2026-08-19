@@ -273,6 +273,7 @@ function buildOrganizationProjectionFromFolders(folders: typeof sessionFoldersV1
         folderAssignmentsBySessionId: foldersById.folder_a ? { sess_a: 'folder_a' } : {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     };

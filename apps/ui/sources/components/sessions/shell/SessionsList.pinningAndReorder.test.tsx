@@ -21,6 +21,8 @@ const routerPushSpy = vi.fn();
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
 let hideInactiveSessions = false;
+let sessionListAttentionPromotionMode: string | null = null;
+let sessionListAttentionStandingDefault = false;
 
 let sessionListGroupOrderV1: Record<string, string[]> = {};
 const setSessionListGroupOrderV1 = vi.fn();
@@ -111,6 +113,8 @@ installSessionShellCommonModuleMocks({
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
+                    if (key === 'sessionListAttentionPromotionModeV1') return sessionListAttentionPromotionMode;
+                    if (key === 'sessionListAttentionStandingDefaultV1') return sessionListAttentionStandingDefault;
                     return null;
                 },
                 useSessionOrganizationProjection: () => sessionOrganizationProjection,
@@ -401,6 +405,7 @@ function createEmptySessionOrganizationProjection(): SessionOrganizationProjecti
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
     };
@@ -422,6 +427,8 @@ describe('SessionsList pinning + per-group ordering', () => {
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
         hideInactiveSessions = false;
+        sessionListAttentionPromotionMode = null;
+        sessionListAttentionStandingDefault = false;
         readMachineTargetForSessionMock.mockReset();
         mockMachinesState.current = [];
         sessionOrganizationProjection = createEmptySessionOrganizationProjection();
@@ -430,6 +437,87 @@ describe('SessionsList pinning + per-group ordering', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('carries the stored attention standing into every row model it builds', async () => {
+        sessionListAttentionPromotionMode = 'global';
+        sessionOrganizationProjection = {
+            ...createEmptySessionOrganizationProjection(),
+            attentionStandingsBySessionId: {
+                sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
+            },
+        };
+
+        const screen = await renderSessionsList();
+
+        const standingRow = expectPresent(findSessionItem(screen, 'sess_a'), 'expected standing session row');
+        const plainRow = expectPresent(findSessionItem(screen, 'sess_b'), 'expected non-standing session row');
+
+        expect(standingRow.props.rowModel.attentionStandingEnabled).toBe(true);
+        expect(standingRow.props.rowModel.isAttentionStanding).toBe(true);
+        expect(plainRow.props.rowModel.isAttentionStanding).toBe(false);
+    });
+
+    it('dirties the virtualized row gate when an attention standing changes, exactly as a pin does', async () => {
+        // `renderItem` is pinned to one identity for the life of the list (it reads the live
+        // renderer through a ref), so `extraData` is the ONLY channel that reaches an already
+        // mounted row: FlashList's ViewHolder skips a row whose item and extraData are unchanged.
+        // Pin flips this gate; attention standing has to flip it the same way or a kept session
+        // keeps rendering its stale row model.
+        sessionListAttentionPromotionMode = 'global';
+        const { SessionsList } = await import('./SessionsList');
+        const screen = await renderScreen(<SessionsList />);
+        const baselineExtraData = expectPresent(capturedRootFlatListProps?.extraData, 'expected row extra data');
+
+        // Every organization write also republishes the visible list, so each step below refreshes
+        // the view data the way the real hook does before re-rendering the surface.
+        const republishVisibleSessionListViewData = async () => {
+            mockVisibleSessionListViewData = [...mockVisibleSessionListViewData];
+            await screen.update(<SessionsList />);
+        };
+
+        // An organization refresh that changes nothing a row presents must not invalidate every
+        // rendered row: the gate compares signatures, never the rebuilt policy/pin objects.
+        sessionOrganizationProjection = { ...createEmptySessionOrganizationProjection(), version: 2 };
+        await republishVisibleSessionListViewData();
+        expect(capturedRootFlatListProps?.extraData).toBe(baselineExtraData);
+
+        sessionOrganizationProjection = {
+            ...createEmptySessionOrganizationProjection(),
+            version: 3,
+            attentionStandingsBySessionId: {
+                sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
+            },
+        };
+        await republishVisibleSessionListViewData();
+        const standingExtraData = expectPresent(
+            capturedRootFlatListProps?.extraData,
+            'expected row extra data after the standing landed',
+        );
+        expect(standingExtraData).not.toBe(baselineExtraData);
+
+        sessionOrganizationProjection = {
+            ...createEmptySessionOrganizationProjection(),
+            version: 4,
+            attentionStandingsBySessionId: {
+                sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
+            },
+            pinnedSessionIds: ['sess_b'],
+            pinsBySessionId: { sess_b: { sessionId: 'sess_b', sortKey: null, pinnedAt: 1 } },
+        };
+        await republishVisibleSessionListViewData();
+        expect(capturedRootFlatListProps?.extraData).not.toBe(standingExtraData);
+    });
+
+    it('leaves every row non-standing while the attention band is off', async () => {
+        sessionListAttentionPromotionMode = 'off';
+        sessionListAttentionStandingDefault = true;
+
+        const screen = await renderSessionsList();
+
+        const row = expectPresent(findSessionItem(screen, 'sess_a'), 'expected session row');
+
+        expect(row.props.rowModel.attentionStandingEnabled).toBe(false);
     });
 
     it('renders the archived sessions footer on web and routes to archived sessions', async () => {

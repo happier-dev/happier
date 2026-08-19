@@ -9,7 +9,7 @@ import {
     type LayoutChangeEvent,
     type ViewToken,
 } from 'react-native';
-import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { SessionListVirtualizedList } from '@/components/ui/lists/flashListCompat/SessionListVirtualizedList';
 import { usePathname, useRouter } from 'expo-router';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { SessionListViewItem, storage, useSetting } from '@/sync/domains/state/storage';
@@ -35,6 +35,7 @@ import {
 import { isSessionListWorkingPlacementReason } from '@/sync/domains/session/listing/placement/sessionListPlacementProjection';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
+    setSessionAttentionStanding,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagLabels,
@@ -64,6 +65,7 @@ import type {
     SessionListRowPresentationSettings,
     SessionListSessionItem,
 } from './row/sessionListRowModelTypes';
+import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import { useSessionListRowMoveActionHandlers } from './row/useSessionListRowMoveActionHandlers';
 import {
     buildSessionListEmbeddedPriorityRowKeys,
@@ -84,12 +86,13 @@ import { storeTempData } from '@/utils/sessions/tempDataStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     buildVisibleSessionNavigationEntries,
+    findVisibleSessionNavigationEntryByScope,
     moveSessionMruEntryToFront,
     resolveSessionMruNavigation,
     resolveVisibleSessionEdgeNavigation,
     resolveVisibleSessionNavigation,
     type VisibleSessionNavigationEntry,
-} from '@/keyboard/sessions';
+} from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { useFocusReturnFallbackRef } from '@/keyboard/focusReturn';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
@@ -118,6 +121,8 @@ import {
     type SessionListSurfaceOwnership,
 } from './surface/sessionListSurfaceOwnership';
 import { useSessionListSnapshotWhenInactive } from './surface/useSessionListSnapshotWhenInactive';
+import { useSessionListPaneSourceScopeKey } from './surface/sessionListPaneRetention';
+import { useSessionNavigationCursorPublisher } from '@/sync/domains/session/navigation/useSessionNavigationCursorPublisher';
 import {
     createSessionListRuntimePriorityRowScopeSelector,
 } from '@/sync/store/sessionListRowStateSnapshot';
@@ -125,7 +130,6 @@ import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/p
 import { SyncPerformanceReactProfiler } from '@/components/ui/performance/SyncPerformanceReactProfiler';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
-import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import type {
     SessionBulkActionExecutionContext,
     SessionBulkActionTarget,
@@ -144,6 +148,7 @@ import {
     SessionListSelectionStoreProvider,
     useSessionListSelectionController,
 } from './selection/SessionListSelectionContext';
+import { buildSessionBulkActionTargetFromSessionItem } from './selection/buildSessionBulkActionTarget';
 import {
     buildSessionListSelectionScopeKey,
     readSessionListSelectionKeysFromVisibleEntries,
@@ -284,43 +289,6 @@ function resolveWebListInitialNumToRender(items: ReadonlyArray<SessionListViewIt
     return Math.max(WEB_LIST_INITIAL_NUM_TO_RENDER, priorityPrefixLength);
 }
 
-function buildSessionBulkActionTargetFromSessionItem(
-    item: SessionListSessionItem,
-    settings: SessionListRowPresentationSettings,
-): SessionBulkActionTarget {
-    const sessionId = String(item.session.id);
-    const serverId = typeof item.serverId === 'string' && item.serverId.trim()
-        ? item.serverId.trim()
-        : null;
-    const rowKey = serverId ? sessionTagKey(serverId, sessionId) : sessionId;
-    const actionTarget = createSessionActionTarget({
-        session: item.session,
-        serverId,
-        currentUserId: settings.currentUserId,
-        isConnected: item.session.active === true,
-        isPinned: item.pinned === true || settings.pinnedSessionKeys.includes(rowKey),
-    });
-    const readState = actionTarget.readStateAction.visible
-        ? actionTarget.readStateAction.targetState === 'read'
-            ? 'unread'
-            : 'read'
-        : undefined;
-
-    return {
-        key: rowKey,
-        sessionId,
-        serverId,
-        active: actionTarget.isActive,
-        archived: actionTarget.isArchived,
-        hasAdminAccess: actionTarget.hasAdminAccess,
-        canStop: actionTarget.canStop,
-        canArchive: actionTarget.canArchive,
-        pinned: actionTarget.isPinned,
-        tags: settings.sessionTagsByKey[rowKey] ?? [],
-        readState,
-    };
-}
-
 function buildStringListSignature(values: ReadonlyArray<string> | null | undefined): string {
     if (!values || values.length === 0) return '';
     return values.join('\u0001');
@@ -400,6 +368,26 @@ function buildStringRecordSignature(value: Readonly<Record<string, string>> | nu
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, entryValue]) => `${key}\u0001${entryValue}`)
         .join('\u0002');
+}
+
+/**
+ * Signature of the resolved attention-standing inputs, in the same shape the pinned keys use.
+ *
+ * The policy object is rebuilt by every session-organization projection change (a pin, a tag, a
+ * folder move all mint a fresh overrides record), so comparing it by identity would invalidate
+ * every rendered row on unrelated organization traffic. Comparing its content keeps the gate dirty
+ * exactly when a session's standing actually changed.
+ */
+function buildAttentionStandingSignature(policy: SessionAttentionStandingPolicy): string {
+    const overrides = Object.entries(policy.overridesBySessionKey);
+    const defaultPart = policy.defaultStanding ? '1' : '0';
+    if (overrides.length === 0) return defaultPart;
+    return [
+        defaultPart,
+        ...overrides
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, standing]) => `${key}\u0001${standing ? '1' : '0'}`),
+    ].join('\u0002');
 }
 
 function buildStringArrayRecordSignature(value: Readonly<Record<string, readonly string[]>> | null | undefined): string {
@@ -555,23 +543,6 @@ function useStableSessionListRowStoreSubscriptionScopes<T extends ReadonlyArray<
     return stableScopes;
 }
 
-function findVisibleSessionNavigationEntryByScope(
-    entries: readonly VisibleSessionNavigationEntry[],
-    sessionId: string,
-    serverId: string | null | undefined,
-): VisibleSessionNavigationEntry | null {
-    const normalizedServerId = typeof serverId === 'string' && serverId.trim().length > 0
-        ? serverId.trim()
-        : null;
-    if (normalizedServerId) {
-        const scoped = entries.find((entry) =>
-            entry.sessionId === sessionId && entry.serverId === normalizedServerId
-        );
-        if (scoped) return scoped;
-    }
-    return entries.find((entry) => entry.sessionId === sessionId) ?? null;
-}
-
 function resolveSessionTreeRowId(sessionKey: string | null): string | null {
     if (!sessionKey) return null;
     const separatorIndex = sessionKey.indexOf(':');
@@ -579,24 +550,6 @@ function resolveSessionTreeRowId(sessionKey: string | null): string | null {
     const serverId = sessionKey.slice(0, separatorIndex);
     const sessionId = sessionKey.slice(separatorIndex + 1);
     return serverId && sessionId ? treeRowId.session(serverId, sessionId) : null;
-}
-
-function resolveAdjacentSessionSelectionKey(params: Readonly<{
-    visibleKeys: readonly string[];
-    currentKey: string | null;
-    direction: 'previous' | 'next';
-}>): string | null {
-    if (params.visibleKeys.length === 0) return null;
-    const currentIndex = params.currentKey ? params.visibleKeys.indexOf(params.currentKey) : -1;
-    if (currentIndex < 0) {
-        return params.direction === 'previous'
-            ? params.visibleKeys[params.visibleKeys.length - 1] ?? null
-            : params.visibleKeys[0] ?? null;
-    }
-    const targetIndex = params.direction === 'previous'
-        ? Math.max(0, currentIndex - 1)
-        : Math.min(params.visibleKeys.length - 1, currentIndex + 1);
-    return params.visibleKeys[targetIndex] ?? null;
 }
 
 const SessionsListHeader = React.memo(function SessionsListHeader(props: Readonly<{
@@ -649,6 +602,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     const data = useSessionListSnapshotWhenInactive(liveData, surfaceOwnership.dataActive);
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
+    const sessionListPaneSourceScopeKey = useSessionListPaneSourceScopeKey();
     const currentPathname = usePathname();
     const pathname = props.pathname ?? currentPathname;
     const router = useRouter();
@@ -756,6 +710,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         pinnedKeyList,
         pinnedKeySet,
         setPinnedSessionKeysV1,
+        attentionStandingEnabled,
+        attentionStandingPolicy,
         sessionMruOrderV1,
         setSessionMruOrderV1,
         currentGroupOrderMap,
@@ -1102,6 +1058,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             sessionTagsByKey: sessionTagsV1 ?? EMPTY_SESSION_TAGS_BY_KEY,
             allKnownTags,
             pinnedSessionKeys: pinnedKeyList,
+            attentionStandingEnabled,
+            attentionStandingPolicy,
             hasMultipleMachines,
             reachableSessionDisplayByKey: reachableSessionDisplayByKeyRecord,
             folderViewEnabled,
@@ -1113,6 +1071,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         };
     }, [
         allKnownTags,
+        attentionStandingEnabled,
+        attentionStandingPolicy,
         compactSessionView,
         compactSessionViewMinimal,
         currentUserId,
@@ -1499,6 +1459,14 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                     pinned,
                 });
             },
+            setSessionAttentionStanding: async ({ target, standing }) => {
+                const mutation = await resolveMutationContext(target, 'Session attention standing mutation');
+                await setSessionAttentionStanding({
+                    ...mutation,
+                    sessionId: target.sessionId,
+                    standing,
+                });
+            },
             setSessionTagAssignments: async ({ target, tags }) => {
                 const mutation = await resolveMutationContext(target, 'Session tag assignment');
                 await setSessionTagLabels({
@@ -1660,6 +1628,16 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         () => visibleSessionNavigationEntries.map((entry) => entry.sessionKey),
         [visibleSessionNavigationEntries],
     );
+    // Freezing the lateral-navigation order is a side effect of this surface going data-inactive:
+    // on phone that happens on every `/session/*` route, so the last published order is exactly
+    // the one the user was looking at when they opened a session.
+    useSessionNavigationCursorPublisher({
+        active: surfaceOwnership.dataActive,
+        origin: 'session-list',
+        sourceScopeKey: sessionListPaneSourceScopeKey,
+        storageKind: props.storageKind ?? 'all',
+        items: listItems,
+    });
     const cursorSessionKeyRef = React.useRef<string | null>(null);
     const mruCursorSessionKeyRef = React.useRef<string | null>(null);
     const sessionListKeyboardFocusedRef = React.useRef(false);
@@ -1808,17 +1786,18 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         const snapshot = sessionListSelectionStore.getSnapshot();
         const currentKey = resolveSelectionKeyboardCurrentKey();
         if (!currentKey) return;
-        const targetKey = resolveAdjacentSessionSelectionKey({
-            visibleKeys: visibleSessionSelectionKeys,
-            currentKey,
+        const targetKey = resolveVisibleSessionNavigation({
+            visibleEntries: visibleSessionNavigationEntries,
+            activeSessionKey: currentKey,
+            cursorSessionKey: null,
             direction,
-        });
+        })?.sessionKey ?? null;
         if (!targetKey) return;
         if (snapshot.selectedKeys.size === 0 || snapshot.anchorKey == null) {
             sessionListSelectionStore.replaceWith(currentKey);
         }
         sessionListSelectionStore.selectRange(targetKey);
-    }, [resolveSelectionKeyboardCurrentKey, sessionListSelectionStore, visibleSessionSelectionKeys]);
+    }, [resolveSelectionKeyboardCurrentKey, sessionListSelectionStore, visibleSessionNavigationEntries]);
     useKeyboardShortcutHandlers(React.useMemo(() => {
         if (!surfaceOwnership.interactive) return {};
         return {
@@ -2136,6 +2115,10 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         () => buildStringListSignature(pinnedKeyList),
         [pinnedKeyList],
     );
+    const attentionStandingSignature = React.useMemo(
+        () => buildAttentionStandingSignature(attentionStandingPolicy),
+        [attentionStandingPolicy],
+    );
     const allKnownTagsSignature = React.useMemo(
         () => buildStringListSignature(allKnownTags),
         [allKnownTags],
@@ -2158,6 +2141,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     );
     const virtualizedRowExtraData = React.useMemo(() => ({
         allKnownTagsSignature,
+        attentionStandingEnabled,
+        attentionStandingSignature,
         compactSessionView: Boolean(compactSessionView),
         compactSessionViewMinimal: Boolean(compactSessionView && compactSessionViewMinimal),
         currentUserId,
@@ -2182,6 +2167,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         workspaceMachineSubtitlesEnabled,
     }), [
         allKnownTagsSignature,
+        attentionStandingEnabled,
+        attentionStandingSignature,
         compactSessionView,
         compactSessionViewMinimal,
         currentUserId,
@@ -2390,7 +2377,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             ListFooterComponent={renderVirtualizedFooter as any}
         />
     ) : (
-        <FlashList
+        <SessionListVirtualizedList
             ref={virtualizedListRef as never}
             data={renderedListItems as any}
             renderItem={renderVirtualizedItem as any}

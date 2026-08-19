@@ -226,6 +226,13 @@ const windowingFlashList = createWindowingList({
     },
 });
 
+// The engine behind the seam is selectable, so this suite captures at the SEAM rather than at one
+// engine. It asserts that large web lists use the virtualized surface (and do not mount every row)
+// rather than RN-Web FlatList — which is true whichever engine renders them.
+vi.mock('@/components/ui/lists/flashListCompat/SessionListVirtualizedList', () => ({
+    SessionListVirtualizedList: (props: any) => windowingFlashList(props),
+}));
+
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

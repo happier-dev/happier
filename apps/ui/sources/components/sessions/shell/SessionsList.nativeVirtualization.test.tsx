@@ -172,6 +172,7 @@ function buildOrganizationProjectionFromLegacyState() {
             stripServerScopedSessionKey(key),
             tags,
         ])),
+        attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: Object.fromEntries(Object.entries(workspaceLabelsV1).map(([scopeKey, label], index) => [
             `server_a:workspace:${scopeKey}`,
@@ -350,6 +351,17 @@ vi.mock('@shopify/flash-list', async () => ({
         componentName: 'FlashList',
         renderItems: true,
     }).module,
+}));
+
+// The engine behind the seam is selectable (Legend on native, FlashList on web), so this suite
+// captures at the SEAM rather than at one engine. It asserts the props and adjacency the list
+// passes down, which are the same whichever engine renders them — pinning an engine here would make
+// these tests fail on an engine swap that changed nothing they care about.
+vi.mock('@/components/ui/lists/flashListCompat/SessionListVirtualizedList', async () => ({
+    SessionListVirtualizedList: ((await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList')).createCapturingFlashListMock({
+        componentName: 'FlashListCompat',
+        renderItems: true,
+    }).module.FlashList,
 }));
 
 vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => ({
