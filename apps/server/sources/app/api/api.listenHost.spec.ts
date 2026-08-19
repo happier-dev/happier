@@ -6,6 +6,7 @@ import {
   API_CORS_EXPOSED_HEADERS,
   createApiCorsOptions,
   DEFAULT_API_CORS_MAX_AGE_SECONDS,
+  enableContentTypeParsers,
   resolveApiCorsMaxAgeSeconds,
   resolveApiListenHost,
 } from './api';
@@ -92,3 +93,68 @@ describe('createApiCorsOptions', () => {
     expect(response.headers['access-control-expose-headers']).toContain('server-timing');
   });
 });
+
+describe('enableContentTypeParsers', () => {
+  it('allows bodyless chunked POST requests without Content-Type to succeed without 415', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-archive', async (request) => {
+      return { success: true, body: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-archive',
+      headers: {
+        'transfer-encoding': 'chunked',
+      },
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true });
+  });
+
+  it('parses valid JSON payloads when Content-Type is provided', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-json', async (request) => {
+      return { received: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-json',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify({ hello: 'world' }),
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ received: { hello: 'world' } });
+  });
+
+  it('handles arbitrary media types with empty bodies on POST without 415', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-empty', async () => {
+      return { ok: true };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-empty',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: '',
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+  });
+});
+

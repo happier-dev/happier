@@ -68,6 +68,19 @@ export function resolveApiCorsMaxAgeSeconds(env: Record<string, string | undefin
     return parsed;
 }
 
+export function enableContentTypeParsers(app: { addContentTypeParser: (...args: any[]) => any }) {
+    app.addContentTypeParser(/^/, { parseAs: 'string' }, (_req: any, body: string, done: (err: Error | null, result?: any) => void) => {
+        if (!body || body.trim() === '') {
+            return done(null, undefined);
+        }
+        try {
+            done(null, JSON.parse(body));
+        } catch (err) {
+            done(err as Error, undefined);
+        }
+    });
+}
+
 export async function startApi() {
 
     // Configure
@@ -81,6 +94,7 @@ export async function startApi() {
         forceCloseConnections: 'idle',
         ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
     });
+    enableContentTypeParsers(app);
     app.register(import('@fastify/cors'), createApiCorsOptions(process.env));
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
 
