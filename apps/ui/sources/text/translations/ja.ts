@@ -1155,6 +1155,7 @@ export const ja: TranslationStructure = {
     moreActionsHint: "追加の操作メニューを開きます",
     cancel: "キャンセル",
     close: "閉じる",
+    dismissKeyboard: 'キーボードを閉じる',
       open: "開く",
       done: "完了",
       reorder: "並べ替え",

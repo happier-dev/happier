@@ -1117,6 +1117,7 @@ export const ca: TranslationStructure = {
           moreActionsHint: 'Obre un menú amb més accions',
           cancel: 'Cancel·la',
           close: 'Tancar',
+          dismissKeyboard: 'Amaga el teclat',
           open: 'Obre',
         done: 'Fet',
         reorder: 'Reordena',

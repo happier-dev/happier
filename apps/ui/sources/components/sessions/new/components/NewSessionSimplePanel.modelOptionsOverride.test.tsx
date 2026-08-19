@@ -68,17 +68,9 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native-reanimated', async () => {
-    const React = await import('react');
-    return {
-        __esModule: true,
-        default: {
-            View: (props: any) => React.createElement('AnimatedView', props, props.children),
-        },
-        useAnimatedStyle: (fn: any) => fn(),
-        useSharedValue: (initial: any) => ({ value: initial }),
-    };
-});
+// `react-native-reanimated` is a boundary the testkit already owns (installed globally in
+// `dev/vitestSetup.ts`); a hand-rolled subset here shadowed it with three exports and broke as
+// soon as production code reached for a fourth.
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -234,8 +226,14 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
 
             const scaffold = tree.root.findByType('ComposerKeyboardScaffold');
             expect(scaffold.props.mode).toBe('newSession');
-            expect(scaffold.props.headerHeight).toBe(44);
-            expect(scaffold.props.safeAreaBottom).toBe(34);
+            // Zero, not the 44 the caller passes: `useHeaderHeight()` is a platform constant rather
+            // than a measurement, and this presentation draws no header at all. Forwarding it would
+            // subtract phantom chrome from the keyboard layout's bootstrap viewport. The top
+            // reservation travels on `availablePanelMaxHeight` instead.
+            expect(scaffold.props.headerHeight).toBe(0);
+            // The resting offset is the card's own side margin rather than the home-indicator
+            // inset, so the gap under a floating card matches the gap beside it.
+            expect(scaffold.props.safeAreaBottom).toBe(0);
 
             const dismissSpacer = tree.root.findAllByType('Pressable').find((node) => {
                 return flattenStyle(node.props.style).flex === 1;
@@ -292,7 +290,10 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
 
             const latestCall = AgentInputMock.mock.calls.at(-1);
             const latestProps = (latestCall?.[0] ?? {}) as any;
-            expect(latestProps.maxPanelHeight).toBe(480);
+            // 480 less the 42pt close capsule row this host draws above the card (safeAreaTop is 0
+            // here). The row lives inside the same budget and nothing else subtracts it, so without
+            // this a long draft grows up past the capsule and off the top of the screen.
+            expect(latestProps.maxPanelHeight).toBe(480 - 0 - 42);
             expect(latestProps.panelMaxHeightMode).toBe('host-constrained');
         } finally {
             act(() => {
@@ -301,7 +302,13 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         }
     });
 
-    it('dismisses the keyboard when the empty area above the composer is pressed on iOS', async () => {
+    // On native this empty area is the visible backdrop of a transparent modal, so pressing it
+    // starts the dismissal. It deliberately does NOT call `Keyboard.dismiss()`: retracting the
+    // keyboard drags the composer — and the scrim's stacked blur layers — down with it over the
+    // keyboard's own curve, which tore the frost into horizontal bands. The keyboard goes down
+    // when the input unmounts instead. What IS asserted is that the target disarms itself, so a
+    // second press cannot land on a backdrop that outlived the tap which closed it.
+    it('dismisses the screen on a backdrop press instead of eagerly retracting the keyboard on iOS', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
@@ -351,7 +358,10 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                 invokeTestInstanceHandler(dismissPressable!, 'onPress', undefined, 'new-session-dismiss-background');
             });
 
-            expect(keyboardDismissMock).toHaveBeenCalledTimes(1);
+            // Retracting the keyboard here would drag the composer — and the scrim's blur layers —
+            // down the keyboard's own curve while the card is still on screen. It goes down anyway
+            // when the input unmounts, so the dismissal owns the ordering instead.
+            expect(keyboardDismissMock).not.toHaveBeenCalled();
         } finally {
             act(() => {
                 tree?.unmount();

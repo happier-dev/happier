@@ -1799,6 +1799,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           authenticate: '驗證',
           moreActions: '更多操作',
           moreActionsHint: '打開包含更多操作的選單',
+          dismissKeyboard: '收起鍵盤',
           duplicate: '複製',
           save: '儲存',
           saveAs: '另存為',

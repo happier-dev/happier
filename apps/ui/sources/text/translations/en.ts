@@ -1025,6 +1025,7 @@ export const en = {
 	        moreActionsHint: 'Opens a menu with more actions',
 	        cancel: 'Cancel',
 	        close: 'Close',
+	        dismissKeyboard: 'Dismiss keyboard',
 	        open: 'Open',
 	        done: 'Done',
 	        reorder: 'Reorder',

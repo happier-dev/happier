@@ -1200,6 +1200,7 @@ export const ru: TranslationStructure = {
     moreActionsHint: "Открывает меню с другими действиями",
     cancel: "Отмена",
     close: "Закрыть",
+    dismissKeyboard: 'Скрыть клавиатуру',
     open: "Открыть",
     done: "Готово",
     reorder: "Упорядочить",

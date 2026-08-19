@@ -1194,6 +1194,7 @@ export const pl: TranslationStructure = {
     moreActionsHint: "Otwiera menu z dodatkowymi działaniami",
     cancel: "Anuluj",
     close: "Zamknij",
+    dismissKeyboard: 'Ukryj klawiaturę',
       open: "Otwórz",
       done: "Gotowe",
       reorder: "Zmień kolejność",

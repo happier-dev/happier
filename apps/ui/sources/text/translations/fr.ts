@@ -1027,6 +1027,7 @@ export const fr: TranslationStructure = {
 	        moreActionsHint: 'Ouvre un menu avec plus d’actions',
 	        cancel: 'Annuler',
 	        close: 'Fermer',
+	        dismissKeyboard: 'Masquer le clavier',
 	        open: 'Ouvrir',
 	        done: 'Terminé',
 	        reorder: 'Réordonner',

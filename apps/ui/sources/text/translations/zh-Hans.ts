@@ -1155,6 +1155,7 @@ export const zhHans: TranslationStructure = {
     moreActionsHint: "打开包含更多操作的菜单",
     cancel: "取消",
     close: "关闭",
+    dismissKeyboard: '收起键盘',
     open: "打开",
     authenticate: "认证",
     save: "保存",
