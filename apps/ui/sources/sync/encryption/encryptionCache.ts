@@ -64,12 +64,20 @@ function estimateValueBytes(value: unknown, seen = new WeakSet<object>(), depth 
     return total;
 }
 
+/**
+ * What one cache slot costs beyond its payload: the Map node, the entry object and its
+ * own fields. Counted so the byte budget bounds ACTUAL memory rather than payload alone —
+ * which is what lets the message cache drop its separate entry cap without becoming
+ * unbounded. A million tiny entries are no longer free just because their contents are.
+ */
+const CACHE_ENTRY_OVERHEAD_BYTES = 96;
+
 function estimateEntryBytes(data: unknown, extraKeys: readonly string[] = []): number {
     let total = estimateValueBytes(data);
     for (const key of extraKeys) {
         total += key.length * 2;
     }
-    return Math.max(1, total);
+    return Math.max(1, total + CACHE_ENTRY_OVERHEAD_BYTES);
 }
 
 /**
@@ -85,13 +93,31 @@ export class EncryptionCache {
     private daemonStateCache = new Map<string, CacheEntry<any>>();
     private totalBytes = 0;
     private readonly maxBytes: number;
+    /**
+     * Recency ticket. `Date.now()` cannot order a batch: hundreds of decrypted messages
+     * land inside one millisecond, every entry ties, and "least recently used" collapses
+     * into "whatever iterated first" — which is how a warm re-open evicted the very
+     * messages it had just cached (measured 2026-08-18: 287 of 307 re-decrypted).
+     * A counter is exact, monotonic, and costs nothing.
+     */
+    private accessTicket = 0;
     
     // Configuration
     private readonly maxAgentStates = 1000;
     private readonly maxMetadata = 1000;
-    private readonly maxMessages = 1000;
     private readonly maxMachineMetadata = 500;
     private readonly maxDaemonStates = 500;
+    /**
+     * Messages have NO entry cap. The resource being protected is memory, and the byte
+     * budget protects it directly; a second count-based bound only ever fired earlier and
+     * for no stated reason. At 1000 entries it bound roughly an order of magnitude before
+     * the byte budget, so a single ordinary transcript evicted every other session's
+     * decrypted content and re-opening any of them paid full decryption again.
+     *
+     * The other caches keep their caps: they are keyed by `id:version`, so a stuck writer
+     * could mint unbounded distinct keys for one subject. Messages are keyed by message id
+     * and are naturally bounded by the transcripts actually retained.
+     */
 
     constructor(options: EncryptionCacheOptions = {}) {
         this.maxBytes = normalizeMaxBytes(options.maxBytes);
@@ -104,7 +130,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         const entry = this.agentStateCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.agentStateCache, key, entry);
             return entry.data;
         }
         return null;
@@ -117,7 +143,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         this.setEntry(this.agentStateCache, key, {
             data,
-            accessTime: Date.now(),
+            accessTime: 0,
             bytes: estimateEntryBytes(data, [key]),
         }, this.maxAgentStates);
     }
@@ -129,7 +155,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         const entry = this.metadataCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.metadataCache, key, entry);
             return entry.data;
         }
         return null;
@@ -142,7 +168,7 @@ export class EncryptionCache {
         const key = `${sessionId}:${version}`;
         this.setEntry(this.metadataCache, key, {
             data,
-            accessTime: Date.now(),
+            accessTime: 0,
             bytes: estimateEntryBytes(data, [key]),
         }, this.maxMetadata);
     }
@@ -156,7 +182,7 @@ export class EncryptionCache {
             if (entry.fingerprint !== fingerprint) {
                 return null;
             }
-            entry.accessTime = Date.now();
+            this.touch(this.messageCache, messageId, entry);
             return entry.data;
         }
         return null;
@@ -168,11 +194,11 @@ export class EncryptionCache {
     setCachedMessage(messageId: string, data: DecryptedMessage, fingerprint: string, sessionId?: string | null): void {
         this.setEntry(this.messageCache, messageId, {
             data,
-            accessTime: Date.now(),
+            accessTime: 0,
             fingerprint,
             sessionId: sessionId ?? null,
             bytes: estimateEntryBytes(data, [messageId, fingerprint, sessionId ?? '']),
-        }, this.maxMessages);
+        }, null);
     }
 
     /**
@@ -182,7 +208,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         const entry = this.machineMetadataCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.machineMetadataCache, key, entry);
             return entry.data;
         }
         return null;
@@ -195,7 +221,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         this.setEntry(this.machineMetadataCache, key, {
             data,
-            accessTime: Date.now(),
+            accessTime: 0,
             bytes: estimateEntryBytes(data, [key]),
         }, this.maxMachineMetadata);
     }
@@ -207,7 +233,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         const entry = this.daemonStateCache.get(key);
         if (entry) {
-            entry.accessTime = Date.now();
+            this.touch(this.daemonStateCache, key, entry);
             return entry.data;
         }
         return undefined;
@@ -220,7 +246,7 @@ export class EncryptionCache {
         const key = `${machineId}:${version}`;
         this.setEntry(this.daemonStateCache, key, {
             data,
-            accessTime: Date.now(),
+            accessTime: 0,
             bytes: estimateEntryBytes(data, [key]),
         }, this.maxDaemonStates);
     }
@@ -300,16 +326,30 @@ export class EncryptionCache {
         };
     }
 
+    /**
+     * Marks an entry as most-recently-used. Re-inserting moves it to the END of the Map,
+     * so insertion order and LRU order are the same thing and the least-recently-used
+     * entry is always simply the first — no scan to find it.
+     */
+    private touch<T, Entry extends CacheEntry<T>>(cache: Map<string, Entry>, key: string, entry: Entry): void {
+        entry.accessTime = ++this.accessTicket;
+        cache.delete(key);
+        cache.set(key, entry);
+    }
+
     private setEntry<T, Entry extends CacheEntry<T>>(
         cache: Map<string, Entry>,
         key: string,
         entry: Entry,
-        maxSize: number,
+        maxSize: number | null,
     ): void {
         const previous = cache.get(key);
         if (previous) {
             this.totalBytes -= previous.bytes;
         }
+        entry.accessTime = ++this.accessTicket;
+        // Delete first so a replaced key moves to the end rather than keeping its old slot.
+        cache.delete(key);
         cache.set(key, entry);
         this.totalBytes += entry.bytes;
         this.evictOldest(cache, maxSize);
@@ -324,25 +364,18 @@ export class EncryptionCache {
     }
 
     /**
-     * Evict oldest entries when cache exceeds limit (LRU eviction)
+     * Evict down TO the bound, not by one entry per insert.
+     *
+     * The previous version dropped a single entry per call after an O(size) scan, so
+     * streaming a batch into a full cache ran one full scan per message and left the
+     * cache pinned at its cap, thrashing, for the whole batch. Insertion order is LRU
+     * order here, so the victim is the first key and eviction is O(1).
      */
-    private evictOldest<T>(cache: Map<string, CacheEntry<T>>, maxSize: number): void {
-        if (cache.size <= maxSize) {
-            return;
-        }
-
-        // Find oldest entry by access time
-        let oldestKey: string | null = null;
-        let oldestTime = Infinity;
-        
-        for (const [key, entry] of cache.entries()) {
-            if (entry.accessTime < oldestTime) {
-                oldestTime = entry.accessTime;
-                oldestKey = key;
-            }
-        }
-        
-        if (oldestKey) {
+    private evictOldest<T>(cache: Map<string, CacheEntry<T>>, maxSize: number | null): void {
+        if (maxSize === null) return;
+        while (cache.size > maxSize) {
+            const oldestKey = cache.keys().next().value;
+            if (oldestKey === undefined) return;
             this.deleteEntry(cache, oldestKey);
         }
     }
@@ -355,22 +388,28 @@ export class EncryptionCache {
         }
     }
 
+    /**
+     * The globally least-recently-used entry across every cache.
+     *
+     * Only each cache's HEAD is inspected, because insertion order is LRU order within a
+     * cache — so this is O(number of caches), not O(number of entries). It used to scan
+     * every entry of every cache for each eviction, which meant a large batch paid that
+     * scan once per evicted message.
+     */
     private findOldestEntry(): { cache: Map<string, CacheEntry<unknown>>; key: string } | null {
         const visit = <T>(
             cache: Map<string, CacheEntry<T>>,
             current: OldestCacheEntryRef | null,
         ): OldestCacheEntryRef | null => {
-            let oldest = current;
-            for (const [key, entry] of cache.entries()) {
-                if (!oldest || entry.accessTime < oldest.accessTime) {
-                    oldest = {
-                        cache: cache as unknown as Map<string, CacheEntry<unknown>>,
-                        key,
-                        accessTime: entry.accessTime,
-                    };
-                }
-            }
-            return oldest;
+            const head = cache.entries().next();
+            if (head.done) return current;
+            const [key, entry] = head.value;
+            if (current && current.accessTime <= entry.accessTime) return current;
+            return {
+                cache: cache as unknown as Map<string, CacheEntry<unknown>>,
+                key,
+                accessTime: entry.accessTime,
+            };
         };
 
         let oldest: OldestCacheEntryRef | null = null;
