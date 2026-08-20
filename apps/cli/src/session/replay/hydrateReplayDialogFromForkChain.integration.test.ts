@@ -136,6 +136,111 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
     ]);
   });
 
+  /**
+   * Two rows on opposite sides of a fork boundary can carry the SAME timestamp:
+   * the fork copies nothing, so the parent's last turn and the child's first are
+   * independent writes that a busy second puts in the same millisecond.
+   *
+   * `createdAt` alone is therefore not a total order, and the walk collects
+   * child-segment-first — so a stable sort that leaves ties alone emits the
+   * child's turn BEFORE the parent turn it answered. The target then reads the
+   * conversation out of order and treats an answer as the question.
+   */
+  it('orders a fork boundary parent-before-child when both rows share a timestamp', async () => {
+    const childSessionId = 'sess_tie_child';
+    const parentSessionId = 'sess_tie_parent';
+    const SHARED_CREATED_AT = 500;
+
+    const makeSession = (id: string, metadata: Record<string, unknown>) => ({
+      id,
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      archivedAt: null,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata),
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      pendingCount: 0,
+      pendingVersion: 0,
+      dataEncryptionKey: null,
+      share: null,
+    });
+
+    const sessions = new Map([
+      [childSessionId, makeSession(childSessionId, {
+        flavor: 'claude',
+        path: '/tmp',
+        forkV1: { v: 1, parentSessionId, parentCutoffSeqInclusive: 1 },
+      })],
+      [parentSessionId, makeSession(parentSessionId, { flavor: 'claude', path: '/tmp' })],
+    ]);
+    const messages = new Map<string, Array<Record<string, unknown>>>([
+      [childSessionId, [{
+        seq: 1,
+        createdAt: SHARED_CREATED_AT,
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'child answer' } } },
+      }]],
+      [parentSessionId, [{
+        seq: 1,
+        createdAt: SHARED_CREATED_AT,
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'parent question' } } },
+      }]],
+    ]);
+
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      const sessionMatch = /^\/v2\/sessions\/([^/]+)$/u.exec(url.pathname);
+      if (req.method === 'GET' && sessionMatch) {
+        const session = sessions.get(sessionMatch[1]!);
+        res.statusCode = session ? 200 : 404;
+        res.setHeader('content-type', 'application/json');
+        res.end(session ? JSON.stringify({ session }) : undefined);
+        return;
+      }
+      const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
+      if (req.method === 'GET' && messagesMatch) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages: messages.get(messagesMatch[1]!) ?? [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server!.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to resolve server address');
+
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    const { hydrateReplayDialogFromForkChain } = await import('./hydrateReplayDialogFromForkChain');
+    const result = await hydrateReplayDialogFromForkChain({
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      startingSessionId: childSessionId,
+      limit: 10,
+      wantSynopsisText: false,
+    });
+
+    expect(result?.dialog.map((item) => item.text)).toEqual([
+      'parent question',
+      'child answer',
+    ]);
+  });
+
   it('discovers session synopsis even when it is outside the first replay page', async () => {
     const sessionId = 'sess_plain_chain_1';
 
@@ -934,6 +1039,8 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
      */
     parentSessionId?: string;
     parentRows?: readonly Row[];
+    /** Fail every transcript page request after this many have succeeded. */
+    failMessageRequestsAfter?: number;
   }>) {
     const requests: Array<{ roles: string | null; beforeSeq: number | null; afterSeq: number | null; limit: number }> = [];
     const parentRequests: Array<'session' | 'messages'> = [];
@@ -983,6 +1090,15 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
         const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
         const afterSeq = afterSeqRaw ? Number.parseInt(afterSeqRaw, 10) : null;
         requests.push({ roles: rolesRaw, beforeSeq, afterSeq, limit });
+
+        if (
+          typeof params.failMessageRequestsAfter === 'number'
+          && requests.length > params.failMessageRequestsAfter
+        ) {
+          res.statusCode = 500;
+          res.end();
+          return;
+        }
 
         const requested = rolesRaw ? rolesRaw.split(',') : null;
         const eligible = sorted
@@ -1045,6 +1161,27 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
       expect(request.roles).toBe('user,agent');
     }
     expect(result?.dialog.map((item) => item.text)).toEqual(['the actual instruction', 'the answer']);
+  });
+
+  /**
+   * A LATER page that fails is not a budget stop, and the difference is a
+   * statement made to the target Agent. `reachedSourceStart: false` alone makes
+   * the framer print "earlier messages were not retrieved to fit the context
+   * budget" — a false explanation for a hole an I/O failure tore. The
+   * incompleteness signal already carries "part of this could not be read", and
+   * the framer already renders it, so a failed page must raise it.
+   */
+  it('reports a failed later page as incomplete history, not as a budget stop', async () => {
+    const rows = Array.from({ length: 30 }, (_unused, index) =>
+      textRow(index + 1, index % 2 === 0 ? 'user' : 'agent', `turn-${index + 1}`));
+
+    // The page size is 5, so the first page succeeds and the second fails: the
+    // walk has real rows in hand and still cannot see the rest of the source.
+    const { result } = await run({ rows, charBudget: 100_000, failMessageRequestsAfter: 1 });
+
+    expect(result?.dialog.length).toBeGreaterThan(0);
+    expect(result?.reachedSourceStart).toBe(false);
+    expect(result?.historyIncomplete).toBe(true);
   });
 
   it('pages backwards until the character budget is met, not until a row count is', async () => {
