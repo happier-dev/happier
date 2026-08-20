@@ -1,3 +1,4 @@
+import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayText';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 export function resolveForkFromMessageSemantics(params: Readonly<{
@@ -15,7 +16,10 @@ export function resolveForkFromMessageSemantics(params: Readonly<{
   // Important: keep `upToSeqInclusive` equal to the clicked message seq so provider-native forks can resolve
   // vendor message ids precisely. The daemon will compute the effective replay cutoff (seq - 1) for user messages.
   if (seq >= 2) {
-    const text = typeof params.message.text === 'string' ? params.message.text : '';
+    // The draft is what the reader SAW, not the expanded transport text: a turn
+    // that carried review comments, attachments, a routed command or a template
+    // sent scaffolding the composer must not put back in front of them.
+    const text = readMessageDisplayText(params.message);
     const restoredDraftText = text.trim().length > 0 ? text : null;
     return { upToSeqInclusive: seq, restoredDraftText };
   }

@@ -787,6 +787,55 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
+    it('edits a queued message from what the transcript showed, not the expanded transport text', async () => {
+        sessionPendingMessagesState.current = [{
+            id: 'p-display',
+            text: 'Review these\n\n<review-comments>\nsrc/a.ts:1 fix it\n</review-comments>',
+            displayText: 'Review these',
+            createdAt: 0,
+            updatedAt: 0,
+            localId: 'p-display',
+            rawRecord: {},
+        }];
+        sessionTranscriptIdsState.current = ['m1'];
+        pendingFireAndForget.length = 0;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const latestChatListProps = chatListPropsSpy.mock.calls
+                .map((call) => call[0])
+                .find((props) => typeof props?.onEditPendingMessage === 'function');
+            expect(latestChatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await latestChatListProps.onEditPendingMessage({
+                    id: 'p-display',
+                    text: sessionPendingMessagesState.current[0].text,
+                    displayText: sessionPendingMessagesState.current[0].displayText,
+                    message: sessionPendingMessagesState.current[0],
+                });
+            });
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Review these');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
     it('loads pending edits into the composer and saves them without sending a new message', async () => {
         sessionPendingMessagesState.current = [{
             id: 'p1',

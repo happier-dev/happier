@@ -1,3 +1,4 @@
+import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayText';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -169,7 +170,7 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             if (!trustedStartSeqs.has(seq)) continue;
             actions[messageId] = {
                 target: { type: 'before_user_message', userMessageSeq: seq },
-                restoredDraftText: message.text,
+                restoredDraftText: readMessageDisplayText(message),
             };
         }
         return Object.keys(actions).length > 0 ? actions : EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;

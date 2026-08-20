@@ -101,6 +101,7 @@ import {
 } from '@happier-dev/protocol';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSession } from '@/sync/domains/state/storage';
+import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayText';
 import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 import { Session, type Metadata } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
@@ -4101,6 +4102,11 @@ function SessionViewLoaded({
         restorePendingEditComposerSnapshotIfSafe(edit);
     }, [restorePendingEditComposerSnapshotIfSafe]);
     const handleEditPendingMessage = React.useCallback<NonNullable<ChatListProps['onEditPendingMessage']>>((request) => {
+        // The composer reopens what the reader SAW. A queued turn that expanded
+        // review comments, attachments or a template into its transport text
+        // kept the typed sentence in `displayText`, and editing the expansion is
+        // editing something the user never wrote.
+        const editText = readMessageDisplayText(request);
         const previousDraftText = pendingMessageEditRef.current?.previousDraftText ?? messageRef.current;
         const previousAttachmentDrafts = pendingMessageEditRef.current?.previousAttachmentDrafts ?? attachmentDraftsSnapshotRef.current;
         const previousSemanticDraftSnapshot = pendingMessageEditRef.current?.previousSemanticDraftSnapshot
@@ -4113,12 +4119,12 @@ function SessionViewLoaded({
             previousAttachmentDrafts,
             previousSemanticDraftSnapshot,
             previousTransientInputState,
-            loadedText: request.text,
+            loadedText: editText,
         });
         replaceSessionAttachmentDrafts([]);
         clearSemanticDraftValuesAfterAcceptedComposerClear();
         inputComposerClearTransientStateRef.current();
-        setDraftValue(request.text);
+        setDraftValue(editText);
     }, [
         captureComposerSemanticDraftSnapshot,
         clearSemanticDraftValuesAfterAcceptedComposerClear,

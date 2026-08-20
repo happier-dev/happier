@@ -146,6 +146,57 @@ describe('resolveTranscriptRollbackActions', () => {
         });
     });
 
+    it('restores what the transcript showed, not the expanded transport text', () => {
+        const session = createActiveSession({
+            metadata: {
+                path: '/workspace',
+                host: 'localhost',
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            sessionTurns: {
+                v: 1,
+                sessionId: 's1',
+                latestTurnId: 'turn-1',
+                updatedAt: 10,
+                turns: [
+                    {
+                        turnId: 'turn-1',
+                        status: 'completed',
+                        startedAt: 1,
+                        updatedAt: 10,
+                        terminalAt: 10,
+                        transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1, endSeqInclusive: 2 },
+                        rollback: { state: 'eligible', updatedAt: 10 },
+                    },
+                ],
+            },
+        });
+        const messagesById: Record<string, Message> = {
+            u1: {
+                kind: 'user-text',
+                id: 'u1',
+                seq: 1,
+                localId: 'u1',
+                createdAt: 1,
+                text: 'Fix this\n\n[attachments]\n{"v":1,"files":[]}\n[/attachments]',
+                displayText: 'Fix this',
+            },
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1'],
+            messagesById,
+            rollbackRanges: [],
+        })).toEqual({
+            u1: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'Fix this',
+            },
+        });
+    });
+
     it('ignores turns that are not completed rollback-eligible starts', () => {
         const messagesById: Record<string, Message> = {
             active: userTextMessage('active', 1, 'active prompt'),
