@@ -119,7 +119,7 @@ describe('createAcpRuntime session identity', () => {
     });
 
     await expect(runtime.startOrLoad({ resumeId: resumeReference })).resolves.toBe('pi-session-1');
-    expect(loadSession).toHaveBeenCalledWith(resumeReference);
+    expect(loadSession).toHaveBeenCalledWith(resumeReference, undefined);
     expect(persistBound).toHaveBeenCalledWith(expect.objectContaining({
       operation: 'resume',
       vendorSessionId: 'pi-session-1',
