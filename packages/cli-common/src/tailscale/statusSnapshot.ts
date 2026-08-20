@@ -34,6 +34,17 @@ export type TailscaleStatusSnapshot = Readonly<{
   tailnetName: string | null;
   tailscaleIps: readonly string[];
   loggedIn: boolean;
+  /**
+   * Whether the local backend is actually up and carrying traffic.
+   *
+   * `loggedIn` cannot answer this. `tailscale status --json` exits 0 for every
+   * backend state, so `Stopped` and `NeedsMachineAuth` arrive as ordinary data
+   * — and because both retain node identity, both report `loggedIn: true`.
+   * A caller asking "can this machine reach its tailnet right now?" wants
+   * `running`; a caller asking "has this machine ever been signed in?" wants
+   * `loggedIn`.
+   */
+  running: boolean;
 }>;
 
 export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSnapshot {
@@ -50,6 +61,11 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
   const explicitLoginRequired = authUrl !== null || Boolean(backendState && /login/i.test(backendState));
   const hasLoggedInEvidence = haveNodeKey || dnsName !== null || tailnetName !== null || tailscaleIps.length > 0;
 
+  // Tailscale's BackendState is one of NoState, InUseOtherUser, NeedsLogin,
+  // NeedsMachineAuth, Stopped, Starting, Running. Only the last one means
+  // traffic can flow.
+  const running = backendState !== null && backendState.toLowerCase() === 'running';
+
   return {
     backendState,
     authUrl,
@@ -57,6 +73,7 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
     tailnetName,
     tailscaleIps,
     loggedIn: hasLoggedInEvidence && !explicitLoginRequired,
+    running,
   };
 }
 

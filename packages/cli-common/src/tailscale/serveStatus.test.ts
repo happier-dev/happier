@@ -72,4 +72,27 @@ describe('tailscaleServeStatusMatchesInternalServerUrl', () => {
 
     expect(tailscaleServeStatusMatchesInternalServerUrl(status, 'http://127.0.0.1:53545')).toBe(true);
   });
+
+  it('matches when serve output and the internal URL spell the loopback host differently', () => {
+    // The exact-substring fast path cannot answer this, so it exercises the
+    // proxy-line pattern. Regression guard: that pattern was previously built
+    // with doubled escapes and matched nothing.
+    const status = [
+      'https://my-machine.tailnet.ts.net',
+      '|-- / proxy http://localhost:3005',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeStatusMatchesInternalServerUrl(status, 'http://127.0.0.1:3005')).toBe(true);
+  });
+
+  it('does not match a port that merely shares a prefix', () => {
+    const status = [
+      'https://my-machine.tailnet.ts.net',
+      '|-- / proxy http://localhost:30051',
+      '',
+    ].join('\n');
+
+    expect(tailscaleServeStatusMatchesInternalServerUrl(status, 'http://127.0.0.1:3005')).toBe(false);
+  });
 });

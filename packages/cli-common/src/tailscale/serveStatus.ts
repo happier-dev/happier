@@ -95,7 +95,7 @@ export function tailscaleServeStatusMatchesInternalServerUrl(
   }
   if (!port) return false;
 
-  const re = new RegExp(String.raw`\\bproxy\\s+https?:\\/\\/(?:127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0):${port}\\b`, 'i');
+  const re = new RegExp(String.raw`\bproxy\s+https?:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0):${port}\b`, 'i');
   return re.test(serveStatusText);
 }
 

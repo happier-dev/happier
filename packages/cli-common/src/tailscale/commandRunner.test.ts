@@ -207,6 +207,7 @@ describe('runTailscaleStatusJson', () => {
       tailnetName: 'example-tailnet',
       tailscaleIps: ['100.64.0.10'],
       loggedIn: true,
+      running: true,
     });
   });
 
@@ -255,6 +256,7 @@ describe('runTailscaleStatusJson', () => {
       tailnetName: null,
       tailscaleIps: [],
       loggedIn: false,
+      running: false,
     });
   });
 });

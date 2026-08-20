@@ -1,6 +1,9 @@
 import { stat } from 'node:fs/promises';
 
-import { readDisplayableSessionWorkStateV1 } from '@happier-dev/protocol';
+import {
+  HappierReplayWritableMaxSeedCharsSchema,
+  readDisplayableSessionWorkStateV1,
+} from '@happier-dev/protocol';
 import {
   AGENT_IDS,
   resolveAgentNativeTranscriptPathFromSessionMetadata,
@@ -17,6 +20,7 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { resolveReplaySeedDraft, type ReplaySeedDraftResolution } from '@/session/replay/resolveReplaySeedDraft';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 /**
  * A recorded id the incumbent catalog still knows.
@@ -79,6 +83,33 @@ async function resolveNativeTranscriptPathCandidate(
  * A preview built by a second composition would be free to show something the
  * target Agent was never sent, which is worse than showing nothing.
  */
+/**
+ * The Account's Replay seed budget, or `null` when no Account snapshot states a
+ * usable one.
+ *
+ * Fork and resume already honour `sessionReplayMaxSeedChars`: their UI entry
+ * points resolve it and send it as the caller-supplied `maxSeedChars`, which the
+ * seed owners take in preference to the daemon default. The in-place transition
+ * has no such caller — neither the transition request nor the read-only brief
+ * preview carries a budget — so it used the daemon value alone and the number a
+ * user set in Settings did not apply to switching Agent in place.
+ *
+ * Read HERE rather than at the two callers because they must not disagree: the
+ * preview's whole claim is that it shows what the target Agent was sent, and a
+ * rebuild against a different budget would quietly break that.
+ *
+ * Parsed through the shared budget owner rather than a range restated here, so
+ * the floor beneath which the seed builder deliberately produces NO seed stays
+ * stated in exactly one place.
+ */
+function readAccountReplayMaxSeedChars(): number | null {
+  const settings = getActiveAccountSettingsSnapshot()?.settings as
+    | { sessionReplayMaxSeedChars?: unknown }
+    | undefined;
+  const parsed = HappierReplayWritableMaxSeedCharsSchema.safeParse(settings?.sessionReplayMaxSeedChars);
+  return parsed.success ? parsed.data : null;
+}
+
 export async function buildSessionAgentTransitionActivationBrief(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
@@ -189,7 +220,10 @@ export async function buildSessionAgentTransitionActivationBrief(params: Readonl
     strategy: 'recent_messages',
     // No count bound: the brief is bounded by CHARACTERS (section 9.2).
     recentMessagesCount: null,
-    maxSeedChars: configuration.replaySeedMaxChars,
+    // The same precedence the fork path applies: caller-supplied budget →
+    // daemon env → default. The Account preference IS the supplied value here,
+    // because this path has no wire field to carry one.
+    maxSeedChars: readAccountReplayMaxSeedChars() ?? configuration.replaySeedMaxChars,
     candidateLimit: configuration.replaySeedCandidateLimit,
     // Section 8's other half. The cutover projection clears `sessionWorkStateV1` — the target
     // republishes its own — and the items are a structured projection rather than transcript

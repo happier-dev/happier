@@ -31,11 +31,15 @@ const mocks = vi.hoisted(() => ({
   resolveTrustedSessionAttachmentLocalImagePaths: vi.fn(),
   findTranscriptEncryptedMessageByLocalIdV2: vi.fn(),
   bootstrapAccountSettingsContext: vi.fn(),
+  fetchAccountMachineReplacements: vi.fn(),
   readAgentNativeResumeRecord: vi.fn(),
   writeAgentNativeResumeRecord: vi.fn(),
   callOrder: [] as string[],
 }));
 
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
+}));
 vi.mock('@/session/services/resolveSessionTransportContext', () => ({
   resolveSessionTransportContext: mocks.resolveSessionTransportContext,
 }));
@@ -225,6 +229,7 @@ describe('runSessionAgentTransition', () => {
     // by default, which is the structurally important case.
     mocks.readAgentNativeResumeRecord.mockResolvedValue(null);
     mocks.writeAgentNativeResumeRecord.mockResolvedValue(undefined);
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([{ id: 'machine-1' }, { id: 'machine-2' }]);
   });
 
   describe('pre-effect rejections leave the source running', () => {
@@ -344,6 +349,68 @@ describe('runSessionAgentTransition', () => {
       });
 
       expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+    });
+
+    // The product ruling: replacing a machine must not strand the Sessions the
+    // previous one hosted. The Session row still names the predecessor — nothing
+    // re-homes it — and the client already reached this daemon by walking the
+    // replacement chain, so the daemon resolves BOTH sides through the same walk.
+    // The DEVICE-LOCAL native-return record is simply absent here, which the
+    // target already degrades to a full replay, so the successor is a legitimate
+    // host rather than a wrong one.
+    it('runs for a Session whose recorded host machine this one replaced', async () => {
+      primeHappyPath();
+      mocks.fetchAccountMachineReplacements.mockResolvedValue([
+        { id: 'machine-1', replacedByMachineId: 'machine-2' },
+        { id: 'machine-2' },
+      ]);
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        currentMachineId: 'machine-2',
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+    });
+
+    // Widening to successors must not turn the guard into a no-op.
+    it('still rejects an unrelated machine that never replaced the host', async () => {
+      primeHappyPath();
+      mocks.fetchAccountMachineReplacements.mockResolvedValue([
+        { id: 'machine-1' },
+        { id: 'machine-2' },
+      ]);
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        currentMachineId: 'machine-2',
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+      expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the replacement chain cannot be read', async () => {
+      primeHappyPath();
+      mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        currentMachineId: 'machine-2',
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+    });
+
+    it('does not read the machine chain when this machine is the recorded host', async () => {
+      primeHappyPath();
+
+      await runSessionAgentTransition({ credentials, request: request(), currentMachineId: 'machine-1' });
+
+      expect(mocks.fetchAccountMachineReplacements).not.toHaveBeenCalled();
     });
 
     it('rejects a direct-transcript Session as unsupported', async () => {

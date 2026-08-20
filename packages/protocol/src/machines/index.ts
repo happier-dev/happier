@@ -24,3 +24,14 @@ export {
   type MachineReplacementReason,
   type MachineReplacementRegistrationIntent,
 } from './identity/machineReplacement.js';
+
+export {
+  findMachineInCollection,
+  isMachineReplaced,
+  normalizeMachineIdentityString,
+  resolveCanonicalMachineId,
+  type CanonicalMachineResolution,
+  type MachineCollection,
+  type MachineIdentityRecord,
+  type MachineReplacementRecord,
+} from './identity/canonicalMachineId.js';

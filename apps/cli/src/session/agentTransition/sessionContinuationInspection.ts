@@ -1,4 +1,5 @@
 import {
+  resolveCanonicalMachineId,
   type SessionAgentTransitionSelectionV1,
   type SessionContinuationInspectionRequestV1,
   type SessionContinuationInspectionV1,
@@ -6,6 +7,7 @@ import {
 import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -75,16 +77,40 @@ function readNonEmptyString(value: unknown): string | null {
  * An unknown machine on either side is not a mismatch: an older row that records
  * no machine, or a daemon whose identity was not threaded in, must not lose the
  * ability to switch Agents.
+ *
+ * A machine REPLACEMENT is not a mismatch either. Replacing a machine must not
+ * strand the Sessions the previous one hosted, and nothing re-homes a Session
+ * row, so its recorded host stays the predecessor forever. Both sides are
+ * therefore resolved through {@link resolveCanonicalMachineId} — the same walk
+ * the client used to choose this daemon as the RPC target — so the successor
+ * recognises its own inheritance instead of reading it as foreign. That yields a
+ * fresh target with a full replay, because the DEVICE-LOCAL resume record is
+ * simply absent on a new host and an absent record already degrades to replay;
+ * no vendor state is migrated, because the vendor conversation genuinely does
+ * not exist here.
+ *
+ * The chain lives only on the server, so it costs one Account-scoped read — taken
+ * ONLY when the identity comparison already failed, which is the rare case. An
+ * unreadable chain proves no inheritance and keeps the refusal.
  */
-export function sessionIsHostedHere(params: Readonly<{
+export async function sessionIsHostedHere(params: Readonly<{
   currentMachineId?: string | null;
   rawSession: Readonly<Record<string, unknown>>;
   metadata: Readonly<Record<string, unknown>>;
-}>): boolean {
+  credentials: Credentials;
+}>): Promise<boolean> {
   const hostMachineId = readNonEmptyString(params.currentMachineId);
   const sessionMachineId = readNonEmptyString(params.rawSession.machineId)
     ?? readNonEmptyString(params.metadata.machineId);
-  return !hostMachineId || !sessionMachineId || hostMachineId === sessionMachineId;
+  if (!hostMachineId || !sessionMachineId || hostMachineId === sessionMachineId) return true;
+
+  const machines = await fetchAccountMachineReplacements({ credentials: params.credentials });
+  if (!machines) return false;
+  const canonicalSessionMachineId = resolveCanonicalMachineId(sessionMachineId, machines)?.machineId
+    ?? sessionMachineId;
+  const canonicalHostMachineId = resolveCanonicalMachineId(hostMachineId, machines)?.machineId
+    ?? hostMachineId;
+  return canonicalSessionMachineId === canonicalHostMachineId;
 }
 
 export type SessionContinuationTargetSupport =
@@ -173,10 +199,11 @@ export async function inspectSessionContinuation(params: Readonly<{
   const transitionableSession = Boolean(workspacePath)
     && sourceAgentId !== null
     && hasCanonicalHostedTranscript(record)
-    && sessionIsHostedHere({
+    && await sessionIsHostedHere({
       currentMachineId: params.currentMachineId,
       rawSession,
       metadata: record,
+      credentials: params.credentials,
     });
   if (!transitionableSession) {
     return { type: 'unavailable', reason: 'unsupported_session' };
