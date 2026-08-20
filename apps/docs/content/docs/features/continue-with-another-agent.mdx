@@ -14,9 +14,9 @@ The promise is narrow and worth stating exactly:
 
 This is different from:
 
-- [Session handoff](/docs/features/session-handoff), which moves a session to a **different machine** and keeps the same Agent
-- [Session forking & replay](/docs/features/session-forking), which creates a **new** session branched from this one
-- [Model and engine selection](/docs/features/model-and-engine-selection), which chooses the engine and model for a **new** session
+- [Session handoff](/features/session-handoff), which moves a session to a **different machine** and keeps the same Agent
+- [Session forking & replay](/features/session-forking), which creates a **new** session branched from this one
+- [Model and engine selection](/features/model-and-engine-selection), which chooses the engine and model for a **new** session
 
 ## Where to find it
 
@@ -43,13 +43,13 @@ The switch works only for a **hosted** session, on the machine that already host
 
 It is not available when:
 
-- **The session's transcript is not hosted by Happier.** A [direct session](/docs/features/direct-sessions), where the Agent owns its own store, has no Happier conversation for another Agent to continue.
+- **The session's transcript is not hosted by Happier.** A [direct session](/features/direct-sessions), where the Agent owns its own store, has no Happier conversation for another Agent to continue.
 - **You have read-only access to the session.** The picker says so once for the session rather than once per Agent.
 - **The current Agent is still working.** Send is refused with *"`{Agent}` is still working. Nothing was sent — try again once it finishes."* Wait for the turn to finish and send again.
 - **The machine hosting the session is offline, or its CLI is older than the feature.** Happier distinguishes the two where it can, and says "update or reconnect" when it genuinely cannot tell.
 - **The target is a Custom ACP backend.** Configured ACP backends stay visible in the picker so the catalog reads the same everywhere, but in-place switching to them is not supported yet rather than failing at send time.
 
-The switch never moves a session to another machine. If you want that, use [session handoff](/docs/features/session-handoff).
+The switch never moves a session to another machine. If you want that, use [session handoff](/features/session-handoff).
 
 ## Switching back to an Agent you used before
 
@@ -57,7 +57,7 @@ If you switch back to an Agent that already ran this session **on the same machi
 
 Two things follow from that:
 
-- It only happens when that Agent's own provider-session resume is supported and allowed for you. An Agent you have disabled in settings, a provider that does not support resume at all, and — for Codex — a backend mode that does not offer it, all fall back to a fresh start with the **full** carried-over context instead. See [Resume a provider session](/docs/features/resume-provider-sessions).
+- It only happens when that Agent's own provider-session resume is supported and allowed for you. An Agent you have disabled in settings, a provider that does not support resume at all, and — for Codex — a backend mode that does not offer it, all fall back to a fresh start with the **full** carried-over context instead. See [Resume a provider session](/features/resume-provider-sessions).
 - The Agent's own vendor session can be gone by the time you return: providers prune, rotate and expire their session stores. Happier does not pre-check it. A dead session **fails at the first turn**, visibly, exactly like any other resume whose provider state has disappeared. This is expected. Switch to another Agent and back, or continue with a different Agent, to get a fresh start with the full context.
 
 ## What the arriving Agent is given
@@ -132,9 +132,9 @@ The minimum is not arbitrary. Below roughly 800 characters the prompt builder co
 
 ## Related guides
 
-- [Session handoff](./session-handoff)
-- [Session forking & replay](./session-forking)
-- [Model and engine selection](./model-and-engine-selection)
-- [Synced and direct sessions](./direct-sessions)
-- [Resume provider sessions](./resume-provider-sessions)
-- [Server feature flags](./feature-flags)
+- [Session handoff](/features/session-handoff)
+- [Session forking & replay](/features/session-forking)
+- [Model and engine selection](/features/model-and-engine-selection)
+- [Synced and direct sessions](/features/direct-sessions)
+- [Resume provider sessions](/features/resume-provider-sessions)
+- [Server feature flags](/features/feature-flags)

@@ -1,15 +1,65 @@
 ---
 title: Security
-description: Privacy and threat model.
+description: What the server can and cannot read, how that changes with your storage policy, and where the boundaries actually sit.
 ---
 
-## End-to-end encryption (E2EE)
+The question worth asking before you trust anything with your code is: **what
+can whoever runs the server actually read?**
 
-Messages and sensitive session payloads are encrypted on-device. The server stores encrypted blobs and sync metadata, but cannot read content.
+The honest answer depends on one setting. On Happier Cloud, and on any
+self-hosted server left at its defaults, the answer is "not your conversations".
+That is not a property of the product in the abstract — it is a property of the
+storage policy the server is running.
+
+## End-to-end encryption, and what it is conditioned on
+
+Messages and sensitive session payloads are encrypted on your device before they
+are sent. The server stores ciphertext and the sync metadata it needs to route
+it, and cannot read the content.
+
+That holds under `required_e2ee`, which is the default
+(`HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY`). A self-hosted operator can
+choose otherwise:
+
+| Storage policy | What the server stores | Who can read it |
+| --- | --- | --- |
+| `required_e2ee` *(default)* | Ciphertext only | Only your devices |
+| `optional` | Ciphertext, or plaintext for accounts and sessions in plain mode | Whoever runs the server, for anything stored in plain mode |
+| `plaintext_only` | Plaintext session content | Whoever runs the server |
+
+Plaintext mode is not a loophole — it is a deliberate option for deployments
+that need server-side search, keyless logins, or enterprise identity through
+[mTLS](/server/auth-mtls), which provisions keyless accounts and so cannot be
+paired with `required_e2ee`. It is a real trade-off, and it should be a decision
+someone makes on purpose.
+
+If you use Happier Cloud, this is settled for you: content is end-to-end
+encrypted. If you use somebody else's server, the guarantee is theirs to make.
 
 ## What the server can see
 
-- Account identifiers and basic metadata needed to route sync.
-- Encrypted blobs (ciphertext).
-- Operational metadata for running the service (timestamps, sizes).
+Under the default policy:
 
+- Account identifiers and the metadata needed to route sync.
+- Encrypted blobs — ciphertext it cannot open.
+- Operational metadata: timestamps, sizes, session and message ordering.
+- The device push token needed to deliver notifications, and the attention badge
+  count sent with a refresh. Notification *content* is generated on your device;
+  the delivery the backend sends carries a count and nothing else.
+- For a session shared through a public link with **Require consent** enabled,
+  an access log for each viewer, including their IP address and user agent.
+- Identity records and any stored OAuth or refresh tokens for connected
+  services, plus certificate identities where mTLS is in use.
+- Account settings and credentials, sealed with server-owned key material
+  (`server_sealed`) rather than your device key. Sealed is not the same as
+  end-to-end encrypted: an operator holding the master secret can open these.
+
+Under `optional` or `plaintext_only`, add session content itself to that list
+for anything stored in plain mode.
+
+## Related
+
+- [Encryption model](/security/encryption) — the mechanism, key by key.
+- [Encryption and plaintext storage](/server/encryption) — the operator's view,
+  including how to choose a policy and what cannot be changed afterwards.
+- [Privacy Policy](/legal/privacy) — what Happier Cloud does with the above.

@@ -28,7 +28,7 @@ This works best with:
 
 If you are trying to continue an existing provider session by id (without opening it as a direct session first), see:
 
-- [Resume a provider session (Resume ID)](./resume-provider-sessions)
+- [Resume a provider session (Resume ID)](/features/resume-provider-sessions)
 
 ## Where to find it
 
@@ -75,7 +75,7 @@ This is the best option when you mainly want to browse, inspect, monitor, or lig
 
 ### Import or sync into Happier
 
-Use **Take over + Sync** when you want:
+Use **Take over + import** when you want:
 
 - Happier to own the transcript moving forward
 - a session that behaves like a normal Happier synced session
@@ -93,7 +93,7 @@ Use **Direct** when:
 - the machine will stay online
 - you do not want to import it yet
 
-Use **Take over + Sync** when:
+Use **Take over + import** when:
 
 - you want Happier-native continuity
 - you want the session to feel like a normal Happier session afterward
@@ -117,7 +117,7 @@ Depending on the provider and session state, users may also be able to:
 
 ## How import works conceptually
 
-When a user chooses **Take over + Sync**:
+When a user chooses **Take over + import**:
 
 1. Happier reads the provider transcript
 2. Happier imports that history into the Happier session
@@ -178,7 +178,7 @@ In the Resume ID flow, the picker is intentionally locked to the machine/provide
 Open **Direct → Browse provider sessions**, select the machine and Codex, find the session, open it, then either:
 
 - keep it direct, or
-- choose **Take over + Sync**
+- choose **Take over + import**
 
 ### “I want to monitor a live Claude session from Happier”
 
@@ -190,11 +190,11 @@ Browse the OpenCode source, open the session directly, and sync it later only if
 
 ## Related guides
 
-- [Resume inactive sessions](./session-resume)
-- [Resume a provider session (Resume ID)](./resume-provider-sessions)
-- [Synced and direct sessions](./direct-sessions)
-- [Connected services](./connected-services)
-- [Profiles](./profiles)
-- [Codex](../providers/codex)
-- [Claude](../providers/claude)
-- [OpenCode](../providers/opencode)
+- [Resume inactive sessions](/features/session-resume)
+- [Resume a provider session (Resume ID)](/features/resume-provider-sessions)
+- [Synced and direct sessions](/features/direct-sessions)
+- [Connected services](/features/connected-services)
+- [Profiles](/features/profiles)
+- [Codex](/providers/codex)
+- [Claude](/providers/claude)
+- [OpenCode](/providers/opencode)

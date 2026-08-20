@@ -9,7 +9,7 @@ This is different from:
 
 - **Attach**: reconnecting to a session that is still running locally through its live terminal/provider host
 - **Browse Direct sessions**: opening a provider-native session that Happier does not own yet
-- **Resume ID**: starting a new session by resuming an existing provider session id (see [Resume a provider session (Resume ID)](./resume-provider-sessions))
+- **Resume ID**: starting a new session by resuming an existing provider session id (see [Resume a provider session (Resume ID)](/features/resume-provider-sessions))
 - **Starting a new session**: creating a fresh provider session with no vendor resume
 
 ## What “resume” means in Happier
@@ -165,7 +165,7 @@ Direct sessions are provider-native sessions that Happier can inspect or follow,
 For those sessions:
 
 - browsing/opening happens through the **Direct** sessions flow
-- syncing/importing happens through **Take over + Sync**
+- syncing/importing happens through **Take over + import**
 - normal Happier resume applies after the session is a synced Happier session and has valid vendor-resume metadata
 
 ## Things to check if resume is unavailable
@@ -181,9 +181,9 @@ If a session does not resume, check:
 
 ## Related guides
 
-- [Attach to a running session](./attach-to-session)
-- [Synced and direct sessions](./direct-sessions)
-- [Browse and import provider sessions](./browse-and-import-sessions)
-- [CLI](../clients/cli)
-- [Codex](../providers/codex)
-- [Permissions](./permissions)
+- [Attach to a running session](/features/attach-to-session)
+- [Synced and direct sessions](/features/direct-sessions)
+- [Browse and import provider sessions](/features/browse-and-import-sessions)
+- [CLI](/clients/cli)
+- [Codex](/providers/codex)
+- [Permissions](/features/permissions)

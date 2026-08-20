@@ -1,0 +1,150 @@
+---
+title: Agent capabilities
+description: What each coding agent can and cannot do inside Happier, generated from the agent manifest.
+---
+
+Happier drives coding agents; it does not replace them. What any given session
+can do is therefore the intersection of what Happier supports and what that
+agent's own CLI exposes — which is why these tables exist rather than one list
+of features.
+
+Every table on this page is generated from the agent manifest in
+`packages/agents`, so it describes the build you are reading the docs for
+rather than the state of things whenever someone last updated a wiki page. A
+dash means the agent does not support that capability, not that Happier has not
+got to it yet.
+
+3 of the 14 agents are marked Stable: Claude, Codex, OpenCode.
+The rest are Experimental — they work, and people use them daily, but their
+integration is younger and more likely to change. Availability of an agent is
+separate from availability of a feature; see
+[Server feature flags](/features/feature-flags) for the latter.
+
+## Agents at a glance
+
+| Agent | Start it with | Status | Models | Managed install |
+| --- | --- | --- | --- | --- |
+| **Claude** | `happier claude` | Stable | Queried from the agent, custom ids allowed | Vendor recipe |
+| **Codex** | `happier codex` | Stable | Queried from the agent | Vendor's own installer |
+| **OpenCode** | `happier opencode` | Stable | Queried from the agent, custom ids allowed | `opencode-ai` |
+| **Gemini** | `happier gemini` | Experimental | Queried from the agent, custom ids allowed | `@google/gemini-cli` |
+| **Auggie** | `happier auggie` | Experimental | Queried from the agent | `@augmentcode/auggie` |
+| **Qwen Code** | `happier qwen` | Experimental | Fixed list | `@qwen-code/qwen-code` |
+| **Kimi** | `happier kimi` | Experimental | Queried from the agent | Vendor recipe |
+| **Kilo** | `happier kilo` | Experimental | Queried from the agent, custom ids allowed | `@kilocode/cli` |
+| **Kiro** | `happier kiro` | Experimental | Fixed list, custom ids allowed | Vendor's own installer |
+| **Custom ACP** | `happier customAcp` | Experimental | Queried from the agent, custom ids allowed | Vendor recipe |
+| **Pi** | `happier pi` | Experimental | Queried from the agent, custom ids allowed | `@earendil-works/pi-coding-agent` |
+| **Copilot** | `happier copilot` | Experimental | Queried from the agent | `@github/copilot` |
+| **Cursor** | `happier cursor` | Experimental | Queried from the agent | Vendor recipe |
+| **Grok** | `happier grok` | Experimental | Queried from the agent | Vendor recipe |
+
+Where the managed-install column names a package, Happier can install the agent
+for you from the machine's detail screen. Where it says the vendor's own
+installer, run that first — see the agent's own page for the exact command.
+
+**Custom ACP** is not a bundled agent. It is how you point Happier at any agent
+that speaks the Agent Client Protocol, so its row describes the adapter rather
+than a particular vendor. See [Custom ACP](/providers/custom-acp).
+
+Several subcommands accept aliases, so the name you already have in your fingers
+usually works: `codex` also answers to `codex-acp`, `codex-mcp`, `openai`, `gpt`; `opencode` also answers to `open-code`; `qwen` also answers to `qwen-code`; `kimi` also answers to `kimi-cli`; `kilo` also answers to `kilocode`; `kiro` also answers to `kiro-cli`; `customAcp` also answers to `custom-acp`; `pi` also answers to `pi-coding-agent`; `copilot` also answers to `github-copilot`, `copilot-cli`; `cursor` also answers to `cursor-agent`; `grok` also answers to `grok-build`, `grok-cli`.
+
+## Sessions
+
+Resume, browse, fork and roll back are the four things people most often assume
+work everywhere. They do not.
+
+| Agent | Resume its own sessions | Browse its sessions | Fork a conversation | Fork from a message | Roll back |
+| --- | --- | --- | --- | --- | --- |
+| **Claude** | Yes | Yes | — | — | — |
+| **Codex** | Experimental | Yes | Yes | — | Yes |
+| **OpenCode** | Yes | Yes | Yes | Yes | — |
+| **Gemini** | Yes | — | — | — | — |
+| **Auggie** | Yes | — | — | — | — |
+| **Qwen Code** | Yes | — | — | — | — |
+| **Kimi** | Yes | — | — | — | — |
+| **Kilo** | Yes | — | — | — | — |
+| **Kiro** | Experimental | — | — | — | — |
+| **Custom ACP** | — | — | — | — | — |
+| **Pi** | Yes | — | — | — | — |
+| **Copilot** | Yes | — | — | — | — |
+| **Cursor** | Experimental | — | — | — | — |
+| **Grok** | Experimental | — | — | — | — |
+
+"Resume its own sessions" means Happier can reattach to a conversation the agent
+started outside Happier. "Fork" means the agent's own runtime can branch a
+conversation; where it cannot, Happier's replay fork still works, because that
+is Happier's own mechanism rather than the agent's. See
+[Session forking](/features/session-forking).
+
+## Running a turn
+
+| Agent | Steer a running turn | Plan mode | Accept edits | Mode switching | Session modes |
+| --- | --- | --- | --- | --- | --- |
+| **Claude** | Yes | Yes | Yes | `provider-native` | `staticAgentModes` |
+| **Codex** | — | — | — | `metadata-gating` | `acpPolicyPresets` |
+| **OpenCode** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
+| **Gemini** | — | — | — | `none` | `none` |
+| **Auggie** | — | — | — | `none` | `none` |
+| **Qwen Code** | — | — | — | `none` | `none` |
+| **Kimi** | — | — | — | `none` | `none` |
+| **Kilo** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
+| **Kiro** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
+| **Custom ACP** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
+| **Pi** | Yes | — | — | `none` | `none` |
+| **Copilot** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
+| **Cursor** | — | Yes | — | `acp-config-option` | `acpAgentModes` |
+| **Grok** | — | — | — | `none` | `none` |
+
+Steering is what lets you add a correction to a turn already in flight instead
+of interrupting it. Where an agent cannot steer, Happier interrupts and resends,
+which is slower and loses less than it sounds — see [Steering](/features/steering).
+
+## Media and tools
+
+| Agent | Send it images | Publishes generated media | Generates images natively | Happier tools | Connected Services |
+| --- | --- | --- | --- | --- | --- |
+| **Claude** | Yes | Yes | — | Yes (`native_mcp`) | `claude-subscription`, `anthropic` |
+| **Codex** | Yes | Yes | Yes | Yes (`native_mcp`) | `openai-codex`, `openai` |
+| **OpenCode** | Experimental | Yes | — | Yes (`native_mcp`) | `openai-codex`, `openai`, `claude-subscription`, `anthropic` |
+| **Gemini** | Yes | — | — | Yes (`native_mcp`) | `gemini` |
+| **Auggie** | Experimental | Experimental | — | — | — |
+| **Qwen Code** | Experimental | Yes | — | — | — |
+| **Kimi** | Experimental | Yes | — | — | — |
+| **Kilo** | Experimental | Yes | — | — | — |
+| **Kiro** | Experimental | Yes | — | Yes (`native_mcp`) | — |
+| **Custom ACP** | Experimental | Yes | — | Yes (`native_mcp`) | — |
+| **Pi** | Experimental | Experimental | — | — | `openai-codex`, `openai`, `claude-subscription`, `anthropic` |
+| **Copilot** | Experimental | Yes | — | — | — |
+| **Cursor** | — | Yes | Yes | — | — |
+| **Grok** | — | — | — | — | — |
+
+## Authentication
+
+| Agent | Where its credentials live | Background auth checks |
+| --- | --- | --- |
+| **Claude** | `~/.claude/.credentials.json` or `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Automatic |
+| **Codex** | `~/.codex/auth.json` or `OPENAI_API_KEY`, `CODEX_API_KEY` | Automatic |
+| **OpenCode** | Agent-managed | Automatic |
+| **Gemini** | `~/.gemini/oauth_creds.json` or `GEMINI_API_KEY`, `GOOGLE_API_KEY` | Automatic |
+| **Auggie** | Agent-managed | Automatic |
+| **Qwen Code** | Agent-managed | Automatic |
+| **Kimi** | Agent-managed | Automatic |
+| **Kilo** | Agent-managed | Automatic |
+| **Kiro** | Agent-managed | Manual only |
+| **Custom ACP** | Agent-managed | Manual only |
+| **Pi** | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | Automatic |
+| **Copilot** | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` | Automatic |
+| **Cursor** | `CURSOR_API_KEY` | Automatic |
+| **Grok** | `XAI_API_KEY` | Automatic |
+
+Agents whose background checks are manual only will not be re-probed on a timer;
+their status refreshes when you open the backend's settings screen or start a
+session. See [Agent authentication](/features/provider-authentication).
+
+## Related
+
+- [Coding agents](/providers) — one page per agent, with setup and known limits.
+- [Model and engine selection](/features/model-and-engine-selection)
+- [Server feature flags](/features/feature-flags)

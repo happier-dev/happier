@@ -2,20 +2,20 @@
   "title": "Documentation",
   "pages": [
     "index",
-    "hstack",
     "getting-started",
     "features",
+    "clients",
+    "providers",
     "platforms",
     "deployment",
     "server",
-    "architecture",
-    "development",
-    "providers",
-    "clients",
-    "advanced",
     "security",
+    "advanced",
+    "architecture",
     "protocol",
     "releases",
+    "development",
+    "hstack",
     "legal"
   ]
 }

@@ -8,8 +8,6 @@
     "cli-sessions",
     "daemon",
     "mcp",
-    "mcp-hosts",
-    "notifications",
-    "voice"
+    "mcp-hosts"
   ]
 }

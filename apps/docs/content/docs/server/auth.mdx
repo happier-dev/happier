@@ -6,10 +6,10 @@ description: Overview of server authentication and policy configuration.
 This guide is for **server operators**. It explains the core auth model and the policy env vars that control signup/login enforcement.
 
 For provider-specific setup guides, see:
-- [GitHub auth](./auth-github)
-- [OIDC auth](./auth-oidc)
-- [mTLS auth](./auth-mtls)
-- [Custom auth providers](./auth-custom-providers)
+- [GitHub auth](/server/auth-github)
+- [OIDC auth](/server/auth-oidc)
+- [mTLS auth](/server/auth-mtls)
+- [Custom auth providers](/server/auth-custom-providers)
 
 ## Choosing an auth setup (private vs public servers)
 
@@ -55,8 +55,8 @@ AUTH_REQUIRED_LOGIN_PROVIDERS=github
 ```
 
 Then follow the provider setup guide:
-- GitHub: [GitHub auth](./auth-github)
-- OIDC: [OIDC auth](./auth-oidc)
+- GitHub: [GitHub auth](/server/auth-github)
+- OIDC: [OIDC auth](/server/auth-oidc)
 
 ## Standard authentication (device-key accounts)
 
@@ -104,7 +104,7 @@ Some deployments want accounts to exist **without device keys** (for example: co
 
 Happier currently supports keyless login via:
 
-- [mTLS auth](./auth-mtls)
+- [mTLS auth](/server/auth-mtls)
 - keyless OAuth login (GitHub/OIDC) when enabled by feature env vars
 
 Keyless account auto-provisioning is intentionally guarded:
@@ -115,7 +115,7 @@ Keyless account auto-provisioning is intentionally guarded:
   - enable: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1`
   - allowlist providers: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=github,okta,...`
   - allow first-login account creation: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1`
-- for mTLS keyless login: see [mTLS auth](./auth-mtls)
+- for mTLS keyless login: see [mTLS auth](/server/auth-mtls)
 
 Recommended hardening for plaintext/keyless deployments:
 
@@ -244,8 +244,8 @@ AUTH_REQUIRED_LOGIN_PROVIDERS=
 
 ### GitHub-only signup + GitHub required for login
 
-See [GitHub auth](./auth-github) for full setup steps.
+See [GitHub auth](/server/auth-github) for full setup steps.
 
 ### OIDC-only signup (example: Okta) + OIDC required for login
 
-See [OIDC auth](./auth-oidc) for provider configuration.
+See [OIDC auth](/server/auth-oidc) for provider configuration.

@@ -47,7 +47,7 @@ Important distinction:
 
 Those are intentionally different features.
 
-For the full user-facing guide, see [Session modes](/docs/features/session-modes).
+For the full user-facing guide, see [Session modes](/features/session-modes).
 
 ### CLI usage
 
@@ -113,7 +113,7 @@ For Codex specifically:
 - if Codex is set to plain `mcp`, fresh sessions can still run there, but vendor resume is not available on that path
 - explicit resume remains **fail-closed**: Happier errors instead of silently starting a fresh session
 
-For the user-facing workflow, see [Resume inactive sessions](/docs/features/session-resume).
+For the user-facing workflow, see [Resume inactive sessions](/features/session-resume).
 
 ## Model selection
 
@@ -146,7 +146,7 @@ Model changes are capability-driven and provider-specific:
 - **Codex/OpenCode/Kilo/Auggie (ACP)**: Happier applies model changes live when `session/set_model` is supported; otherwise it falls back to provider config options when available.
 - **Gemini (ACP)**: model changes may require recreating the underlying ACP process; Happier preserves context using replay/history so the session still continues.
 
-For the full guide to engine picking, dynamic/static model lists, custom model ids, model-specific options, and favorite models, see [Model and engine selection](/docs/features/model-and-engine-selection).
+For the full guide to engine picking, dynamic/static model lists, custom model ids, model-specific options, and favorite models, see [Model and engine selection](/features/model-and-engine-selection).
 
 ## CLI usage
 
@@ -165,13 +165,27 @@ For new sessions, prefer:
 
 ### Aliases (you can use the words you already know)
 
-The CLI accepts common aliases and normalizes them automatically:
+The CLI accepts common aliases and resolves each to a canonical mode:
 
-- `readonly`, `read only`, `ro` → `read-only`
-- `full`, `full-access`, `danger-full-access`, `bypass` → `yolo`
-- `ask`, `prompt`, `auto` → `default`
-- `accept-edits` (Claude wording) → `safe-yolo`
-- `bypass-permissions` (legacy) → `yolo`
+| You pass | You get |
+| --- | --- |
+| `ask`, `prompt`, `normal` | `default` |
+| `readonly`, `read`, `ro`, `no-tools` | `read-only` |
+| `accept-edits` | `acceptEdits` |
+| `safe`, `workspace`, `workspace-write`, `auto-edit`, `auto` | `safe-yolo` |
+| `full`, `full-access`, `danger`, `danger-full-access`, `bypass`, `dont-ask` | `yolo` |
+| `bypass-permissions` | `bypassPermissions` |
+
+`auto` is the row worth reading twice. It resolves to `safe-yolo`, which lets the
+agent write inside the workspace without asking each time. If what you wanted was
+"ask when needed", pass `ask` or `normal`.
+
+There is a second step after this one. An agent that has no distinct mode for a
+canonical value narrows it further when the session starts: both Claude and the
+Codex-like agents fold `acceptEdits` into `safe-yolo` and `bypassPermissions`
+into `yolo`, and Claude additionally treats `plan` as read-only. So the table
+above is what the CLI parses, and what your agent actually runs is that value
+narrowed to the modes it supports.
 
 If you pass an unknown value, Happier prints the supported list and examples.
 
@@ -202,7 +216,7 @@ That same approval model applies across the main action surfaces, including:
 - the external MCP surface
 - voice surfaces
 
-For the broader model, see [Happier tools & actions](/docs/features/happier-tools) and [Inbox and approvals](/docs/features/inbox-and-approvals).
+For the broader model, see [Happier tools & actions](/features/happier-tools) and [Inbox and approvals](/features/inbox-and-approvals).
 
 ### Set defaults for new sessions
 
@@ -343,11 +357,11 @@ The UI’s **Effective** line is the source of truth for what your current sessi
 
 ## Related guides
 
-- [ACP backends](/docs/features/acp-backends)
-- [Model and engine selection](/docs/features/model-and-engine-selection)
-- [Profiles](/docs/features/profiles)
-- [Session modes](/docs/features/session-modes)
-- [Session settings](/docs/features/session-settings)
+- [ACP backends](/features/acp-backends)
+- [Model and engine selection](/features/model-and-engine-selection)
+- [Profiles](/features/profiles)
+- [Session modes](/features/session-modes)
+- [Session settings](/features/session-settings)
 
 ### Claude
 

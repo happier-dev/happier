@@ -6,6 +6,7 @@
     "self-host-runtime",
     "docker",
     "proxmox",
-    "env"
+    "env",
+    "rate-limits"
   ]
 }

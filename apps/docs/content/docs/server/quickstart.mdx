@@ -3,7 +3,7 @@ title: Server quickstart
 description: Minimal production-oriented server configuration and the env vars that matter most.
 ---
 
-This page is a “getting started” guide for self-hosting `apps/server`. For the full reference, see [Deployment → Environment variables](../deployment/env).
+This page is a “getting started” guide for self-hosting `apps/server`. For the full reference, see [Deployment → Environment variables](/deployment/env).
 
 ## 1) Pick a canonical/share URL (recommended)
 
@@ -56,7 +56,7 @@ Important: your proxy must also support **WebSocket upgrades** for Socket.IO rea
 
 If websocket upgrades are broken, machines can register but stay offline (“no online machines”, `machine.none_online`).
 
-See: [Deployment → Environment variables → Networking / reverse proxy](../deployment/env#websockets-required-for-realtime--machine-online)
+See: [Deployment → Environment variables → Networking / reverse proxy](/deployment/env#websockets-required-for-realtime--machine-online)
 
 ## 4) Optional: Tailscale Serve inference
 
@@ -72,10 +72,10 @@ tailscale serve --bg http://127.0.0.1:3005
 tailscale serve status
 ```
 
-If you use the Happier Stack (`hstack`), prefer the guided commands in [Remote access (Tailscale)](../hstack/remote-access).
+If you use the Happier Stack (`hstack`), prefer the guided commands in [Remote access (Tailscale)](/hstack/remote-access).
 
 ## 5) Optional: auth providers
 
 If you enable GitHub/OIDC OAuth providers and you’re not using the hosted web app at `https://app.happier.dev`, make sure `HAPPIER_WEBAPP_URL` (or `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`) is set so the server can redirect back to your client.
 
-See [Server → Auth](./auth) and the provider pages under this section.
+See [Server → Auth](/server/auth) and the provider pages under this section.

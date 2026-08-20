@@ -10,7 +10,7 @@ They are different from **provider authentication** in provider settings:
 - **Connected services** are stored in Happier and can be reused across compatible backends
 - **Provider authentication** reflects the native login state of a provider CLI on one specific machine
 
-See [Provider authentication](/docs/features/provider-authentication).
+See [Provider authentication](/features/provider-authentication).
 
 They exist so you can:
 
@@ -212,8 +212,8 @@ Connected services do not replace every native provider login flow. Some provide
 
 See:
 
-- [Session handoff](/docs/features/session-handoff)
-- [Provider authentication](/docs/features/provider-authentication)
+- [Session handoff](/features/session-handoff)
+- [Provider authentication](/features/provider-authentication)
 
 ## Profiles, defaults, and labels
 
@@ -228,6 +228,83 @@ For each service you can:
 - set one default profile
 - override the default at session start
 - assign a friendly label so the auth picker can show something clearer than just `work` or `default`
+
+## Account pools
+
+A pool groups several accounts for the same service and decides which one should
+be handling work right now. It is the answer to running out of quota mid-turn:
+instead of the session stopping until a reset, the pool moves to another account
+and carries on.
+
+Pools are shared by every session using them. When one session discovers the
+active account is exhausted, the pool selects a replacement and the other
+sessions bound to that pool adopt it, rather than each rediscovering the same
+dead account.
+
+### Choosing which account is active
+
+| Strategy | What it does |
+| --- | --- |
+| **Least limited** *(default)* | Picks whichever member has the most quota left. |
+| **Priority** | Uses your ordering, falling back down the list. |
+| **Manual** | Never chooses for you; you pick. |
+
+Reorder members to set the fallback order, and enable or disable individual
+accounts without removing them.
+
+### When it switches
+
+Automatic switching is **off by default** — turn it on per pool. Once on, it
+reacts to:
+
+| Trigger | Default |
+| --- | --- |
+| The account hit a usage limit | On |
+| Authentication expired | On |
+| The active account changed unexpectedly | On |
+| A credential refresh failed | Off |
+
+It can also move *before* a hard limit: when the active account drops below
+**15%** remaining and a better member is available. That threshold is
+configurable.
+
+### Bounds that stop it thrashing
+
+A broken pool or a repeated authentication failure must not become a switching
+loop, so switching is bounded:
+
+- at most **1 switch per turn**
+- at most **3 switches per session per hour**
+- a **30-second cooldown** between switches
+- provider reset times are honoured, so a member known to be resetting shortly
+  is not treated as permanently dead
+
+### Recovery after a hard limit
+
+When a session does hit a wall, what happens next is configurable:
+
+| Mode | Behaviour |
+| --- | --- |
+| **Switch or wait** *(default)* | Move to another account; wait for a reset if there is none. |
+| **Switch then resume** | Move and continue immediately. |
+| **Wait until reset** | Stay on this account and wait. |
+| **Off** | Stop and let you decide. |
+
+When it resumes, it can send Happier's standard continuation prompt, a prompt
+you write, or nothing at all.
+
+### Freshness
+
+Quota snapshots older than **five minutes** are re-probed before a turn. By
+default Happier probes only when the snapshot is stale, checking the current
+account first and candidates after — you can make it probe every turn, or never,
+and reverse that order.
+
+<Callout type="info">
+  Every switch appears as an event in the session transcript, saying which
+  account became active and why. Routine low-quota observations stay out of the
+  transcript so they do not bury the conversation.
+</Callout>
 
 ## Quotas
 
@@ -287,8 +364,8 @@ UI build gates:
 
 See:
 
-- [Server feature flags](/docs/features/feature-flags)
-- [App environment variables (Expo)](/docs/development/app-env)
+- [Server feature flags](/features/feature-flags)
+- [App environment variables (Expo)](/development/app-env)
 
 ## Advanced server overrides
 

@@ -7,7 +7,7 @@ Happier can run **Grok Build** through the local `grok` CLI using the Agent Clie
 
 ## Install Grok Build
 
-In Happier, open **Settings → AI provider settings → Grok Build** to check whether the CLI is available on the selected machine and run its vendor installer.
+In Happier, open **Settings → AI & Agents → AI backends → Grok** to check whether the CLI is available on the selected machine and run its vendor installer.
 
 For a manual installation, use xAI's current Grok Build CLI instructions, then verify:
 
@@ -33,7 +33,7 @@ Set `XAI_API_KEY` in the environment used by the Happier CLI or daemon. Happier 
 
 ### Native login
 
-From **Settings → AI provider settings → Grok Build**, start the normal login flow or the device-code flow for a headless or remote machine. The equivalent terminal commands are:
+From **Settings → AI & Agents → AI backends → Grok**, start the normal login flow or the device-code flow for a headless or remote machine. The equivalent terminal commands are:
 
 ```bash
 grok login
@@ -76,4 +76,4 @@ These limits are intentional capability declarations. Happier does not emulate u
 2. Retry the session so Happier can re-run ACP initialization and select one of the authentication methods advertised by the CLI.
 3. If an older CLI silently drops ACP requests, update Grok Build and retry.
 
-For the shared authentication flow, see [Provider authentication](/docs/features/provider-authentication).
+For the shared authentication flow, see [Provider authentication](/features/provider-authentication).

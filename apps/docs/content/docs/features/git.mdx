@@ -30,8 +30,8 @@ This page covers the full user-facing workflow for:
 ## Availability
 
 - **Files** browsing is part of the normal session UI.
-- **Git write actions** remain behind **Settings → Features → Git operations**.
-- **Review comments** remain behind **Settings → Features → Review comments**.
+- **Git write actions** remain behind **Settings → Features → Source control operations**.
+- **Review comments** remain behind **Settings → Features → File review comments**.
 - The mobile cockpit layout is controlled by **Settings → Session → Mobile session layout** and defaults to **Cockpit**.
 - Some actions require the current machine/daemon to be reachable.
 - If the session is inactive but the machine is still online, Happier can still load repository/file data that comes from the machine-level workspace APIs.
@@ -150,7 +150,7 @@ Platform notes:
 
 If your goal is to send a file with your next message instead of placing it into the workspace, use the session **Attachments** flow instead.
 
-See: [Attachments & image previews](/docs/features/attachments)
+See: [Attachments & image previews](/features/attachments)
 
 ### Upload destination selection
 
@@ -497,7 +497,7 @@ In the composer, saved comments appear as a **Review** chip and attachment badge
 
 When sent, review comments become structured transcript content. The card groups comments by file and includes a **Jump** action back to the referenced file or diff.
 
-Full guide: [Review comments](/docs/features/review-comments)
+Full guide: [Review comments](/features/review-comments)
 
 ## Commit history
 
@@ -529,7 +529,7 @@ Happier includes a **Generate commit message** action in the commit composer.
 - It uses a one-shot execution-run task to propose a commit message.
 - It uses the current commit selection/scope as input when applicable.
 - It applies the final suggested commit message text, not the structured response payload used internally by the generator.
-- You can choose the backend and add custom instructions in **Settings → Source Control**.
+- You can choose the backend and add custom instructions in **Settings → Source control**.
 
 Good use cases:
 

@@ -1,7 +1,8 @@
 {
-  "title": "Providers",
+  "title": "Coding agents",
   "pages": [
     "index",
+    "capabilities",
     "claude",
     "codex",
     "custom-acp",

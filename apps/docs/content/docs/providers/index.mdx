@@ -7,7 +7,7 @@ Happier can run different “providers” (agent backends) depending on which to
 
 Some providers also support Happier connected services. When they do, you can connect subscriptions / API keys once in Settings and then choose those profiles from the new-session auth picker instead of relying only on the provider's native login state.
 
-Some providers also support [session handoff](/docs/features/session-handoff), which lets you move the same Happier session between machines without forking it.
+Some providers also support [session handoff](/features/session-handoff), which lets you move the same Happier session between machines without forking it.
 
 Most providers are first-class built-ins such as Claude, Codex, Gemini, or Kiro.
 
@@ -15,9 +15,9 @@ Happier also ships a generic **Custom ACP** provider family for any CLI that spe
 
 See:
 
-- [ACP backends](/docs/features/acp-backends)
-- [Model and engine selection](/docs/features/model-and-engine-selection)
-- [Provider authentication](/docs/features/provider-authentication)
+- [ACP backends](/features/acp-backends)
+- [Model and engine selection](/features/model-and-engine-selection)
+- [Provider authentication](/features/provider-authentication)
 
 ## Provider settings in the app
 
@@ -26,15 +26,15 @@ Provider-specific settings live with each provider (not hardcoded in the core Se
 In the app, open:
 
 1. **Settings**
-2. **AI provider settings**
-3. Pick a provider (for example, **Claude (remote)**)
+2. **AI & Agents → AI backends**
+3. Pick a provider (for example, **Claude**)
 
 Each provider page can show two different auth surfaces:
 
 - **Authentication** — the native login state of the provider CLI on the selected machine
 - **Connected service** — the Happier-managed credential family that provider can consume, when supported
 
-For the shared user guide to provider CLI auth, see [Provider authentication](/docs/features/provider-authentication).
+For the shared user guide to provider CLI auth, see [Provider authentication](/features/provider-authentication).
 
 ## Installing provider CLIs
 
@@ -49,17 +49,17 @@ You have a few options:
 See the provider-specific pages for installation and troubleshooting.
 
 <Cards>
-  <Card title="Claude" href="/docs/providers/claude" />
-  <Card title="Codex" href="/docs/providers/codex" />
-  <Card title="Custom ACP" href="/docs/providers/custom-acp" />
-  <Card title="Gemini" href="/docs/providers/gemini" />
-  <Card title="Grok Build (experimental)" href="/docs/providers/grok" />
-  <Card title="OpenCode" href="/docs/providers/opencode" />
-  <Card title="Augment (Auggie)" href="/docs/providers/augment" />
-  <Card title="GitHub Copilot" href="/docs/providers/copilot" />
-  <Card title="Kilo (experimental)" href="/docs/providers/kilo" />
-  <Card title="Kimi" href="/docs/providers/kimi" />
-  <Card title="Kiro" href="/docs/providers/kiro" />
-  <Card title="Qwen" href="/docs/providers/qwen" />
-  <Card title="Pi (experimental)" href="/docs/providers/pi" />
+  <Card title="Claude" href="/providers/claude" />
+  <Card title="Codex" href="/providers/codex" />
+  <Card title="Custom ACP" href="/providers/custom-acp" />
+  <Card title="Gemini" href="/providers/gemini" />
+  <Card title="Grok Build (experimental)" href="/providers/grok" />
+  <Card title="OpenCode" href="/providers/opencode" />
+  <Card title="Augment (Auggie)" href="/providers/augment" />
+  <Card title="GitHub Copilot" href="/providers/copilot" />
+  <Card title="Kilo (experimental)" href="/providers/kilo" />
+  <Card title="Kimi" href="/providers/kimi" />
+  <Card title="Kiro" href="/providers/kiro" />
+  <Card title="Qwen" href="/providers/qwen" />
+  <Card title="Pi (experimental)" href="/providers/pi" />
 </Cards>

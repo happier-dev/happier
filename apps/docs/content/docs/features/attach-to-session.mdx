@@ -51,7 +51,7 @@ If you run `happier attach` without a session id in a supported terminal, Happie
 - active sessions that are visible but not attachable stay disabled with an explanation
 - remote-capable provider sessions are labeled as remote; press `P` to check reachability before attaching
 
-Stopped sessions are not shown in this picker. Use [`happier resume`](/docs/features/session-resume) for inactive sessions.
+Stopped sessions are not shown in this picker. Use [`happier resume`](/features/session-resume) for inactive sessions.
 
 ## Requirements
 
@@ -159,7 +159,7 @@ Remote-to-local control starts from the terminal with `happier attach`. Local-to
 - On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
 - If **local permission bridge** is enabled, some permission prompts can still appear in Happier while the session is locally attached.
 
-See also: [Claude](../providers/claude)
+See also: [Claude](/providers/claude)
 
 ### Codex
 
@@ -170,7 +170,7 @@ See also: [Claude](../providers/claude)
 - On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
 - Switching back to remote lets Happier take over again without losing the session.
 
-See also: [Codex](../providers/codex)
+See also: [Codex](/providers/codex)
 
 ### OpenCode
 
@@ -179,7 +179,7 @@ See also: [Codex](../providers/codex)
 - OpenCode uses shared local control, so the app can remain writable while the OpenCode TUI is attached.
 - The session remains the same Happier session while you move between remote and local/shared control.
 
-See also: [OpenCode](../providers/opencode)
+See also: [OpenCode](/providers/opencode)
 
 ## What happens to messages while switching
 
@@ -226,12 +226,12 @@ Short “waiting”, “pending”, or “resume” states during local ↔ remo
 
 ## Related guides
 
-- [Resume inactive sessions](./session-resume)
-- [Session settings](./session-settings)
-- [CLI](../clients/cli)
-- [Permissions](./permissions)
-- [Pending queue](./pending-queue)
-- [Windows](../platforms/windows)
-- [Claude](../providers/claude)
-- [Codex](../providers/codex)
-- [OpenCode](../providers/opencode)
+- [Resume inactive sessions](/features/session-resume)
+- [Session settings](/features/session-settings)
+- [CLI](/clients/cli)
+- [Permissions](/features/permissions)
+- [Pending queue](/features/pending-queue)
+- [Windows](/platforms/windows)
+- [Claude](/providers/claude)
+- [Codex](/providers/codex)
+- [OpenCode](/providers/opencode)

@@ -37,15 +37,15 @@ The CLI login flow still works, but the app-first setup is the recommended contr
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.
-- If you prefer an npm workflow, see [CLI install](/docs/clients/cli) (requires Node).
+- If you prefer an npm workflow, see [CLI install](/clients/cli) (requires Node).
 
 ### Option B — Self-host Relay only (background service on your laptop)
 You run your own Relay (remote machine, LAN box, or even your own computer), but keep the background service on another machine.
 
 1. Install your Relay (examples):
-   - Proxmox: see [Proxmox deployment](../deployment/proxmox).
+   - Proxmox: see [Proxmox deployment](/deployment/proxmox).
    - Any machine (managed service): install the CLI, then run `happier relay host install --mode system` (or remote: `happier relay host install --ssh user@host --mode system`)
-   - Docker: see [Deployment → Docker](../deployment/docker).
+   - Docker: see [Deployment → Docker](/deployment/docker).
 
 2. Open the desktop app (recommended) or web UI (status/management only) and choose that Relay.
    - Some installers print one-click links/QRs that prefill the Relay URL.
@@ -117,4 +117,4 @@ happier --server personal daemon service status
 happier --server company daemon service status
 ```
 
-For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/docs/features/multi-server).
+For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/features/multi-server).

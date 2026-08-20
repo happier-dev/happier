@@ -1,25 +1,37 @@
 ---
 title: Happier Docs
-description: End-to-end encrypted sync for CLI + mobile/web clients.
+description: Run coding agents on your own machines and drive them from your phone, a browser, or anywhere else.
 ---
 
-Happier is an end-to-end encrypted sync system for CLI + mobile/web clients. The server stores encrypted data blobs and sync metadata, but cannot read your conversations.
+Happier runs coding agents — Claude Code, Codex, OpenCode, Cursor, Gemini and
+nine more — on computers you control, and lets you watch, steer, approve and
+reply to them from your phone, a browser, or another machine. The work happens
+on your hardware, in your repository, with your agent's own credentials.
+
+Sessions sync end-to-end encrypted. On Happier Cloud, and on a self-hosted
+server at its defaults, the server holds ciphertext and routing metadata and
+cannot read your conversations. A self-hosted operator can choose a plaintext
+storage policy instead — [Security](/security) covers exactly what changes.
 
 ## Start here
 
 <Cards>
-  <Card icon={<Rocket />} title="Getting started" href="/docs/getting-started" description="Install the CLI, pair a device, and run your first session from your phone." />
-  <Card icon={<Laptop />} title="Local development (hstack)" href="/docs/hstack" description="Run the whole stack — server, CLI and app — against your own machine." />
-  <Card icon={<Table />} title="Feature matrix" href="/docs/features/feature-matrix" description="What each client supports today, surface by surface." />
-  <Card icon={<Boxes />} title="Providers" href="/docs/providers" description="Every coding agent Happier drives, and what each one needs installed." />
-  <Card icon={<Ship />} title="Deployment" href="/docs/deployment" description="Self-host the relay: containers, TLS, database and the settings that matter." />
-  <Card icon={<Network />} title="Architecture overview" href="/docs/architecture" description="How the CLI, relay and clients fit together, and where encryption sits." />
+  <Card icon={<Rocket />} title="Start here" href="/getting-started" description="Install a client and the CLI, connect them, and run your first session. About ten minutes." />
+  <Card icon={<Laptop />} title="Get the apps" href="/getting-started/get-the-apps" description="iPhone, Android, desktop and browser — and which one to start with." />
+  <Card icon={<Boxes />} title="Coding agents" href="/providers" description="Every agent Happier drives, what each needs installed, and how to authenticate it." />
+  <Card icon={<Table />} title="Agent capabilities" href="/providers/capabilities" description="What varies between agents: resume, forking, steering, images, models." />
+  <Card icon={<Ship />} title="Run your own relay" href="/deployment" description="Self-hosting: containers, TLS, database, auth and the settings that matter." />
+  <Card icon={<Network />} title="Features" href="/features" description="Permissions, review, git, voice, notifications and everything else in a session." />
 </Cards>
 
-## What lives in this repo
+## If something is not working
 
-- **Server**: sync API + realtime updates.
-- **CLI**: local agent runner + daemon + remote sync client.
-- **App**: mobile + web UI for sessions and devices.
-- **Protocol**: shared types/contracts between components.
-- **Website / Docs**: deployable static sites.
+[Check your setup](/getting-started/check-your-setup) explains `happier status`
+and `happier doctor repair`, which between them diagnose and fix most of what
+goes wrong on a machine.
+
+## Contributing
+
+Building Happier itself, rather than using it, starts at
+[Development](/development). The local stack that runs the server, CLI and app
+together against your own checkout is documented under [hstack](/hstack).

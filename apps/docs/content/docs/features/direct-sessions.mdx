@@ -8,7 +8,7 @@ Happier supports two user-facing session modes:
 - **Synced**: the session is managed by Happier and available across your devices
 - **Direct**: the session stays linked to the provider on a specific machine
 
-This page explains how to choose between them, how provider-session browsing works, and when to use **Take over** vs **Take over + Sync**.
+This page explains how to choose between them, how provider-session browsing works, and when to use **Take over** vs **Take over + import**.
 
 ## The difference in one sentence
 
@@ -78,8 +78,8 @@ Happier also uses provider-session browsing to help you fill **Resume ID** when 
 
 This is a separate workflow from “resume inactive sessions”:
 
-- **Resume inactive sessions** resumes an existing Happier session. See [Resume inactive sessions](./session-resume).
-- **Resume ID** starts a new Happier session by resuming an existing provider session id. See [Resume a provider session (Resume ID)](./resume-provider-sessions).
+- **Resume inactive sessions** resumes an existing Happier session. See [Resume inactive sessions](/features/session-resume).
+- **Resume ID** starts a new Happier session by resuming an existing provider session id. See [Resume a provider session (Resume ID)](/features/resume-provider-sessions).
 
 When the selected provider supports browsing sessions, the Resume ID input shows a browse icon. The picker is locked to the machine/provider/auth context you selected so you do not accidentally pick a session from a different machine or provider home.
 
@@ -113,7 +113,7 @@ The chip is available only when:
 
 Direct support currently focuses on providers where Happier can reliably browse and follow provider-native sessions.
 
-## Take over vs Take over + Sync
+## Take over vs Take over + import
 
 When you open a direct session, Happier can offer two control paths:
 
@@ -127,9 +127,9 @@ This means:
 - the provider transcript remains the source of truth
 - the session stays machine-bound
 
-### Take over + Sync
+### Take over + import
 
-Choose **Take over + Sync** when you want to convert the workflow into a Happier-managed session.
+Choose **Take over + import** when you want to convert the workflow into a Happier-managed session.
 
 This means:
 
@@ -151,7 +151,7 @@ This is the lowest-friction path because Happier does not need to import the tra
 
 If the session should remain provider-backed and the machine stays online, keep it **Direct**.
 
-If you want Happier to own the session moving forward, use **Take over + Sync**.
+If you want Happier to own the session moving forward, use **Take over + import**.
 
 ### I only want to inspect the transcript
 
@@ -161,7 +161,7 @@ This is useful when you want visibility without changing the session’s ownersh
 
 ### I want a session that feels fully native to Happier
 
-Start it as **Synced**, or open it direct first and then use **Take over + Sync**.
+Start it as **Synced**, or open it direct first and then use **Take over + import**.
 
 ## Handing off direct sessions between machines
 
@@ -192,7 +192,7 @@ This is the right choice when:
 - you now want Happier to own the session moving forward
 - you want future continuity to behave like a normal synced Happier session
 
-For the full cross-machine workflow, see [Session handoff](./session-handoff).
+For the full cross-machine workflow, see [Session handoff](/features/session-handoff).
 
 ## What happens when the machine is offline
 
@@ -267,21 +267,21 @@ The quality of that signal depends on what the provider exposes.
 - Happier can follow provider-backed Codex transcripts directly
 - direct sessions are useful for sessions created outside Happier
 
-See also: [Codex](/docs/providers/codex)
+See also: [Codex](/providers/codex)
 
 ### Claude
 
 - Happier can browse and open Claude provider sessions directly from the machine that owns them
 - titles and transcript continuity depend on what the Claude session logs expose
 
-See also: [Claude](/docs/providers/claude)
+See also: [Claude](/providers/claude)
 
 ### OpenCode
 
 - Happier can browse server-backed OpenCode sessions directly
 - direct control is especially natural when the OpenCode server is already the source of truth
 
-See also: [OpenCode](/docs/providers/opencode)
+See also: [OpenCode](/providers/opencode)
 
 ## Privacy and storage model
 
@@ -291,18 +291,18 @@ The important mental model is:
 - **Direct** = transcript managed by the provider on the machine
 
 Direct sessions are not the same as “unsaved”.
-They simply are not synced into Happier until you explicitly choose **Take over + Sync**.
+They simply are not synced into Happier until you explicitly choose **Take over + import**.
 
 ## Related guides
 
-- [Session handoff](./session-handoff)
-- [Resume inactive sessions](./session-resume)
-- [Resume a provider session (Resume ID)](./resume-provider-sessions)
-- [Browse and import provider sessions](./browse-and-import-sessions)
-- [Connected services](./connected-services)
-- [Profiles](./profiles)
-- [Permissions](./permissions)
-- [Feature matrix](./feature-matrix)
-- [Codex](../providers/codex)
-- [Claude](../providers/claude)
-- [OpenCode](../providers/opencode)
+- [Session handoff](/features/session-handoff)
+- [Resume inactive sessions](/features/session-resume)
+- [Resume a provider session (Resume ID)](/features/resume-provider-sessions)
+- [Browse and import provider sessions](/features/browse-and-import-sessions)
+- [Connected services](/features/connected-services)
+- [Profiles](/features/profiles)
+- [Permissions](/features/permissions)
+- [Feature matrix](/features/feature-matrix)
+- [Codex](/providers/codex)
+- [Claude](/providers/claude)
+- [OpenCode](/providers/opencode)

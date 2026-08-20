@@ -1,20 +1,124 @@
 ---
-title: Getting started
-description: Install, connect, and run Happier locally.
+title: Start here
+description: Get a coding agent running on your computer and drive it from your phone, in about ten minutes.
 ---
 
-## Start here
+By the end of this page you will have a coding agent running on your own
+computer, and you will be able to watch it, steer it, approve its work and reply
+to it from your phone, a browser, or another machine.
 
-- Read: [Onboarding](./onboarding)
-- Read: [Local development](./local-development)
+Happier does not replace your coding agent. It drives the one you already use —
+Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Qwen Code, Kimi, Kiro,
+Kilo, Auggie, Pi or Grok — and gives it a remote control.
 
-## Prerequisites (for self-hosting from source)
+## What you need
 
-- Node.js + Yarn
-- Docker (optional; depends on your server flavor)
+Four things. Three are quick; the first is the one people miss.
 
-## What’s next
+1. **A computer that stays awake.** Happier connects you *to* your machine — it
+   does not run your agent in the cloud. A laptop that sleeps stops the session.
+   If you want work to survive the lid closing, use a desktop, a VPS, or a box
+   that stays plugged in.
+2. **A coding agent CLI, installed and signed in on that computer.** Happier
+   ships none of them and detects what is already there. If `claude` (or
+   `codex`, or `opencode`) does not run in your terminal today, it will not run
+   through Happier either.
+3. **A Happier account**, created in the app or the web client — not from the
+   terminal. The CLI's login is an *approval* step against a client you are
+   already signed in to.
+4. **About ten minutes**, and a phone or second browser tab to approve from.
 
-- Read about **deployment** and domains: [deployment](/docs/deployment).
-- Learn **multi-server usage** (Happier Cloud + self-host side-by-side): [features/multi-server](/docs/features/multi-server).
-- Learn the **architecture** and sync model: [architecture](/docs/architecture).
+You do **not** need a server of your own, Node.js or npm, or a custom app build.
+
+## 1. Get a client
+
+Install the app, or just open [app.happier.dev](https://app.happier.dev/) —
+the web client is the whole product and needs no install. Create your account
+there.
+
+See [Get the apps](/getting-started/get-the-apps) for iPhone, Android, desktop
+and browser.
+
+<Callout type="warn">
+  Your account is a key held on your device, not a password on our server. Back
+  it up from **Settings → Account** once you are signed in. If you lose every
+  signed-in device without a backup, the account cannot be recovered.
+</Callout>
+
+## 2. Install the CLI on the machine that will do the work
+
+<Tabs items={['macOS / Linux', 'Windows']}>
+<Tab value="macOS / Linux">
+```bash
+curl -fsSL https://happier.dev/install | bash
+```
+</Tab>
+<Tab value="Windows">
+```powershell
+iwr https://happier.dev/install.ps1 -useb | iex
+```
+</Tab>
+</Tabs>
+
+The installer verifies the release signature, unpacks under `~/.happier`, and
+offers to set up automatic startup so the machine stays reachable with no
+terminal open. Say yes unless you have a reason not to.
+
+It adds `~/.local/bin` to your shell profile, which the shell you are currently
+in has already read. Open a new terminal, or source your profile, before the
+next step.
+
+## 3. Connect the machine to your account
+
+```bash
+happier auth login
+```
+
+This prints a URL and a QR code. Scan it with the app, or open the URL in a
+browser where you are already signed in, and approve. The terminal continues on
+its own once you do.
+
+## 4. Start your first session
+
+```bash
+happier
+```
+
+That starts a session with Claude Code, the default agent. To use another, name
+it: `happier codex`, `happier opencode`, `happier cursor`. The session appears
+in your client within a second or two, and you can drive it from there.
+
+## 5. Confirm it all worked
+
+```bash
+happier status
+```
+
+This reads your account, relay registration, automatic startup and CLI channel,
+and changes nothing. It is the first thing to run whenever something looks
+wrong later — see [Check your setup](/getting-started/check-your-setup).
+
+## If something went wrong
+
+**`happier: command not found`** — the installer edited your shell profile but
+could not change the shell you were already in. Open a new terminal. If you use
+fish, add `~/.local/bin` to your `fish_user_paths` yourself; the installer
+writes to `~/.profile`, which fish does not read.
+
+**`Claude CLI (claude) is not available from any configured source`** — you have
+reached the last step without prerequisite 2. Install the agent
+(`curl -fsSL https://claude.ai/install.sh | bash`), sign in to it, confirm
+`claude` runs on its own, then run `happier` again. Or start a session with an
+agent you do have.
+
+**The machine never appears in the app** — signing in and registering the
+machine are two different things, and the second happens when the background
+service or a session starts. Run `happier status`; if it reports the machine is
+not registered, `happier doctor repair` will fix it.
+
+## Where to go next
+
+- [Get the apps](/getting-started/get-the-apps) — every client, and which to start with.
+- [Coding agents](/providers) — setup and limits for each agent.
+- [Agent capabilities](/providers/capabilities) — what varies between them.
+- [Run your own relay](/server/quickstart) — if you would rather not use Happier Cloud.

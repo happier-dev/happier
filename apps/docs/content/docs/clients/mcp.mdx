@@ -12,7 +12,7 @@ Happier can run its own **external MCP server** so other MCP hosts (editors, age
 - start execution runs (review / plan / delegate / voice agent)
 - execute any enabled Happier action (using the action spec as source of truth)
 
-This is separate from **MCP servers you manage inside Happier** (Playwright, GitHub, etc). Those are documented under [MCP servers](/docs/features/mcp-servers).
+This is separate from **MCP servers you manage inside Happier** (Playwright, GitHub, etc). Those are documented under [MCP servers](/features/mcp-servers).
 
 The external MCP server uses the same action catalog as the app, CLI, voice, and session-agent surfaces. An action can be:
 
@@ -93,7 +93,7 @@ Or use ad-hoc URLs:
 }
 ```
 
-Deep reference (host setup and security): [MCP host setup](./mcp-hosts).
+Deep reference (host setup and security): [MCP host setup](/clients/mcp-hosts).
 
 ## Quick smoke test
 
@@ -342,8 +342,8 @@ If a tool is approval-gated, the MCP tool call returns an `approval_request_crea
 This applies both to generic `action_execute` calls and to built-in aliases such as `session_title_set`, because they share the same action + surface policy.
 Use the app's **Inbox** to approve/deny and view the final result:
 
-- [Inbox and approvals](/docs/features/inbox-and-approvals)
-- [Happier tools & actions](/docs/features/happier-tools)
+- [Inbox and approvals](/features/inbox-and-approvals)
+- [Happier tools & actions](/features/happier-tools)
 
 ### Programmatic approval decisions
 
@@ -383,7 +383,7 @@ Authenticate the CLI first:
 happier auth login
 ```
 
-If you’re targeting a self-hosted server, ensure the MCP host launches Happier with the right server profile (or server URL flags). See [CLI → Server profiles](/docs/clients/cli#server-profiles).
+If you’re targeting a self-hosted server, ensure the MCP host launches Happier with the right server profile (or server URL flags). See [CLI → Server profiles](/clients/cli#server-profiles).
 
 ### `No daemon running` / session create fails
 

@@ -24,7 +24,7 @@ docker pull ghcr.io/happier-dev/relay-server:preview
 Published images:
 
 - `relay-server`: Happier Server + embedded web UI (this page)
-- `dev-box`: Happier CLI + daemon in Docker (see: [Dev box](../development/devcontainers))
+- `dev-box`: Happier CLI + daemon in Docker (see: [Dev box](/development/devcontainers))
 
 The published `relay-server` image is built from signed server-runtime and UI-web release artifacts. It runs as the non-root `happier` user, embeds the UI bundle at image build time, and does not need a source checkout or `hstack`.
 
@@ -47,7 +47,7 @@ docker compose up -d --force-recreate
 
 For strict control, pin to an immutable tag (for example `:preview-<short-sha>`) or a digest.
 
-Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+Full matrix (all apps/assets): [Updates](/advanced/updates).
 
 The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
 
@@ -59,9 +59,9 @@ docker run --rm -p 3005:3005 \
 
 Configuration docs:
 
-- Server env var reference: [Environment variables](./env)
-- Server auth policy (GitHub/OIDC/anonymous, etc): [Server Auth](../server/auth)
-- If you’re running a headless machine and want to pair/authenticate without a browser: [Daemon auth (headless)](../clients/daemon#headless-authentication-no-tty)
+- Server env var reference: [Environment variables](/deployment/env)
+- Server auth policy (GitHub/OIDC/anonymous, etc): [Server Auth](/server/auth)
+- If you’re running a headless machine and want to pair/authenticate without a browser: [Daemon auth (headless)](/clients/daemon#headless-authentication-no-tty)
 
 Notes:
 
@@ -110,7 +110,7 @@ volumes:
   happier-relay-data:
 ```
 
-For S3/Minio instead of local files, set `HAPPIER_FILES_BACKEND=s3` and the `S3_*` env vars (see [Environment variables](./env)).
+For S3/Minio instead of local files, set `HAPPIER_FILES_BACKEND=s3` and the `S3_*` env vars (see [Environment variables](/deployment/env)).
 
 ## Optional: expose a relay securely with Tailscale
 
@@ -170,7 +170,7 @@ Notes:
 - `tailscale serve` publishes the Happier UI + API (including WebSockets) behind the Tailscale HTTPS endpoint.
 - If your environment can’t use `/dev/net/tun` (some restricted hosts), fall back to a normal reverse proxy (Caddy/Traefik/nginx) or run Tailscale on the host OS and proxy to the container.
   - Make sure your proxy supports **WebSocket upgrades** for Socket.IO realtime at `/v1/updates` (otherwise machines can stay offline).
-  - See: [Deployment → Environment variables → Networking / reverse proxy](./env#websockets-required-for-realtime--machine-online)
+  - See: [Deployment → Environment variables → Networking / reverse proxy](/deployment/env#websockets-required-for-realtime--machine-online)
 
 ## Build images
 

@@ -5,7 +5,7 @@ description: Manage machine-local provider CLI authentication from Happier, chec
 
 Happier can inspect and manage the **machine-local authentication state** of supported provider CLIs directly from each provider settings page.
 
-This is separate from [Connected services](/docs/features/connected-services):
+This is separate from [Connected services](/features/connected-services):
 
 - **Provider authentication** = the native login state of the provider CLI installed on a specific machine
 - **Connected services** = credentials stored in Happier and reused across compatible backends
@@ -20,7 +20,7 @@ This also differs from **Custom ACP**:
 Open:
 
 1. **Settings**
-2. **AI provider settings**
+2. **AI & Agents → AI backends**
 3. Choose a provider
 4. Choose the target machine in the context bar
 5. Look for the **Authentication** section
@@ -107,7 +107,7 @@ So if you are using **Custom ACP**, think in terms of:
 - “is this backend ready on this machine?”
 - not “does the generic Custom ACP provider have one global login state?”
 
-See [ACP backends](./acp-backends).
+See [ACP backends](/features/acp-backends).
 
 ## How the login terminal fits with the rest of Happier
 
@@ -155,15 +155,15 @@ When you move a session to another machine:
 - machine-local provider auth does not come along automatically
 - the target machine must still be able to run that provider/backend
 
-If the provider/backend supports Happier [Connected services](/docs/features/connected-services), that is often the easiest way to make the target machine ready for handoff without depending only on a native CLI login on that machine.
+If the provider/backend supports Happier [Connected services](/features/connected-services), that is often the easiest way to make the target machine ready for handoff without depending only on a native CLI login on that machine.
 
 If the provider/backend depends on native machine-local auth, you still need the destination machine to be authenticated.
 
 ## Related guides
 
-- [Providers](/docs/providers)
-- [ACP backends](/docs/features/acp-backends)
-- [Session handoff](/docs/features/session-handoff)
-- [Connected services](/docs/features/connected-services)
-- [Embedded terminal](/docs/features/embedded-terminal)
-- [Daemon](/docs/clients/daemon)
+- [Providers](/providers)
+- [ACP backends](/features/acp-backends)
+- [Session handoff](/features/session-handoff)
+- [Connected services](/features/connected-services)
+- [Embedded terminal](/features/embedded-terminal)
+- [Daemon](/clients/daemon)

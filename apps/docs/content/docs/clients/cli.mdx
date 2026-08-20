@@ -55,7 +55,7 @@ The CLI can also show periodic update notices in TTY sessions; disable with:
 HAPPIER_CLI_UPDATE_CHECK=0
 ```
 
-Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+Full matrix (all apps/assets): [Updates](/advanced/updates).
 
 ## Authenticate
 
@@ -82,7 +82,7 @@ Notes:
 Advanced:
 - To also print optional “configure server” links (rarely needed): `happier auth login --print-configure-links`
 
-User guide: [Features → Device linking & restore](/docs/features/device-linking-and-restore)
+User guide: [Features → Device linking & restore](/features/device-linking-and-restore)
 
 ### Remote machine pairing (SSH, automated)
 
@@ -118,6 +118,47 @@ happier auth wait --public-key <publicKey> --json
 
 This is terminal/CLI pairing, not the same flow as device restore inside the app.
 
+## Check and repair this machine
+
+`happier status` reads the whole chain between you and a working session —
+account, relay registration, automatic startup, CLI channel — and changes
+nothing. `happier doctor repair` fixes what it can. Both are covered in
+[Check your setup](/getting-started/check-your-setup), along with the
+`happier service` commands that manage automatic startup.
+
+## Notifications from a script
+
+Send a notification to your own devices from anywhere a shell runs — the end of
+a long build, a cron job, a deploy:
+
+```bash
+happier notify -p "Deployment complete!"
+happier notify -p "Database connection restored" -t "Alert"
+```
+
+`-p` is the message and `-t` an optional title.
+
+## Automations
+
+Trigger a saved automation without opening the app:
+
+```bash
+happier automation run <automation-id> [--idempotency-key <key>] [--json]
+```
+
+Pass `--idempotency-key` when the caller might retry — a repeated key will not
+run the automation twice.
+
+## Plugins
+
+```bash
+happier plugins list [--json]
+```
+
+This version of Happier does not support installing plugins; the command exists
+so that tooling asking about plugins gets a clean, empty answer rather than an
+unrecognised-command error. It always lists nothing.
+
 ## Server profiles
 
 ### Save and switch servers
@@ -147,9 +188,14 @@ happier --server-url https://api.company.example --webapp-url https://app.compan
 happier --server-url https://api.company.example --webapp-url https://app.company.example auth pair-remote --ssh user@host --json
 ```
 
+<Callout type="warn">
+  `happier logout` is deprecated and prints a notice saying so. Use
+  `happier auth logout`.
+</Callout>
+
 ## Daemon (background mode)
 
-For always-on background sessions, remote control, and headless servers, see [Daemon](./daemon).
+For always-on background sessions, remote control, and headless servers, see [Daemon](/clients/daemon).
 
 ## Attach to an existing session
 
@@ -186,7 +232,7 @@ Supported attach styles include:
 - **Windows Terminal** or **Console** hosted sessions on Windows
 - **provider-native attach** for supported provider sessions such as OpenCode
 
-For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
+For the full workflow, see [Features → Attach to a running session](/features/attach-to-session).
 
 ## Resume an inactive session
 
@@ -214,7 +260,7 @@ Important behavior:
 - archived or already-active sessions cannot be resumed
 - the command restores the session working directory before launching the provider again
 
-For the full user guide and the meaning of “resumable”, see [Features → Resume inactive sessions](/docs/features/session-resume).
+For the full user guide and the meaning of “resumable”, see [Features → Resume inactive sessions](/features/session-resume).
 
 ## List sessions
 
@@ -242,7 +288,7 @@ happier session list --json
 
 The `happier session ...` command group is the non-interactive surface for creating and controlling sessions.
 
-Deep reference: [CLI sessions](./cli-sessions).
+Deep reference: [CLI sessions](/clients/cli-sessions).
 
 ### Create a session (scriptable)
 
@@ -312,8 +358,8 @@ Some actions can be configured as **approval-gated** on the CLI surface.
 In that case, the CLI command does not execute immediately; it creates an approval request instead.
 Use the app’s **Inbox** to review/approve/deny and see the final execution result:
 
-- [Inbox and approvals](/docs/features/inbox-and-approvals)
-- [Happier tools & actions](/docs/features/happier-tools)
+- [Inbox and approvals](/features/inbox-and-approvals)
+- [Happier tools & actions](/features/happier-tools)
 
 For advanced automation, approvals can also be decided through the generic action executor:
 
@@ -352,7 +398,7 @@ happier mcp serve
 
 `happier mcp start` is accepted as a compatibility alias, but `serve` is the canonical command name in the docs and CLI help.
 
-Guide: [Happier MCP (external)](./mcp)
+Guide: [Happier MCP (external)](/clients/mcp)
 
 ## Backend profiles
 
@@ -364,7 +410,7 @@ happier claude --profile deepseek
 happier codex --profile openai
 ```
 
-For the full guide, see [Features → Profiles](/docs/features/profiles).
+For the full guide, see [Features → Profiles](/features/profiles).
 
 ## Happier tools
 
@@ -411,8 +457,8 @@ Examples:
 
 Use the Happier built-in discovery tools when you do not know the exact action id or valid option values yet.
 
-For the broader product model, see [Happier tools & actions](/docs/features/happier-tools).
+For the broader product model, see [Happier tools & actions](/features/happier-tools).
 
 ## Multi-server reference
 
-For full multi-server and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).
+For full multi-server and multi-daemon guidance, see [Features → Multi-server](/features/multi-server).

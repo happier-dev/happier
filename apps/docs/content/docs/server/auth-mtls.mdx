@@ -14,7 +14,7 @@ Happier can use mTLS to:
 Important:
 
 - mTLS is **authentication**, not end-to-end encryption (E2EE).
-- If you disable E2EE (encryption opt-out / plaintext storage), the server can read and index session content (enabling features like server-side search). See: [Encryption & plaintext storage](./encryption).
+- If you disable E2EE (encryption opt-out / plaintext storage), the server can read and index session content (enabling features like server-side search). See: [Encryption & plaintext storage](/server/encryption).
 
 ## When to choose mTLS vs OIDC
 
@@ -39,11 +39,16 @@ Security note:
 
 - forwarded identity headers must be **stripped and overwritten at the edge** so clients cannot spoof them.
 
-### Mode B: Direct mTLS (app server terminates TLS)
+### Mode B: Direct mTLS — not implemented
 
-In this mode, the Happier API itself listens on HTTPS and verifies the client certificate chain against a configured CA bundle.
+Direct mode would have the Happier API terminate TLS itself and verify the client
+certificate chain against a configured CA bundle. **The open-source server does not
+support it.** Setting `HAPPIER_FEATURE_AUTH_MTLS__MODE=direct` does not start it —
+the server records `auth_mtls_not_configured` and leaves the method unadvertised,
+so mTLS login never appears in the UI.
 
-This is appropriate when you want a single-node deployment without a separate proxy, or when your platform makes it easy to manage TLS materials directly on the app server.
+Use forwarded mode. If you have no reverse proxy today, adding one is the
+supported path, not a workaround.
 
 ## Stable identity mapping (multi-device behavior)
 
@@ -95,6 +100,20 @@ Note: switching encryption mode does not retroactively decrypt or re-encrypt his
 
 ## Environment variables (overview)
 
+### Prerequisites
+
+mTLS provisions keyless accounts, and keyless accounts are off by default. Both of
+these must be set or auto-provisioning refuses every identity with `e2ee-required`:
+
+| Variable | Required value | Default |
+| --- | --- | --- |
+| `HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED` | `1` | off |
+| `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY` | `optional` or `plaintext_only` | `required_e2ee` |
+
+Leaving the storage policy at its default is the most common reason mTLS appears
+configured and still does not work. See [Keyless-only behavior](#keyless-only-behavior-important)
+for what that means for your users' accounts.
+
 ### Enable mTLS
 
 - `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` (`0`/`1`)
@@ -144,7 +163,7 @@ If mTLS is the only supported login flow for your deployment, you can enable aut
 
 On mobile, this will open the system browser to start the certificate-authenticated flow.
 
-For the full canonical list, see [Deployment → Environment variables](../deployment/env).
+For the full canonical list, see [Deployment → Environment variables](/deployment/env).
 
 ## Setup checklist
 
@@ -155,17 +174,6 @@ For the full canonical list, see [Deployment → Environment variables](../deplo
 3. Ensure the proxy strips any incoming identity headers from the public internet and overwrites them with verified values.
 4. Enable forwarded mode in Happier and enable auto-provisioning if desired.
 
-### Direct mode
-
-1. Ensure you have:
-   - server certificate + private key (for HTTPS),
-   - a CA bundle that issued your client certificates.
-2. Configure the Happier server to listen on HTTPS with:
-   - client cert verification required,
-   - CA chain configured for verification.
-3. Enable direct mode in Happier and confirm the API rejects requests without a valid client cert.
-
-Note: Direct mode is not implemented yet in the open-source server; use forwarded mode for now.
 
 ## Troubleshooting
 

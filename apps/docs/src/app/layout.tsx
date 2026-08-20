@@ -3,6 +3,7 @@ import './global.css';
 import localFont from 'next/font/local';
 
 import { Analytics, AnalyticsNotice } from '../analytics/client';
+import { SITE_NAME, SITE_URL } from '../lib/site';
 
 /**
  * The marketing site's three families, from the site's own variable woff2 files.
@@ -36,6 +37,16 @@ const jetbrainsMono = localFont({
   display: 'swap',
   variable: '--font-jetbrains-mono',
 });
+
+/**
+ * Resolves every page's root-relative `openGraph.images` against the real
+ * origin. Without it Next falls back to `http://localhost:3000` and prerenders
+ * that into all 132 pages.
+ */
+export const metadata = {
+  metadataBase: new URL(SITE_URL),
+  title: { default: SITE_NAME, template: `%s | ${SITE_NAME}` },
+};
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (

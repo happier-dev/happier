@@ -13,12 +13,12 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 ## Supported ways to run it
 
 - **Managed self-host runtime** (service + install-or-update).
-  - See: [Self-host runtime (installer vs runner)](./self-host-runtime)
+  - See: [Self-host runtime (installer vs runner)](/deployment/self-host-runtime)
 - **Run from a monorepo clone** (repo-local mode): use `yarn` from the repo root to run a stackless local stack, install a service, and configure Tailscale.
-  - See: [Run from a monorepo clone (repo-local mode)](./repo-local)
+  - See: [Run from a monorepo clone (repo-local mode)](/deployment/repo-local)
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
-  - See: [Docker](./docker)
-- **Configuration reference**: see [Environment variables](./env) for the complete server runtime env surface.
+  - See: [Docker](/deployment/docker)
+- **Configuration reference**: see [Environment variables](/deployment/env) for the complete server runtime env surface.
 - **Canonical env template**: `apps/server/.env.example`
 - **HStack** (stack CLI): a guided workflow that can run the server for you (documentation maintained separately).
   - Remote daemon bootstrap over SSH: `/docs/hstack/remote-daemon`
@@ -49,7 +49,7 @@ You can run the server in one process (simple), or split into roles:
 
 For multi-replica API deployments, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`) and configure sticky sessions at your load balancer.
 
-See [Docker](./docker) for concrete examples.
+See [Docker](/deployment/docker) for concrete examples.
 
 ## Reverse proxy basics
 
@@ -64,4 +64,4 @@ If you serve `/files/*` from the server (light flavor), ensure your proxy allows
 
 Troubleshooting note: if `/v1/updates` websocket upgrades are broken, machines can register but stay offline (`machine.none_online`).
 
-See: [Environment variables → Networking / reverse proxy](./env#websockets-required-for-realtime--machine-online)
+See: [Environment variables → Networking / reverse proxy](/deployment/env#websockets-required-for-realtime--machine-online)

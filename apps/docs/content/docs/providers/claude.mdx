@@ -12,10 +12,19 @@ Happier supports two ways of running Claude:
 - **Local mode**: you run **Claude Code’s own TUI** directly in your terminal.
 - **Remote mode**: you drive Claude from the **Happier UI**, but Claude still runs **locally on your machine** (Happier spawns the `claude` process in the background).
 
-Remote mode currently has **two implementations**:
+Remote mode has **three implementations**, selected in that order: unified
+terminal when it is enabled, otherwise Agent SDK, otherwise legacy.
 
-- **Agent SDK remote** (default): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
-- **Legacy remote** (fallback): our older “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
+| Runtime | How Happier drives Claude | Terminal to join? |
+| --- | --- | --- |
+| **Unified terminal** (opt-in) | Happier hosts Claude Code's own TUI in a terminal session and types prompts into its composer, so the app and the terminal share one Claude Code run. | Yes |
+| **Agent SDK** (default) | Runs Claude through the official `@anthropic-ai/claude-agent-sdk` in a background process, publishing capabilities and optionally file checkpointing. | No |
+| **Legacy remote** (fallback) | The older SDK-like shim that spawns `claude` with a streaming output format and forwards hooks for session info. | No |
+
+The unified terminal is off until you turn it on, and it changes enough about
+how a session behaves — steering, queued input, which runtime controls apply
+live — to be worth reading about first:
+[Claude unified terminal](/features/claude-unified-terminal).
 
 ## Start in Happier, continue in the terminal
 
@@ -34,7 +43,7 @@ If you send a message from the app while Claude is locally controlled, Happier s
 
 On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, use Happier’s Windows remote session mode (`Windows Terminal`, `Console`, or `Hidden`) instead of expecting tmux.
 
-For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
+For the full workflow, see [Features → Attach to a running session](/features/attach-to-session).
 
 ## Permissions and modes
 
@@ -45,9 +54,9 @@ Happier uses:
 
 For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
 
-- [Permissions](../features/permissions)
-- [Session modes](../features/session-modes)
-- [Model and engine selection](../features/model-and-engine-selection)
+- [Permissions](/features/permissions)
+- [Session modes](/features/session-modes)
+- [Model and engine selection](/features/model-and-engine-selection)
 
 ### Claude plan mode
 
@@ -115,7 +124,7 @@ Claude also supports **machine-local provider authentication** directly in provi
 
 Open:
 
-- **Settings → AI provider settings → Claude**
+- **Settings → AI & Agents → AI backends → Claude**
 
 From there you can:
 
@@ -126,7 +135,7 @@ From there you can:
 
 Happier launches Claude and sends `/login` for you when you use **Log in**.
 
-For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+For the shared user guide, see [Provider authentication](/features/provider-authentication).
 
 ## Authentication (connected services)
 
@@ -156,7 +165,7 @@ happier connect claude --oauth
 
 For more details (service ids, security model, and env overrides), see:
 
-- [Connected services](/docs/features/connected-services)
+- [Connected services](/features/connected-services)
 
 Practical guidance:
 
@@ -183,15 +192,15 @@ Important notes:
 
 See:
 
-- [Session handoff](/docs/features/session-handoff)
-- [Connected services](/docs/features/connected-services)
+- [Session handoff](/features/session-handoff)
+- [Connected services](/features/connected-services)
 
 ## Where to configure Claude in Happier
 
 In the app:
 
 1. **Settings**
-2. **AI provider settings**
+2. **AI & Agents → AI backends**
 3. **Claude (remote)**
 
 Most settings below affect **Claude remote mode only**.  
@@ -213,7 +222,7 @@ The one exception is **Experimental: local permission bridge**, which affects **
 
 For the full user-facing MCP guide in Happier, see:
 
-- [MCP servers](/docs/features/mcp-servers)
+- [MCP servers](/features/mcp-servers)
 
 ## Environment variables
 
@@ -237,8 +246,8 @@ When Agent Teams are enabled in Claude, Happier can:
 
 For the complete user-facing guide to the Agents sidebar, Subagents, details-pane behavior, and Claude team workflows, see:
 
-- [Agents & subagents](/docs/features/subagents)
-- [Participant routing & live run messaging](/docs/features/participant-routing)
+- [Agents & subagents](/features/subagents)
+- [Participant routing & live run messaging](/features/participant-routing)
 
 ### Routing UI (recipient chip)
 
@@ -285,7 +294,7 @@ Send those as regular lead messages instead.
 
 Regular non-routed session messages do support Happier attachments.
 
-See: [Attachments & image previews](/docs/features/attachments)
+See: [Attachments & image previews](/features/attachments)
 
 ## Local permission bridge (experimental)
 
