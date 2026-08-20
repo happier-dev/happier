@@ -664,6 +664,7 @@ vi.mock('./memory/memoryWorker', () => ({
 }));
 
 vi.mock('./connectedServices/quotas/ConnectedServiceQuotasCoordinator', () => ({
+  DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS: 15_000,
   ConnectedServiceQuotasCoordinator: vi.fn(() => ({
     flushInBandQuotaPersistence: vi.fn(async () => ({ timedOut: false })),
     notifyQuotaPersistenceConnectivityChanged: vi.fn(),
@@ -1811,6 +1812,7 @@ describe('startDaemon automation wiring (integration)', () => {
     let run: Promise<void> | null = null;
     let app: Awaited<ReturnType<typeof createCapturedDaemonControlApp>> | null = null;
     let runtimeRegistry: ConnectedServiceRuntimeRegistryType | null = null;
+    const getRuntimeRegistry = (): ConnectedServiceRuntimeRegistryType | null => runtimeRegistry;
     harness.setAutoShutdownAfterAutomationStart(false);
 
     try {
@@ -1887,10 +1889,10 @@ describe('startDaemon automation wiring (integration)', () => {
 
       expect(response.statusCode).toBe(200);
       await waitForCondition(
-        () => runtimeRegistry?.getByBrokerSelectionIdentity(brokerSelectionIdentity)?.sessionId === sessionId,
+        () => getRuntimeRegistry()?.getByBrokerSelectionIdentity(brokerSelectionIdentity)?.sessionId === sessionId,
         'Expected the terminal-started broker identity to reach the canonical runtime registry',
       );
-      expect(runtimeRegistry?.getByBrokerSelectionIdentity(brokerSelectionIdentity)).toMatchObject({
+      expect(getRuntimeRegistry()?.getByBrokerSelectionIdentity(brokerSelectionIdentity)).toMatchObject({
         pid,
         agentId: 'opencode',
         sessionId,
