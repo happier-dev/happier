@@ -319,9 +319,9 @@ export const GET_STARTED_STEPS = [
     },
     {
         id: 'setup',
-        title: 'Run setup',
+        title: 'Sign in on that computer',
         description:
-            'Signs you in and installs the background service that keeps this machine reachable while you are away from it.',
+            'Connects the CLI to your Happier account. You approve it from a device where you are already signed in — the app, or the web.',
     },
     {
         id: 'pair',
