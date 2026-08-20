@@ -127,6 +127,38 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     });
   });
 
+  it('denies session title tool calls when a profile override disables title updates over an enabled global', async () => {
+    const session = new FakeSession();
+    session.metadata = { profileId: 'profile-no-titles' };
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'ongoing',
+          responseOptions: 'agent',
+        },
+        profiles: [
+          {
+            id: 'profile-no-titles',
+            name: 'Profile (no titles)',
+            codingPromptBehaviorV1: {
+              v: 1,
+              sessionTitleUpdates: 'disabled',
+            },
+          },
+        ],
+      } as any),
+    });
+
+    // The deny layer must evaluate the same merged decision as the prompt and the
+    // tools bridge: the profile override disables title updates even though the
+    // global account default is ongoing.
+    await expect(handler.handleToolCall('title-1', 'mcp__happier__change_title', { title: 'Renamed' })).resolves.toEqual({
+      decision: 'denied',
+    });
+  });
+
   it('exposes immediate decisions for always-auto-approved tools', () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
