@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, writeFile, mkdir, rm, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { lstat, mkdtemp, writeFile, mkdir, rm, readFile, readdir } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import * as packModule from './pack.mjs';
 import { analyzeTarList, findMonorepoRoot, resolvePackDirForComponent } from './pack.mjs';
 
@@ -162,4 +163,44 @@ test('stack package keeps the Expo heap helper local to the packaged scripts tre
   const commandMjs = await readFile(new URL('./utils/expo/command.mjs', import.meta.url), 'utf8');
   assert.match(commandMjs, /from '\.\/expoNodeHeapEnv\.mjs';/);
   assert.doesNotMatch(commandMjs, /scripts\/expo\/expoNodeHeapEnv\.mjs/);
+});
+
+test('published stack modules do not statically import files outside the package', async () => {
+  const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  const explicitlyExcludedFiles = new Set(
+    packageJson.files
+      .filter((entry) => entry.startsWith('!') && !entry.endsWith('/'))
+      .map((entry) => entry.slice(1)),
+  );
+  const modulePaths = [];
+  const visit = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+      } else if (entry.isFile() && entry.name.endsWith('.mjs') && !entry.name.endsWith('.test.mjs')) {
+        const packageRelativePath = relative(packageRoot, path).split(sep).join('/');
+        if (!explicitlyExcludedFiles.has(packageRelativePath)) {
+          modulePaths.push(path);
+        }
+      }
+    }
+  };
+  await visit(join(packageRoot, 'bin'));
+  await visit(join(packageRoot, 'scripts'));
+
+  const escapingImports = [];
+  const staticRelativeImport = /(?:from\s+|import\s*)['"](\.\.?\/[^'"]+)['"]/g;
+  for (const modulePath of modulePaths) {
+    const source = await readFile(modulePath, 'utf8');
+    for (const match of source.matchAll(staticRelativeImport)) {
+      const importedPath = resolve(dirname(modulePath), match[1]);
+      if (importedPath !== packageRoot && !importedPath.startsWith(`${packageRoot}${sep}`)) {
+        escapingImports.push(`${modulePath}: ${match[1]}`);
+      }
+    }
+  }
+
+  assert.deepEqual(escapingImports, []);
 });

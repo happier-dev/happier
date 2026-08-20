@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, readdir, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 import { pathExists } from '../fs/fs.mjs';
 import { writeJsonAtomic } from '../fs/json.mjs';
@@ -22,10 +23,6 @@ import { resolveHappyCliRuntimeInputPaths } from './cli_runtime_inputs.mjs';
 import { isDevRuntimeReloadIgnoredPath } from '../dev/devRuntimeInputPolicy.mjs';
 
 export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
-import {
-  ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameOwner,
-  ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentOwner,
-} from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 const HSTACK_CLI_INPUT_FRESHNESS_NS_FIELD = 'hstackInputFreshnessNs';
 
@@ -728,14 +725,27 @@ const stackWorkspaceBuildBoundary = {
   },
 };
 
+async function loadWorkspacePackageBuildOwner(monorepoRoot) {
+  const ownerPath = join(monorepoRoot, 'scripts', 'workspaces', 'ensureWorkspacePackagesBuilt.mjs');
+  return await import(pathToFileURL(ownerPath).href);
+}
+
 export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNames, options = {}) {
-  return await ensureWorkspacePackagesBuiltByNameOwner(monorepoPath, packageNames, {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
+  if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
+  const { ensureWorkspacePackagesBuiltByName: ensureWorkspacePackagesBuiltByNameOwner } =
+    await loadWorkspacePackageBuildOwner(monorepoRoot);
+  return await ensureWorkspacePackagesBuiltByNameOwner(monorepoRoot, packageNames, {
     ...options,
     workspaceBuildBoundary: stackWorkspaceBuildBoundary,
   });
 }
 
 export async function ensureWorkspacePackagesBuiltForComponent(componentDir, options = {}) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+  if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
+  const { ensureWorkspacePackagesBuiltForComponent: ensureWorkspacePackagesBuiltForComponentOwner } =
+    await loadWorkspacePackageBuildOwner(monorepoRoot);
   return await ensureWorkspacePackagesBuiltForComponentOwner(componentDir, {
     ...options,
     workspaceBuildBoundary: stackWorkspaceBuildBoundary,

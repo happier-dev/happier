@@ -17,6 +17,7 @@
     "docs/",
     "extras/",
     "scripts/",
+    "!scripts/ghops.mjs",
     "!scripts/provision/macos-lima-wsrepl-matrix.sh",
     "!scripts/provision/macos-lima-vm.sh"
   ],
