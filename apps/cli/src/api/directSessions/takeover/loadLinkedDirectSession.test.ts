@@ -19,7 +19,7 @@ describe('loadLinkedDirectSession', () => {
     vi.clearAllMocks();
   });
 
-  it('re-links a converted session from its external history import record', async () => {
+  it('does not reinterpret an imported persisted session as a direct session', async () => {
     fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_converted' });
     tryDecryptSessionMetadataMock.mockReturnValueOnce({
       path: '/home/kunde21',
@@ -38,34 +38,6 @@ describe('loadLinkedDirectSession', () => {
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       sessionId: 'sess_converted',
       machineId: 'machine_1',
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      session: expect.objectContaining({
-        providerId: 'pi',
-        machineId: 'machine_1',
-        remoteSessionId: '01a00481-8cdc-78ff-a4aa-9b243badd9fb',
-        source: { kind: 'piAgentDir', agentDir: '/home/kunde21/.pi/agent' },
-      }),
-    });
-  });
-
-  it('still rejects a converted session when no machine scope can back the relink', async () => {
-    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_converted_no_machine' });
-    tryDecryptSessionMetadataMock.mockReturnValueOnce({
-      externalHistoryImportV1: {
-        v: 1,
-        providerId: 'pi',
-        remoteSessionId: '01a00481-8cdc-78ff-a4aa-9b243badd9fb',
-        importedAtMs: 123,
-        source: { kind: 'piAgentDir', agentDir: '/home/kunde21/.pi/agent' },
-      },
-    });
-
-    const result = await loadLinkedDirectSession({
-      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
-      sessionId: 'sess_converted_no_machine',
     });
 
     expect(result).toEqual({

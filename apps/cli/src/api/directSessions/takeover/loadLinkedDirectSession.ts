@@ -104,42 +104,6 @@ function resolveCanonicalDirectSource(params: Readonly<{
   return params.source;
 }
 
-/**
- * Rebuild a direct-session identity for a session that takeover.persist converted
- * (directSessionV1 deleted, externalHistoryImportV1 recorded). The identity is
- * machine-scoped to the requesting machine, and the result still has to pass
- * DirectSessionMetadataSchema. Returns null when the record cannot back a relink.
- */
-function rebuildDirectSessionMetadataFromImportRecord(
-  metadata: Record<string, unknown>,
-  requestMachineId: string | undefined,
-): Record<string, unknown> | null {
-  const machineId = typeof requestMachineId === 'string' ? requestMachineId.trim() : '';
-  if (!machineId) return null;
-
-  const importRecord = metadata.externalHistoryImportV1;
-  if (!importRecord || typeof importRecord !== 'object' || Array.isArray(importRecord)) return null;
-  const record = importRecord as Record<string, unknown>;
-  if (record.v !== 1) return null;
-  if (!DirectSessionsProviderIdSchema.safeParse(record.providerId).success) return null;
-  if (typeof record.remoteSessionId !== 'string' || !record.remoteSessionId.trim()) return null;
-  if (!DirectSessionsSourceSchema.safeParse(record.source).success) return null;
-  const importedAtMs = record.importedAtMs;
-  if (typeof importedAtMs !== 'number' || !Number.isFinite(importedAtMs) || importedAtMs < 0) return null;
-
-  return {
-    ...metadata,
-    directSessionV1: {
-      v: 1,
-      providerId: record.providerId,
-      machineId,
-      remoteSessionId: record.remoteSessionId,
-      source: record.source,
-      linkedAtMs: Math.trunc(importedAtMs),
-    },
-  };
-}
-
 export async function loadLinkedDirectSession(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
@@ -158,17 +122,7 @@ export async function loadLinkedDirectSession(params: Readonly<{
     return { ok: false, errorCode: 'provider_unavailable', error: 'session_metadata_unavailable' };
   }
 
-  let parsed = DirectSessionMetadataSchema.safeParse(metadata);
-  if (!parsed.success) {
-    // takeover.persist converts imported sessions by deleting directSessionV1 and recording
-    // externalHistoryImportV1. That conversion must not dead-end re-imports of the same remote
-    // session: rebuild the direct identity from the import record so a second take-over/import
-    // of the same vendor session stays idempotent.
-    const rebuilt = rebuildDirectSessionMetadataFromImportRecord(metadata, params.machineId);
-    if (rebuilt) {
-      parsed = DirectSessionMetadataSchema.safeParse(rebuilt);
-    }
-  }
+  const parsed = DirectSessionMetadataSchema.safeParse(metadata);
   if (!parsed.success) {
     return { ok: false, errorCode: 'invalid_request', error: 'session_is_not_direct' };
   }

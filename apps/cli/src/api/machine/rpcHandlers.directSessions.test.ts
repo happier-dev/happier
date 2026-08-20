@@ -204,29 +204,48 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+    const markerDir = join('/tmp/happier-test-home', 'tmp', 'daemon-sessions');
+    const markerPath = join(markerDir, `pid-${process.pid}.json`);
+    await mkdir(markerDir, { recursive: true });
+    await writeFile(markerPath, JSON.stringify({
+      pid: process.pid,
+      happySessionId: 'sess_existing_pi_owner',
+      happyHomeDir: '/tmp/happier-test-home',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      flavor: 'pi',
+      metadata: { flavor: 'pi', piSessionId },
+    }), 'utf8');
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
-    expect(handler).toBeDefined();
+    try {
+      registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-    const res = await handler!({
-      machineId: 'm1',
-      sessionId: 'sess_happy_direct_pi',
-    });
+      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
+      expect(handler).toBeDefined();
 
-    expect(res).toEqual({ ok: true });
-    expect(stopSession).not.toHaveBeenCalled();
-    expect(spawnSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        directory: cwd,
-        backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
-        existingSessionId: 'sess_happy_direct_pi',
-        resume: piSessionId,
-        approvedNewDirectoryCreation: true,
-        transcriptStorage: 'direct',
-        environmentVariables: expect.objectContaining({ PI_CODING_AGENT_DIR: resolvedAgentDir }),
-      }),
-    );
+      const res = await handler!({
+        machineId: 'm1',
+        sessionId: 'sess_happy_direct_pi',
+        forceStop: true,
+      });
+
+      expect(res).toEqual({ ok: true });
+      expect(stopSession).toHaveBeenCalledWith('sess_existing_pi_owner');
+      expect(spawnSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directory: cwd,
+          backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+          existingSessionId: 'sess_happy_direct_pi',
+          resume: piSessionId,
+          approvedNewDirectoryCreation: true,
+          transcriptStorage: 'direct',
+          environmentVariables: expect.objectContaining({ PI_CODING_AGENT_DIR: resolvedAgentDir }),
+        }),
+      );
+      expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(spawnSession.mock.invocationCallOrder[0]);
+    } finally {
+      await rm(markerPath, { force: true });
+    }
   });
 
   it('requires forceStop before taking over when a trusted local runner still owns the provider session', async () => {

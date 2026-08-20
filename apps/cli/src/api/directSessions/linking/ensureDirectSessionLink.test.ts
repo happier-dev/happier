@@ -642,6 +642,44 @@ describe('ensureDirectSessionLink', () => {
     });
   });
 
+  it('reuses an imported persisted session without turning it back into a direct session', async () => {
+    const tag = `direct:v1:${sha256Hex('machine_1|pi|pi_imported|piAgentDir:/home/user/.pi/agent')}`;
+    const importedMetadata = {
+      tag,
+      path: '/repo',
+      machineId: 'machine_1',
+      flavor: 'pi',
+      piSessionId: 'pi_imported',
+      externalHistoryImportV1: {
+        v: 1,
+        providerId: 'pi',
+        remoteSessionId: 'pi_imported',
+        importedAtMs: 123,
+        source: { kind: 'piAgentDir', agentDir: '/home/user/.pi/agent' },
+      },
+    };
+    fetchSessionsPageMock.mockResolvedValueOnce({
+      sessions: [{ id: 'sess_imported_pi', metadata: importedMetadata }],
+      hasNext: false,
+      nextCursor: null,
+    });
+    tryDecryptSessionMetadataMock.mockImplementation(({ rawSession }: { rawSession: { metadata?: unknown } }) => rawSession.metadata);
+
+    const result = await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'pi',
+      remoteSessionId: 'pi_imported',
+      source: { kind: 'piAgentDir', agentDir: '/home/user/.pi/agent' },
+      directoryHint: '/repo',
+      nowMs: () => 456,
+    });
+
+    expect(result).toEqual({ sessionId: 'sess_imported_pi', created: false, tag });
+    expect(getOrCreateSessionByTagMock).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+  });
+
   it('discriminates pi direct sessions by agentDir so identical remote ids do not collide', async () => {
     getOrCreateSessionByTagMock.mockResolvedValueOnce({ session: { id: 'sess_direct_pi_a', metadata: {} } });
     getOrCreateSessionByTagMock.mockResolvedValueOnce({ session: { id: 'sess_direct_pi_b', metadata: {} } });
