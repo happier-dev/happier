@@ -174,7 +174,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor({ openSession });
@@ -220,9 +220,14 @@ describe('createDefaultActionExecutor (session.fork)', () => {
         },
       },
       settings: {
+        sessionReplayEnabled: true,
         sessionReplayStrategy: 'summary_plus_recent',
         sessionReplaySummaryRunnerV1: runner,
         sessionReplayMaxSeedChars: 54_321,
+        // The summary runner is an LLM task and follows the execution-runs
+        // feature, which is experimental and off by default.
+        experiments: true,
+        featureToggles: { 'execution.runs': true },
       },
     });
 
@@ -241,6 +246,136 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       replaySummaryRunner: runner,
       replayMaxSeedChars: 54_321,
     }));
+  }, 60_000);
+
+  it('requests a native fork instead of falling back to Replay when the account disabled Replay', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1', flavor: 'codex', codexBackendMode: 'appServer' },
+        },
+      },
+      settings: { sessionReplayEnabled: false },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    // `auto` is what lets the daemon settle on Replay; the account turned Replay off.
+    expect(forkSessionOpMock).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 'sess_parent',
+      strategy: 'native',
+    }));
+  }, 60_000);
+
+  it('refuses the fork when Replay is off and this Agent has no native fork route', async () => {
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1', flavor: 'claude' },
+        },
+      },
+      settings: { sessionReplayEnabled: false },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+    );
+
+    // This executor envelope reports the action's own refusal in `result`.
+    expect((res as any).result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(forkSessionOpMock).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it('clamps an out-of-range replay seed budget to what the fork wire accepts', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1' },
+        },
+      },
+      // The stored account setting permits a wider range than the fork wire schema, so an
+      // unclamped forward would be rejected as invalid rather than bounded.
+      settings: { sessionReplayEnabled: true, sessionReplayMaxSeedChars: 500_000 },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(forkSessionOpMock).toHaveBeenCalledWith(expect.objectContaining({
+      replayMaxSeedChars: 200_000,
+    }));
+  }, 60_000);
+
+  it('omits the replay summary runner when the execution-runs feature is off', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1' },
+        },
+      },
+      settings: {
+        sessionReplayEnabled: true,
+        sessionReplayStrategy: 'summary_plus_recent',
+        sessionReplaySummaryRunnerV1: {
+          v: 1,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          modelId: 'default',
+          permissionMode: 'no_tools',
+        },
+        featureToggles: { 'execution.runs': false },
+      },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    // The summary runner is an LLM task; it follows the execution-runs feature
+    // exactly as it does on every other fork entry point.
+    expect(forkSessionOpMock.mock.calls[0]?.[0]).not.toHaveProperty('replaySummaryRunner');
   }, 60_000);
 
   it('delegates session fork even when session metadata machineId is missing', async () => {
@@ -264,7 +399,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           metadata: {},
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -311,7 +446,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -357,7 +492,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -411,7 +546,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -462,7 +597,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -524,7 +659,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();
@@ -566,7 +701,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           },
         },
       },
-      settings: {},
+      settings: { sessionReplayEnabled: true },
     });
 
     const executor = createDefaultActionExecutor();

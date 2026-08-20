@@ -55,6 +55,10 @@ import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles'
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
+import { resolveSessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
+import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import {
   isRequestedSessionModeSupported,
@@ -144,19 +148,38 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const machineId = resolveSessionMachineId(sid, session?.metadata ?? null);
 
       const settings = stateAny?.settings ?? null;
-      const replaySummaryRunner =
-        settings?.sessionReplayStrategy === 'summary_plus_recent'
-          ? (settings?.sessionReplaySummaryRunnerV1 ?? null)
-          : null;
-      const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number' ? settings.sessionReplayMaxSeedChars : undefined;
+      const forkPoint = { type: 'latest' } as const;
+      // One fork policy for every surface. This executor has no strategy modal
+      // to show, so it reads the same availability the modal renders and asks
+      // for the exact route that modal would have offered. An unqualified
+      // request is what let the daemon settle on Replay for an account that
+      // turned Replay off.
+      const availability = resolveSessionForkStrategyAvailability({
+        session,
+        forkPoint,
+        replayEnabled: resolveHappierReplayConfig(settings ?? {}).enabled,
+        // Source-context continuation is a navigation to the New Session
+        // screen; this executor has no such route, so it is not one of its
+        // options rather than a route it silently fails to take.
+        agentSwitchingEnabled: false,
+      });
+      if (!availability.native && !availability.replay) {
+        return { ok: false, errorCode: 'action_disabled', errorMessage: 'action_disabled' };
+      }
+      const replayOptions = resolveSessionForkReplayOptions({
+        settings,
+        executionRunsEnabled: resolveLocalFeaturePolicyEnabled('execution.runs', settings ?? {}),
+      });
 
       const result = await forkSessionOp({
         ...(machineId ? { machineId } : {}),
         serverId,
         parentSessionId: sid,
-        forkPoint: { type: 'latest' },
-        ...(typeof replayMaxSeedChars === 'number' ? { replayMaxSeedChars } : {}),
-        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
+        forkPoint,
+        // `auto` is the only value that can fall through to Replay, so it stays
+        // the request exactly while Replay is a route the account allows.
+        ...(availability.replay ? {} : { strategy: 'native' as const }),
+        ...replayOptions,
       } as any);
       if ((result as any)?.ok !== true) return result as any;
 
