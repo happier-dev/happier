@@ -13,6 +13,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.resource',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   setup: async () => {
     const resource = await acquirePluginOwnedResource();
     return async () => resource.close();
@@ -23,6 +24,12 @@ export const { manifest, activate } = definePlugin({
 The callback owns only resources the plugin acquired after activation began
 successfully. Happier invokes it at most once when that activation is no longer
 serving or when later validation fails.
+
+Activation belongs to one daemon-owned accepted generation. When a replacement
+is admitted, new work moves to that generation and the retiring generation's
+cleanup releases only its plugin-owned resources. Do not use cleanup to
+dispose host-owned Sessions, transcripts, candidates, or the previous
+generation's last-known-good fallback.
 
 If activation rejects before returning, use local `try`/`finally` for anything
 acquired directly. Happier can release host-tracked registrations and dynamic

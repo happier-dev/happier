@@ -22,6 +22,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.runtime',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   agents: {
     example: {
       declaration: {
@@ -52,6 +53,20 @@ The `agents.example` local id projects the matching
 Session-capable custom Agent, it also needs a distinct named
 `sessionRunnerFactory` leaf; execution-run-only custom Agents must not declare
 one.
+
+For a complete package rather than this shape-only excerpt, start with the
+compiled and packed
+[`advanced-package-root`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/advanced-package-root)
+reference. From its package root, its maintained author loop is:
+
+```bash
+happier plugins author typecheck .
+happier plugins author build .
+happier plugins test . --packed
+```
+
+It demonstrates a custom Session Agent, External Sessions companion, managed
+Provider, Connected Account purpose, and generation-scoped background work.
 
 ## Runtime contents
 

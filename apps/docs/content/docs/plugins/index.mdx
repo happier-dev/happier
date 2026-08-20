@@ -53,6 +53,8 @@ Start from the thing you need to add, not from a broad API inventory:
   <Card title="Activation API" href="/plugins/api/activation" />
   <Card title="Runtime context" href="/plugins/api/context" />
   <Card title="Agent runtimes" href="/plugins/agent-runtimes/agent-runtime" />
+  <Card title="Authoring CLI" href="/plugins/packaging/authoring-cli" />
+  <Card title="Diagnostics and errors" href="/plugins/testing/diagnostics" />
   <Card title="Hooks and lifecycle" href="/plugins/api/hooks" />
   <Card title="Events" href="/plugins/api/events" />
   <Card title="Security and permissions" href="/plugins/security" />
@@ -73,12 +75,13 @@ Start from the thing you need to add, not from a broad API inventory:
 - Keep Agent-specific behavior inside the plugin-owned Agent runtime leaf.
 - Do not write Happier transcript rows, session rows, or execution-run state directly from agent code.
 
-Every current author-facing export is marked experimental, and the workspace
-package is private at `0.0.0` on a prepublication hold. Treat this as a
-Developer Preview source contract, not an installable public release or a
-released-semver compatibility promise. Preview status does not waive
-correctness, install safety, lifecycle cleanup, security disclosure, or
-documentation.
+The SDK is one package-level **Developer Preview** source contract. The
+workspace package is private at `0.0.0` on a prepublication hold, so this is
+not an installable public release or a released-semver compatibility promise.
+Use the current public entrypoint inventory and capability matrix for the
+authoring contract; do not infer a different stability tier per export.
+Preview status does not waive correctness, install safety, lifecycle cleanup,
+security disclosure, or documentation.
 
 ## Where plugin code runs
 

@@ -16,20 +16,32 @@ Fast deterministic tests for pure logic/component behavior.
 yarn test
 ```
 
-This runs:
-- `yarn workspace @happier-dev/protocol test`
-- `yarn workspace @happier-dev/transfers test`
-- `yarn workspace @happier-dev/agents test`
-- `yarn workspace @happier-dev/cli-common test`
-- `yarn workspace @happier-dev/support test`
-- `yarn workspace @happier-dev/connection-supervisor test`
-- `yarn workspace @happier-dev/app test`
-- `yarn workspace @happier-dev/cli test:unit`
-- `yarn --cwd apps/server test:unit`
-- `yarn --cwd packages/relay-server test`
-- `yarn --cwd apps/stack test:unit`
+This runs the workspace test script of every workspace named by the root `test:unit:local` script.
+That script is the single source of truth for the unit lane: `yarn test:wiring` derives the expected
+CI coverage from it and fails when a workspace it runs has no matching CI step, so the list is never
+duplicated here or in the workflow.
 
 Note: the UI workspace package name is `@happier-dev/app` and its directory is `apps/ui`.
+
+### 1b) Plugin workspace unit tests
+
+**Root command:**
+```bash
+yarn test:plugin-workspaces
+```
+
+This discovers plugin workspaces from the root workspace metadata and runs each package's declared `test` script. It fails if no plugin workspaces are selected or if a plugin workspace lacks an executable `test` or `typecheck` script. Run the same derived package set through typechecking with `yarn typecheck:plugin-workspaces`. CI runs the test and typecheck lanes separately from the ordinary unit lane; it still executes plugin typechecks after a test failure so both results are visible.
+
+### 1c) Plugin Platform contract tests
+
+**Root command:**
+```bash
+yarn test:plugin-platform:contracts
+```
+
+This runs every `packages/tests/src/plugin-platform/*.test.ts` contract test. The file set is derived
+from the directory, so a new contract test beside the existing ones is executed without editing a
+script list. CI runs this lane alongside the shared package unit tests.
 
 ### 2) Integration
 
@@ -394,6 +406,7 @@ Workflow: `CI — Tests` (`.github/workflows/tests.yml`)
 
 Default gate includes:
 - Unit (shared workspace packages + app/unit lanes)
+- Plugin workspace unit tests (derived from root workspace metadata)
 - Integration (UI/CLI/Server/Stack app lanes)
 - Governance validators (`test:wiring`, `test:policy`, plus report-only inventory commands)
 - Typecheck

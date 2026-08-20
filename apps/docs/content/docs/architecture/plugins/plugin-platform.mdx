@@ -13,6 +13,16 @@ The host reads a plugin source, validates the manifest, checks version compatibi
 
 The host projects contributions into catalogs and UI data without importing daemon executable code.
 
+## Admission and generations
+
+Catalog projection and executable admission are deliberately separate. The
+daemon validates a candidate, gathers the required trust decision, and adopts
+one immutable generation before it routes new executable work there. A
+candidate can therefore be visible in a review or a catalog without becoming
+the active implementation. A failed edit or update leaves the retained
+last-known-good generation serving; plugin authors do not manage a parallel
+activation, currentness, or rollback path.
+
 ## Activation
 
 The host imports daemon code only after trust and validation. Activation receives `PluginApi` and registers executable bindings through its capability families.

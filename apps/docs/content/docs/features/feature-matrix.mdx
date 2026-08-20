@@ -10,6 +10,7 @@ Status legend:
 - **Stable**: intended for regular use
 - **Experimental**: available, still being hardened
 - **Capability-driven**: depends on backend/provider support
+- **Development only**: present in the current development source, not in released builds
 
 ## Core capabilities
 
@@ -21,6 +22,7 @@ Status legend:
 | Happier sessions + resume | Stable | App, Web, CLI | Resume inactive Happier-managed sessions when the provider/backend supports vendor resume for that session. |
 | New session shortcuts | Stable | App, Web, Mobile app | Start a new session from a project or Session info while reusing the relevant session setup; existing composer draft content is preserved while launch selections are replaced. |
 | Session handoff between machines | Capability-driven | App, Web | Move a live session to another machine while keeping the same session id. Claude and OpenCode are supported; Codex is experimental. |
+| Continue with another Agent | Development only | App, Web | Replace the Agent running a session without leaving it: same session id and transcript, a transition divider, and a bounded context recap for the new Agent. Server feature `sessions.agentSwitching`, enabled by default. Not yet in released builds. |
 | Direct provider sessions | Experimental | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
 | Mobile session cockpit | Stable | Mobile app, mobile web | Default phone session layout with bottom tabs for agent chat, Files, Git, open details tabs, and Terminal when available. |
 | Embedded terminal | Experimental | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |

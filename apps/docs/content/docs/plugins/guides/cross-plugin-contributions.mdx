@@ -27,6 +27,7 @@ import {
 export const { manifest, activate } = definePlugin({
   id: 'com.example.channels-target',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   contributionPoints: {
     providers: ConversationProvidersContributionProtocolV1.point(),
   },

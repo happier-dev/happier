@@ -24,6 +24,10 @@ The plugin runtime has three principal public contexts:
 - supported Voice contributions declared by the installed SDK version
 - activation cleanup returned from the code-defined `setup` callback
 
+This list describes source-level ABI families. Consult the installed
+`capability-matrix.json` before author use: a `deferred` family is conformance
+reference material until a maintained plugin proves its canonical lifecycle.
+
 ## Runtime context
 
 Use the services and `context.ui` on `PluginInvocationContext` from invoked handlers. Agent runtimes receive their own bounded factory/session contexts.

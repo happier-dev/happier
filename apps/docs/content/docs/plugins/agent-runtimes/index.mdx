@@ -132,6 +132,68 @@ create/resume/fork, delivery, configuration, compaction, rollback, goal,
 catalog, usage-recovery, terminal, or external-session behavior must remain
 absent and fail closed through the host's typed unavailable path.
 
+## Catalog facts
+
+Happier's bundled Agents carry a few host-behavior facts in Happier's own Agent
+tables. A contributed Agent declares the same facts in an optional strict
+`catalog` block on the contribution, and the host projects both through one
+catalog owner — so a contributed Agent reaches the same contract as a bundled
+one.
+
+```json
+{
+  "id": "example",
+  "catalog": {
+    "vendorResume": { "support": "experimental" }
+  }
+}
+```
+
+`vendorResume.support` is the Agent's own native (vendor-owned) resume level:
+
+- `supported` — the Agent resumes its own sessions; Happier allows a resume spawn.
+- `unsupported` — Happier refuses a resume spawn for this Agent.
+- `experimental` — declared but not enabled. Happier fails closed and reports
+  resume as unsupported unless the Agent supplies its own resume decision.
+
+Omit the block and Happier infers `supported` or `unsupported` from whether
+`capabilities.sessions.open` contains `"resume"`. Declare it when that inference
+is wrong for your Agent, which is the only way to express `experimental`.
+
+## Client UI behavior
+
+An Agent's client presentation behavior — permission-footer handling,
+selectable transcript storage modes, composer facts, and declarative component
+slots — comes from an optional `ui` block on the same contribution:
+
+```json
+{
+  "id": "example",
+  "ui": {
+    "behavior": {
+      "permissions": {
+        "footer": {
+          "usePermissionUpdates": true,
+          "forceReadOnlyAfterStop": false,
+          "supportsExecPolicyAmendment": true,
+          "stopHandling": "denyOnly"
+        }
+      },
+      "newSession": { "transcriptStorageModes": ["persisted", "direct"] }
+    }
+  }
+}
+```
+
+The daemon carries the descriptor verbatim on its contribution-registry
+projection and never interprets it; the client owns the one fail-closed
+interpreter that reads it, so a malformed field is dropped with a diagnostic
+rather than failing the Agent.
+
+An Agent that declares no `ui` block keeps the neutral default: permission
+updates off, read-only after a stop, no exec-policy amendment, stop denies and
+aborts the run, and no selectable transcript storage mode.
+
 ## What agent leaves own
 
 Agent runtime leaves own agent-specific facts:

@@ -1,11 +1,90 @@
 ---
 title: Notifications
-description: Send host-mediated notifications through the public preview service.
+description: Declare notification categories and channels, then send host-mediated notifications from invoked handlers.
 ---
 
-Invoked handlers send notifications through `context.services.notifications`. The host-mediated notification service is available in the public preview; author-facing channel contribution and registration remain deferred until a maintained plugin channel proves the complete product flow.
+Plugins declare notification categories and channels in the manifest and send
+notifications through `context.services.notifications` from invoked handlers.
+The installed SDK's `capability-matrix.json` stays the availability authority
+for every contribution family.
 
-Use the service to send or inspect the supported notification categories, channels, and preferences exposed by the installed SDK version. Use `context.ui.notify(...)` instead when the intent belongs to the current present-user invocation rather than the notification system.
+## Declare a category and a channel
+
+`notifications` is a descriptor family: each category names its kind, the
+events it covers, and the channels it prefers. `notificationChannels` pairs a
+channel descriptor with a `NotificationSender` that performs the delivery the
+host asks for.
+
+```ts
+import type { NotificationSender } from '@happier-dev/plugin-sdk/notifications';
+
+const sendDocumentReviewReady: NotificationSender = async (request) => ({
+  deliveryId: request.deliveryId,
+  channelId: request.channelId,
+  status: 'accepted',
+  evidence: 'provider',
+});
+```
+
+Declare both families in the same `definePlugin` input:
+
+```ts
+notifications: {
+  'document-review-ready': {
+    kind: 'activity',
+    title: 'Document review ready',
+    eventIds: [],
+    defaultChannels: ['webhook'],
+  },
+},
+notificationChannels: {
+  webhook: {
+    declaration: {
+      kind: 'webhook',
+      title: 'Document review webhook',
+      configurable: true,
+      defaultEnabled: true,
+      settings: [{
+        id: 'endpoint',
+        title: 'Webhook URL',
+        schema: { type: 'string', minLength: 1 },
+      }],
+    },
+    sender: sendDocumentReviewReady,
+  },
+},
+```
+
+`examples/action-contract-producer` in the SDK package is the maintained proof
+for this flow: it declares the category and the channel, registers the sender
+through normal activation, and sends through the service from an Action.
+
+## Send from an invoked handler
+
+```ts
+await context.services.notifications.send({
+  clientRequestId: 'document-review-ready',
+  categoryId: 'document-review-ready',
+  title: 'Document review ready',
+}, { signal: context.signal });
+```
+
+`context.services.notifications.send` accepts only categories the plugin
+declares, and only channels that category declares. `clientRequestId` is the
+idempotency key: repeating it with the same content replays the recorded
+result instead of dispatching twice. The service also exposes `listCategories`,
+`listChannels`, `preferences`, and `watchPreferences`.
+
+Use `context.ui.notify(...)` instead when the intent belongs to the current
+present-user invocation rather than the notification system; it does not fall
+back to the notification service.
+
+## Host ownership
+
+The host owns notification preferences, channel selection, Account-scoped
+settings and secret custody, idempotency, currentness, cancellation, and
+delivery outcomes. A plugin channel supplies the delivery boundary the host
+calls; it does not own preference state, dispatch, or its own settings store.
 
 ## Rules
 

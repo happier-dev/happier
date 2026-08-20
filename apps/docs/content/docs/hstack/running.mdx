@@ -187,7 +187,7 @@ For a controlled stack, persist `HAPPIER_STACK_RUNTIME_MODE=require`. From the c
 
 These are four policies over the same owners: source validation reads source and does not publish runtime artifacts; source development starts from last-green outputs and refreshes in the background; managed publication writes changed component artifacts and a reference-only snapshot; release/self-host packaging uses the existing per-target self-contained builders directly from settled component inputs and does not consume or flatten a managed snapshot. A controlled consumer normally selects the newest valid snapshot and starts immediately, then crosses the selected-versus-loaded boundary only on an explicit restart.
 
-For the checkout-derived repository producer, `dev.mjs` automatically schedules successful server/daemon refreshes through the background runtime publisher. It keeps one publication in flight, coalesces later refreshes into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
+For the checkout-derived repository producer, `dev.mjs` automatically requests publication after successful non-destructive server/daemon preparation. Live activation remains separately fenced when newer source arrives, so a superseded restart does not discard useful completed bytes. The background publisher keeps one publication in flight, coalesces later requests into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
 
 ---
 

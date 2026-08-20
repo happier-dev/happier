@@ -20,8 +20,10 @@ happier plugins dev
 The scaffold creates a code-defined plugin declaration, an isolated Vite
 application, a `pluginUiBuild.mjs` target, relative assets, and the managed
 author scripts. `plugins dev`, `happier plugins author build .`, and
-`happier plugins pack .` use the same UI-build owner; a failed build is not
-submitted as a development candidate.
+`happier plugins pack .` use the same UI-build owner. During `plugins dev`,
+the CLI first submits the captured source batch; the daemon runs the build
+before candidate adoption. A failed build prevents adoption and leaves the
+last accepted generation current.
 
 ## Bootstrap boundary
 
@@ -62,12 +64,40 @@ promise an author-controlled immediate recall mechanism.
 
 ## Build and runtime availability
 
-The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified.
-
 `kind: 'hostedWeb'` deliberately declares one portable web graph and does not
-accept author-owned `platforms`. Runtime admission owns whether that unchanged
-graph can be framed on browser/desktop, iOS, or Android. Until the relevant
-adapter passes, the emitted graph is useful source/build coverage but is not an
-advertised packaged runtime path. It is never valid to substitute a dev server,
-remote URL, blob URL, source checkout, or URL-encoded launch data for that
-adapter.
+accept author-owned `platforms`. The graph never varies by host. What varies is
+the physical frame adapter each host can construct, and every host reports that
+one fact to runtime admission. Authors never select, branch on, or work around
+it, and it is never valid to substitute a dev server, remote URL, blob URL,
+source checkout, or URL-encoded launch data for the adapter.
+
+Each row below is derived by the host that owns it — the browser probes a
+sandboxed iframe, the packaged desktop shell asks its Artifact frame owner, and
+the mobile hosts report the native adapter their renderer already proved. A
+host that cannot construct its adapter reports the typed reason instead, so an
+unimplemented cell is never presented as a generic "desktop is unsupported"
+claim.
+
+| Host | Frame adapter | Reported runtime status |
+| --- | --- | --- |
+| Browser | DOM iframe | `{ platform: 'web', adapter: 'domIframe' }` |
+| Packaged desktop — macOS | Direct Wry child (`WKWebView` subview) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Linux/Wayland | None | `desktop_hosted_artifact_wayland_gtk_container_unimplemented` |
+| Packaged desktop — Linux, no display server | None | `desktop_hosted_artifact_linux_display_unavailable` |
+| iOS | `WKWebView` | `{ platform: 'ios', adapter: 'WKWebView' }` |
+| Android | `WebViewAssetLoader` | `{ platform: 'android', adapter: 'WebViewAssetLoader' }` |
+
+Linux/Wayland is the one desktop cell with no adapter. Wry's `build_as_child`
+constructor requires an X11 parent window handle and returns
+`UnsupportedWindowHandle` under Wayland, which has no X11-style native
+subwindow. Wry's supported Wayland route builds into an application-owned
+`gtk::Fixed` that overlays the shell's own webview — a different host widget
+topology than the direct child every other desktop cell uses — so the shell
+reports the typed reason rather than a frame it cannot construct.
+
+Availability is a transport fact only. It does not attest to Artifact hosting,
+Account eligibility, an endpoint, or any other server-owned admission
+condition, and an available adapter is not by itself a statement that a given
+host has completed device QA.

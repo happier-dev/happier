@@ -53,10 +53,12 @@ import {
 export const { manifest, activate } = definePlugin({
   id: 'com.example.my-plugin',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   displayName: 'My plugin',
   actions: {
     'save-note': {
       title: 'Save note',
+      execution: { target: 'daemon' },
       inputSchema: defineProtocolObject({}, { policy: 'closed' }),
       async run() { return {}; },
     },

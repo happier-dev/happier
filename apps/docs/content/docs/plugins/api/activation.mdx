@@ -3,9 +3,10 @@ title: Activation
 description: Bind executable plugin behavior to manifest-declared local ids.
 ---
 
-Ordinary plugin modules use `definePlugin(...)`. It is the single authoring
-path: one declaration produces the cold manifest and the matching named
-`activate` ABI without maintaining a second handwritten module.
+Ordinary root/daemon plugin modules use `definePlugin(...)`. It is the single
+authoring path for daemon behavior: one declaration produces the cold manifest
+and the matching named `activate` ABI without maintaining a second handwritten
+module.
 
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -13,19 +14,27 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.echo',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   actions: {
     echo: {
       title: 'Echo',
+      execution: { target: 'daemon' },
       run: async (input) => input,
     },
   },
 });
 ```
 
-The generated activation is registration-only. It receives `PluginApi`, not
-invocation or session services, and binds only ids declared in the matching
-manifest family. Missing, undeclared, duplicate, or wrong-family registrations
-fail validation.
+The generated root activation is registration-only. It receives `PluginApi`,
+not invocation or session services, and binds only daemon-target ids declared
+in the matching manifest family. Missing, undeclared, duplicate, or
+wrong-family registrations fail validation.
+
+A client-target Action is different: its root declaration has no `run`. The
+exact client artifact named by `execution.client` exports its own ordinary
+`activate(api)` function, receiving the narrow `PluginClientApi` for Action
+and Voice registrations only. See [Actions, tools, and commands](/plugins/api/actions-tools-commands)
+for that two-module shape.
 
 Static manifest-declared registration methods return `void`. Dynamic watches
 or subscriptions may return `Disposable` when their documented lifetime is

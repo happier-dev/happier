@@ -18,6 +18,31 @@ Bind executable MCP behavior through `definePlugin(...)`:
 
 Runtime-discovered per-session servers should be returned through the MCP runtime/discovery APIs, not promoted into the static plugin catalog by side effect.
 
+## Declaring which agent a discovery source belongs to
+
+A discovery source must declare its owning agent as `metadata.agentId` on the
+contribution declaration. Detection uses that declared id — bundled and
+externally contributed agent ids alike — and never infers one from the
+contribution's local id. A source without it is reported as an `unsupported`
+detection warning and contributes no servers.
+
+```ts
+mcp: {
+  discoverySources: {
+    config: {
+      declaration: { title: 'Acme MCP configuration', metadata: { agentId: 'acme.cli' } },
+      discover: async (input) => ({ items: [], endpoints: [], warnings: [] }),
+    },
+  },
+}
+```
+
+This one declaration is also what puts the agent on the MCP settings screen's
+detected-servers tab. Happier derives the scan offer from the discovery source
+the agent owns, so there is nothing else to declare — and no way for the screen
+to offer a scan that has no source behind it. Bundled and externally contributed
+agents reach the screen the same way.
+
 ## Session-scoped MCP
 
 Agent session runtimes resolve MCP servers through

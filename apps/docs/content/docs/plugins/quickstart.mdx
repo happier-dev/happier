@@ -6,6 +6,9 @@ description: Create, develop, test, build, pack, and install a minimal Happier p
 The default scaffold contains one code-defined plugin module, one action, one
 focused test, and the package metadata needed by the current author tools.
 
+For every authoring command and the exact review-decision lifecycle, see the
+[Plugin authoring CLI](/plugins/packaging/authoring-cli) reference.
+
 > Release status: the author packages are not publicly installable yet. The
 > empty-directory flow remains a packed/live release gate until an approved
 > Preview artifact is published. Source and schema checks in this repository do
@@ -36,11 +39,12 @@ public build contract. The hosted scaffold emits its isolated artifact and
 bootstrap client, but its packaged browser/desktop, iOS, and Android runtime
 paths remain unavailable until their respective frame adapters are verified.
 
-`plugins dev` is the automatic watcher flow: after trust it evaluates the
-selected author module, validates its projected manifest, installs declared
-development dependencies with Happier's managed toolchain, observes the source
-closure, and sends each valid change to the daemon. The daemon imports the
-development module only as the activation entry and calls its generated
+`plugins dev` is the automatic watcher flow: after trust, the CLI observes the
+source closure and submits each captured batch to the daemon. After submission,
+the daemon-owned candidate lifecycle materializes declared development
+dependencies, builds declared UI artifacts, evaluates the selected author
+module, and validates its projected manifest before adoption. The daemon imports
+the development module only as the activation entry and calls its generated
 `activate(api)` export.
 
 This normal create-to-dev loop prepares dependencies automatically; do not run
@@ -99,10 +103,12 @@ import {
 export const { manifest, activate } = definePlugin({
   id: 'com.example.my-plugin',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   displayName: 'My plugin',
   actions: {
     'save-note': {
       title: 'Save note',
+      execution: { target: 'daemon' },
       inputSchema: defineProtocolObject({
         note: defineProtocolString(),
       }, { policy: 'closed' }),
@@ -110,7 +116,7 @@ export const { manifest, activate } = definePlugin({
         note: defineProtocolString(),
       }, { policy: 'closed' }),
       async run(input) {
-        return { note: input.note };
+        return { note: (input as Readonly<{ note: string }>).note };
       },
     },
   },

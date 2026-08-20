@@ -25,6 +25,12 @@ archive even though authors do not keep that file in the source tree. Packing
 includes only selected regular files and rejects unsafe archive paths and
 package lifecycle assumptions.
 
+The same pack step writes generated `happier.compatibilityProjection` and
+`happier.marketplaceDiscovery` data into the staged `package.json`. Do not add
+or maintain those fields in source metadata: they are derived from the
+canonical manifest and generated UI inventory, including the exact staged
+manifest digest.
+
 ## Include
 
 - the generated `.happier-plugin/plugin.json` cold projection

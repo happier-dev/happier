@@ -23,9 +23,11 @@ Trust the package only after reviewing its source, build inputs, dependencies, d
 ## Development sources
 
 `happier plugins dev` starts the supported local development loop from the
-plugin directory. It inspects the project, prepares author dependencies,
-observes source changes, and asks the running daemon to apply the development
-source. Development convenience does not turn untrusted code into a sandbox.
+plugin directory. The CLI inspects the project, observes source changes, and
+submits each captured batch to the running daemon. The daemon-owned candidate
+lifecycle prepares author dependencies before it validates and adopts a
+development generation. Development convenience does not turn untrusted code
+into a sandbox.
 
 ## Static projection
 

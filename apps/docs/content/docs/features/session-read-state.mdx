@@ -41,6 +41,8 @@ For normal Happier sessions, marking unread moves your read position to just bef
 
 For Direct sessions, the same action also updates the direct-session attention marker so the linked provider session can still appear as needing review.
 
+Marking a session unread is not a good way to keep a session in front of you after you have read it, because opening it again clears the unread state and the session drops back down the list. Use [Keep in Needs attention](#keeping-a-session-in-needs-attention) for that.
+
 ## What Mark as read does
 
 Use **Mark as read** when the session no longer needs unread attention.
@@ -48,6 +50,34 @@ Use **Mark as read** when the session no longer needs unread attention.
 For normal Happier sessions, Happier moves your read position to the latest committed transcript activity.
 
 For Direct sessions, Happier also records the currently observed provider progress as viewed. The unread badge clears unless newer transcript or provider activity appears afterwards.
+
+## Keeping a session in Needs attention
+
+Read state tracks whether you have seen a session yet. It is a poor fit for a session you have already read and still want near the top, because reading it is exactly what clears the signal.
+
+**Keep in Needs attention** covers that case directly. A session you keep stays in the attention area of the session list whatever its read state, until you remove it.
+
+- **Keep in Needs attention** holds the session there after you read it.
+- **Remove from Needs attention** lets it move back down the list again.
+
+You will find it with the other session actions, alongside **Mark as unread**. Session-list multi-select offers the same choice for several sessions at once.
+
+A kept session shows **kept in attention** as its status line, so it stays distinguishable from a session that is in the attention area because it is unread, ready, or waiting on you. Kept sessions also sort after those, so a session that genuinely needs you still comes first.
+
+Your choice is stored per session on the server, so it follows you across devices and browser windows for the same account.
+
+### Turning the attention area on
+
+The attention area itself comes from **Settings → Session → Sessions needing attention**, which is **Leave in normal position** by default. Set it to **Group at top** or **Move to top of current group** first; until then nothing is placed there and keeping a session has nothing to hold it in.
+
+### Choosing the default
+
+**Settings → Session → Keep sessions in Needs attention** decides what happens to sessions you have not made a choice about:
+
+- **off** (the default): sessions leave the attention area as soon as they no longer need you, and you keep the ones you care about one at a time
+- **on**: every session stays in the attention area until you remove it, which turns the area into a list you clear by hand
+
+A per-session choice always wins over the default, in both directions: a session you removed stays out of the attention area even when the default is on.
 
 ## When the session is already open
 
@@ -112,6 +142,8 @@ Happier hides manual read-state actions when they would not make sense:
 - archived sessions
 
 Archived sessions do not contribute to the normal unread activity badge, so showing read-state actions there would be misleading.
+
+**Keep in Needs attention** is hidden in the same cases, and also when the session is shared with you as view-only or when **Sessions needing attention** is left in normal position.
 
 ## Related guides
 

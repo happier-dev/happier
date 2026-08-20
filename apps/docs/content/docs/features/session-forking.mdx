@@ -5,6 +5,8 @@ description: Branch Happier sessions safely, keep context via hidden replay seed
 
 Session forking lets you branch a session without losing the original conversation. This page explains how Happier session forks work, how replay seeds keep context hidden but intact, and what Codex app-server currently supports for native fork and rollback.
 
+If you want to change the Agent without branching at all, see [Continue with another Agent](/features/continue-with-another-agent) — the same session keeps its id and transcript while its Agent is replaced. In the current development source, the fork flow also offers **Configure a new session**, which opens the normal new-session screen carrying this conversation as removable source context so you can change Agent, model, machine, and folder before the child starts.
+
 ## What you get
 
 - **Fork from any message**: hover a committed message and fork into a new session.
@@ -20,7 +22,7 @@ Happier tries strategies in this order:
 
 1. **Provider-native fork-at-message** (OpenCode server) when you fork a specific message.
 2. **Provider-native fork-at-latest** (Codex app-server, plus ACP backends that expose `session/fork`) when you use the session-level fork action from the current tip.
-3. **Happier replay fork** (always available when replay is enabled) builds a replay seed from the transcript and starts a fresh provider session.
+3. **Happier replay fork** (always available when replay is enabled) builds a replay seed from the transcript and starts a fresh provider session. Replay is enabled by default, so this path is available unless you turn it off in Settings.
 
 If a provider fork is unavailable or fails, Happier falls back to replay automatically.
 
@@ -37,6 +39,8 @@ If a provider fork is unavailable or fails, Happier falls back to replay automat
 - **Summary + recent**: if enabled and `execution.runs` is available, Happier first generates a structured summary (Goal/Instructions/Discoveries/Accomplished/Relevant files) then appends recent messages. If execution runs are disabled, Happier falls back to recent-only.
 
 You can adjust the replay seed budget in Settings (`max seed characters`) to trade context vs. size.
+
+The machine running the session supplies the default when no setting is chosen. Override it on that machine with `HAPPIER_REPLAY_MAX_SEED_CHARS`, which defaults to `120000` and is clamped to the range `1024`–`200000`. The seed's own framing counts against that budget, so the number is a true total rather than a transcript-only allowance. The minimum is not arbitrary: below roughly 800 characters the prompt builder correctly produces **no** seed at all rather than a frame with no conversation under it, so `1024` is the smallest value that can still deliver a usable seed.
 
 ## Ancestor transcript rendering
 

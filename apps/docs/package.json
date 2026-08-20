@@ -5,6 +5,7 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/build.mjs",
+    "test": "node --test \"scripts/**/*.test.mjs\"",
     "dev": "next dev",
     "start": "next start",
     "types:check": "next typegen && fumadocs-mdx && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
@@ -17,6 +18,7 @@
     "fumadocs-ui": "16.4.11",
     "lucide-react": "^0.563.0",
     "next": "16.1.4",
+    "posthog-js": "1.414.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "tailwind-merge": "^3.4.0"

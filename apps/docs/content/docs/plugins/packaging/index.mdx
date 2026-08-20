@@ -11,9 +11,10 @@ cd my-plugin
 happier plugins dev
 ```
 
-`plugins dev` installs declared development dependencies, observes the source
-closure, and asks the daemon to apply valid changes. It is the normal author
-loop; authors do not manage daemon replacement or recovery state.
+`plugins dev` observes the source closure and submits each captured batch to
+the daemon. The daemon-owned candidate lifecycle materializes declared
+development dependencies and validates the candidate before adoption. It is the
+normal author loop; authors do not manage daemon replacement or recovery state.
 
 For a watcher-free development refresh, install the package root in
 development mode and reload from that root:

@@ -5,6 +5,7 @@
     "fixtures",
     "runtime-tests",
     "manual-qa",
-    "debugging"
+    "debugging",
+    "diagnostics"
   ]
 }

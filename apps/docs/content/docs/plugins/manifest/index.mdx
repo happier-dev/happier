@@ -57,7 +57,8 @@ its `definePlugin(...)` source:
         "description": "Returns the supplied note from one minimal plugin action.",
         "scopes": ["global"],
         "surfaces": ["agent", "cli", "mcp"],
-        "placement": "commandPalette",
+        "execution": { "target": "daemon" },
+        "placementBindings": ["commandPalette"],
         "dangerLevel": "safe",
         "inputSchema": {
           "type": "object",

@@ -1,6 +1,6 @@
 ---
 title: Actions, tools, and commands
-description: Register executable operations and expose them across CLI, MCP, and session-agent surfaces.
+description: Declare executable operations, their invocation surfaces, and their execution target.
 ---
 
 Actions are the canonical executable operation model. Tools and commands are convenience surfaces over the same idea.
@@ -15,9 +15,11 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.echo',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   actions: {
     echo: {
       title: 'Echo',
+      execution: { target: 'daemon' },
       run: async (input) => ({ input }),
     },
   },
@@ -26,22 +28,111 @@ export const { manifest, activate } = definePlugin({
 
 Action handlers return JSON-safe values. Throw a typed plugin error when the operation cannot complete:
 
-```js
-{ value: 1 }
+```ts
+import { PluginError } from '@happier-dev/plugin-sdk';
+
+throw new PluginError({
+  code: 'notes.invalid_input',
+  retryable: false,
+});
 ```
 
-Prefer stable error codes over parsing text.
+Prefer stable error codes over parsing text. See
+[Diagnostics](/plugins/testing/diagnostics) for the public guard and the
+diagnostic workflow.
+
+## Invocation surface and execution target
+
+An Action is declared and implemented once. Its `surfaces` say who may invoke
+it; its required `execution` field says where its one handler runs. Those are
+independent decisions.
+
+- `execution: { target: 'daemon' }` runs through the daemon Action executor.
+- `execution: { target: 'client', ... }` names one exact client artifact,
+  module, export, and supported platform list.
+- `host` is not a public plugin target; canonical host ActionSpecs keep their
+  existing host executor.
+- `surfaces` may include `ui`, `plugin`, `voice`, `agent`, `mcp`, or `cli`.
+  Adding `voice` to an Action does not add Voice to the separate Tool surface
+  grammar.
+
+A daemon target's `run` handler is bound by the root module's generated
+`activate(api)`. A client target has no root `run`: its exact client artifact
+exports the ordinary named `activate(api)` function and registers the same
+local Action id with `api.actions.register(...)`. That client API exposes only
+Action and Voice registration, not daemon services or daemon contribution
+families.
+
+A client target is client-local: it is intended to execute in the exact web,
+iOS, or Android process that invoked it. Missing or retired local activation
+must fail unavailable; it must not fall back to a daemon, move to another
+client, or enter a cross-client queue.
+
+> **Development status:** The explicit `daemon | client` declaration is part
+> of the current Developer Preview source contract. End-to-end client Action
+> dispatch and loaded web/iOS/Android proof are still in progress. Do not treat
+> a client-target declaration as a released or currently runnable capability.
+
+For example, the root declaration names the exact client artifact without an
+inline handler:
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.details',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'open-details': {
+      title: 'Open details',
+      surfaces: ['ui', 'voice'],
+      placementBindings: ['detailsPanel'],
+      execution: {
+        target: 'client',
+        client: {
+          artifactId: 'action-client',
+          modulePath: './client-runtime',
+          exportName: 'activate',
+        },
+        platforms: ['web', 'ios', 'android'],
+      },
+    },
+  },
+});
+```
+
+The declared artifact exports that one handler exactly once:
+
+```ts
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+
+export async function activate(api: PluginClientApi) {
+  api.actions.register('open-details', async (_input, context) => {
+    await context.ui.openSurface('details');
+    return null;
+  });
+}
+```
+
+Client handlers receive a client-safe context, including cancellation,
+invocation surface, plugin identity, current-UI context when available, and
+host-owned navigation. They do not acquire daemon services. Existing schema
+validation, availability, generation currentness, cancellation, danger
+classification, confirmation, effect custody, result validation/redaction,
+and no-blind-retry rules remain canonical for every surface and target.
 
 ## Calling host Actions
 
-The generated activation from `actions.<id>.run` binds a Plugin's own
-manifest-declared handlers (the low-level ABI method is
-`api.actions.register(...)`). When a handler needs an existing host operation,
-call the same canonical Action through `context.services.actions.execute(...)`;
-do not create a parallel RPC or duplicate host handler. Use an exact action id
-documented by the feature that owns that operation; the SDK deliberately does
-not maintain a second author-facing dump of every host action id, safety rule,
-or input shape. The owning action contract remains the source of truth.
+The generated root activation from a daemon `actions.<id>.run` binds a Plugin's
+own manifest-declared handler (the low-level ABI method is
+`api.actions.register(...)`). When a daemon handler needs an existing host
+operation, call the same canonical Action through
+`context.services.actions.execute(...)`; do not create a parallel RPC or
+duplicate host handler. Use an exact action id documented by the feature that
+owns that operation; the SDK deliberately does not maintain a second
+author-facing dump of every host action id, safety rule, or input shape. The
+owning action contract remains the source of truth.
 
 ```ts
 const result = await context.services.actions.execute('action.spec.get', {
@@ -51,11 +142,24 @@ const result = await context.services.actions.execute('action.spec.get', {
 });
 ```
 
+The same call reaches another plugin's Action by its exact
+`{ pluginId, localId }` reference. When that Action's handler throws a
+`PluginError`, the rejection you catch carries the target's own `code`,
+`retryable`, and published payload — see
+[Diagnostics and errors](/plugins/testing/diagnostics#errors-across-a-plugin-to-plugin-action-call)
+for what does and does not cross.
+
 ## Tools
 
 Tools expose plugin actions to tool-capable surfaces. The manifest owns tool metadata and references the action that supplies executable behavior; tools do not have a second runtime registration path.
 
 Use tools when the operation is meant to be called by agents or MCP-compatible tool clients.
+
+> **Development status:** Tool declarations remain deferred, conformance-only
+> authoring. Their source and MCP bridge are implemented, but the installed
+> external Tool lifecycle still needs packed replacement, disable, and
+> uninstall proof before the capability matrix can advertise Tools as
+> available.
 
 ### Worked tool example
 
@@ -66,7 +170,7 @@ Declare the tool under `contributes.tools[]`. The `surfaces` list makes it avail
   "contributes": {
     "tools": [
       {
-        "id": "notes.add",
+        "id": "notes-add",
         "name": "session_notes_add",
         "title": "Add session note",
         "description": "Store a note for the current plugin.",
@@ -79,7 +183,7 @@ Declare the tool under `contributes.tools[]`. The `surfaces` list makes it avail
           },
           "required": ["note"]
         },
-        "action": "notes.add"
+        "action": "notes-add"
       }
     ]
   }
@@ -96,9 +200,11 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.notes',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   actions: {
-    'notes.add': {
+    'notes-add': {
       title: 'Add session note',
+      execution: { target: 'daemon' },
       run: async (input, context) => {
         const note = String((input as { note?: unknown }).note ?? '');
         const existing = await context.services.storage.daemon.get<string[]>('notes');
@@ -116,6 +222,31 @@ export const { manifest, activate } = definePlugin({
 
 Commands expose CLI-facing entries. Command declarations specify their path, visibility, availability, and canonical action reference; they do not register a parallel command handler.
 
+> **Development status:** Command declarations and canonical host-catalog
+> wiring exist in current source, but Commands remain deferred for external
+> authors. Exact packed external proof must cover Action invocation,
+> replacement, disable, and uninstall currentness before a published capability
+> matrix or this guide can advertise Commands as available.
+
+### Current-UI commands
+
+The current-UI contract under active development keeps contextual commands as
+data, not callbacks. A mounted surface may contribute bounded presentation and
+one existing semantic command: either `executeAction` or `openSurface`. Voice
+and other readers see only a snapshot-scoped opaque command id plus its title
+and optional description; the executable payload stays local to the client.
+
+Immediately before execution, the client re-reads its current snapshot and
+resolves that opaque id again. A changed selection, retired surface, stale
+generation, or unknown id produces no effect. This preserves the existing
+Action and navigation owners instead of creating a screen-specific Voice
+handler or callback registry.
+
+> **Development status:** The DTOs and semantic-command vocabulary exist in
+> current source, but mounted publication, Voice read/invoke wiring, and loaded
+> candidate proof are not complete. The source-green mounted publication
+> contract is documented under [Plugin UI](/plugins/ui#publish-mounted-semantic-context).
+
 ## Approvals
 
 Dangerous actions should declare danger level and confirmation metadata in the manifest. Runtime approvals should use the host action approval service instead of prompting through agent-specific side channels.
@@ -124,5 +255,6 @@ Dangerous actions should declare danger level and confirmation metadata in the m
 
 - Keep operation identity in the manifest.
 - Keep executable code in handlers.
+- Keep invocation surfaces independent from the single execution target.
 - Keep user-facing placement and availability descriptor-driven.
 - Do not create parallel RPC handlers for operations that fit the action model.

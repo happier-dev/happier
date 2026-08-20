@@ -1,0 +1,145 @@
+---
+title: Plugin authoring CLI
+description: Use the one local create, development, validation, review, and package command lifecycle.
+---
+
+This page is the canonical command reference for plugin authors. Run commands
+from the plugin root unless a command takes an explicit path. `--json` selects
+the structured result for automation; it does not bypass review or trust.
+
+## Create and develop
+
+```bash
+happier plugins create my-plugin --id com.example.my-plugin
+cd my-plugin
+happier plugins dev
+```
+
+`happier plugins create <name> [--id <plugin.id>] [--name <display name>]
+[--ui hostedWeb|reactNative]` creates the normal code-defined TypeScript
+package. React Native is the executable UI option with supported client
+realms. A hosted-web scaffold is a source/build reference only while its
+Artifact-backed runtime adapter remains unavailable.
+
+`happier plugins dev [path] [--sdk-registry <origin>]` is the normal edit
+loop. The CLI observes the source closure and submits each captured batch to the
+daemon. After submission, the daemon-owned candidate lifecycle materializes
+declared dependencies, builds declared UI artifacts, evaluates the candidate,
+and validates it before adoption. On cold start the CLI also materializes the
+author root itself when nothing has materialized it yet, so the directory you
+edit resolves its declared dependencies; a root whose declared SDK already
+resolves is left alone rather than reinstalled, and an interrupted first run is
+repaired on the next start. Do not run
+`happier plugins author install .` before this loop: it is the explicit repair
+command, not a prerequisite. Pass
+`--sdk-registry <origin>` only when the selected SDK must resolve from an
+approved registry origin.
+
+## Check the author package
+
+```bash
+happier plugins author typecheck .
+happier plugins author build .
+happier plugins test .
+happier plugins test . --packed
+```
+
+- `happier plugins author install <path> [--sdk-registry <origin>]` prepares an
+  external-author fixture, and repairs or refreshes an author root whose package
+  tree is stale or wiped. It is not a prerequisite for `plugins dev`.
+- `happier plugins author typecheck <path>`,
+  `happier plugins author build <path>`, and
+  `happier plugins author test <path>` run the managed focused check named by
+  the subcommand.
+- `happier plugins test [path]` runs the plugin's daemon-independent suite.
+  Its `--packed` mode packs, trusts, installs, restarts, and invokes the
+  package through a disposable daemon; it never reads or mutates the author's
+  installed-plugin state. `--with-plugin <root-or-archive>` supplies an
+  explicitly composed companion for that packed proof.
+- `happier plugins doctor [path]` evaluates the code-defined author module once
+  and reports import or top-level evaluation diagnostics. It does not prove
+  repeated evaluation is pure.
+
+Use [Diagnostics and errors](/plugins/testing/diagnostics) to distinguish
+these owner-level checks from an admitted candidate or a loaded client surface.
+
+## Pack and install
+
+```bash
+happier plugins pack . --out ./my-plugin.tgz
+happier plugins install ./my-plugin.tgz --kind archive
+```
+
+`happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>]`
+validates the package and writes its selected-file npm-compatible archive.
+Packing derives the cold manifest from `definePlugin(...)`; authors do not keep
+a second checked-in manifest. See [Pack plugins](/plugins/packaging/pack) for
+archive contents.
+
+`happier plugins install <path|archive|package> [--kind path|archive|npm]
+[--selector <version>] [--integrity <sha256-SRI>] [--dev] [--dry-run]` submits
+one reviewed install to the active daemon. The daemon, rather than the CLI,
+owns package activation, currentness, and retained last-known-good behavior.
+Use `--dev` only for an intentional watcher-free package-root development
+source. [Install and trust](/plugins/packaging/install-trust) owns the detailed
+trust, update, rollback, enable/disable, inspection, and uninstall contracts.
+
+## Reload a development source
+
+```bash
+happier plugins install . --dev
+happier plugins reload
+```
+
+`happier plugins reload [developmentPluginId]` reruns the daemon-owned cycle
+for the development source registered for the current directory. When more
+than one registered source contains that directory, pass the explicit plugin
+id. A failed replacement leaves the last accepted generation serving; do not
+start a second watcher or invent a source-only reload path.
+
+## Review a pending change
+
+An install or development request can return a daemon-issued pending change
+ID. Review and decide that exact request:
+
+```bash
+happier plugins change status <pendingChangeId> --json
+happier plugins change approve <pendingChangeId> --json
+happier plugins change reject <pendingChangeId> --json
+```
+
+`status` is read-only. `approve` and `reject` are explicit present-user
+decisions; an Agent may prepare a request but cannot decide it. A source-root
+approval can return `reviewRequired` with the same pending ID when package
+review remains. Review the reported package facts, then use `approve` again on
+the same pending ID. `reject` cancels the request. JSON or noninteractive
+installation never auto-approves, and a direct noninteractive approval selects
+no optional host resources.
+
+The same decision is available in the app. Settings -> Plugins lists every
+change the machine's daemon is still holding, including one an Agent prepared,
+and offers the same approve and reject decisions with the full review. Use it
+when the initiating result is not in front of you.
+
+Pending IDs are rejoinable only during the same daemon lifetime. If `status`
+reports `expired` after restart, rerun the original request and review its new
+facts. If a mutation reports `outcome_unknown`, inspect installed state before
+replaying it. The listing is daemon-lifetime state, not a durable queue: a
+restarted daemon holds nothing, so preserve the ID surfaced by the initiating
+result whenever you can query that exact request.
+
+## Other plugin administration
+
+The `happier plugins` command also owns these product and operator surfaces;
+they are not alternate authoring lifecycles. Use their specific help output for
+flags and the linked install, Settings, registry, or marketplace documentation
+rather than repurposing them to prepare a source candidate.
+
+| Surface | Commands |
+| --- | --- |
+| Installed inspection | `happier plugins list`, `happier plugins show <pluginId>`, `happier plugins actions <pluginId>`, `happier plugins logs <pluginId>` |
+| Installed lifecycle | `happier plugins enable <pluginId>`, `happier plugins disable <pluginId>`, `happier plugins rollback <pluginId>`, `happier plugins uninstall <pluginId>` |
+| Settings and secrets | `happier plugins settings list <pluginId>`, `happier plugins settings secret status`, `bind`, `unbind`, and `delete` |
+| Private registries | `happier plugins registry add`, `login`, `test`, `logout`, `remove`, and `list` |
+| Marketplace sources | `happier plugins marketplace sources list`, `add`, `enable`, `disable`, and `remove` |
+| Marketplace listings | `happier plugins marketplace list`, `show`, and `install` |

@@ -13,7 +13,7 @@ dist/happier-plugin-ui/
   react-native-web/<contributionId>/...       # web, Vite + react-native-web-built
 ```
 
-The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified. An emitted hosted-web directory is not an advertised runtime contract by itself.
+The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; each host then reports the one physical frame adapter it can construct, so packaged runtime availability is per host rather than a single global claim. See [Hosted web UI](/plugins/ui/hosted-web#build-and-runtime-availability) for the derived per-host status. An emitted hosted-web directory is not an advertised runtime contract by itself.
 
 A React Native contribution can emit platform-specific entries distinguished by
 `platform` and `builtWith.bundler` (`repack` for iOS/Android and `vite` for
@@ -36,9 +36,10 @@ The command discovers one of these config files at the plugin root:
 same contract with `--help`.
 
 The React Native scaffold uses the public SDK build surface and declares every
-Preview artifact it is responsible for. Its generated Vite and Re.Pack configs
-are part of the package; do not replace them with a web-only target or a
-second hand-run bundler path:
+Preview artifact it is responsible for. The managed builder derives its Vite
+and Re.Pack configuration for that operation; the package declares source
+targets only. Do not replace them with a web-only target or a second hand-run
+bundler path:
 
 ```ts
 import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
@@ -63,7 +64,7 @@ The hosted scaffold instead declares one graph with no `platforms` field:
 ```ts
 {
   rendererId: 'main-web',
-  entry: 'ui/index.ts',
+  entry: 'src/ui/index.ts',
   kind: 'hostedWeb',
 }
 ```

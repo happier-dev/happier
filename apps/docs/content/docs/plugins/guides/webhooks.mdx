@@ -27,10 +27,12 @@ import {
 export const { manifest, activate } = definePlugin({
   id: 'com.example.github-events',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   actions: {
     'receive-github': {
       title: 'Receive GitHub event',
       surfaces: ['plugin'],
+      execution: { target: 'daemon' },
       async run(rawInput) {
         const input = PluginWebhookActionInputSchema.parse(rawInput);
         const rawBody = decodePluginWebhookActionRawBody(input);

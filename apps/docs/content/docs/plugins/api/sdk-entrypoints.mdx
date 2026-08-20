@@ -9,10 +9,11 @@ without reproducing a symbol-level API dump. The publisher generates a
 symbol-level inventory from those same sources when an SDK artifact is ready;
 that generated output is not a second authoring owner.
 
-Every author-facing source export is currently marked experimental, and the
-package is private at `0.0.0` on a prepublication hold. Treat these paths as
-**Developer Preview** source contracts, not as an offer to install a published
-package or a released-semver stability promise.
+The SDK is one package-level **Developer Preview** source contract, and the
+workspace package is private at `0.0.0` on a prepublication hold. Treat these
+paths as current source contracts, not as an offer to install a published
+package or a released-semver stability promise. The generated inventory maps
+the public surface; it does not create a separate stability tier per export.
 
 ## Import rules
 
@@ -71,7 +72,7 @@ package or a released-semver stability promise.
 | `@happier-dev/plugin-sdk/managed-services` | Daemon-realm host-managed service declaration and lifecycle types. | `import type * as ManagedServices from '@happier-dev/plugin-sdk/managed-services';` |
 | `@happier-dev/plugin-sdk/manifest` | Plugin Manifest V2 parsing, validation, and declaration types. | `import type * as Manifest from '@happier-dev/plugin-sdk/manifest';` |
 | `@happier-dev/plugin-sdk/mcp` | Daemon-realm MCP server, client, discovery, tool, prompt, and resource contracts. | `import type * as Mcp from '@happier-dev/plugin-sdk/mcp';` |
-| `@happier-dev/plugin-sdk/notifications` | Host-mediated notification service and preference result types. | `import type * as Notifications from '@happier-dev/plugin-sdk/notifications';` |
+| `@happier-dev/plugin-sdk/notifications` | Host-mediated notification service, channel sender, and preference result types. | `import type * as Notifications from '@happier-dev/plugin-sdk/notifications';` |
 | `@happier-dev/plugin-sdk/protocol` | Validator-neutral JSON schema algebra for reusable feature protocols. | `import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';` |
 | `@happier-dev/plugin-sdk/contributions` | Cross-plugin contribution protocols, points, operation roles, and authoring bindings. | `import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';` |
 | `@happier-dev/plugin-sdk/providers` | Model-provider contribution, binding, and projection types. | `import type * as Providers from '@happier-dev/plugin-sdk/providers';` |

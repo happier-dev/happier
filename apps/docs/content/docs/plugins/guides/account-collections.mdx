@@ -24,6 +24,7 @@ import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 const reviewStatuses = defineAccountCollection({
   id: 'review-statuses',
   schemaVersion: 2,
+  readableSchemaVersions: [1, 2],
   schema: {
     type: 'object',
     properties: {
@@ -35,6 +36,7 @@ const reviewStatuses = defineAccountCollection({
     additionalProperties: false,
   },
   rowIdField: 'id',
+  identityFields: [],
   serverReadable: ['title', 'status'],
   indexes: [{
     id: 'by-status',
@@ -60,6 +62,7 @@ const reviewStatuses = defineAccountCollection({
 export const { manifest, activate } = definePlugin({
   id: 'com.example.review-statuses',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   accountCollections: {
     'review-statuses': reviewStatuses,
   },
@@ -68,8 +71,41 @@ export const { manifest, activate } = definePlugin({
 
 The host accepts one ordered source-to-target chain only: each callback must
 match its declared migration id and adjacent source/target versions in order.
+List every version that remains readable in `readableSchemaVersions`, including
+the current version, so the host can verify that exact chain.
 The callback receives the already-admitted source row and returns the target
 row. It does not select an Account, Collection, storage writer, or retry loop.
+
+## Writing more rows than one batch carries
+
+`batch` is atomic: every operation in one call applies together or none does.
+A deployment bounds how many operations and how many encoded bytes one call may
+carry, so writing a large set means splitting it into several atomic batches.
+
+Do not guess those bounds. Read them from the collection handle:
+
+```ts
+const limits = await collection.limits();
+const measurement = await collection.measureBatch(operations);
+```
+
+`limits()` reports what is actually in force — the deployment's published policy
+narrowed by your collection's admitted quota — and says through `basis` whether
+the deployment published it or the platform default is being assumed.
+`measureBatch()` reports what those operations cost on the wire, measured
+through the same seal-and-serialize path `batch` uses, so the private envelope
+is accounted for on an end-to-end-encrypted Account without you modelling it.
+
+Costs are additive: a batch of any subset encodes to at most
+`overheadEncodedBytes` plus that subset's entries in `operationEncodedBytes`.
+Pack against those numbers, keep any operation that must repeat in every batch
+(such as a fence `assert`) in the measurement, and stay within
+`limits.maxBatchRows`. You may measure more operations than one batch can
+carry — that is the point — and each reported cost stays exact.
+
+The server remains the enforcement owner. Planning against these numbers avoids
+a rejected batch; it does not replace the typed `collection_quota_incompatible`
+failure you must still handle.
 
 ## Failure, retry, and rollback
 

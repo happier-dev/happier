@@ -1,0 +1,85 @@
+---
+title: Diagnostics and errors
+description: Use one public error contract and distinguish author checks from daemon lifecycle evidence.
+---
+
+Use the command or runtime result that owns the failed boundary. A typecheck or
+test failure is author-source evidence; `happier plugins dev` and
+`happier plugins reload` report candidate preparation and admission; a packed
+test proves the disposable-daemon path described by that command. None of
+those results proves that a client mounted a UI or completed an unrelated user
+flow.
+
+## Plugin errors
+
+Use `PluginError` for a stable failure that callers can handle by code. Catch
+unknown values and narrow them with `isPluginError(error)` rather than relying
+on `instanceof`: the guard recognizes the public error contract across
+separately bundled SDK copies in the same JavaScript realm.
+
+```ts
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+
+try {
+  throw new PluginError({
+    code: 'notes.invalid_input',
+    retryable: false,
+    details: { field: 'note' },
+  });
+} catch (error) {
+  if (isPluginError(error)) {
+    console.error(error.code, error.retryable, error.details);
+    throw error;
+  }
+  throw error;
+}
+```
+
+The public error result has a stable `code` and `retryable` signal. It can also
+carry JSON-safe `details`, host-directed `remediation`, bounded `diagnostics`,
+and `actionHandlerInvocation`. Treat absent `actionHandlerInvocation` as an
+unknown invocation outcome; only the canonical Actions host sets
+`notStarted` when it can prove the handler never began. A false `retryable`
+value is the default, and a true value is not a general retry policy: preserve
+the operation's own idempotency and user-approval requirements.
+
+### Errors across a plugin-to-plugin Action call
+
+When your plugin invokes another plugin's Action and that Action's handler
+throws a `PluginError`, your `catch` receives the target's own failure: its
+`code`, its `retryable` signal, and the payload it published (`details`,
+`remediation`, `diagnostics`). Handle a cross-plugin failure by the target's
+documented codes, exactly as you would handle your own.
+
+Three things do not cross, so do not design around them:
+
+- An ordinary `Error` publishes only the host code `plugin_action_execution_failed`
+  and its message. Throw `PluginError` when a caller should be able to react.
+- The error is rebuilt from data, not transported as an object: identity
+  comparisons and `cause` chains do not survive the call.
+- The payload passes the same JSON-safety and byte bound as every Action input
+  and result, and the host's credential redaction still applies to it. Keep
+  `details` small and free of secrets.
+
+Use the error's structured fields, not its message text, for handling and
+tests. A host-mediated client error that satisfies this public shape is handled
+by the same guard; do not depend on an internal transport-error class.
+
+## Diagnose the owning boundary
+
+1. Run `happier plugins author typecheck .` for source/type failures and
+   `happier plugins author build .` for a declared build.
+2. Run `happier plugins test .` for the package's daemon-independent suite, or
+   `happier plugins test . --packed` for the explicit disposable-daemon smoke.
+3. Run `happier plugins doctor .` for an import or top-level evaluation issue.
+   It evaluates once; it does not prove repeated evaluation is pure.
+4. Use `happier plugins dev` or `happier plugins reload` for the
+   daemon-owned candidate result. A rejected candidate leaves the last accepted
+   generation serving.
+5. Inspect daemon/plugin logs and exercise the real surface only when the
+   claim depends on that loaded runtime.
+
+For a review or mutation that returns a pending change ID, use
+`happier plugins change status <pendingChangeId> --json` to inspect that same
+daemon-lifetime operation. Do not create a second request merely to learn its
+state.

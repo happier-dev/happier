@@ -31,17 +31,21 @@ description: Contribution families that a plugin can declare for projection and 
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |
 | `sessionHeaderActions` | **Deferred — conformance only.** Declarative Session-header actions | manifest command reference |
 
-The installed SDK's generated `capability-matrix.json` is the sole availability
-authority. This catalog describes shapes and author fields; it does not create
-a second availability list. A `deferred` row is conformance-only reference
-material, not a supported product lifecycle. Runtime demand is derived from
-the contribution declarations; Manifest V2 has no separate `uses[]` owner.
+The generated `capability-matrix.json` in a proven published SDK artifact is the
+availability authority for that exact artifact. This catalog describes shapes
+and author fields; it does not create a second availability list. A `deferred`
+row is conformance-only reference material, not a supported product lifecycle.
+Runtime demand is derived from the contribution declarations; Manifest V2 has
+no separate `uses[]` owner.
 
 **Deferred — conformance only:** `composer.references`,
 `composer.attachments`, `composer.controls`, and `composer.regions` remain
 visible in the author surface for conformance, but are not product availability
-claims. The matrix also owns the current status of `tools`, `commands`,
-`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers`.
+claims. `tools` and `commands` have source declarations and host wiring, but
+both remain externally deferred until exact packed lifecycle proof covers
+invocation, replacement, disable, and uninstall currentness.
+`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers` likewise
+remain deferred until their named matrix unblock conditions are proven.
 
 ## Cross-plugin contribution points
 

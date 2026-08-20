@@ -13,7 +13,7 @@ React Native plugin code is trusted package code and runs in the client realm; i
 
 ## Hosted web scaffold and availability
 
-The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; packaged runtime support remains unavailable until the platform-specific frame adapter is present and verified.
+The hostedWeb scaffold emits the packaged artifact and canonical bootstrap contract; each host then reports the one physical frame adapter it can construct, so packaged runtime availability is per host rather than a single global claim. See [Hosted web UI](/plugins/ui/hosted-web#build-and-runtime-availability) for the derived per-host status.
 
 Start the source product with the same beginner command as every other plugin:
 
@@ -93,6 +93,68 @@ internals, or import protocol types from an admitted surface.
 `defineUiSurface` remains the only provider installation boundary there. Use
 root hooks for host-backed Actions and Resources; `/data` remains the dedicated
 Collection-query entry.
+
+## Publish mounted semantic context
+
+> **Development status:** `publishCurrentUiContext` is source-green in the
+> public Developer Preview Host API. Its mounted product integration, Voice
+> read/invoke path, and loaded web/iOS/Android candidate proof are still in
+> progress, so this is not a shipped availability claim.
+
+The host automatically supplies a privacy-safe, parameter-free navigation
+baseline. A mounted surface can optionally enrich that baseline with bounded
+semantic data and contextual commands for the lifetime of that exact mount:
+
+```tsx
+import * as React from 'react';
+import { usePluginHostApi } from '@happier-dev/plugin-ui';
+
+function ReviewDetails() {
+  const hostApi = usePluginHostApi();
+
+  React.useEffect(() => {
+    hostApi.publishCurrentUiContext({
+      entity: {
+        kind: 'review',
+        label: 'PR #42',
+        summary: 'Ready for review',
+      },
+      detail: { repository: 'example/widgets' },
+      commands: [{
+        title: 'Open changed files',
+        command: {
+          kind: 'openSurface',
+          destination: 'review-files',
+          input: { reviewNumber: 42 },
+        },
+      }],
+    });
+
+    return () => hostApi.publishCurrentUiContext(null);
+  }, [hostApi]);
+
+  return null;
+}
+```
+
+`publishCurrentUiContext(enrichment)` atomically replaces this mount's prior
+enrichment; passing `null` clears it. Unmount, parent or Account retirement,
+and generation replacement also remove it synchronously. The value is strict,
+bounded JSON data. It cannot contain a callback or become a second route,
+selection, persistence, or navigation owner.
+
+Commands reuse only the existing `executeAction | openSurface` semantic
+command union. The host qualifies local references and exposes only an opaque,
+snapshot-scoped command id to context readers. It retains the command payload
+on the invoking client and resolves the id again against the current snapshot
+before any effect. Plugins do not generate or persist those ids.
+
+This publication does not itself send data to a Voice provider. The active
+Voice client's privacy mode decides whether current-UI data leaves that client,
+and automatic mode sends navigation metadata only; semantic detail and
+commands remain on demand. Maintained built-ins and packed external plugins
+use this same public Host API and mount retirement path, and both remain
+trusted executable package code.
 
 ## Destinations and form factors
 

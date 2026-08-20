@@ -14,7 +14,7 @@ Declare published events and subscriptions in the cold manifest. Each event has 
 `emit` accepts the current plugin's local event id:
 
 ```ts
-await context.services.events.plugin.emit('build.completed', {
+await context.services.events.plugin.emit('build-completed', {
   status: 'ok'
 });
 ```
@@ -27,7 +27,7 @@ Dynamic subscriptions use a structured contribution reference:
 
 ```ts
 const subscription = context.services.events.plugin.subscribe(
-  { pluginId: 'com.example.build', localId: 'build.completed' },
+  { pluginId: 'com.example.build', localId: 'build-completed' },
   async (event) => {
     const payload = event.payload;
   }

@@ -16,10 +16,28 @@ Marketplace entries should provide enough metadata for Happier to show:
 - contribution previews
 - install/trust prompts
 
+## Community npm discovery
+
+Community discovery searches npm's `happier-plugin` keyword only for candidate
+package names and versions. Happier then reads the exact version from its npm
+packument; it does not rely on custom fields returned by search or download
+archives merely to browse listings.
+
+`happier plugins pack` emits the closed
+`happier.marketplaceDiscovery` projection beside the generated compatibility
+projection. npm supplies the package coordinate and `dist.integrity`; the
+projection supplies the manifest-derived display, summary, and exact manifest
+digest. Happier rejects a listing if those generated projections disagree, and
+the install path rechecks the selected SRI and manifest digest against the
+staged archive.
+
 ## Executable trust
 
 Executable marketplace installs should require explicit trust before daemon code runs.
 
 ## Compatibility
 
-Use the manifest schema version, `engines.happier`, and the plugin SDK package version to communicate compatibility. See [Versioning and compatibility](/plugins/packaging/versioning-compat).
+Use the manifest schema version and `engines.happier` to communicate
+compatibility. The pack owner emits the resulting generated compatibility
+projection; it is not author-maintained marketplace metadata. See [Versioning
+and compatibility](/plugins/packaging/versioning-compat).

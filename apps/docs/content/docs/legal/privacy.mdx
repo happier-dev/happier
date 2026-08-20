@@ -3,7 +3,7 @@ title: Privacy Policy
 description: Your privacy is our priority
 ---
 
-**Last Updated: July 2026**
+**Last Updated: August 2026**
 
 ## Overview
 
@@ -32,10 +32,22 @@ Happier is committed to protecting your privacy. This policy explains how Happie
 - **Push Notification Tokens**: Device tokens for sending push notifications via Expo's push notification service
 
 ### Analytics (PostHog)
-- **Anonymous Events**: We collect basic app usage events through PostHog to improve the app experience
+
+We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfurt)**. One PostHog project covers both the app and our websites; every event carries a property naming which of the two it came from, so they can be told apart without ever sharing an identity between them.
+
+**In the app**
+- **Anonymous Events**: We collect basic app usage events to improve the app experience
 - **Privacy by Design**: All analytics events use an anonymized ID derived from a secret key - we cannot match this back to any user or account
 - **No Content Tracking**: Happier analytics track basic app usage events, not message content, code, audio, credentials, or personal information
 - **Opt-Out Available**: You can disable analytics collection at any time in the app settings
+
+**On happier.dev, docs.happier.dev and guides.happier.dev**
+- **No cookies and no visitor ID**: The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
+- **Global Privacy Control is honoured**: If your browser sends the GPC signal — Brave and DuckDuckGo do by default — analytics never start at all.
+- **First-party only**: Analytics requests go to a path on the site you are already reading and are forwarded to PostHog from our own server. The pages make no third-party requests.
+- **No IP addresses**: Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept; the address itself is never stored.
+- **What is recorded**: which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.
+- **Opt-Out Available**: There is a switch in the footer of every page. The record of that choice is the only thing these sites ever write to your device.
 
 ### Subscription Management (Revenue Cat)
 - **Account ID**: Revenue Cat uses your account ID to manage subscriptions and enable premium features

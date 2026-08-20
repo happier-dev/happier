@@ -274,7 +274,7 @@ Important:
 
 These are four policies over the same owners: source validation reads source and does not publish runtime artifacts; source development starts from a valid last-green output and refreshes changed outputs in the background; managed publication builds only requested component code/support and commits a reference-only snapshot; release/self-host packaging uses the existing per-target self-contained builders directly from settled component inputs and does not consume or flatten a managed snapshot. A controlled consumer selects the newest valid snapshot and starts immediately, then reloads newly selected server/daemon bytes only after an explicit restart.
 
-For the checkout-derived repository producer, `dev.mjs` automatically schedules successful server/daemon refreshes through the background runtime publisher. It keeps one publication in flight, coalesces later refreshes into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
+For the checkout-derived repository producer, `dev.mjs` automatically requests publication after successful non-destructive server/daemon preparation. Live activation remains separately fenced when newer source arrives, so a superseded restart does not discard useful completed bytes. The background publisher keeps one publication in flight, coalesces later requests into one trailing identity recomputation, reconciles web/server/daemon identities on restart, preserves the current snapshot and source services on failure, and does not restart consumers.
 
 ## Controlled stacks for agent QA
 

@@ -2,6 +2,7 @@
   "title": "Packaging",
   "pages": [
     "index",
+    "authoring-cli",
     "local-development",
     "install-trust",
     "versioning-compat",

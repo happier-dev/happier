@@ -108,7 +108,19 @@ The Action service validates the exact input and result contract for each id. Us
 
 ## `automation.conversation.admit`
 
-**Admit Automation conversation occurrence** — Admit a Channel conversation occurrence through the canonical Automation owner.
+**Admit Automation conversation occurrence** — Admit a conversation occurrence through the canonical Automation owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `automation.conversation.target.create`
+
+**Create Automation conversation target** — Author a conversation-triggered Automation through the canonical Automation owner.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -120,7 +132,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `automation.conversation.target.verify`
 
-**Verify Automation conversation target** — Verify a Channel-owned conversation target through the canonical Automation owner.
+**Verify Automation conversation target** — Verify an Automation conversation target through the canonical Automation owner.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
@@ -132,7 +144,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `automation.conversation.targets.list`
 
-**List Automation conversation targets** — List current Channel-selectable Automation conversation targets through the canonical Automation owner.
+**List Automation conversation targets** — List current selectable Automation conversation targets through the canonical Automation owner.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
@@ -1523,6 +1535,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `limit` (text): Limit
 - `cursor` (text): Cursor
+- `direction` (select): Direction — Page away from the cursor: before reads older items (the default), after reads newer ones.
 - `maxCharsPerMessage` (text): Message truncation chars — Optional per-message truncation budget. Omit or pass null for full message text.
 
 ## `session.unarchive`

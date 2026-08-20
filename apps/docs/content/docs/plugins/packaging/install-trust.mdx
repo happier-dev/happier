@@ -52,10 +52,23 @@ Install an exact npm version:
 happier plugins install @scope/my-plugin --kind npm --selector 0.1.0
 ```
 
-There is no separate update command. Build and pack the new version, then run
-`plugins install` against the new archive or npm selector. The daemon
-recognizes the existing plugin identity, applies the source's update policy,
-and preserves the last applied generation if the candidate fails validation:
+To update an installed plugin through the daemon's existing trusted channel,
+run:
+
+```bash
+happier install plugin update com.example.my-plugin
+```
+
+For an approved curated npm channel with the `automatic` policy, this explicit
+command selects a compatible newer release and can apply it without another
+trust prompt only while the reviewed source binding, package identity, host
+access, executable realms, and compatibility projection remain compatible.
+`automatic` does not poll registries or install updates in the background.
+
+To replace an archive or select an exact npm version yourself, use
+`plugins install`. The daemon recognizes the existing plugin identity, applies
+the source's update policy, and preserves the last applied generation if the
+candidate fails validation:
 
 ```bash
 happier plugins pack . --out ./my-plugin-0.2.0.tgz
@@ -105,3 +118,7 @@ after a daemon restart, rerun the original development or install request and
 review the newly prepared facts; do not reuse the old pending ID. This is not
 the same as `outcome_unknown`: inspect installed state before deciding whether
 to replay that mutation.
+
+Settings -> Plugins lists the reviews the selected machine's daemon is still
+holding, so a review you no longer have an ID for stays decidable there for
+that daemon lifetime.

@@ -76,15 +76,15 @@ state, or import app, host, or protocol internals. Keep
 ## Code-defined UI declaration
 
 Declare each executable surface with `@happier-dev/plugin-sdk`'s
-`defineUiSurface` and include it in the `ui` family of `definePlugin(...)`.
+`defineUiSurfaceDefinition` and include it in the `ui` family of `definePlugin(...)`.
 Packing projects that one declaration into the cold manifest. `appPage` and
 `settingsPage` derive the app target, while a Session or Project placement
 requires an explicit target.
 
 ```ts
-import { definePlugin, defineUiSurface } from '@happier-dev/plugin-sdk';
+import { definePlugin, defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';
 
-export const mainSurface = defineUiSurface({
+export const mainSurface = defineUiSurfaceDefinition({
   id: 'main',
   placement: 'appPage',
   title: 'My plugin',
@@ -93,10 +93,10 @@ export const mainSurface = defineUiSurface({
     requiredHostMethods: ['context', 'executeAction'],
   },
   build: {
-    entry: 'ui/PluginPanel.tsx',
+    entry: 'src/ui/PluginPanel.tsx',
     platforms: ['web', 'ios', 'android'],
     module: {
-      containerName: 'com_example_my_plugin',
+      containerName: 'happier_plugin_com_example_my_plugin_main_renderer',
       modulePath: './PluginPanel',
       exportName: 'renderSurface',
     },
@@ -106,28 +106,42 @@ export const mainSurface = defineUiSurface({
 export const { manifest, activate } = definePlugin({
   id: 'com.example.my-plugin',
   version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
   ui: {
     surfaces: [mainSurface],
   },
 });
 ```
 
-Use that same declaration in the public build configuration; do not repeat its
-renderer or artifact identity in a second manifest-shaped object:
+`definePlugin(...)` projects the cold manifest, while `pluginUiBuild.mjs` is a
+build-only source input that must load before the daemon module has compiled.
+Use the generated source-relative target there; do not import `dist/index.js`
+or turn the build target into a second manifest-shaped object:
 
 ```ts
-import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
-import { mainSurface } from './plugin.js';
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
 
 export default defineBuildConfig({
-  targets: [...buildUiSurfaceTargets(mainSurface)],
+  targets: [{
+    rendererId: 'main-renderer',
+    entry: 'src/ui/PluginPanel.tsx',
+    kind: 'reactNative',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'happier_plugin_com_example_my_plugin_main_renderer',
+      modulePath: './renderSurface',
+      exportName: 'renderSurface',
+    },
+  }],
 });
 ```
 
-The shorthand derives a collision-free renderer/artifact identity from the
-surface id. Use explicit `ui.views` and `ui.renderers` only for advanced forms
-such as a shared renderer, fallback chain, or custom artifact; those raw forms
-remain supported rather than becoming a second beginner path.
+The scaffold derives the matching initial declaration and build target from one
+plugin id. If you move the source entry, update both declared source paths;
+the build target remains build input only, while `definePlugin(...)` remains
+the one manifest owner. Use explicit `ui.views` and `ui.renderers` only for
+advanced forms such as a shared renderer, fallback chain, or custom artifact;
+those raw forms remain supported rather than becoming a second beginner path.
 
 `requiredHostMethods` is a renderer admission requirement, not a
 method-availability claim. Name only the host methods without which the

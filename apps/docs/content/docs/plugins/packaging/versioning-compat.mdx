@@ -23,11 +23,12 @@ Package semver does not replace the host and runtime compatibility fields.
 
 ## Current Developer Preview source contract
 
-Every current author-owned SDK export is marked experimental. The workspace
-package is private at `0.0.0` on a prepublication hold, so this documentation
-uses **Developer Preview** to describe the source contract; it does not claim
-that an external package can be installed or that a released semver policy is
-already in effect.
+The SDK is one package-level **Developer Preview** source contract. The
+workspace package is private at `0.0.0` on a prepublication hold, so this
+documentation does not claim that an external package can be installed or that
+a released semver policy is already in effect. The source inventory identifies
+public routes; it does not assign a different stability tier per export. No
+public version is established by the current source tree.
 
 - Author-owned `index.public.ts` sources and the package export map define the
   current intended import paths. Publisher-generated inventories are derived
@@ -63,3 +64,9 @@ The workspace package is private at `0.0.0` on a prepublication hold.
 Publication requires the consolidated public API, packed external consumer,
 platform, compatibility, and human approval gates. This guide does not promise
 when that work will make an artifact available.
+
+Source declarations and host wiring establish source readiness, not external
+availability. Tool and Command declarations both remain deferred until an exact
+packed external plugin proves invocation through the canonical host catalog,
+replacement, disable, and uninstall currentness. Only the generated capability
+matrix in a proven published artifact may advertise them as available.

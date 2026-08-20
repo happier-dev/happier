@@ -37,9 +37,13 @@ No-execute projection lets Happier:
 
 ## Handler binding happens later
 
-Executable handlers are bound during daemon activation or runtime invocation.
-For an ordinary author module, `definePlugin({ actions: { ... } })` projects the
-action and generates the matching activation binding from the same local id.
+Executable handlers are bound through the Action's declared daemon or exact
+client activation target. For a daemon target, an ordinary
+`definePlugin({ actions: { ... } })` declaration projects the Action and its
+generated root `activate(api)` binds the same local id. For a client target,
+the declaration projects no root handler: the exact named client artifact
+registers that local id through its own ordinary `activate(api)`. A catalog row
+never relocates a missing client handler to the daemon or another client.
 
 Cross-plugin contribution authoring follows the same rule: a feature protocol's
 `.point()` and `.contribute()` helpers project the target point and contributor
@@ -50,9 +54,10 @@ contributor does not create a callback registry or another dispatcher.
 ## Avoid split-brain declarations
 
 Do not declare the same static contribution in both manifest data and a
-handwritten activation module. `definePlugin` owns both the projected identity
-and generated executable binding; the host-owned low-level ABI exists only for
-conformance fixtures.
+handwritten activation module. `definePlugin` owns the projected identity and
+the generated daemon binding; a declared client artifact may only register the
+handler for that already-projected Action. The host-owned low-level ABI exists
+only for conformance fixtures.
 
 Likewise, do not handwrite raw `contributes` or copy a role's Action facts into
 a second manifest-shaped map. The source author API is `contributionPoints` and
