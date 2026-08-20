@@ -22,7 +22,6 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { readCredentials } from '@/persistence';
-import { ApiClient } from '@/api/api';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
 import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
@@ -185,7 +184,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         activeServerDir: configuration.activeServerDir,
         baseDir: materializationBaseDir,
         credentials: params.credentials,
-        api: await ApiClient.create(params.credentials),
+        api: await (await import('@/api/api')).ApiClient.create(params.credentials),
         accountSettings: params.accountSettings,
         processEnv: process.env,
         // A model/control probe observes current group authority but must never mutate the selected
