@@ -11,7 +11,7 @@ type SessionListFetchHydrationTelemetryParams = Readonly<{
     awaitSessionListHydration?: boolean;
     source?: SessionListFetchHydrationTelemetrySource;
     requiredHydrationSessionIds?: readonly string[];
-    organizationPinnedSessionIds?: readonly string[];
+    organizationRequiredSessionIds?: readonly string[];
     explicitPrioritizedSessionIds?: readonly string[];
     runtimePrioritizedSessionIds?: readonly string[];
     prioritizedHydrationSessionIds?: readonly string[];
@@ -41,10 +41,10 @@ export function buildSessionListFetchHydrationTelemetryFields(
 ): Record<string, number> {
     const source = params.source ?? 'direct';
     const explicitRequiredIds = normalizeSessionListHydrationSessionIds(params.requiredHydrationSessionIds);
-    const organizationPinnedRequiredIds = normalizeSessionListHydrationSessionIds(params.organizationPinnedSessionIds);
+    const organizationRequiredIds = normalizeSessionListHydrationSessionIds(params.organizationRequiredSessionIds);
     const requiredIds = normalizeSessionListHydrationSessionIds([
         ...explicitRequiredIds,
-        ...organizationPinnedRequiredIds,
+        ...organizationRequiredIds,
     ]);
     const explicitPriorityIds = normalizeSessionListHydrationSessionIds(params.explicitPrioritizedSessionIds);
     const runtimePriorityIds = normalizeSessionListHydrationSessionIds(params.runtimePrioritizedSessionIds);
@@ -63,9 +63,9 @@ export function buildSessionListFetchHydrationTelemetryFields(
         sourceLegacyImportedPins: countSource(source, 'legacyImportedPins'),
         sourceChangesCatchUp: countSource(source, 'changesCatchUp'),
         explicitRequiredIds: explicitRequiredIds.length,
-        organizationPinnedRequiredIds: organizationPinnedRequiredIds.length,
+        organizationRequiredIds: organizationRequiredIds.length,
         requiredIds: requiredIds.length,
-        requiredOverlapIds: countIntersection(explicitRequiredIds, organizationPinnedRequiredIds),
+        requiredOverlapIds: countIntersection(explicitRequiredIds, organizationRequiredIds),
         explicitPriorityIds: explicitPriorityIds.length,
         runtimePriorityIds: runtimePriorityIds.length,
         priorityIds: priorityIds.length,

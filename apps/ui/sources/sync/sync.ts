@@ -81,6 +81,7 @@ import { normalizeSessionListAttentionPromotionMode } from '@/sync/domains/sessi
 import {
     buildSessionOrganizationProjection,
     buildSessionOrganizationSnapshotFromProjection,
+    listSessionOrganizationRequiredHydrationSessionIds,
     type SessionOrganizationProjection,
 } from '@/sync/domains/session/organization';
 import { fetchAndApplySessionOrganizationSnapshot } from '@/sync/ops/sessionOrganization';
@@ -3791,18 +3792,19 @@ class Sync {
             ? null
             : buildOrganizationProjectionForServer(storage.getState(), activeServerId);
         const hasOrganizationSnapshot = organizationProjection?.version != null;
-        const organizationPinnedSessionIds = hasOrganizationSnapshot
-            ? [...(organizationProjection?.pinnedSessionIds ?? [])]
-            : [];
+        // One owner for the organization rows this list must hold — pinned sessions and sessions the
+        // user explicitly kept in Needs attention — so a placement the snapshot already carries can
+        // never be computed against a row the cursor page left behind.
+        const organizationRequiredSessionIds = listSessionOrganizationRequiredHydrationSessionIds(organizationProjection);
         if (hasOrganizationSnapshot) {
             persistSessionOrganizationWarmCache(activeServerId, warmCacheAccountId, organizationProjection);
         }
         const requiredHydrationSessionIds = Array.from(new Set([
             ...normalizeSessionListHydrationSessionIds(options?.requiredHydrationSessionIds),
-            ...organizationPinnedSessionIds,
+            ...organizationRequiredSessionIds,
         ]));
         const awaitSessionListHydration = options?.awaitSessionListHydration === true
-            || organizationPinnedSessionIds.length > 0;
+            || organizationRequiredSessionIds.length > 0;
         if (syncPerformanceTelemetry.isEnabled()) {
             syncPerformanceTelemetry.count(
                 'sync.sessions.fetch.hydrationInputs',
@@ -3811,7 +3813,7 @@ class Sync {
                     awaitSessionListHydration,
                     source: options?.hydrationTelemetrySource,
                     requiredHydrationSessionIds: options?.requiredHydrationSessionIds,
-                    organizationPinnedSessionIds,
+                    organizationRequiredSessionIds,
                     explicitPrioritizedSessionIds: explicitPrioritizedHydrationIds,
                     runtimePrioritizedSessionIds: runtimePrioritizedHydrationIds,
                     prioritizedHydrationSessionIds: prioritizedHydrationIds,
