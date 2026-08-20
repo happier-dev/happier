@@ -478,14 +478,19 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       });
       if (!page) {
         everySegmentExhausted = false;
-        // A segment that could not be opened at all is a hole. A page that
-        // failed after the first one is a stop: what was already collected is
-        // real, and re-asking for it is how a slow server turns one failure
-        // into a retry loop.
-        if (firstPage) {
-          segmentContentUnavailable = true;
-          continue walk;
-        }
+        // Both branches are HOLES: rows this walk asked for exist and could not
+        // be read. A first-page failure abandons the segment; a later-page
+        // failure also STOPS the walk, because what was already collected is
+        // real and re-asking for it is how a slow server turns one failure into
+        // a retry loop.
+        segmentContentUnavailable = true;
+        if (firstPage) continue walk;
+        // The stop is still reported — but `stoppedOnBound` alone reads
+        // downstream as a BUDGET stop, and the framer then tells the target its
+        // earlier messages "were not retrieved to fit the context budget". That
+        // is a false statement to the target about why its context is missing.
+        // A failed page is genuinely both a stop and a hole, and the existing
+        // incompleteness signal is the half that says so truthfully.
         stoppedOnBound = true;
         break walk;
       }
@@ -610,7 +615,20 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     }
   }
 
-  const dialog = [...accepted].sort((a, b) => a.createdAt - b.createdAt);
+  /**
+   * Conversation order, made TOTAL.
+   *
+   * `accepted` is filled newest-first at every level — segments run child→parent,
+   * pages run backwards, and each page's rows are read newest-first — so its
+   * reverse IS conversation order. `createdAt` alone is not a total order: a fork
+   * copies nothing, so the parent's last turn and the child's first are
+   * independent writes that a busy second puts in the same millisecond. Sorting
+   * is stable, so on a tie the collection order survives — which emits the CHILD
+   * row ahead of the parent row it answered. Reversing first makes the order that
+   * survives a tie the walk's own, so equal timestamps fall back to
+   * parent-before-child and oldest-before-newest.
+   */
+  const dialog = [...accepted].reverse().sort((a, b) => a.createdAt - b.createdAt);
   return {
     dialog,
     sourceCutoffSeqInclusive,
