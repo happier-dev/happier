@@ -909,7 +909,6 @@ jobs:
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
-      android_release_status: draft
       desktop_mode: ${{ inputs.desktop_mode }}
       run_tests: false
       release_notes_id: ${{ inputs.release_notes_id }}
@@ -1091,6 +1090,7 @@ jobs:
     needs: [plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web]
     permissions:
       contents: read
+      packages: write
     uses: ./.github/workflows/publish-docker.yml
     secrets: inherit
     with:
@@ -1107,7 +1107,7 @@ jobs:
     if: always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || inputs.force_deploy == true) && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate]
     permissions:
-      contents: read
+      contents: write
       actions: read
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit

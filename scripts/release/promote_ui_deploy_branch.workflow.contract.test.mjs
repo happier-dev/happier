@@ -43,6 +43,20 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
   assert.ok(callInputs.desktop_mode, 'workflow_call should also define desktop_mode so reusable invocations validate');
 });
 
+test('release passes only declared inputs to reusable promote-ui', async () => {
+  const release = parse(await loadWorkflow('release.yml'));
+  const promoteUi = parse(await loadWorkflow('promote-ui.yml'));
+  const declaredInputs = promoteUi?.on?.workflow_call?.inputs ?? {};
+  const passedInputs = release?.jobs?.deploy_ui?.with ?? {};
+
+  for (const inputName of Object.keys(passedInputs)) {
+    assert.ok(
+      declaredInputs[inputName],
+      `release deploy_ui passes undeclared promote-ui input ${inputName}`,
+    );
+  }
+});
+
 test('promote-ui delegates web deploy branch promotion to pipeline script', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /Promote exact release SHA to deploy branch/);

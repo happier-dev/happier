@@ -17,6 +17,18 @@ test('promote-website delegates deploy branch promotion to pipeline script', asy
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });
 
+test('release grants reusable promote-website the contents permission it requests', async () => {
+  const { parse } = await import('yaml');
+  const release = parse(await loadWorkflow('release.yml'));
+  const deployWebsite = release?.jobs?.deploy_website;
+
+  assert.equal(
+    deployWebsite?.permissions?.contents,
+    'write',
+    'release caller must permit promote-website to write its deploy branch',
+  );
+});
+
 // The website is published to Cloudflare Workers static assets, not to the
 // Dokploy origin the other components use. The deploy branch is still promoted
 // — it remains the record of which SHA is live — but it no longer triggers a

@@ -85,6 +85,7 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   );
 
   const release = await loadWorkflow('release.yml');
+  const releaseWorkflow = YAML.parse(release);
   assert.match(release, /publish_docker:/);
   assert.match(release, /publish_cli_binaries:/);
   assert.match(
@@ -108,6 +109,11 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(release, /build_relay:/);
   assert.match(release, /build_dev_box:/);
   assert.doesNotMatch(release, /build_dev_box:\s*\$\{\{[^\n]*changed_stack/);
+  assert.equal(
+    releaseWorkflow.jobs.publish_docker.permissions.packages,
+    'write',
+    'release must delegate the packages:write permission required by publish-docker',
+  );
 });
 
 test('nightly dev docker waits for the release artifacts it consumes', async () => {
