@@ -1043,10 +1043,10 @@ export function ProfileEditForm({
                                 ? t(`profiles.codingPromptBehavior.sessionTitleUpdates.${codingPromptSessionTitleUpdates}`)
                                 : t('profiles.codingPromptBehavior.accountDefaultSubtitle', { label: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${accountCodingPromptBehavior.sessionTitleUpdates}`) })
                             }
-                            icon={<Ionicons name="text-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="note-pencil" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                                    <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
                                 </View>
                             )}
                             showChevron={false}
@@ -1061,7 +1061,7 @@ export function ProfileEditForm({
                             subtitle: t('profiles.codingPromptBehavior.currently', { label: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${accountCodingPromptBehavior.sessionTitleUpdates}`) }),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                    <Icon name="gear" size={22} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         },
@@ -1070,7 +1070,7 @@ export function ProfileEditForm({
                             title: t(`profiles.codingPromptBehavior.sessionTitleUpdates.${mode}`),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name={mode === 'disabled' ? 'close-circle-outline' : mode === 'initial' ? 'flag-outline' : 'sync-outline'} size={22} color={theme.colors.text.secondary} />
+                                    <Icon name={mode === 'disabled' ? 'x-circle' : mode === 'initial' ? 'target' : 'arrows-clockwise'} size={22} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         })),
@@ -1103,10 +1103,10 @@ export function ProfileEditForm({
                                 ? t(`profiles.codingPromptBehavior.responseOptions.${codingPromptResponseOptions}`)
                                 : t('profiles.codingPromptBehavior.accountDefaultSubtitle', { label: t(`profiles.codingPromptBehavior.responseOptions.${accountCodingPromptBehavior.responseOptions}`) })
                             }
-                            icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                                    <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
                                 </View>
                             )}
                             showChevron={false}
@@ -1120,7 +1120,7 @@ export function ProfileEditForm({
                             subtitle: t('profiles.codingPromptBehavior.currently', { label: t(`profiles.codingPromptBehavior.responseOptions.${accountCodingPromptBehavior.responseOptions}`) }),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                    <Icon name="gear" size={22} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         },
@@ -1129,7 +1129,7 @@ export function ProfileEditForm({
                             title: t(`profiles.codingPromptBehavior.responseOptions.${mode}`),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name={mode === 'disabled' ? 'close-circle-outline' : 'checkmark-circle-outline'} size={22} color={theme.colors.text.secondary} />
+                                    <Icon name={mode === 'disabled' ? 'x-circle' : 'check-circle'} size={22} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         })),

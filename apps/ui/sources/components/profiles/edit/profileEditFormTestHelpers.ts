@@ -135,6 +135,9 @@ export function installProfileEditFormModuleMocks(
     vi.mock('@/components/ui/lists/ItemGroup', () => ({
         ItemGroup: ({ children }: { children?: React.ReactNode }) =>
             React.createElement(React.Fragment, null, children),
+        // The real Item consumes this context; expose a real (empty-default) one so tests that
+        // mount actual Item rows through this stub don't hit a missing-export error.
+        ItemGroupSelectionContext: React.createContext(undefined),
     }));
 
     vi.mock('@/components/ui/forms/Switch', () => ({
