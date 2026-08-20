@@ -124,6 +124,26 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
   });
 
+  it('classifies Grok Build usage-balance exhaustion as a visible usage-limit issue', () => {
+    expect(classifyPrimarySessionRuntimeIssue({
+      provider: 'grok',
+      cause: 'status_error',
+      error: new Error(
+        'responses API error status = 402 Payment Required error_message = Grok Build usage balance exhausted',
+      ),
+      occurredAt: 1_000,
+    })).toMatchObject({
+      code: 'usage_limit',
+      source: 'usage_limit',
+      sanitizedPreview: 'Usage limit reached',
+      usageLimit: {
+        v: 1,
+        quotaScope: 'unknown',
+        recoverability: 'wait',
+      },
+    });
+  });
+
   it('keeps capacity runtime auth classifications distinct from usage limits', () => {
     const error = new Error('provider overloaded') as Error & {
       runtimeAuthClassification: {

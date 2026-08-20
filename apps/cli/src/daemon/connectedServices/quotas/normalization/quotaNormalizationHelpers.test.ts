@@ -121,6 +121,7 @@ describe('quota normalization helpers', () => {
     const helpers = await loadNormalizationHelpers();
 
     expect(helpers.classifyProviderLimitEvidence({ code: 'usage_limit_reached' })).toBe('usage_limit');
+    expect(helpers.classifyProviderLimitEvidence('Grok Build usage balance exhausted')).toBe('usage_limit');
     expect(helpers.classifyProviderLimitEvidence({ status: 429, message: 'rate limit exceeded' })).toBe('rate_limit');
     expect(helpers.classifyProviderLimitEvidence({ error: { status: 429 } })).toBe('rate_limit');
     expect(helpers.classifyProviderLimitEvidence({ error: { code: -32603, data: { status: 429 } } })).toBe('rate_limit');
