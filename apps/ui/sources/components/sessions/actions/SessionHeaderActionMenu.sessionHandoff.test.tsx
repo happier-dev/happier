@@ -9,10 +9,12 @@ import {
 } from './sessionActionsTestHelpers';
 import {
   SESSION_ACTION_ARCHIVE_ID,
+  SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
   SESSION_ACTION_RESUME_ID,
+  SESSION_ACTION_SET_ATTENTION_STANDING_ID,
   SESSION_ACTION_STOP_ID,
   SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
@@ -73,6 +75,13 @@ const unarchiveSessionMock = vi.hoisted(() =>
     _opts?: Readonly<{ serverId?: string | null }>,
   ) => ({ success: true })),
 );
+const setAttentionStandingMock = vi.hoisted(() =>
+  vi.fn(async (
+    _sessionId: string,
+    _standing: boolean,
+    _opts?: Readonly<{ serverId?: string | null }>,
+  ) => ({ success: true })),
+);
 const setManualReadStateMock = vi.hoisted(() =>
   vi.fn(async (
     _sessionId: string,
@@ -107,9 +116,41 @@ const voiceSessionSnapshotState = vi.hoisted(() => ({
 const actionsSettingsState = vi.hoisted(() => ({
   current: { v: 1, actions: {} } as any,
 }));
+const buildOrganizationProjectionFixture = (
+  attentionStandingsBySessionId: Record<string, { sessionId: string; standing: boolean; updatedAt: number }>,
+) => ({
+  schemaVersion: 1,
+  version: 3,
+  pinnedSessionIds: [] as string[],
+  pinsBySessionId: {},
+  foldersById: {},
+  folderAssignmentsBySessionId: {},
+  tagsById: {},
+  tagAssignmentsBySessionId: {},
+  attentionStandingsBySessionId,
+  orderEntriesByScopeKey: {},
+  labelsByLabelKey: {},
+});
+const organizationProjectionState = vi.hoisted(() => ({
+  current: null as any,
+}));
+const attentionStandingSettingsState = vi.hoisted(() => ({
+  promotionMode: null as string | null,
+  defaultStanding: null as boolean | null,
+}));
 const storageState = vi.hoisted(() => ({
   current: {
     settings: { voice: null as any } as any,
+    sessionOrganizationSchemaVersionByServerId: {} as Record<string, number>,
+    sessionOrganizationSnapshotVersionByServerId: {} as Record<string, number>,
+    sessionOrganizationPinsBySessionKey: {} as Record<string, any>,
+    sessionOrganizationFoldersByFolderKey: {} as Record<string, any>,
+    sessionOrganizationFolderAssignmentsBySessionKey: {} as Record<string, any>,
+    sessionOrganizationTagsByTagKey: {} as Record<string, any>,
+    sessionOrganizationTagAssignmentsBySessionKey: {} as Record<string, any>,
+    sessionOrganizationAttentionStandingsBySessionKey: {} as Record<string, any>,
+    sessionOrganizationOrderEntriesByScopeKey: {} as Record<string, any>,
+    sessionOrganizationLabelsByLabelKey: {} as Record<string, any>,
     sessions: {} as Record<string, any>,
     sessionListRenderables: {} as Record<string, any>,
     sessionMessages: {} as Record<string, any>,
@@ -152,11 +193,14 @@ installSessionActionsCommonModuleMocks({
     );
     return createStorageModuleStub({
       storage: storageStore,
+      useSessionOrganizationProjection: () => organizationProjectionState.current,
       useSettings: () => storageState.current.settings,
       useSetting: (key: string) => {
         if (key === 'actionsSettingsV1') return actionsSettingsState.current;
         if (key === 'sessionReplayEnabled') return true;
         if (key === 'voice') return voiceSettingState.current;
+        if (key === 'sessionListAttentionPromotionModeV1') return attentionStandingSettingsState.promotionMode;
+        if (key === 'sessionListAttentionStandingDefaultV1') return attentionStandingSettingsState.defaultStanding;
         return null;
       },
     });
@@ -331,6 +375,17 @@ vi.mock('@/sync/ops', () => ({
   ) => setManualReadStateMock(sessionId, readState, opts),
 }));
 
+// The op boundary the header menu's attention-standing action resolves by default. Everything
+// between the menu item and this call — target build, availability, dropdown item, dispatch,
+// `executeSessionAction` — stays real.
+vi.mock('@/sync/ops/sessionOrganization', () => ({
+  sessionSetAttentionStandingWithServerScope: (
+    sessionId: string,
+    standing: boolean,
+    opts?: Readonly<{ serverId?: string | null }>,
+  ) => setAttentionStandingMock(sessionId, standing, opts),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: (...args: unknown[]) => machineRpcWithServerScopeMock(...args),
 }));
@@ -375,6 +430,13 @@ describe('SessionHeaderActionMenu handoff', () => {
     stopSessionMock.mockClear();
     unarchiveSessionMock.mockClear();
     setManualReadStateMock.mockReset();
+    setAttentionStandingMock.mockReset();
+    setAttentionStandingMock.mockResolvedValue({ success: true });
+    attentionStandingSettingsState.promotionMode = null;
+    attentionStandingSettingsState.defaultStanding = null;
+    storageState.current.sessionOrganizationSnapshotVersionByServerId = {};
+    storageState.current.sessionOrganizationAttentionStandingsBySessionKey = {};
+    organizationProjectionState.current = buildOrganizationProjectionFixture({});
     completeSessionForkNavigationMock.mockReset();
     modalAlertMock.mockClear();
     modalConfirmMock.mockClear();
@@ -402,6 +464,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     });
     voiceSettingState.current = null;
     storageState.current = {
+      ...storageState.current,
       settings: {
         voice: null,
         experiments: true,
@@ -853,6 +916,95 @@ describe('SessionHeaderActionMenu handoff', () => {
     dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_READ_ID)).toBe(true);
     expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID)).toBe(false);
+  });
+
+  it('keeps a session in Needs attention from the header menu and reaches the standing op', async () => {
+    attentionStandingSettingsState.promotionMode = 'global';
+    storageState.current.sessionOrganizationSnapshotVersionByServerId = { server_a: 3 };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_standing"
+          session={{
+            id: 'sess_standing',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const ids = dropdown.props.items.map((item: any) => item?.id);
+    expect(ids).toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+    expect(ids).not.toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+    });
+    await findFireAndForgetByTag('SessionHeaderActionMenu.execute.sessionAttentionStanding');
+
+    expect(setAttentionStandingMock).toHaveBeenCalledWith('sess_standing', true, { serverId: 'server_a' });
+  });
+
+  it('offers the remove direction once the session is already kept in Needs attention', async () => {
+    attentionStandingSettingsState.promotionMode = 'global';
+    storageState.current.sessionOrganizationSnapshotVersionByServerId = { server_a: 3 };
+    organizationProjectionState.current = buildOrganizationProjectionFixture({
+      'sess_standing': { sessionId: 'sess_standing', standing: true, updatedAt: 1 },
+    });
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_standing"
+          session={{
+            id: 'sess_standing',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const ids = dropdown.props.items.map((item: any) => item?.id);
+    expect(ids).toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+    expect(ids).not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+    });
+    await findFireAndForgetByTag('SessionHeaderActionMenu.execute.sessionAttentionStanding');
+
+    expect(setAttentionStandingMock).toHaveBeenCalledWith('sess_standing', false, { serverId: 'server_a' });
+  });
+
+  it('hides the attention-standing action while the attention band is off', async () => {
+    attentionStandingSettingsState.promotionMode = 'off';
+    storageState.current.sessionOrganizationSnapshotVersionByServerId = { server_a: 3 };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_standing"
+          session={{
+            id: 'sess_standing',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const ids = dropdown.props.items.map((item: any) => item?.id);
+    expect(ids).not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+    expect(ids).not.toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
   });
 
   it('surfaces central lifecycle actions in the header menu', async () => {

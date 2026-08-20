@@ -133,6 +133,13 @@ function reasonFromUnknown(error: unknown): string {
     return t('errors.unknownError');
 }
 
+/**
+ * Every bulk id whose request needs no extra input. Exhaustive over `SessionBulkActionId` on
+ * purpose: an id that falls through here renders a button `handleActionPress` then drops on its null
+ * request, so a missing case is a silently inert action rather than a compile error. The ids that
+ * genuinely need input are listed and returned as null by `resolveActionRequest`, which intercepts
+ * them before delegating here.
+ */
 function simpleBulkActionRequest(actionId: SessionBulkActionId): SessionBulkActionRequest | null {
     switch (actionId) {
         case SESSION_BULK_ACTION_IDS.stop:
@@ -140,11 +147,20 @@ function simpleBulkActionRequest(actionId: SessionBulkActionId): SessionBulkActi
         case SESSION_BULK_ACTION_IDS.unarchive:
         case SESSION_BULK_ACTION_IDS.markRead:
         case SESSION_BULK_ACTION_IDS.markUnread:
+        case SESSION_BULK_ACTION_IDS.setAttentionStanding:
+        case SESSION_BULK_ACTION_IDS.clearAttentionStanding:
         case SESSION_BULK_ACTION_IDS.pin:
         case SESSION_BULK_ACTION_IDS.unpin:
             return { id: actionId };
-        default:
+        case SESSION_BULK_ACTION_IDS.tagsAdd:
+        case SESSION_BULK_ACTION_IDS.tagsRemove:
+        case SESSION_BULK_ACTION_IDS.tagsSet:
+        case SESSION_BULK_ACTION_IDS.moveToFolder:
             return null;
+        default: {
+            const unreachable: never = actionId;
+            return unreachable;
+        }
     }
 }
 

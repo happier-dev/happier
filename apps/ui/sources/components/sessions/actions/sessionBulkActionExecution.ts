@@ -250,6 +250,18 @@ async function executeAttentionStandingAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
+            // `buildSessionBulkActionTargetFromSessionItem` leaves `standing` undefined when the
+            // action is unreachable for that session (archived, view-only, band off), so a mixed
+            // selection reaches here with targets the row's own menu refuses to offer. Skip them the
+            // way `executeReadStateAction` skips an unavailable read state, instead of writing a
+            // standing the server would reject for an archived session and silently accept for a
+            // view-only one.
+            if (typeof target.standing !== 'boolean') {
+                return createTargetResult(target, 'skipped', {
+                    reasonCode: 'attention_standing_unavailable',
+                    reason: 'Session attention standing is unavailable',
+                });
+            }
             await setSessionAttentionStanding({ target, standing });
             return createTargetResult(target, 'succeeded');
         },

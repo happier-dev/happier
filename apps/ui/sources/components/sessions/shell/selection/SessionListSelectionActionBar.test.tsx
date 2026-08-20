@@ -175,6 +175,41 @@ describe('SessionListSelectionActionBarHost', () => {
         expect(screen.findByTestId('session-list-selection-action-bar')).toBeNull();
     });
 
+    it('executes a bulk attention-standing action through the injected operation', async () => {
+        const setSessionAttentionStanding = vi.fn(async () => undefined);
+        const targetsByKey = new Map<string, SessionBulkActionTarget>([
+            ['session-a', {
+                key: 'session-a',
+                sessionId: 'session-a',
+                serverId: 'server-a',
+                pinned: false,
+                standing: false,
+            }],
+        ]);
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={['session-a']}>
+                <SelectionControls />
+                <SessionListSelectionActionBarHost
+                    targetsByKey={targetsByKey}
+                    bulkActionContext={{
+                        setSessionAttentionStanding,
+                    }}
+                />
+            </SessionListSelectionProvider>,
+        );
+
+        await pressByTestId(screen, 'select-session-a');
+        await pressByTestId(screen, 'session-list-selection-action-session-set-attention-standing');
+
+        expect(setSessionAttentionStanding).toHaveBeenCalledWith({
+            target: expect.objectContaining({ key: 'session-a', sessionId: 'session-a' }),
+            standing: true,
+        });
+        const result = screen.findByProps({ testID: 'session-list-selection-result' });
+        expect(result.props['data-action-id']).toBe(SESSION_BULK_ACTION_IDS.setAttentionStanding);
+        expect(result.props['data-succeeded-count']).toBe(1);
+    });
+
     it('keeps failed targets selected after a partial bulk result', async () => {
         const screen = await renderScreen(<ActionBarHarness />);
 

@@ -381,6 +381,32 @@ describe('executeSessionBulkAction', () => {
         expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1', 'server-a:s2']);
     });
 
+    it('skips attention-standing actions for targets whose standing is unavailable', async () => {
+        const setSessionAttentionStanding = vi.fn(async () => undefined);
+
+        const result = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.setAttentionStanding },
+            targets: [
+                target({ key: 'server-a:s1', sessionId: 's1', standing: false }),
+                target({ key: 'server-a:s2', sessionId: 's2', archived: true, standing: undefined }),
+            ],
+            context: { setSessionAttentionStanding },
+        });
+
+        expect(setSessionAttentionStanding).toHaveBeenCalledTimes(1);
+        expect(setSessionAttentionStanding).toHaveBeenCalledWith({
+            target: expect.objectContaining({ sessionId: 's1' }),
+            standing: true,
+        });
+        expect(result.succeeded.map((entry) => entry.target.key)).toEqual(['server-a:s1']);
+        expect(result.skipped).toHaveLength(1);
+        expect(result.skipped[0]).toMatchObject({
+            target: expect.objectContaining({ key: 'server-a:s2' }),
+            reasonCode: 'attention_standing_unavailable',
+        });
+        expect(result.remainingSelectedKeys).toEqual(['server-a:s2']);
+    });
+
     it('skips read-state actions for targets whose read state is unavailable', async () => {
         const setManualReadState = vi.fn(async () => ({ success: true }));
 
