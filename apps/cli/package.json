@@ -96,7 +96,7 @@
     "build": "node scripts/build.mjs",
     "test": "$npm_execpath run test:unit",
     "vitest": "vitest",
-    "test:unit": "vitest run --config vitest.config.ts && yarn -s test:import-cycles",
+    "test:unit": "node scripts/runVitestShards.mjs --config vitest.config.ts && yarn -s test:import-cycles",
     "test:import-cycles": "node scripts/importCycleGuard.mjs",
     "test:integration": "node scripts/runVitestShards.mjs --config vitest.integration.config.ts",
     "test:slow": "vitest run --config vitest.slow.config.ts",

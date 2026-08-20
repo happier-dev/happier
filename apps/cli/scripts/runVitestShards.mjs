@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
@@ -9,9 +10,10 @@ function parsePositiveInt(raw) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function resolveVitestShardCount(env) {
+export function resolveVitestShardCount(env, configPath = null) {
   const override = parsePositiveInt(env?.HAPPIER_CLI_VITEST_SHARDS);
-  return override ?? 8;
+  if (override !== null) return override;
+  return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 32 : 8;
 }
 
 export function resolveVitestConfigPath(argv) {
@@ -48,7 +50,7 @@ async function main(argv) {
     process.exit(1);
   }
 
-  const shardCount = resolveVitestShardCount(process.env);
+  const shardCount = resolveVitestShardCount(process.env, configPath);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
 

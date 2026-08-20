@@ -15,6 +15,7 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const uiE2eJob = extractJobBlock(raw, 'ui-e2e');
   const uiJob = extractJobBlock(raw, 'ui');
+  const cliJob = extractJobBlock(raw, 'cli');
   const stackJob = extractJobBlock(raw, 'stack');
   const installerSmokeWindowsJob = extractJobBlock(raw, 'installers-smoke-windows');
 
@@ -28,6 +29,12 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
     uiJob,
     /name:\s*UI Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*75\b/,
     'UI Tests job should reserve enough time to finish on GitHub-hosted runners',
+  );
+
+  assert.match(
+    cliJob,
+    /name:\s*CLI Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*60\b/,
+    'CLI Tests should reserve enough time for bounded unit and integration shards',
   );
 
   assert.match(

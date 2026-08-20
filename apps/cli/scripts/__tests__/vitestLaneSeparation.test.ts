@@ -41,6 +41,9 @@ describe('Vitest lane separation', () => {
         ].join('\n');
 
         expect(packageJson.scripts?.['test:unit']).toContain(
+            'node scripts/runVitestShards.mjs --config vitest.config.ts',
+        );
+        expect(packageJson.scripts?.['test:unit']).not.toContain(
             'vitest run --config vitest.config.ts',
         );
         expect(packageJson.scripts?.['test:unit']).toContain('test:import-cycles');
