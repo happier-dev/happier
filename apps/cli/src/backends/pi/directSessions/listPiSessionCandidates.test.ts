@@ -85,6 +85,28 @@ describe('listPiSessionCandidates', () => {
     expect(exact.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
   });
 
+  it('consolidates copied files with the same header id onto the newest resolvable session', async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-copied-'));
+    writeSession(agentDir, '--proj-old--', 'old-copy.jsonl', [
+      header(SESSION_A, '/proj-old'),
+      userMsg('m1', null, 'older copy'),
+    ], 1_700_000_100);
+    writeSession(agentDir, '--proj-new--', 'new-copy.jsonl', [
+      header(SESSION_A, '/proj-new'),
+      userMsg('n1', null, 'newer copy'),
+    ], 1_700_000_200);
+
+    const { source, env } = sourceEnv(agentDir);
+    const listed = await listPiSessionCandidates({ source, env, limit: 10 });
+
+    expect(listed.candidates).toHaveLength(1);
+    expect(listed.candidates[0]).toMatchObject({
+      remoteSessionId: SESSION_A,
+      title: 'newer copy',
+      details: { cwd: '/proj-new', sessionDirName: '--proj-new--' },
+    });
+  });
+
   it('terminates full search pagination when no candidates match', async () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-no-match-'));
     writeSession(agentDir, '--proj-a--', `2024-12-03T14-00-00-000Z_${SESSION_A}.jsonl`, [header(SESSION_A, '/proj-a'), userMsg('m1', null, 'alpha')], 1_700_000_100);

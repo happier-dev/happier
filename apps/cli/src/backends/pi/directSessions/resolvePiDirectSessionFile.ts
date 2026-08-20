@@ -12,6 +12,18 @@ export type ResolvedPiDirectSessionFile = Readonly<{
   fileRelPath: string;
 }>;
 
+type PiSessionFilePreference = Readonly<{
+  filePath: string;
+  mtimeMs: number;
+}>;
+
+export function comparePiSessionFilePreference(
+  left: PiSessionFilePreference,
+  right: PiSessionFilePreference,
+): number {
+  return right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath);
+}
+
 function isSafeSegment(value: string): boolean {
   if (!value) return false;
   if (value.includes('/') || value.includes('\\')) return false;
@@ -85,7 +97,10 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
         if (header?.id !== remoteSessionId) continue;
         const s = await stat(filePath);
         if (!s.isFile()) continue;
-        if (!best || s.mtimeMs > best.mtimeMs) {
+        if (!best || comparePiSessionFilePreference(
+          { filePath, mtimeMs: s.mtimeMs },
+          best,
+        ) < 0) {
           best = {
             filePath,
             fileRelPath: `sessions/${dirName}/${name}`.replace(/\\/g, '/'),

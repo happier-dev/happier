@@ -10,7 +10,11 @@ import { logger } from '@/utils/logger';
 
 import { readPiSessionHeader } from './readPiSessionHeader';
 import { readPiSessionTitle } from './readPiSessionTitle';
-import { extractPiSessionIdFromFilename, resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
+import {
+  comparePiSessionFilePreference,
+  extractPiSessionIdFromFilename,
+  resolvePiDirectSessionFile,
+} from './resolvePiDirectSessionFile';
 import { resolvePiAgentDir } from './resolvePiAgentDir';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
@@ -68,6 +72,8 @@ function resolvePiSearchCandidateLimit(env: NodeJS.ProcessEnv): number {
 
 type DiscoveredPiSession = Readonly<{
   id: string;
+  remoteSessionId: string;
+  cwd: string | null;
   dirName: string;
   fileName: string;
   filePath: string;
@@ -78,22 +84,15 @@ async function buildPiCandidate(params: Readonly<{
   session: DiscoveredPiSession;
   env: NodeJS.ProcessEnv;
 }>): Promise<DirectSessionCandidateV1> {
-  const [header, title] = await Promise.all([
-    readPiSessionHeader(params.session.filePath).catch(() => null),
-    readPiSessionTitle(params.session.filePath).catch(() => null),
-  ]);
-
-  // Prefer the authoritative header id; fall back to the filename UUID when the header is unreadable.
-  const remoteSessionId = header?.id?.trim() || params.session.id;
-  const cwd = header?.cwd?.trim() || null;
+  const title = await readPiSessionTitle(params.session.filePath).catch(() => null);
 
   return {
-    remoteSessionId,
+    remoteSessionId: params.session.remoteSessionId,
     ...(title ? { title } : {}),
     updatedAtMs: params.session.mtimeMs,
     activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: params.session.mtimeMs, env: params.env }),
     details: {
-      ...(cwd ? { cwd } : {}),
+      ...(params.session.cwd ? { cwd: params.session.cwd } : {}),
       sessionDirName: params.session.dirName,
     },
   };
@@ -125,8 +124,8 @@ export async function listPiSessionCandidates(params: Readonly<{
     dirEntries = [];
   }
 
-  // Phase 1: stat every session file. The session id is the filename UUID, so no header read is
-  // needed for discovery — headers/titles are read only for the page slice (Phase 2).
+  // Phase 1: stat and identify every session file. Pi files can be renamed or copied, so the
+  // header id is the canonical identity used to consolidate duplicate files before pagination.
   const discoveredSessions = (
     await mapWithConcurrency(dirEntries, concurrency, async (dirEntry): Promise<DiscoveredPiSession[]> => {
       if (!dirEntry.isDirectory()) return [];
@@ -151,7 +150,16 @@ export async function listPiSessionCandidates(params: Readonly<{
         try {
           const s = await stat(filePath);
           if (!s.isFile()) return null;
-          return { id, dirName, fileName, filePath, mtimeMs: Math.trunc(s.mtimeMs) };
+          const header = await readPiSessionHeader(filePath).catch(() => null);
+          return {
+            id,
+            remoteSessionId: header?.id?.trim() || id,
+            cwd: header?.cwd?.trim() || null,
+            dirName,
+            fileName,
+            filePath,
+            mtimeMs: Math.trunc(s.mtimeMs),
+          };
         } catch {
           return null;
         }
@@ -161,9 +169,14 @@ export async function listPiSessionCandidates(params: Readonly<{
     })
   ).flat();
 
-  const sortedSessions = discoveredSessions.sort(
-    (a, b) => b.mtimeMs - a.mtimeMs || String(a.id).localeCompare(String(b.id)),
-  );
+  const seenRemoteSessionIds = new Set<string>();
+  const sortedSessions = discoveredSessions
+    .sort(comparePiSessionFilePreference)
+    .filter((session) => {
+      if (seenRemoteSessionIds.has(session.remoteSessionId)) return false;
+      seenRemoteSessionIds.add(session.remoteSessionId);
+      return true;
+    });
 
   // Exact-id fast path: when the search term is a bare session id, resolve straight to that file
   // (authoritative, no scan-order dependence).
@@ -181,9 +194,12 @@ export async function listPiSessionCandidates(params: Readonly<{
         if (pageOffset > 0) {
           return { candidates: [], nextCursor: null };
         }
+        const exactHeader = await readPiSessionHeader(resolved.filePath).catch(() => null);
         const candidate = await buildPiCandidate({
           session: {
             id: rawSearchTerm,
+            remoteSessionId: exactHeader?.id?.trim() || rawSearchTerm,
+            cwd: exactHeader?.cwd?.trim() || null,
             dirName: '',
             fileName: '',
             filePath: resolved.filePath,
@@ -204,7 +220,7 @@ export async function listPiSessionCandidates(params: Readonly<{
     if (params.searchMode === 'fast') {
       searchIncomplete = true;
       const metadataMatches = sortedSessions.filter((session) => {
-        const haystack = `${session.id} ${session.dirName}`.toLowerCase();
+        const haystack = `${session.remoteSessionId} ${session.id} ${session.dirName}`.toLowerCase();
         return haystack.includes(searchTerm);
       });
       searchedTotalCount = metadataMatches.length;
