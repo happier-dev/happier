@@ -99,7 +99,7 @@ Optional:
 
 ## Client behavior (UI)
 
-- The Friends experience is reachable at `/friends` (legacy `/inbox` redirects to `/friends`).
+- The Friends experience is reachable at `/friends`. It does not redirect, and it is separate from the global Inbox at `/inbox` — see [Inbox and approvals](/features/inbox-and-approvals).
 - If Friends is disabled (`features.social.friends.enabled=false`), the UI hides the Friends tab and related screens.
 - If Friends requires GitHub (`features.social.friends.requiresGitHub=true`) but GitHub OAuth isn’t configured (`features.oauth.providers.github.configured=false`), the UI disables the GitHub connect button and shows a clear “not configured” hint.
 

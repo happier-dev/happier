@@ -38,8 +38,19 @@ export async function checkGeneratedPages({ generators = GENERATORS } = {}) {
     try {
       rendered = await generator.render();
     } catch (error) {
+      // A missing source means this workspace simply is not checked out — skip.
       if (error && (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT')) continue;
-      throw error;
+      // A source that exists but no longer has the shape the generator expects
+      // is a real problem, and the generator is right to refuse rather than
+      // publish a guess. But it is *this* generator's problem: reporting it and
+      // carrying on keeps the link and label checks working, which matters most
+      // when the two lines of the codebase have diverged and one generator needs
+      // rewiring for the tree it now finds itself in.
+      problems.push({
+        at: relative(process.cwd(), generator.outputPath),
+        reason: `${generator.name}: generator could not run here — ${error?.message ?? error}`,
+      });
+      continue;
     }
     if (!existsSync(generator.outputPath)) {
       problems.push({ at: generator.outputPath, reason: `${generator.name}: generated page is missing` });

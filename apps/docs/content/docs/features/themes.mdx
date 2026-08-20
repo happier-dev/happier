@@ -1,0 +1,63 @@
+---
+title: Themes
+description: Pick a built-in theme, clone one to make your own, and move themes between devices or in from your editor.
+---
+
+Happier ships 18 built-in themes and lets you build your own from any of them.
+Colours carry everywhere the app draws — surfaces, text, controls, diffs, syntax
+highlighting, the embedded editors, and the native system chrome around the
+window — so a theme is not just the chat background.
+
+Find them under **Settings → Appearance**.
+
+## Built-in themes
+
+The presets cover the usual dark and light families plus several ports of
+editor themes people already use: Crisp, Pitch, Sunset, Night, Graphite and
+Classic on the dark side, Crisp and Paper on the light side, and Tokyo Night,
+One Dark Pro, Monokai Pro, GitHub Dark and Light, Dark Modern, and the four
+Catppuccin flavours.
+
+Built-in themes are read-only. To change one, clone it — the clone is yours to
+edit and the original stays intact.
+
+## Making your own
+
+A custom theme starts from a preset, so you are adjusting a coherent palette
+rather than assembling one from nothing. From there you can override individual
+colour tokens, grouped by what they affect rather than by variable name.
+
+Two things worth knowing while editing:
+
+- **The preview is a live sandbox.** It shows surfaces, text, controls, state
+  colours and syntax together, so you can judge a change against the parts of
+  the app you do not currently have open.
+- **Changing the preset replaces your draft colours.** Happier asks first,
+  because unsaved edits are discarded when the starting point changes.
+
+A theme also declares whether it uses light or dark app assets, which is what
+keeps icons and images legible against the palette you chose.
+
+## Moving themes around
+
+Export a theme to JSON and import it on another device, or share it. The export
+is versioned, so a file made today keeps working as the token set grows.
+
+Import also accepts **VS Code themes**, which is usually the fastest way to make
+Happier match the editor you already stare at all day. Imports are validated
+rather than trusted: a malformed file is rejected with a reason instead of
+producing a half-applied palette.
+
+## Limits
+
+| Thing | Limit |
+| --- | --- |
+| Custom theme profiles | 50 |
+| Size of an imported file | 64 KB |
+| Colour overrides per mode | 300 |
+| Theme name length | 64 characters |
+
+## Related
+
+- [App](/clients/app) — the rest of the client's appearance settings.
+- [Keyboard shortcuts](/features/keyboard-shortcuts)

@@ -1,0 +1,85 @@
+---
+title: Session sharing
+description: Share a session with someone in Happier, or publish a read-only link — and know what gets logged when you do.
+---
+
+Sharing lets someone else see a session you are running. Two mechanisms, and they are not variations of each other: a **direct share** invites a specific person into the session with a level of access you choose, and a **public link** publishes a read-only view to anyone holding the URL.
+
+<Callout type="warn" title="Availability">
+Direct sharing needs **Friends**, which is experimental and off by default. Turn it on under **Settings → Features**. It is deliberately not switched on by the Experiments master toggle, so enabling experiments generally does not enable it.
+
+Public links do not depend on Friends and are available without turning anything on.
+</Callout>
+
+## What gets logged
+
+Worth knowing before you share anything, because it is about other people's data, not yours.
+
+**Every access to a shared session is logged with the viewer's IP address and user agent** — for direct shares and public links alike. For a public link you can decide whether the viewer is told: **Require consent** shows them *"This link requires your consent to log your IP address and user agent"* and makes them accept before the session opens.
+
+Turning consent off does not stop the logging. It removes the notice. If you are sending a link outside your team, leaving consent on is the honest default.
+
+## Direct sharing
+
+From a session's sharing screen, pick a person and give them one of three levels:
+
+| Level | What they can do |
+| --- | --- |
+| **View only** | Read the session. Cannot send messages. |
+| **Can edit** | Send messages, and take part in session-wide things like the pending queue. |
+| **Can manage** | Everything above, plus manage the session's sharing — other people's shares and the public link. |
+
+### Letting someone approve permissions
+
+Separately from the access level, a **Can edit** or **Can manage** recipient can be allowed to approve permission prompts: *"Allows this user to approve permission prompts and run tools on your machine."*
+
+Read that literally. The session runs on your machine, so this hands someone else the ability to authorise tool runs there. It is worth it when a collaborator needs to keep work moving while you are away, and it is not something to grant casually.
+
+It is a per-person setting, not a fourth access level, and you can turn it on when you add the share or later. Happier tells you when it is unavailable and why — public links are read-only, view-only access cannot approve, an inactive session has nothing to approve, or the owner simply did not grant it.
+
+### Managing shares
+
+From the same screen you can see everyone the session is shared with, change a level, turn approval delegation on or off, and stop sharing with someone — which revokes their access immediately.
+
+People without **Can manage** can open the session but do not get the management surface.
+
+## Public links
+
+A public link is view-only. Anyone holding it can read messages and tool output; nobody can interact or approve anything.
+
+When you create or regenerate one, you choose:
+
+- **Expires in** — 7 days, 30 days, or Never
+- **Maximum uses** — Unlimited, 10 uses, or 50 uses
+- **Require consent** — whether viewers are told their access is logged
+
+Afterwards Happier shows a QR code, the URL, the expiry, the usage count, and whether consent is required.
+
+**The token is shown once.** Tokens are stored hashed and cannot be recovered — if you lose the URL, regenerate the link, which creates a new token and revokes the old one. Deleting the link revokes access for everyone.
+
+## Where shared sessions appear
+
+A session shared with you is a normal session, not an inbox item. It lands in your session list in a **Shared sessions** subgroup, inside whichever section the list is showing — Active, Inactive, or the combined Sessions layout on narrower screens.
+
+So you can open it, pin it, and work with it exactly like your own. Unread state, permission prompts and pending messages all behave normally, subject to your access level. Attention that genuinely needs a decision still reaches you through the usual surfaces.
+
+## Encrypted deployments
+
+On an encrypted deployment, the person you are sharing with needs sharing keys on their account before an encrypted session can be shared with them. Until then Happier shows that they have not registered encryption keys yet, and they cannot be picked.
+
+This is a readiness state, not a permanent block — it resolves once their device has the keys. On plaintext-storage deployments the sharing model is identical; only the storage mode behind it differs. See [Encryption model](/security/encryption).
+
+## When it goes wrong
+
+**Someone is missing from the share picker.** Either Friends is off for you, or their account has not registered encryption keys yet on an encrypted deployment.
+
+**A collaborator cannot approve a prompt.** Check that they have Can edit or Can manage *and* that approval delegation is on for them specifically. The disabled reason Happier shows names which of the two is missing.
+
+**The link stopped working.** Check expiry and the usage count against the maximum. Both are shown on the link's own screen. A regenerated link invalidates the previous token.
+
+## Related
+
+- [Friends](/features/friends) — the direct-sharing prerequisite
+- [Inbox and approvals](/features/inbox-and-approvals)
+- [Session read and unread state](/features/session-read-state)
+- [Encryption model](/security/encryption)

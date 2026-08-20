@@ -5,6 +5,7 @@
     "capabilities",
     "claude",
     "codex",
+    "cursor",
     "custom-acp",
     "gemini",
     "grok",

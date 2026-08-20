@@ -217,7 +217,7 @@ docker build -t happier-server --target server \
 
 Notes:
 
-- `pglite` uses the Postgres Prisma client; include `postgres` (or `pglite`) to run the light flavor default.
+- `pglite` uses the Postgres Prisma client, so include `postgres` if you intend to run light mode on PGlite. The light flavor's own default is `sqlite`.
 - If you build without `mysql` (or `sqlite`) and later run with `HAPPIER_DB_PROVIDER=mysql` (or `sqlite`), the server will fail at startup with a clear error telling you to rebuild with the missing provider included.
 
 ## Full vs light flavor
@@ -239,7 +239,7 @@ Use this if you want a production setup: an external database, and optional Redi
 
 ### Light flavor (single-node / testing)
 
-Use this if you want the simplest self-hosted setup: a single-node DB stored on disk (embedded Postgres via PGlite by default, or SQLite) and local file storage served by the server at `GET /files/*`.
+Use this if you want the simplest self-hosted setup: a single-node DB stored on disk (SQLite by default, or embedded Postgres via PGlite) and local file storage served by the server at `GET /files/*`.
 
 **You will need:**
 
@@ -255,7 +255,7 @@ The DB provider is selected via:
 Supported values:
 
 - Full flavor: `postgres` (default), `mysql` (MySQL 8.0.16+)
-- Light flavor: `pglite` (default), `sqlite`
+- Light flavor: `sqlite` (default), `pglite`
 
 Image support depends on how the image was built. Prebuilt `relay-server` images include SQLite and Postgres runtime support; MySQL requires a source-built `server` image with MySQL included.
 
@@ -324,7 +324,7 @@ docker run --rm -p 3005:3005 \
   happier-server
 ```
 
-### Light flavor (PGlite, default)
+### Light flavor (PGlite)
 
 The default `server` image starts the **full** flavor. To run light in Docker, you can either:
 
@@ -342,9 +342,9 @@ docker run --rm -p 3005:3005 \
   sh -lc 'yarn --cwd apps/server migrate:light:deploy && yarn --cwd apps/server start:light'
 ```
 
-### Light flavor (SQLite)
+### Light flavor (SQLite, default)
 
-SQLite is the recommended light-mode database for Docker because it is single-process and easy to back up. The server image entrypoint automatically runs `prisma migrate deploy` for SQLite when `RUN_MIGRATIONS=1` (default).
+SQLite is the light flavor's default and the recommended light-mode database for Docker because it is single-process and easy to back up. The server image entrypoint automatically runs `prisma migrate deploy` for SQLite when `RUN_MIGRATIONS=1` (default).
 
 ```bash
 docker run --rm -p 3005:3005 \
@@ -490,20 +490,20 @@ services:
     environment:
       PORT: "3005"
       HAPPIER_SERVER_LIGHT_DATA_DIR: /data/server-light
-      # default: embedded Postgres via PGlite
-      # HAPPIER_DB_PROVIDER: pglite
-      # alternative:
+      # default: SQLite
       # HAPPIER_DB_PROVIDER: sqlite
+      # alternative: embedded Postgres via PGlite
+      # HAPPIER_DB_PROVIDER: pglite
     volumes:
       - happier-server-light:/data/server-light
     command: >
       sh -lc '
-        if [ "${HAPPIER_DB_PROVIDER:-pglite}" = "sqlite" ]; then
+        if [ "${HAPPIER_DB_PROVIDER:-sqlite}" = "pglite" ]; then
+          yarn --cwd apps/server migrate:light:deploy &&
+          HAPPIER_DB_PROVIDER=pglite yarn --cwd apps/server start:light;
+        else
           yarn --cwd apps/server migrate:sqlite:deploy &&
           HAPPIER_DB_PROVIDER=sqlite yarn --cwd apps/server start:light;
-        else
-          yarn --cwd apps/server migrate:light:deploy &&
-          yarn --cwd apps/server start:light;
         fi
       '
 
@@ -582,7 +582,7 @@ If you are developing Happier Server itself (not just deploying it), keep in min
 - There are two runtime flavors: **full** (`yarn --cwd apps/server start`) and **light** (`yarn --cwd apps/server start:light`).
 - The DB provider is selected via `HAPPIER_DB_PROVIDER`:
   - Full: `postgres` (default) or `mysql`
-  - Light: `pglite` (default) or `sqlite`
+  - Light: `sqlite` (default) or `pglite`
 - Prisma model source of truth: `apps/server/prisma/schema.prisma`.
 - Provider schemas are generated from it:
   - `yarn --cwd apps/server schema:sync` (and tests enforce `schema:sync:check`)

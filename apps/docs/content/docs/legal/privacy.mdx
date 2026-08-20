@@ -9,17 +9,19 @@ description: Your privacy is our priority
 
 Happier is committed to protecting your privacy. This policy explains how we handle your data with our zero-knowledge encryption architecture.
 
+It covers Happier Cloud — the hosted service we run. If you self-host a Happier server, the person or organisation running it holds your data and sets its own policy, including whether content is stored encrypted at all. Everything below describes what *we* can and cannot see on the service we operate.
+
 ## What We Collect
 
 ### Encrypted Data
-- **Messages and Code**: All your Claude Code conversations and code snippets are end-to-end encrypted on your device before transmission. We store this encrypted data but have no ability to decrypt or read it.
+- **Messages and Code**: All your agent conversations and code snippets are end-to-end encrypted on your device before transmission. We store this encrypted data but have no ability to decrypt or read it.
 - **Encryption Keys**: When you pair devices, encryption keys are transmitted between your devices in encrypted form. We cannot access or decrypt these keys.
 
 ### Metadata (Not Encrypted)
 - **Message IDs**: Unique identifiers for message ordering and synchronization
 - **Timestamps**: When messages were created and synced
 - **Device IDs**: Anonymous identifiers for device pairing
-- **Session IDs**: Identifiers for your Claude Code terminal sessions
+- **Session IDs**: Identifiers for your coding-agent sessions
 - **Push Notification Tokens**: Device tokens for sending push notifications via Expo's push notification service
 
 ### Analytics (PostHog)
@@ -61,15 +63,15 @@ We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfur
 ### Metadata
 - Message IDs and timestamps are used to maintain proper message ordering
 - Device IDs enable secure pairing between your devices
-- Session IDs track your Claude Code terminal sessions for synchronization
+- Session IDs track your coding-agent sessions for synchronization
 - Push notification tokens are stored to enable notifications through Expo's service
 
 ### Push Notifications
-Push notifications are sent directly from your devices to each other, not from our backend. This means:
-- We never see the content of your notifications
-- Notification content is generated on your device
-- Only device-to-device communication occurs for notification content
-- We use Expo's push notification service solely as a delivery mechanism
+Notification content is composed on your device, never on our backend. Our backend does send one kind of push, and it is deliberately empty of content:
+
+- **The text stays on your device.** A notification's title and body are built locally from data your device has already decrypted. We never see them.
+- **The one push we send is a badge refresh.** When your attention count changes, our backend asks Expo to update the number on your app icon. That message carries the count and nothing else — no title, no body, no session or message content.
+- **We store your device push token** so delivery can reach you. Expo and the operating-system push services (Apple, Google) see that token and the badge count above, as any push service must.
 
 ## Data Security
 

@@ -1,0 +1,98 @@
+---
+title: Cursor
+description: Run Cursor's coding agent through Happier — install and authenticate the CLI, pick a model, and know which parts of the integration are still young.
+---
+
+Happier runs **Cursor** through its local `cursor-agent` CLI, over the Agent Client Protocol. Once the CLI works on a machine, `happier cursor` starts a session there that you can read, steer and approve from your phone, a browser, or another computer.
+
+<Callout type="warn" title="Experimental">
+Cursor's integration is younger than Claude's, Codex's or OpenCode's. It works and people use it daily, but more of it is likely to change, and several session features Happier offers elsewhere are not available here — see [Limits](#limits) below.
+</Callout>
+
+## What you need first
+
+Happier drives your coding agent; it does not ship one. Before `happier cursor` will do anything, `cursor-agent` has to be installed and signed in on the machine that will run the session. If it does not work in that machine's terminal today, it will not work through Happier either.
+
+## Install the CLI
+
+Follow Cursor's current CLI installation instructions, then confirm it runs:
+
+```bash
+cursor-agent --version
+```
+
+In Happier you can check the same thing without leaving the app: open **Settings → AI & Agents → AI backends → Cursor** to see whether the CLI was found on the selected machine.
+
+Happier looks for `cursor-agent` on `PATH` (`cursor-agent.cmd` on Windows), and falls back to `agent`. If yours lives somewhere unusual, set `HAPPIER_CURSOR_PATH` to the absolute path of the executable in the environment the Happier CLI or daemon runs in.
+
+## Authenticate
+
+Two routes, and Happier accepts either.
+
+**An API key.** Set `CURSOR_API_KEY` in the environment used by the Happier CLI or daemon. Happier detects the variable without copying its value into session metadata or logs.
+
+**Cursor's own login.** Sign in with the `cursor-agent` CLI as you normally would. Happier reads the cached status by running Cursor's own read-only status command, so **Settings → AI & Agents → AI backends → Cursor** reflects your real login state without you having to re-authenticate through Happier.
+
+That status check is safe to run in the background, so unlike some agents, Cursor's login state stays current on its own.
+
+## Start a session
+
+```bash
+happier cursor
+```
+
+Or pick **Cursor** as the AI backend in the new-session flow on any client.
+
+### Models
+
+Happier asks Cursor which models it offers and shows you that list — it does not carry a hardcoded catalog that can drift. Selecting one applies it through Cursor's own ACP configuration, so what you see selected is what Cursor confirmed.
+
+Cursor does not accept arbitrary model ids: you choose from the models it advertises. If you need one that is not listed, it is Cursor's CLI that decides, not Happier.
+
+### Permission modes
+
+Happier's permission modes map onto real `cursor-agent` flags rather than being advisory:
+
+| Happier mode | What Cursor is launched with |
+| --- | --- |
+| Default | no override — Cursor asks as it normally would |
+| Accept edits | `--force --sandbox enabled` |
+| Bypass all permissions | `--force` |
+
+See [Permissions](/features/permissions) for what those modes mean across agents.
+
+## Limits
+
+Cursor's own capabilities decide most of these, and the [agent capability tables](/providers/capabilities) carry the authoritative, generated version. The ones worth knowing before you start:
+
+- **Images go one way.** Cursor can generate images, and they arrive in Happier as durable session media that survives a reload. Happier does not send images *to* Cursor — attaching a screenshot to a prompt is not available on this agent.
+- **Resume is experimental.** Happier stores the Cursor session identity and can ask to resume after the provider process restarts, but it checks at runtime whether the installed CLI actually supports it rather than assuming.
+- **No session browsing, forking or rollback through Cursor.** Happier cannot list your existing Cursor sessions, fork one natively, or roll a conversation back. Where Happier offers those actions, the Cursor routes are shown as unavailable with the reason, rather than silently doing something else. Happier's own [replay fork](/features/session-forking) is a separate mechanism and is not affected by this.
+- **Tool calls run over the shell bridge**, and that path is experimental for Cursor.
+- **One session per machine at a time.** Cursor's local control is exclusive, and Happier cannot attach to a `cursor-agent` process you started yourself.
+- **No plan mode.** Cursor exposes a single session mode.
+
+## Advanced
+
+`HAPPIER_CURSOR_API_ENDPOINT` points `cursor-agent` at a non-default API endpoint. Set it in the environment the Happier CLI or daemon runs in; Happier passes it through on launch.
+
+## When it goes wrong
+
+### "Cursor not found"
+
+1. Confirm `cursor-agent --version` works on the machine that will run the session — not on your laptop, if the session runs elsewhere.
+2. Restart Happier after installing the CLI so detection re-runs.
+3. If the binary is outside the usual locations, set `HAPPIER_CURSOR_PATH` to its absolute path.
+
+### Sessions fail to start, or the model list is empty
+
+1. Check the login state under **Settings → AI & Agents → AI backends → Cursor**.
+2. If you authenticate by key, confirm `CURSOR_API_KEY` is present in the Happier CLI or daemon environment — not just in your interactive shell. A daemon started before you exported it will not see it.
+3. Update `cursor-agent`. An older CLI can accept an ACP connection and then not advertise a model inventory.
+
+## Related
+
+- [Agent capabilities](/providers/capabilities) — the generated matrix for all agents
+- [Provider authentication](/features/provider-authentication) — the shared authentication flow
+- [Model and engine selection](/features/model-and-engine-selection)
+- [Permissions](/features/permissions)

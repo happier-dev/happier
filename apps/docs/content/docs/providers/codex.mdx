@@ -66,10 +66,10 @@ Notes:
 - If you connect multiple profiles, you can choose which one to use when starting a new session.
 - On web, Happier uses device or paste flows. Embedded OAuth is native-only.
 
-Codex-connected-service selection can also affect **session browsing** and the **Resume ID** picker. See:
+Codex-connected-service selection can also affect **session browsing** and the **Resume session** picker. See:
 
 - [Browse and import provider sessions](/features/browse-and-import-sessions)
-- [Resume a provider session (Resume ID)](/features/resume-provider-sessions)
+- [Resume an agent's own session](/features/resume-provider-sessions)
 
 ## Session handoff
 
@@ -228,11 +228,43 @@ Important notes:
 
 ### Plan mode
 
-Plan is a **session mode**, not a normal permission mode.
+Plan is a **session mode**, not a permission mode, and Codex reaches it
+differently from Claude.
 
-It is shown only when the current Codex backend/session advertises a compatible session mode.
+Claude's plan mode is provider-native, so Happier gives it a dedicated control.
+Codex's modes arrive over ACP from the running Codex app-server, so what is
+available is whatever that build advertises for the session — `plan` among them.
+You select it from the **Mode** control rather than a plan-specific toggle.
 
-If plan is not supported for the current session, Happier simply does not show the Mode control for that session/backend.
+Because the list comes from the runtime, Happier shows the Mode control only when
+the current Codex backend and session actually advertise modes. If they do not,
+the control is hidden rather than offering a mode that would fail.
+
+Happier keeps the older spelling working: `--permission-mode plan` maps to
+`--agent-mode plan`.
+
+## Code review
+
+Codex can run a review through its own review API rather than by being asked in
+prose, which produces structured findings instead of a paragraph.
+
+Start one inline with:
+
+```
+/codex.review
+```
+
+Happier's own review entry point uses the same path where the request can be
+represented safely. Findings come back normalized, so they render as a review
+card in the transcript rather than as free text, and entering and leaving review
+show up as transcript events.
+
+Where the running Codex build does not offer the review API, Happier reports the
+method as unsupported rather than silently falling back to an ordinary prompt
+that would look like a review but not be one.
+
+For marking up a diff yourself and sending those notes to an agent — any agent,
+not just Codex — see [Review comments](/features/review-comments).
 
 ## Switching and permission persistence
 

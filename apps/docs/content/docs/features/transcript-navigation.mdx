@@ -1,0 +1,82 @@
+---
+title: Navigating a transcript
+description: Jump between turns, pin the messages that matter, and select messages to copy or send into another session.
+---
+
+A long session is hard to move around in. Scrolling back through a day of work
+to find the turn where you changed your mind is the kind of friction that makes
+people start a new session instead. Happier gives a transcript two things to fix
+that: a navigation surface for jumping, and a selection mode for taking messages
+somewhere else.
+
+## The Navigate surface
+
+**Navigate** lists the session's turns so you can jump straight to one. It has
+two modes:
+
+- **All** — every user turn, so you can walk back through the conversation's
+  decision points without scrolling.
+- **Pinned** — only messages you pinned, so a long session can carry its own
+  index of the parts that matter.
+
+Jumping works even when the target has not been loaded yet: Happier fetches the
+history around it first and only reports success once the message is actually on
+screen at the requested position. You will not be told you arrived somewhere you
+did not.
+
+Where it appears depends on how much room there is. On a wide browser window it
+is a hover rail beside the transcript. On narrower layouts it is a panel or a
+sheet. On desktop it is a tab in the right-hand panel, and on a phone it is one
+of the [Cockpit](/clients/app) surfaces.
+
+## Pinning messages
+
+Hover a message and choose the pin icon. User, assistant and eligible tool
+messages can all be pinned.
+
+<Callout type="info">
+  **Pins are saved on this device only.** They are not synced to the server and
+  do not follow you to another device, which is deliberate: a pin is a reading
+  aid, and syncing it would mean sending the server a durable pointer at a
+  specific message.
+</Callout>
+
+## Selecting messages
+
+Tap a message to start a selection, then add more. With messages selected you
+can copy them, or send them to another session.
+
+**Copy** uses Markdown with role labels by default, so pasting somewhere else
+keeps who said what. Plain text is available if the labels are noise for what
+you are doing.
+
+**Send to session** appends the selection to another session's draft rather than
+sending it immediately — you land in that session with the messages already in
+the composer, free to add a sentence of context before you send. The draft
+survives navigating away and back.
+
+### Shaping what gets sent
+
+The text that arrives is built from a template you control, so forwarding can
+carry an instruction rather than a bare quote. Three placeholders are available:
+
+| Placeholder | Becomes |
+| --- | --- |
+| `{{MESSAGES}}` | The selected messages themselves |
+| `{{SELECTED_COUNT}}` | How many were selected |
+| `{{SOURCE_SESSION_NAME}}` | The session they came from |
+
+A template without `{{MESSAGES}}` is accepted but warned about, since the
+selection would have nowhere to go.
+
+## Turning the pieces on
+
+Selection and forwarding are configured under **Settings → Transcript →
+Message actions**, where you can enable message selection, enable Send to
+session, choose the copy format and edit the template.
+
+## Related
+
+- [Keyboard shortcuts](/features/keyboard-shortcuts) — selection and jump commands.
+- [Organizing sessions](/features/session-organization)
+- [Session settings](/features/session-settings)

@@ -55,11 +55,11 @@ usually works: `codex` also answers to `codex-acp`, `codex-mcp`, `openai`, `gpt`
 Resume, browse, fork and roll back are the four things people most often assume
 work everywhere. They do not.
 
-| Agent | Resume its own sessions | Browse its sessions | Fork a conversation | Fork from a message | Roll back |
+| Agent | Resume its own sessions | Fork a conversation | Fork from a message | Roll back | Declares session listing |
 | --- | --- | --- | --- | --- | --- |
-| **Claude** | Yes | Yes | — | — | — |
-| **Codex** | Experimental | Yes | Yes | — | Yes |
-| **OpenCode** | Yes | Yes | Yes | Yes | — |
+| **Claude** | Yes | — | — | — | Yes |
+| **Codex** | Experimental | Yes | — | Yes | Yes |
+| **OpenCode** | Yes | Yes | Yes | — | Yes |
 | **Gemini** | Yes | — | — | — | — |
 | **Auggie** | Yes | — | — | — | — |
 | **Qwen Code** | Yes | — | — | — | — |
@@ -78,47 +78,75 @@ conversation; where it cannot, Happier's replay fork still works, because that
 is Happier's own mechanism rather than the agent's. See
 [Session forking](/features/session-forking).
 
+The last column is a declaration rather than a gate — nothing currently reads
+it, so it does not decide whether you can browse an agent's own sessions. What
+you can actually browse and import is described in
+[Browse and import provider sessions](/features/browse-and-import-sessions).
+
 ## Running a turn
 
-| Agent | Steer a running turn | Plan mode | Accept edits | Mode switching | Session modes |
-| --- | --- | --- | --- | --- | --- |
-| **Claude** | Yes | Yes | Yes | `provider-native` | `staticAgentModes` |
-| **Codex** | — | — | — | `metadata-gating` | `acpPolicyPresets` |
-| **OpenCode** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
-| **Gemini** | — | — | — | `none` | `none` |
-| **Auggie** | — | — | — | `none` | `none` |
-| **Qwen Code** | — | — | — | `none` | `none` |
-| **Kimi** | — | — | — | `none` | `none` |
-| **Kilo** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
-| **Kiro** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
-| **Custom ACP** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
-| **Pi** | Yes | — | — | `none` | `none` |
-| **Copilot** | — | Yes | — | `acp-setSessionMode` | `acpAgentModes` |
-| **Cursor** | — | Yes | — | `acp-config-option` | `acpAgentModes` |
-| **Grok** | — | — | — | `none` | `none` |
+| Agent | Steer a running turn | Session modes | Dedicated plan control | Accept edits |
+| --- | --- | --- | --- | --- |
+| **Claude** | Yes | Agent modes, built in | Yes | Yes |
+| **Codex** | — | Policy presets, from the agent | — | — |
+| **OpenCode** | — | Agent modes, from the agent | Yes | — |
+| **Gemini** | — | — | — | — |
+| **Auggie** | — | — | — | — |
+| **Qwen Code** | — | — | — | — |
+| **Kimi** | — | — | — | — |
+| **Kilo** | — | Agent modes, from the agent | Yes | — |
+| **Kiro** | — | Agent modes, from the agent | Yes | — |
+| **Custom ACP** | — | Agent modes, from the agent | Yes | — |
+| **Pi** | Yes | — | — | — |
+| **Copilot** | — | Agent modes, from the agent | Yes | — |
+| **Cursor** | — | Agent modes, from the agent | Yes | — |
+| **Grok** | — | — | — | — |
 
 Steering is what lets you add a correction to a turn already in flight instead
 of interrupting it. Where an agent cannot steer, Happier interrupts and resends,
 which is slower and loses less than it sounds — see [Steering](/features/steering).
 
+**Session modes are not permission modes.** Where the list comes *from the
+agent*, Happier shows whichever modes that build advertises for the session, so
+the choices can differ between versions and the Mode control is hidden when the
+runtime offers none. A dash under "Dedicated plan control" means Happier has no
+plan-specific affordance for that agent — **not** that the agent lacks a plan
+mode. Codex, for instance, reaches `plan` through the Mode control.
+
 ## Media and tools
 
-| Agent | Send it images | Publishes generated media | Generates images natively | Happier tools | Connected Services |
+| Agent | Publishes generated media | Declares image input | Declares native image generation | Happier tools | Connected Services |
 | --- | --- | --- | --- | --- | --- |
 | **Claude** | Yes | Yes | — | Yes (`native_mcp`) | `claude-subscription`, `anthropic` |
 | **Codex** | Yes | Yes | Yes | Yes (`native_mcp`) | `openai-codex`, `openai` |
-| **OpenCode** | Experimental | Yes | — | Yes (`native_mcp`) | `openai-codex`, `openai`, `claude-subscription`, `anthropic` |
-| **Gemini** | Yes | — | — | Yes (`native_mcp`) | `gemini` |
+| **OpenCode** | Yes | Experimental | — | Yes (`native_mcp`) | `openai-codex`, `openai`, `claude-subscription`, `anthropic` |
+| **Gemini** | — | Yes | — | Yes (`native_mcp`) | `gemini` |
 | **Auggie** | Experimental | Experimental | — | — | — |
-| **Qwen Code** | Experimental | Yes | — | — | — |
-| **Kimi** | Experimental | Yes | — | — | — |
-| **Kilo** | Experimental | Yes | — | — | — |
-| **Kiro** | Experimental | Yes | — | Yes (`native_mcp`) | — |
-| **Custom ACP** | Experimental | Yes | — | Yes (`native_mcp`) | — |
+| **Qwen Code** | Yes | Experimental | — | — | — |
+| **Kimi** | Yes | Experimental | — | — | — |
+| **Kilo** | Yes | Experimental | — | — | — |
+| **Kiro** | Yes | Experimental | — | Yes (`native_mcp`) | — |
+| **Custom ACP** | Yes | Experimental | — | Yes (`native_mcp`) | — |
 | **Pi** | Experimental | Experimental | — | — | `openai-codex`, `openai`, `claude-subscription`, `anthropic` |
-| **Copilot** | Experimental | Yes | — | — | — |
-| **Cursor** | — | Yes | Yes | — | — |
+| **Copilot** | Yes | Experimental | — | — | — |
+| **Cursor** | Yes | — | Yes | — | — |
 | **Grok** | — | — | — | — | — |
+
+Two of these columns describe what an integration **declares**, not what Happier
+enforces, and the distinction matters if you are deciding whether to attach a
+screenshot.
+
+**Publishes generated media** is behavioural: Happier reads it when wiring an
+agent's runtime, so an agent marked here really can put generated images into a
+session.
+
+**Declares image input** and **Declares native image generation** are the
+integration's own statements about the agent, and no code path currently gates
+on either. In practice, an ACP-backed session attaches your trusted local images
+to the prompt regardless of what the manifest says — whether the agent then does
+anything useful with them is the agent's business, not Happier's. So treat a
+dash in those two columns as "not claimed", not "will be refused", and expect
+some declarations to lag the runtime.
 
 ## Authentication
 
