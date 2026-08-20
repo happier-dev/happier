@@ -1,4 +1,5 @@
 import {
+    SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
     SESSION_ORGANIZATION_MAX_FOLDERS,
     SESSION_ORGANIZATION_MAX_LABELS,
     SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
@@ -369,7 +370,7 @@ export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx,
     accountId: string;
     sessionId: string;
     request: SetSessionAttentionStandingRequest;
-}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" | "session-attention-standing-limit-exceeded" }> {
     if (params.request.standing === null) {
         await tx.sessionAttentionStanding.deleteMany({
             where: { accountId: params.accountId, sessionId: params.sessionId },
@@ -388,6 +389,26 @@ export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx,
     });
     if (!visible) {
         return { error: "session-not-found" };
+    }
+
+    // Bound the collection at its writer, the way the pin limit is enforced, so the snapshot's
+    // `.max()` can never reject a whole organization payload that this account was allowed to store.
+    // Only a row that does not exist yet grows it; overwriting an existing standing is always allowed
+    // so a user at the bound can still flip a session they already declared.
+    const existingStanding = await tx.sessionAttentionStanding.findUnique({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        select: { sessionId: true },
+    });
+    if (!existingStanding) {
+        const standingCount = await tx.sessionAttentionStanding.count({
+            where: {
+                accountId: params.accountId,
+                session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId),
+            },
+        });
+        if (standingCount >= SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS) {
+            return { error: "session-attention-standing-limit-exceeded" };
+        }
     }
 
     const standing = await tx.sessionAttentionStanding.upsert({
@@ -414,7 +435,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
     accountId: string;
     sessionId: string;
     request: SetSessionAttentionStandingRequest;
-}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" | "session-attention-standing-limit-exceeded" }> {
     return await inTx(async (tx) => await setSessionAttentionStandingInTx(tx, params));
 }
 

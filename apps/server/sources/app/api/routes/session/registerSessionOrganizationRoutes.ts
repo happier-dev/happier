@@ -212,6 +212,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 200: SetSessionAttentionStandingResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-attention-standing") }),
                 404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal("session-attention-standing-limit-exceeded") }),
             },
         },
     }, async (request, reply) => {
@@ -240,6 +241,9 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             request: parsedBody.data,
         });
         if ("error" in result) {
+            if (result.error === "session-attention-standing-limit-exceeded") {
+                return reply.code(409).send({ error: result.error });
+            }
             return reply.code(404).send({ error: "Session not found" });
         }
 

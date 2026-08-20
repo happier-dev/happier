@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { SessionOrganizationSnapshotResponseSchema } from "@happier-dev/protocol";
+import {
+    SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
+    SessionOrganizationSnapshotResponseSchema,
+} from "@happier-dev/protocol";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { registerSessionOrganizationRoutes } from "@/app/api/routes/session/registerSessionOrganizationRoutes";
@@ -148,6 +151,68 @@ describe("session attention standings on SQLite", () => {
         ).resolves.toEqual({
             hint: { sessionOrganization: true, scope: "attentionStandings", sessionIds: [sessionId] },
         });
+    });
+
+    it("refuses a new standing past the product maximum but still lets an existing one flip", async () => {
+        const { accountId, sessionId } = await createAccountWithSession();
+        const route = createStandingRouteBuilder();
+        await route.invoke({ userId: accountId, params: { sessionId }, body: { standing: true } });
+
+        // Fill the account to the bound. The response schema caps the collection, so a writer that
+        // let the account past the bound would make its own snapshot unparseable.
+        const fillerTags = Array.from(
+            { length: SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS - 1 },
+            () => `session-${randomUUID()}`,
+        );
+        for (const tag of fillerTags) {
+            const filler = await db.session.create({
+                data: {
+                    accountId,
+                    tag,
+                    metadata: "{}",
+                    metadataVersion: 0,
+                    agentState: null,
+                    agentStateVersion: 0,
+                },
+                select: { id: true },
+            });
+            await db.sessionAttentionStanding.create({
+                data: { accountId, sessionId: filler.id, standing: true },
+                select: { sessionId: true },
+            });
+        }
+
+        const overflow = await createAccountWithSession();
+        const overflowSession = await db.session.create({
+            data: {
+                accountId,
+                tag: `session-${randomUUID()}`,
+                metadata: "{}",
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 0,
+            },
+            select: { id: true },
+        });
+        expect(overflow.accountId).not.toBe(accountId);
+
+        const rejected = await route.invoke({
+            userId: accountId,
+            params: { sessionId: overflowSession.id },
+            body: { standing: true },
+        });
+        expect(rejected.reply.statusCode).toBe(409);
+        expect(rejected.response).toEqual({ error: "session-attention-standing-limit-exceeded" });
+
+        // The bound rejects growth, never a change to a standing the account already declared.
+        const flipped = await route.invoke({ userId: accountId, params: { sessionId }, body: { standing: false } });
+        expect(flipped.reply.statusCode).toBe(200);
+        expect(flipped.response).toEqual({
+            standing: { sessionId, standing: false, updatedAt: expect.any(Number) },
+        });
+        await expect(
+            db.sessionAttentionStanding.count({ where: { accountId } }),
+        ).resolves.toBe(SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS);
     });
 
     it("clears a standing for an archived session but refuses to set one", async () => {
