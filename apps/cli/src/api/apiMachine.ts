@@ -424,6 +424,10 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                // The machine this client authenticated as — the only honest
+                // answer to "which machine is this daemon?", and taken here so no
+                // caller has to remember to supply it.
+                currentMachineId: this.machine.id,
                 machineRpcWorkingDirectory: this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: this.filesystemAccessPolicy,
                 emitDirectSessionTranscriptUpdate:

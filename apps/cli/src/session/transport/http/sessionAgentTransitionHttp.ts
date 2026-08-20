@@ -3,8 +3,6 @@ import { z } from 'zod';
 
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
 
-import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
-
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
 /**
@@ -17,55 +15,78 @@ import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
  * - the generic message ingress REJECTS the reserved divider localId, so the
  *   divider can only be produced by this command.
  *
- * The transport outcome is deliberately three-valued. A lost response after the
+ * The transport outcome is deliberately two-valued. A lost response after the
  * server committed is indistinguishable from a request that never arrived, so
  * `unknown` is returned instead of guessing — the coordinator then reports
  * `outcome_unknown` rather than a rejection that would claim an untouched
  * source.
+ *
+ * The wire shape is the ONE cutover contract, shared with the successor tree:
+ * the outcome rides the HTTP status (200 success, 409/500 carrying the explicit
+ * partial-effect discriminator, 400/403/404 for the status-coded no-effect
+ * refusals), which is how every other session route in this server reports
+ * itself. This reader and `registerSessionAgentTransitionRoute` are the two
+ * halves of that contract, and `sessionAgentTransitionHttp.test.ts` is what pins
+ * them together — nothing else does, because the coordinator tests mock this
+ * function.
  */
 
-const CommittedCurrentViewSchema = z.object({
-  kind: z.literal('legacy_v0'),
-  metadataVersion: z.number().int().min(0),
-  agentStateVersion: z.number().int().min(0),
-});
+const CutoverSuccessSchema = z.object({
+  success: z.literal(true),
+  dividerSeq: z.number().int().min(0),
+  /**
+   * The server found an unreadable row already occupying the reserved divider
+   * localId and could not establish that this operation wrote it. A server that
+   * seals dividers deterministically decides authorship by byte comparison and
+   * never sends this; one that seals with a random nonce has to defer.
+   */
+  dividerVerificationRequired: z.literal(true).optional(),
+}).passthrough();
 
-const CutoverResponseSchema = z.union([
-  z.object({
-    ok: z.literal(true),
-    dividerSeq: z.number().int().min(0),
-    dividerDidWrite: z.boolean(),
-    currentView: CommittedCurrentViewSchema,
-  }),
-  z.object({
-    ok: z.literal(false),
-    effect: z.literal('current_view_committed'),
-    error: z.enum(['divider-conflict', 'divider-rejected', 'internal']),
-    currentView: CommittedCurrentViewSchema,
-  }),
-  z.object({
-    ok: z.literal(false),
-    effect: z.literal('none'),
-    error: z.enum([
-      'invalid-params',
-      'forbidden',
-      'session-not-found',
-      'archived',
-      'session-active',
-      'version-mismatch',
-      'internal',
-    ]),
-  }),
+const CutoverNoEffectErrorSchema = z.enum([
+  'invalid-params',
+  'forbidden',
+  'session-not-found',
+  'archived',
+  'session-active',
+  'version-mismatch',
+  'internal',
 ]);
 
-export type SessionAgentTransitionCutoverResponse = z.infer<typeof CutoverResponseSchema>;
+const CutoverConflictSchema = z.discriminatedUnion('effect', [
+  z.object({
+    effect: z.literal('none'),
+    error: CutoverNoEffectErrorSchema,
+  }).passthrough(),
+  z.object({
+    effect: z.literal('current_view_committed'),
+    error: z.enum(['divider-conflict', 'divider-rejected', 'internal']),
+  }).passthrough(),
+]);
+
+export type SessionAgentTransitionCutoverResponse =
+  | Readonly<{ ok: true; dividerSeq: number; dividerVerificationRequired?: true }>
+  | Readonly<{
+      ok: false;
+      effect: 'none';
+      error: z.infer<typeof CutoverNoEffectErrorSchema>;
+    }>
+  | Readonly<{
+      ok: false;
+      effect: 'current_view_committed';
+      error: 'divider-conflict' | 'divider-rejected' | 'internal';
+    }>;
 
 export type SessionAgentTransitionCutoverOutcome =
   | Readonly<{ status: 'settled'; response: SessionAgentTransitionCutoverResponse }>
-  /** The server predates the operation. Definitely nothing was written. */
-  | Readonly<{ status: 'unsupported' }>
   /** The request may or may not have been applied. Never treated as no-effect. */
   | Readonly<{ status: 'unknown'; reason: string }>;
+
+function noEffect(
+  error: z.infer<typeof CutoverNoEffectErrorSchema>,
+): SessionAgentTransitionCutoverOutcome {
+  return { status: 'settled', response: { ok: false, effect: 'none', error } };
+}
 
 export async function commitSessionAgentTransitionCutover(params: Readonly<{
   token: string;
@@ -108,21 +129,43 @@ export async function commitSessionAgentTransitionCutover(params: Readonly<{
     };
   }
 
-  if (isAuthenticationStatus(response.status)) {
-    throw createAuthenticationHttpStatusError(response.status, `Unauthorized (${response.status})`);
+  if (response.status === 200) {
+    const success = CutoverSuccessSchema.safeParse(response.data);
+    return success.success
+      ? {
+          status: 'settled',
+          response: {
+            ok: true,
+            dividerSeq: success.data.dividerSeq,
+            ...(success.data.dividerVerificationRequired
+              ? { dividerVerificationRequired: true as const }
+              : {}),
+          },
+        }
+      : { status: 'unknown', reason: 'Unexpected cutover response shape' };
   }
-  if (response.status === 404) {
-    // The route itself is absent: this operation returns every session-level
-    // failure as a 200 body, so a 404 can only be a server that predates it.
-    return { status: 'unsupported' };
+  // 409 carries the explicit partial-effect discriminator; a 500 may also carry
+  // it when the failure is attributable to a known depth. An unparseable body is
+  // ambiguous and must not be collapsed into a definite effect.
+  if (response.status === 409 || response.status >= 500) {
+    const conflict = CutoverConflictSchema.safeParse(response.data);
+    if (!conflict.success) {
+      return { status: 'unknown', reason: `Unexpected cutover status ${response.status}` };
+    }
+    return conflict.data.effect === 'none'
+      ? noEffect(conflict.data.error)
+      : {
+          status: 'settled',
+          response: { ok: false, effect: 'current_view_committed', error: conflict.data.error },
+        };
   }
-  if (response.status !== 200) {
-    return { status: 'unknown', reason: `Unexpected cutover status ${response.status}` };
-  }
-
-  const parsed = CutoverResponseSchema.safeParse(response.data);
-  if (!parsed.success) {
-    return { status: 'unknown', reason: 'Unexpected cutover response shape' };
-  }
-  return { status: 'settled', response: parsed.data };
+  // Every remaining status the route declares is a refusal that wrote nothing.
+  // A 401/403 is reported through the union rather than thrown: by the time this
+  // runs the source is already stopped, so the coordinator needs a result arm at
+  // a known depth — an exception here would surface as `outcome_unknown` and
+  // withhold a recovery the daemon can prove.
+  if (response.status === 400) return noEffect('invalid-params');
+  if (response.status === 401 || response.status === 403) return noEffect('forbidden');
+  if (response.status === 404) return noEffect('session-not-found');
+  return { status: 'unknown', reason: `Unexpected cutover status ${response.status}` };
 }

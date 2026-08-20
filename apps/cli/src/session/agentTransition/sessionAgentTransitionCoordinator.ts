@@ -61,6 +61,7 @@ import { buildSessionAgentTransitionActivationBrief } from './buildSessionAgentT
 import {
   hasCanonicalHostedTranscript,
   resolveSessionContinuationTargetAgent,
+  sessionIsHostedHere,
 } from './sessionContinuationInspection';
 
 /**
@@ -449,6 +450,8 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
 export async function runSessionAgentTransition(params: Readonly<{
   credentials: Credentials;
   request: SessionAgentTransitionRequestV1;
+  /** Exact daemon machine. A Session hosted elsewhere is not transitionable. */
+  currentMachineId?: string | null;
   deps?: SessionAgentTransitionCoordinatorDeps;
 }>): Promise<SessionAgentTransitionResultV1> {
   const now = params.deps?.now ?? Date.now;
@@ -490,6 +493,11 @@ export async function runSessionAgentTransition(params: Readonly<{
   // shared with inspection so a Session can never pass one gate and fail the
   // other, and so neither disagrees with the canonical storage-kind owner.
   if (!hasCanonicalHostedTranscript(metadata)) return effects.rejected('unsupported_operation');
+  // Same owner the inspection asks, so a Session can never be reported
+  // switchable here and then stopped by a daemon that does not host it.
+  if (!sessionIsHostedHere({ currentMachineId: params.currentMachineId, rawSession, metadata })) {
+    return effects.rejected('unsupported_operation');
+  }
 
   const currentAgentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!currentAgentId) return effects.rejected('unsupported_operation');
@@ -704,85 +712,132 @@ export async function runSessionAgentTransition(params: Readonly<{
   }
 
   const nowMs = now();
-  const targetMetadata = projectCurrentAgentSessionView({
-    metadata: stoppedMetadata,
-    // The projector is the ONE writer of a flat vendor resume key, so a native
-    // return travels through it rather than through a second writer beside it:
-    // that is what keeps the one-identity invariant true by construction.
-    // Absent, the target stays fresh — the predecessor behaviour.
-    nativeResumeId: nativeReturn?.identity.vendorResumeId ?? null,
-    target: {
-      agentId: targetAgentId,
-      ...(request.selection.modelId ? { modelId: request.selection.modelId } : {}),
-      ...(request.selection.acpSessionModeId ? { sessionModeId: request.selection.acpSessionModeId } : {}),
-      ...(request.selection.sessionConfigOptionOverrides
-        ? { sessionConfigOptionOverrides: request.selection.sessionConfigOptionOverrides }
-        : {}),
-      updatedAtMs: nowMs,
-    },
-  });
-  // This projection is authoritative over the seed slot, not additive. An
-  // unconsumed `replaySeedV1` left by an earlier operation is addressed to a
-  // runtime that no longer exists, and leaving it in place lets the incoming
-  // Agent's first turn be prefixed with an unrelated operation's replay context.
-  // Either this operation's brief occupies the slot or nothing does.
-  if (seed.status === 'seeded') {
-    targetMetadata.replaySeedV1 = {
-      v: 1,
-      seedText: seed.seedDraft,
-      sourceSessionId: request.sessionId,
-      sourceCutoffSeqInclusive: seed.sourceCutoffSeqInclusive,
-      createdAtMs: nowMs,
-    };
-  } else {
-    delete targetMetadata.replaySeedV1;
-  }
-  await applyTargetConnectedServiceBinding({
-    credentials: params.credentials,
-    targetAgentId,
-    targetMetadata,
-  });
-
   const dividerLocalId = buildSessionAgentTransitionDividerLocalId(localId);
-  const cutover = await commitSessionAgentTransitionCutover({
-    token: params.credentials.token,
-    sessionId: request.sessionId,
-    currentView: {
-      kind: 'legacy_v0',
-      expectedMetadataVersion: stoppedSession.metadataVersion,
-      metadataCiphertext: encryptStoredSessionPayload({
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        payload: targetMetadata,
-      }),
-      expectedAgentStateVersion: stoppedSession.agentStateVersion,
-      agentStateCiphertext: null,
-    },
-    divider: {
-      localId: dividerLocalId,
-      content: buildDividerContent({
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        dividerLocalId,
-        fromAgentId: sourceAgentId,
-        toAgentId: targetAgentId,
-        // The exact bound the brief above was built from, recorded on the
-        // boundary it created. A source with nothing replayable is `0` rows
-        // carried — a fact, not a missing one, and the reader must be able to
-        // say so rather than fall back to "this boundary recorded nothing".
-        sourceCutoffSeqInclusive: seed.status === 'seeded' ? seed.sourceCutoffSeqInclusive : 0,
-      }),
-    },
-  });
+  const divider = {
+    localId: dividerLocalId,
+    content: buildDividerContent({
+      mode: sessionTarget.mode,
+      ctx: sessionTarget.ctx,
+      dividerLocalId,
+      fromAgentId: sourceAgentId,
+      toAgentId: targetAgentId,
+      // The exact bound the brief above was built from, recorded on the
+      // boundary it created. A source with nothing replayable is `0` rows
+      // carried — a fact, not a missing one, and the reader must be able to say
+      // so rather than fall back to "this boundary recorded nothing".
+      sourceCutoffSeqInclusive: seed.status === 'seeded' ? seed.sourceCutoffSeqInclusive : 0,
+    }),
+  };
+
+  /**
+   * Project, seal and commit against ONE observation of the source row.
+   *
+   * Bytes and the version they are checked against are one observation, so this
+   * takes both together. That is also what makes a retry safe: it re-projects
+   * from the refetched row rather than resending the stale target view under a
+   * newer version, which would silently revert whatever moved the version.
+   */
+  const commitCutover = async (
+    source: Readonly<{ metadataVersion: number; agentStateVersion: number }>,
+    sourceCurrentView: Record<string, unknown>,
+  ) => {
+    const targetMetadata = projectCurrentAgentSessionView({
+      metadata: sourceCurrentView,
+      // The projector is the ONE writer of a flat vendor resume key, so a native
+      // return travels through it rather than through a second writer beside it:
+      // that is what keeps the one-identity invariant true by construction.
+      // Absent, the target stays fresh — the predecessor behaviour.
+      nativeResumeId: nativeReturn?.identity.vendorResumeId ?? null,
+      target: {
+        agentId: targetAgentId,
+        ...(request.selection.modelId ? { modelId: request.selection.modelId } : {}),
+        ...(request.selection.acpSessionModeId ? { sessionModeId: request.selection.acpSessionModeId } : {}),
+        ...(request.selection.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: request.selection.sessionConfigOptionOverrides }
+          : {}),
+        updatedAtMs: nowMs,
+      },
+    });
+    // This projection is authoritative over the seed slot, not additive. An
+    // unconsumed `replaySeedV1` left by an earlier operation is addressed to a
+    // runtime that no longer exists, and leaving it in place lets the incoming
+    // Agent's first turn be prefixed with an unrelated operation's replay context.
+    // Either this operation's brief occupies the slot or nothing does.
+    if (seed.status === 'seeded') {
+      targetMetadata.replaySeedV1 = {
+        v: 1,
+        seedText: seed.seedDraft,
+        sourceSessionId: request.sessionId,
+        sourceCutoffSeqInclusive: seed.sourceCutoffSeqInclusive,
+        createdAtMs: nowMs,
+      };
+    } else {
+      delete targetMetadata.replaySeedV1;
+    }
+    await applyTargetConnectedServiceBinding({
+      credentials: params.credentials,
+      targetAgentId,
+      targetMetadata,
+    });
+    const outcome = await commitSessionAgentTransitionCutover({
+      token: params.credentials.token,
+      sessionId: request.sessionId,
+      currentView: {
+        kind: 'legacy_v0',
+        expectedMetadataVersion: source.metadataVersion,
+        metadataCiphertext: encryptStoredSessionPayload({
+          mode: sessionTarget.mode,
+          ctx: sessionTarget.ctx,
+          payload: targetMetadata,
+        }),
+        expectedAgentStateVersion: source.agentStateVersion,
+        agentStateCiphertext: null,
+      },
+      divider,
+    });
+    return { targetMetadata, outcome };
+  };
+
+  let attempt = await commitCutover(stoppedSession, stoppedMetadata);
+  if (
+    attempt.outcome.status === 'settled'
+    && attempt.outcome.response.ok === false
+    && attempt.outcome.response.effect === 'none'
+    && attempt.outcome.response.error === 'version-mismatch'
+  ) {
+    // A CAS loss is not automatically a dead end. The version can move for a
+    // write with nothing to do with the switch, and the source is ALREADY
+    // stopped, so leaving the Session down when the transition is still
+    // applicable is the worst outcome this flow can produce. Exactly one
+    // refetch-and-rebuild: a second loss is a conflict, not a loop.
+    const refreshed = await fetchSessionByIdCompat({
+      token: params.credentials.token,
+      sessionId: request.sessionId,
+    }).catch((error: unknown) => {
+      if (isAuthenticationError(error)) throw error;
+      return null;
+    });
+    const refreshedMetadata = refreshed
+      ? asRecord(tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: refreshed }))
+      : null;
+    if (
+      !refreshed
+      || !refreshedMetadata
+      // The version moved BECAUSE a concurrent transition committed, or the
+      // Session was archived. Re-sealing this operation's target view over
+      // either would silently revert it.
+      || resolveAgentIdFromSessionMetadata(refreshedMetadata) !== sourceAgentId
+      || (refreshed as { archivedAt?: unknown }).archivedAt != null
+    ) {
+      return stopped.sourceStopped('cutover_conflict');
+    }
+    attempt = await commitCutover(refreshed, refreshedMetadata);
+  }
+  const { targetMetadata, outcome: cutover } = attempt;
 
   if (cutover.status === 'unknown') {
     logger.debug('[AGENT TRANSITION] Cutover outcome unknown', { reason: cutover.reason });
     return stopped.outcomeUnknown();
-  }
-  if (cutover.status === 'unsupported') {
-    // The server predates the operation and wrote nothing, but the source is
-    // already stopped, so this is not a no-effect rejection.
-    return stopped.sourceStopped('cutover_conflict');
   }
   if (!cutover.response.ok && cutover.response.effect === 'none') {
     return stopped.sourceStopped('cutover_conflict');
@@ -796,6 +851,19 @@ export async function runSessionAgentTransition(params: Readonly<{
     return stopped.cutoverCommitted().committed(
       cutover.response.error === 'divider-conflict' ? 'divider_conflict' : 'divider_missing',
     );
+  }
+  if (cutover.response.dividerVerificationRequired) {
+    // The server committed the current view but found a row it cannot read
+    // already occupying the reserved localId, so it could not establish that
+    // this operation wrote it. This tree's own server never asks: it seals
+    // dividers deterministically by localId, so a re-derivation is byte-identical
+    // and the byte comparison always answers. The demand can therefore only come
+    // from a server whose dividers carry a random nonce — and this daemon has no
+    // decrypt-and-compare path of its own to answer it with. An unattributable
+    // row at the boundary is exactly the untrusted-divider state the arm above
+    // already names, so it takes that arm instead of activating the target on a
+    // boundary it cannot vouch for.
+    return stopped.cutoverCommitted().committed('divider_conflict');
   }
 
   /* ---------------------------------------------------------------- 7.4 */

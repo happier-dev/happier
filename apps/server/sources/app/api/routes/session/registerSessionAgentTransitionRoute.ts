@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-    SessionStoredMessageContentSchema,
-    isSessionAgentTransitionDividerLocalId,
-} from "@happier-dev/protocol";
+import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
 
 import { buildNewMessageUpdate, buildUpdateSessionUpdate, eventRouter } from "@/app/events/eventRouter";
 import { applySessionAgentTransitionCutover } from "@/app/session/agentTransition/applySessionAgentTransitionCutover";
@@ -25,6 +22,14 @@ import { type Fastify } from "../../types";
  * server reading Agent identity. The metadata/agentState version CAS is what
  * proves no concurrent change slipped in, since the server cannot compare the
  * expected Agent id itself.
+ *
+ * The response is the ONE cutover contract, shared with the successor tree: the
+ * outcome rides the HTTP status — 200 for a committed cutover, 409/500 carrying
+ * the explicit partial-effect discriminator, and 400/403/404 for the refusals
+ * that wrote nothing. That is how every other session route in this server
+ * reports itself, and the daemon reader
+ * (`apps/cli/src/session/transport/http/sessionAgentTransitionHttp.ts`) is the
+ * other half of it.
  */
 export function registerSessionAgentTransitionRoute(app: Fastify) {
     app.post('/v2/sessions/:sessionId/agent-transition/cutover', {
@@ -46,42 +51,27 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
                 }).strict(),
             }).strict(),
             response: {
-                200: z.union([
-                    z.object({
-                        ok: z.literal(true),
-                        dividerSeq: z.number().int().min(0),
-                        dividerDidWrite: z.boolean(),
-                        currentView: z.object({
-                            kind: z.literal('legacy_v0'),
-                            metadataVersion: z.number().int().min(0),
-                            agentStateVersion: z.number().int().min(0),
-                        }),
-                    }),
-                    z.object({
-                        ok: z.literal(false),
-                        effect: z.literal('current_view_committed'),
-                        error: z.enum(['divider-conflict', 'divider-rejected', 'internal']),
-                        currentView: z.object({
-                            kind: z.literal('legacy_v0'),
-                            metadataVersion: z.number().int().min(0),
-                            agentStateVersion: z.number().int().min(0),
-                        }),
-                    }),
-                    z.object({
-                        ok: z.literal(false),
-                        effect: z.literal('none'),
-                        error: z.enum([
-                            'invalid-params',
-                            'forbidden',
-                            'session-not-found',
-                            'archived',
-                            'session-active',
-                            'version-mismatch',
-                            'internal',
-                        ]),
-                    }),
-                ]),
-                400: z.object({ error: z.literal('Invalid parameters'), code: z.string().optional() }),
+                200: z.object({
+                    success: z.literal(true),
+                    dividerSeq: z.number().int().min(0),
+                }).strict(),
+                400: z.object({ error: z.literal('Invalid parameters') }).strict(),
+                403: z.object({ error: z.literal('Forbidden') }).strict(),
+                404: z.object({ error: z.literal('Session not found') }).strict(),
+                409: z.object({
+                    effect: z.enum(['none', 'current_view_committed']),
+                    error: z.enum([
+                        'archived',
+                        'session-active',
+                        'version-mismatch',
+                        'divider-conflict',
+                        'divider-rejected',
+                    ]),
+                }).strict(),
+                500: z.object({
+                    effect: z.enum(['none', 'current_view_committed']),
+                    error: z.literal('internal'),
+                }).strict(),
             },
         },
     }, async (request, reply) => {
@@ -89,10 +79,10 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
         const { sessionId } = request.params;
         const { currentView, divider } = request.body;
 
-        if (!isSessionAgentTransitionDividerLocalId(divider.localId)) {
-            return reply.code(400).send({ error: 'Invalid parameters', code: 'divider-local-id-not-reserved' });
-        }
-
+        // The reserved-localId precondition is NOT re-decided here. The command
+        // owner already refuses a non-reserved localId with `invalid-params`,
+        // and a second copy of that rule at the ingress is a second
+        // decision-maker for the namespace the command exists to protect.
         const result = await applySessionAgentTransitionCutover({
             actorUserId: userId,
             sessionId,
@@ -101,7 +91,19 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
         });
 
         if (!result.ok && result.effect === 'none') {
-            return reply.send({ ok: false as const, effect: 'none' as const, error: result.error });
+            if (result.error === 'invalid-params') {
+                return reply.code(400).send({ error: 'Invalid parameters' as const });
+            }
+            if (result.error === 'forbidden') {
+                return reply.code(403).send({ error: 'Forbidden' as const });
+            }
+            if (result.error === 'session-not-found') {
+                return reply.code(404).send({ error: 'Session not found' as const });
+            }
+            if (result.error === 'internal') {
+                return reply.code(500).send({ effect: 'none' as const, error: 'internal' as const });
+            }
+            return reply.code(409).send({ effect: 'none' as const, error: result.error });
         }
 
         // Both remaining shapes committed the current view, so both fan the new
@@ -117,11 +119,15 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
         }));
 
         if (!result.ok) {
-            return reply.send({
-                ok: false as const,
+            if (result.error === 'internal') {
+                return reply.code(500).send({
+                    effect: 'current_view_committed' as const,
+                    error: 'internal' as const,
+                });
+            }
+            return reply.code(409).send({
                 effect: 'current_view_committed' as const,
                 error: result.error,
-                currentView: result.currentView,
             });
         }
 
@@ -137,11 +143,12 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
             }));
         }
 
+        // `dividerDidWrite` and the committed versions stay INTERNAL: they drive
+        // the fan-out above, and the daemon has never read either. Publishing
+        // them would be contract surface with no consumer.
         return reply.send({
-            ok: true as const,
+            success: true as const,
             dividerSeq: result.dividerSeq,
-            dividerDidWrite: result.dividerDidWrite,
-            currentView: result.currentView,
         });
     });
 }

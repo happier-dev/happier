@@ -19,8 +19,14 @@ const {
 
 const credentials = { token: 'token-1' } as never;
 
-function rawSession(metadata: Record<string, unknown>) {
-  return { id: 'session-1', metadata: JSON.stringify(metadata), metadataVersion: 1 };
+function rawSession(metadata: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'session-1',
+    metadata: JSON.stringify(metadata),
+    metadataVersion: 1,
+    machineId: 'machine-1',
+    ...overrides,
+  };
 }
 
 describe('evaluateSessionContinuationTargetSupport', () => {
@@ -117,6 +123,36 @@ describe('inspectSessionContinuation', () => {
     });
 
     expect(result).toMatchObject({ type: 'available', sameSessionTransition: false });
+  });
+
+  // The inspection answers for THIS exact machine. A Session hosted elsewhere
+  // has no runtime, no workspace and no machine-local native-return record
+  // here, so reporting it as `available` would arm a switch this daemon cannot
+  // honour and would then have to fail after stopping a Session it does not own.
+  it('reports a Session hosted on another machine as unavailable', async () => {
+    mocks.fetchSessionByIdCompat.mockResolvedValue(
+      rawSession({ path: '/work/repo', flavor: 'claude', machineId: 'machine-2' }, { machineId: 'machine-2' }),
+    );
+
+    const result = await inspectSessionContinuation({
+      credentials,
+      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
+      currentMachineId: 'machine-1',
+    });
+
+    expect(result).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
+  });
+
+  it('still answers for its own Session when the host machine matches', async () => {
+    mocks.fetchSessionByIdCompat.mockResolvedValue(rawSession({ path: '/work/repo', flavor: 'claude' }));
+
+    const result = await inspectSessionContinuation({
+      credentials,
+      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
+      currentMachineId: 'machine-1',
+    });
+
+    expect(result).toMatchObject({ type: 'available', sameSessionTransition: true });
   });
 
   it('reports a missing Session as unsupported rather than guessing', async () => {

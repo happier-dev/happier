@@ -201,15 +201,7 @@ function primeHappyPath(metadata: Record<string, unknown> = sourceMetadata()): v
   });
   mocks.commitSessionAgentTransitionCutover.mockImplementation(async () => {
     mocks.callOrder.push('cutover');
-    return {
-      status: 'settled',
-      response: {
-        ok: true,
-        dividerSeq: 101,
-        dividerDidWrite: true,
-        currentView: { kind: 'legacy_v0', metadataVersion: 8, agentStateVersion: 4 },
-      },
-    };
+    return { status: 'settled', response: { ok: true, dividerSeq: 101 } };
   });
   mocks.enqueuePendingQueueV2MessageViaHttp.mockImplementation(async () => {
     mocks.callOrder.push('admit');
@@ -320,6 +312,39 @@ describe('runSessionAgentTransition', () => {
         expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
       },
     );
+
+    // The per-Agent native-return record is DEVICE-LOCAL and the workspace is
+    // this host's, so a transition delivered to a machine that does not host the
+    // Session would read absent local resume state while stopping and cutting
+    // over a Session that lives elsewhere. The client can address a machine other
+    // than the Session's recorded host (machine replacement redirects the RPC
+    // target), and the server routes by the named machine without checking that
+    // it hosts the Session, so this is the daemon's own gate.
+    it('rejects a Session hosted on another machine without touching it', async () => {
+      primeHappyPath();
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        currentMachineId: 'machine-2',
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+      expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+      expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+    });
+
+    it('still runs when the authenticated machine hosts the Session', async () => {
+      primeHappyPath();
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        currentMachineId: 'machine-1',
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+    });
 
     it('rejects a direct-transcript Session as unsupported', async () => {
       primeHappyPath(sourceMetadata({ directSessionV1: { v: 1 } }));
@@ -669,7 +694,44 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
     });
 
-    it('reports a lost cutover precondition as source_stopped/cutover_conflict', async () => {
+    // A CAS loss is not automatically a dead end: the metadata version can move
+    // for a write that has nothing to do with the switch, and the source is
+    // already stopped, so leaving the Session down when the transition is still
+    // applicable is the worst outcome this flow can produce. Exactly one
+    // refetch-revalidate-rebuild-retry, so a genuinely contested Session still
+    // terminates instead of looping.
+    it('rebuilds against the current row and retries once after a recoverable CAS loss', async () => {
+      primeHappyPath();
+      // The post-stop read still shows version 7 (what the first attempt used);
+      // the refetch after the loss shows the row a concurrent write moved to 9.
+      let read = 0;
+      mocks.fetchSessionByIdCompat.mockImplementation(async () => {
+        read += 1;
+        return read <= 2 ? rawSession(sourceMetadata()) : rawSession(sourceMetadata(), { metadataVersion: 9 });
+      });
+      mocks.commitSessionAgentTransitionCutover
+        .mockImplementationOnce(async () => ({
+          status: 'settled',
+          response: { ok: false, effect: 'none', error: 'version-mismatch' },
+        }))
+        .mockImplementationOnce(async () => {
+          mocks.callOrder.push('cutover');
+          return { status: 'settled', response: { ok: true, dividerSeq: 101 } };
+        });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(mocks.commitSessionAgentTransitionCutover).toHaveBeenCalledTimes(2);
+      // The retry is a REBUILD, not a resend: it carries the refetched row's
+      // version, which is the only thing that can make the second CAS succeed.
+      expect(mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0]?.currentView)
+        .toMatchObject({ expectedMetadataVersion: 7 });
+      expect(mocks.commitSessionAgentTransitionCutover.mock.calls[1]?.[0]?.currentView)
+        .toMatchObject({ expectedMetadataVersion: 9 });
+    });
+
+    it('reports a second cutover loss as source_stopped/cutover_conflict, and does not loop', async () => {
       primeHappyPath();
       mocks.commitSessionAgentTransitionCutover.mockResolvedValue({
         status: 'settled',
@@ -684,7 +746,50 @@ describe('runSessionAgentTransition', () => {
         applied: 'source_stopped',
         code: 'cutover_conflict',
       });
+      expect(mocks.commitSessionAgentTransitionCutover).toHaveBeenCalledTimes(2);
       expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+    });
+
+    // The retry must never overwrite a concurrent transition that won the race:
+    // the version moved BECAUSE another cutover committed, and re-sealing this
+    // operation's target view over it would silently revert it.
+    it('does not retry over a concurrent cutover that already moved the Session off the source Agent', async () => {
+      primeHappyPath();
+      let read = 0;
+      mocks.fetchSessionByIdCompat.mockImplementation(async () => {
+        read += 1;
+        return read <= 2
+          ? rawSession(sourceMetadata())
+          : rawSession(sourceMetadata({ flavor: 'codex' }), { metadataVersion: 9 });
+      });
+      mocks.commitSessionAgentTransitionCutover.mockResolvedValue({
+        status: 'settled',
+        response: { ok: false, effect: 'none', error: 'version-mismatch' },
+      });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({
+        type: 'partially_applied',
+        localId: LOCAL_ID,
+        applied: 'source_stopped',
+        code: 'cutover_conflict',
+      });
+      expect(mocks.commitSessionAgentTransitionCutover).toHaveBeenCalledTimes(1);
+    });
+
+    // Every other no-effect refusal is terminal: nothing a refetch could change.
+    it('does not retry a cutover the server refused for a reason a refetch cannot fix', async () => {
+      primeHappyPath();
+      mocks.commitSessionAgentTransitionCutover.mockResolvedValue({
+        status: 'settled',
+        response: { ok: false, effect: 'none', error: 'session-active' },
+      });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toMatchObject({ applied: 'source_stopped', code: 'cutover_conflict' });
+      expect(mocks.commitSessionAgentTransitionCutover).toHaveBeenCalledTimes(1);
     });
 
     it('reports a conflicting divider row as divider_conflict, not divider_missing', async () => {
@@ -699,7 +804,6 @@ describe('runSessionAgentTransition', () => {
           ok: false,
           effect: 'current_view_committed',
           error: 'divider-conflict',
-          currentView: { kind: 'legacy_v0', metadataVersion: 8, agentStateVersion: 4 },
         },
       });
 
@@ -721,7 +825,6 @@ describe('runSessionAgentTransition', () => {
           ok: false,
           effect: 'current_view_committed',
           error: 'divider-rejected',
-          currentView: { kind: 'legacy_v0', metadataVersion: 8, agentStateVersion: 4 },
         },
       });
 

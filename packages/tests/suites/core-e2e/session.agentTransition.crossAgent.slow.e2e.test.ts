@@ -487,11 +487,23 @@ describe('core e2e: same-Session cross-Agent transition', () => {
     expect(dividers).toHaveLength(1);
     const divider = dividers[0]!;
     expect(divider.localId).toBe(dividerLocalId);
-    expect(readSessionAgentTransitionDividerFromStoredRecordV1(decodeRow(divider, sessionKey))).toEqual({
-      v: 1,
-      fromAgentId: 'claude',
-      toAgentId: 'gemini',
+    const dividerSidecar = readSessionAgentTransitionDividerFromStoredRecordV1(decodeRow(divider, sessionKey));
+    expect(dividerSidecar).toEqual({
+        v: 1,
+        fromAgentId: 'claude',
+        toAgentId: 'gemini',
+        // The departure seq is part of the sidecar, not an optional extra: it is the
+        // ONE input that survives the transition, and the bounded away-delta a
+        // returning Agent is seeded with is derived from it. Asserting the payload
+        // without it let a divider that had LOST the bound pass this gate.
+        sourceCutoffSeqInclusive: expect.any(Number),
     });
+    // …and it is the real head of the source, not the `?? 0` fallback: it covers
+    // everything the departing Agent saw, and stops below the divider itself so
+    // the divider is not inside its own bound.
+    expect(dividerSidecar?.sourceCutoffSeqInclusive)
+        .toBeGreaterThanOrEqual(Math.max(...messagesBefore.map((row) => row.seq)));
+    expect(dividerSidecar?.sourceCutoffSeqInclusive).toBeLessThan(divider.seq);
 
     // Source history is preserved, not rewritten: every pre-transition row
     // survives, and the divider lands after all of them.

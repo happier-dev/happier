@@ -195,6 +195,13 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  /**
+   * Exact authenticated machine bound to this daemon instance. The two
+   * continuation operations refuse a Session hosted elsewhere with it: a client
+   * can address a machine other than the Session's recorded host, and the server
+   * routes by the named machine without checking that it hosts the Session.
+   */
+  currentMachineId?: string;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
   promptAssetsHappierHomeDir?: () => string;
@@ -1699,7 +1706,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return rejectUndispatchedSessionAgentTransition('forbidden');
     }
-    return await runSessionAgentTransition({ credentials, request: parsed.data });
+    return await runSessionAgentTransition({
+      credentials,
+      request: parsed.data,
+      ...(params.deps?.currentMachineId ? { currentMachineId: params.deps.currentMachineId } : {}),
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUATION_INSPECT, async (raw: unknown) => {
@@ -1711,7 +1722,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return { type: 'unavailable', reason: 'unsupported_session' };
     }
-    return await inspectSessionContinuation({ credentials, request: parsed.data });
+    return await inspectSessionContinuation({
+      credentials,
+      request: parsed.data,
+      ...(params.deps?.currentMachineId ? { currentMachineId: params.deps.currentMachineId } : {}),
+    });
   });
 
   rpcHandlerManager.registerHandler(

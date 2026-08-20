@@ -50,9 +50,14 @@ Machine RPCs (`packages/protocol/src/rpc.ts`, registered in
 - `session.agentTransition` — the mutation.
 - `session.agentTransition.briefPreview` — read-only rebuild of a divider's brief.
 
-All three run on the machine hosting the Session. Inspection and the preview
-grant no authority and persist nothing; the mutation revalidates every fact
-inspection reported.
+All three run on the machine hosting the Session, and the daemon enforces that
+rather than assuming it: `sessionIsHostedHere` refuses a Session whose recorded
+machine is not this authenticated one, in the mutation and in inspection alike.
+The client can legitimately address another machine — its RPC target is resolved
+through the machine replacement chain — and the server routes by the named
+machine without checking that it hosts the Session, so the daemon is the only
+place the question can be settled. Inspection and the preview grant no authority
+and persist nothing; the mutation revalidates every fact inspection reported.
 
 ## Preconditions
 
@@ -333,9 +338,21 @@ seed pass, so they also affect forking and source-context spawns:
 
 ## Compatibility
 
-- A server that predates the cutover endpoint answers `unsupported`; because the
-  source is already stopped, that surfaces as `partially_applied` with
-  `cutover_conflict`, never as a no-effect rejection.
+- The cutover response is one shape across trees: `200 { success, dividerSeq,
+  dividerVerificationRequired? }`, `409`/`500` carrying the `effect` /`error`
+  partial-effect discriminator, and `400`/`403`/`404` for the refusals that wrote
+  nothing. A cutover the server refuses at any of those depths surfaces as
+  `partially_applied` with `cutover_conflict` — the source is already stopped, so
+  never as a no-effect rejection.
+- A lost cutover CAS is retried EXACTLY once, after refetching the row and
+  re-proving that it is unarchived and still on the source Agent. The target view
+  is re-projected from the refetched bytes, so the retry cannot revert the write
+  that moved the version. A second loss is a conflict, not a loop.
+- `dividerVerificationRequired` is a demand this tree's own server never makes:
+  it seals dividers deterministically by localId, so its byte comparison always
+  settles authorship. A server that seals with a random nonce has to defer, and
+  this daemon — which has no decrypt-and-compare path — reports that
+  unattributable boundary as `divider_conflict` rather than activating on it.
 - A daemon that predates the operation cannot answer
   `session.continuation.inspect`; the client presents that by machine presence
   rather than asserting a cause.
