@@ -90,21 +90,27 @@ export function isAnalyticsActive(): boolean {
 /**
  * Every reason we refuse to measure, evaluated before init.
  *
- * `navigator.globalPrivacyControl` is the CCPA/CPRA-recognised successor to DNT
- * and is what Firefox and Brave actually send in 2026; `doNotTrack` is kept for
- * the browsers that still set it. posthog-js cannot check either one for us in
- * cookieless mode (see the header), so we check both here.
+ * `navigator.globalPrivacyControl` ONLY, deliberately — `doNotTrack` used to be
+ * checked here too and is not any more.
+ *
+ * GPC is the signal that carries weight: it is a recognised opt-out under
+ * CCPA/CPRA, Colorado and Connecticut, and Brave and DuckDuckGo send it by
+ * default, so honouring it is both a legal position and the behaviour a real
+ * share of visitors expect. DNT was neither. The W3C discontinued the spec in
+ * 2019, Safari removed the property outright the same year because it had become
+ * a fingerprinting vector, and Firefox has since retired its checkbox in favour
+ * of GPC — leaving a signal that binds nobody, that the browsers themselves have
+ * walked away from, and that silently dropped a slice of traffic skewed towards
+ * exactly the privacy-minded developers this product is for.
+ *
+ * posthog-js cannot check GPC for us in cookieless mode (see the header), so it
+ * is checked here.
  */
 export function shouldCapture(): boolean {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
 
-    const nav = navigator as Navigator & {
-        globalPrivacyControl?: boolean;
-        msDoNotTrack?: string;
-    };
+    const nav = navigator as Navigator & { globalPrivacyControl?: boolean };
     if (nav.globalPrivacyControl === true) return false;
-    const dnt = nav.doNotTrack ?? nav.msDoNotTrack ?? (window as { doNotTrack?: string }).doNotTrack;
-    if (dnt === '1' || dnt === 'yes') return false;
 
     if (readOptOut()) return false;
 

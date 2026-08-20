@@ -1,4 +1,4 @@
-import { useTheme } from './ThemeContext';
+import { useTheme } from '../islands/themeStore';
 import { trackThemeToggled } from '../analytics/events';
 
 export function ThemeToggle() {

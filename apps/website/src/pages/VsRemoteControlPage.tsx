@@ -4,6 +4,7 @@ import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useLocalePath } from '../i18n';
+import { Island } from '../islands';
 
 /**
  * /vs/claude-code-remote-control
@@ -199,7 +200,7 @@ export function VsRemoteControlPage() {
             <Prose heading={PAGE_PROSE.vsRemoteControlPage.p19} data-section="rc-cta">
                 <P>{rich(PAGE_PROSE.vsRemoteControlPage.p7)}</P>
                 <div data-cta-location="call-to-action">
-                    <InstallCommand />
+                    <Island name="install-command" component={InstallCommand} />
                 </div>
                 {/*
                   * This used to end "…that is a correct conclusion and the first

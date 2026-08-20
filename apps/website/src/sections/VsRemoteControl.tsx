@@ -56,11 +56,16 @@ export function VsRemoteControl() {
                     </p>
                 </div>
 
-                <div className="mx-auto mt-14 grid max-w-[1100px] gap-px sm:grid-cols-2 lg:grid-cols-3">
+                {/* Below sm this is one column, and there a box around each of six
+                    items is just a table the reader has to parse — the content is a
+                    title and a sentence, which the type already separates. Border and
+                    padding start at sm, where the columns actually need dividing; the
+                    phone keeps the rhythm as a gap the size of the padding it drops. */}
+                <div className="mx-auto mt-14 grid max-w-[1100px] gap-6 sm:gap-px sm:grid-cols-2 lg:grid-cols-3">
                     {RC_SECTION.arguments.map((item) => (
                         <div
                             key={item.id}
-                            className="border p-6 md:p-7"
+                            className="sm:border sm:p-6 md:p-7"
                             style={{ borderColor: 'var(--card-border)' }}
                         >
                             <h3

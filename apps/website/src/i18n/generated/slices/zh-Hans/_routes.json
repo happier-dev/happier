@@ -1,0 +1,113 @@
+{
+ "home": [
+  "comparison",
+  "faq",
+  "features",
+  "navigation",
+  "pageProse",
+  "providers"
+ ],
+ "agents": [
+  "agents",
+  "availability",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--claude-code": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--codex": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--opencode": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--cursor": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--gemini": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--github-copilot": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--qwen": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--kimi": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--kilo": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--kiro": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--auggie": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--pi": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "agents--grok": [
+  "agents",
+  "navigation",
+  "pageProse"
+ ],
+ "vs--claude-code-remote-control": [
+  "agents",
+  "comparison",
+  "navigation",
+  "pageProse"
+ ],
+ "vs--codex-remote": [
+  "agents",
+  "codexRemote",
+  "navigation",
+  "pageProse"
+ ],
+ "features--usage-limits": [
+  "navigation",
+  "pageProse",
+  "usageLimits"
+ ],
+ "features--terminal": [
+  "navigation",
+  "pageProse",
+  "terminalFeature"
+ ],
+ "security": [
+  "navigation",
+  "pageProse",
+  "security"
+ ],
+ "enterprise": [
+  "enterprise",
+  "navigation",
+  "pageProse"
+ ]
+}

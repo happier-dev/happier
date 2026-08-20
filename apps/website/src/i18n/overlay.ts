@@ -195,6 +195,7 @@ export function walkStrings(node: unknown, prefix: string, out: Visit[] = []): V
         return out;
     }
     if (typeof node === 'object' && node !== null) {
+        if (isRenderedElement(node)) return out;
         for (const [field, value] of Object.entries(node as Record<string, unknown>)) {
             const id = `${prefix}.${field}`;
             if (typeof value === 'string' && !isCopy(id, field)) continue;
@@ -213,6 +214,39 @@ export function walkStrings(node: unknown, prefix: string, out: Visit[] = []): V
  * allocates nothing and `dist/` is provably byte-identical before any locale
  * ships.
  */
+/**
+ * A rendered element — React element or Preact vnode — which both traversals
+ * must treat as opaque.
+ *
+ * WHY THIS EXISTS. src/data/providers.tsx holds JSX: the provider marks are
+ * elements sitting in the same data the overlay walks. Neither traversal had a
+ * guard for them, so both descended into element internals.
+ *
+ * Under React that was merely wrong-but-harmless — a production React element
+ * is `{type, key, ref, props, $$typeof}` with no cycle, so the walk bottomed
+ * out and quietly considered `props` for translation. Under Preact it is fatal:
+ * a vnode carries `__`, a back-reference to its parent vnode, so the walk
+ * recurses until the stack ends. That is exactly how it failed — `applyOverlay`
+ * repeating down the trace with "Maximum call stack size exceeded", which reads
+ * like a Preact incompatibility and is actually a missing guard that was always
+ * missing.
+ *
+ * Detection is deliberately dependency-free — this module is bundled by
+ * scripts/i18n-extract.mjs and run in plain Node, where importing a renderer
+ * to call `isValidElement` would be a new failure mode rather than a check.
+ *
+ *   React  brands elements with `$$typeof`.
+ *   Preact brands vnodes with an OWN `constructor` property set to undefined
+ *          (a deliberate anti-JSON-injection marker, stable across 10.x).
+ */
+function isRenderedElement(value: object): boolean {
+    if ('$$typeof' in value) return true;
+    return (
+        Object.prototype.hasOwnProperty.call(value, 'constructor') &&
+        (value as { constructor?: unknown }).constructor === undefined
+    );
+}
+
 export function applyOverlay<T>(node: T, overrides: Readonly<Record<string, string>>, prefix: string): T {
     if (typeof node === 'string') {
         if (!looksTranslatable(node) && !forcedCopy(prefix)) return node;
@@ -230,6 +264,7 @@ export function applyOverlay<T>(node: T, overrides: Readonly<Record<string, stri
         return (changed ? next : node) as unknown as T;
     }
     if (typeof node === 'object' && node !== null) {
+        if (isRenderedElement(node)) return node;
         let changed = false;
         const next: Record<string, unknown> = {};
         for (const [field, value] of Object.entries(node as Record<string, unknown>)) {

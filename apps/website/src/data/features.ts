@@ -201,7 +201,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         availability: 'shipped',
         eyebrow: 'Stay in control',
         title: 'Queue it. Steer it. Fork it.',
-        body: 'Queue messages while the agent works — reorder, edit, or send them now. Steer a running turn without interrupting it. Fork from any message to explore a different path.',
+        body: 'Queue messages while the agent works — reorder, edit, or send them now. Steer a running turn without interrupting it, or roll back to any earlier message and take a different path.',
         visual: 'mobile',
         accent: 'rose',
     },
@@ -228,6 +228,66 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         image: {
             id: 'feature_review',
         },
+    },
+    {
+        /**
+         * `sessions.agentSwitching` — server-gated, like `sessions.handoff`.
+         *
+         * TWO MECHANISMS, and the body describes the harder one. A session can
+         * be forked into a different agent (a NEW session seeded with the
+         * conversation), but the claim worth making is the in-place one: arming
+         * another engine in the composer's agent chip continues the SAME
+         * session, which the transcript marks with "Continued this Session from
+         * X to Y" (apps/ui .../en.ts `session.agentContinuation.dividerTitle`).
+         *
+         * WHY "where it keeps one" IS NOT HEDGING. The handoff carries the
+         * departing agent's own native log — Claude from its persisted
+         * `claudeTranscriptPath`, Codex derived from the vendor resume id — but
+         * only for agents that keep such a file
+         * (apps/cli/src/session/agentTransition/buildSessionAgentTransitionActivationBrief.ts).
+         * Without the qualifier this promises something several agents cannot do.
+         *
+         * THE LAST SENTENCE IS THE STRONGEST CLAIM ON THE PAGE, so it is the one
+         * to keep exact. Returning to an agent that already ran this session is
+         * a NATIVE RETURN: it resumes its own conversation and is sent only the
+         * delta since it last saw the session, not the whole history again. An
+         * agent that never ran it gets the full (bounded) tail instead. Same
+         * file, `returningAgentLastSeenSeq`.
+         */
+        id: 'agentSwitching',
+        availability: 'shipped',
+        eyebrow: 'Never locked in',
+        title: 'Start in Codex. Finish in Claude.',
+        body: 'Change the engine mid-conversation and the same session keeps going. Your recent conversation carries over, and the new agent gets tools to read the rest — plus the previous agent’s own transcript, where it keeps one. Switch back later and it resumes its own thread, receiving only what it missed.',
+        visual: 'mobileAndDesktop',
+        accent: 'blue',
+    },
+    {
+        /**
+         * Two inputs, one job, so one card: the phone gesture and the keyboard
+         * are the same feature seen from two devices.
+         *
+         * "Teleport" is the mechanic, not decoration. The swipe is not
+         * next/previous — the picker it opens reaches
+         * SESSION_LATERAL_PICKER_REACH_ROWS + 1 = 19 sessions in a single
+         * gesture, each named as it passes
+         * (apps/ui .../lateralSwipe/sessionLateralPickerState.ts).
+         *
+         * WHY `Ctrl+Tab` AND NOT `Mod+Tab`. `Mod` resolves to Cmd on macOS and
+         * Ctrl elsewhere (keyboard/bindings.ts:81), but this command is bound to
+         * LITERAL Ctrl on every platform — Cmd+Tab is the macOS app switcher. So
+         * the shortcut named here is correct on macOS, Windows and Linux alike;
+         * only the browser differs (`blockedSurfaces: ['web']`, where it is
+         * Alt+PageUp/Down), which is why `Alt+↑/↓` — true on every surface
+         * including the browser — carries the sentence and Ctrl+Tab follows it.
+         */
+        id: 'navigation',
+        availability: 'shipped',
+        eyebrow: 'Move between sessions',
+        title: 'Swipe to teleport. Or Ctrl+Tab.',
+        body: 'Swipe across the bottom bar to slide between sessions — keep going in one gesture to skip several, each one named as you pass it. At a keyboard, Alt+↑/↓ walks the list and Ctrl+Tab walks your most recent sessions. Every shortcut is remappable.',
+        visual: 'mobileAndDesktop',
+        accent: 'blue',
     },
     {
         id: 'voice',
@@ -416,7 +476,7 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         availability: 'shipped',
         eyebrow: 'Make it yours',
         title: 'Configure (almost) everything.',
-        body: 'Modes, models, and permissions per session. Tool-timeline detail levels. Notification routing. Keyboard shortcuts. Custom themes you can build, import, and share. Tune Happier to exactly how you work.',
+        body: 'Modes, models, and permissions per session. Tool-timeline detail levels. Notification routing. Custom themes you can build, import, and share. Tune Happier to exactly how you work.',
         visual: 'desktop',
         accent: 'sun',
     },

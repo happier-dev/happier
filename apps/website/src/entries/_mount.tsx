@@ -1,11 +1,13 @@
-import { StrictMode, type ReactNode } from 'react';
-import { createRoot, hydrateRoot } from 'react-dom/client';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 
 import '../styles/globals.css';
 import { LocaleProvider } from '../i18n';
 import { LocaleSuggestion } from '../components/LocaleSuggestion';
 import type { Locale } from '../i18n/locales';
+import { armReveals, mountIslands } from '../islands';
 import { useSiteAnalytics } from '../analytics/useSiteAnalytics';
+import { ISLANDS } from './_islands';
 import { exposeAnalyticsControls, initAnalytics } from '../analytics/analytics';
 
 /**
@@ -32,47 +34,19 @@ import { exposeAnalyticsControls, initAnalytics } from '../analytics/analytics';
  * they agree by luck.
  */
 
-/**
- * App.tsx's body, with `route.render()` replaced by the page the entry named.
- *
- * `useSiteAnalytics` is effect-only, so it emits nothing into the markup and the
- * prerendered HTML is unaffected by it — the reason App can call it above the
- * provider and this can too, in the same place, without a hydration diff.
- */
-function Page({ locale, children }: { locale: Locale; children: ReactNode }) {
+/** Effect-only; renders nothing. See the note in mount(). */
+function PageScopedEffects() {
     useSiteAnalytics();
-    // `window.location.pathname` is the SAME string the prerenderer passed to
-    // App for this file — the page was served as its own file, so the browser is
-    // standing on exactly the path that produced the markup. That is what keeps
-    // the locale switcher's hrefs identical on both sides of hydration.
-    return (
-        <LocaleProvider locale={locale} path={window.location.pathname}>
-            <LocaleSuggestion />
-            {children}
-        </LocaleProvider>
-    );
+    return null;
 }
 
-/**
- * Hydrate one page.
- *
- * The LOCALE IS PASSED IN, not derived from `location.pathname`. Deriving it is
- * what src/main.tsx used to do, and it was a second source of truth for
- * something the entry already knows for certain: an entry file exists per
- * (route, locale) pair, so `zh-Hans--security.tsx` is the Chinese security page
- * and nothing about the URL can change that. src/i18n/index.tsx's LocaleProvider
- * docblock asks for exactly this ("the client entry is generated per locale").
- */
-export function mount(locale: Locale, page: ReactNode): void {
+export function mount(locale: Locale): void {
     /**
      * Analytics starts before React, not inside it.
      *
      * `$pageview` should carry the moment the page became a page, not the moment
      * hydration finished — on this page those are hundreds of milliseconds
      * apart, and the gap is exactly the interval where a bounced visitor leaves.
-     * Mounting here also keeps it out of the render tree, so StrictMode's
-     * double-invoke cannot double-fire it and the SSR bundle
-     * (src/entry-server.tsx) never touches it at all.
      *
      * initAnalytics() is a no-op when the visitor sends Do Not Track or Global
      * Privacy Control, when they have opted out, or when the key is missing.
@@ -80,26 +54,34 @@ export function mount(locale: Locale, page: ReactNode): void {
     initAnalytics();
     exposeAnalyticsControls();
 
-    const container = document.getElementById('root');
-    if (!container) {
-        throw new Error('No <div id="root"> to mount into. Did index.html change?');
-    }
-
-    const tree = (
-        <StrictMode>
-            <Page locale={locale}>{page}</Page>
-        </StrictMode>
-    );
+    mountIslands(locale, ISLANDS);
+    armReveals();
 
     /**
-     * The production build ships a prerendered #root (scripts/prerender.mjs), so
-     * the markup is already there and must be hydrated rather than thrown away.
-     * `vite dev` serves the empty shell from index.html, so fall back to a fresh
-     * root — hydrating an empty container would warn on every dev reload.
+     * The page-scoped extras, in one root of their own.
+     *
+     * `useSiteAnalytics` is the site's passive instrumentation — outbound_click,
+     * download_badge_clicked, section_viewed, comparison_viewed — and it works by
+     * listening at the document, not by sitting inside the components it
+     * measures. That is precisely why it CANNOT live in an island: an island
+     * only sees its own subtree, so mounting it there would measure the nav and
+     * nothing else. It used to ride along inside the page-wide hydrate; now it
+     * needs somewhere deliberate to live, and this is it.
+     *
+     * LocaleSuggestion renders nothing on the server — it decides from
+     * navigator.language, which the build does not have — so unlike every other
+     * island it has no prerendered container to hydrate. It gets a root of its
+     * own, appended rather than matched.
      */
-    if (container.firstChild) {
-        hydrateRoot(container, tree);
-    } else {
-        createRoot(container).render(tree);
-    }
+    const suggestion = document.createElement('div');
+    suggestion.style.display = 'contents';
+    document.body.appendChild(suggestion);
+    createRoot(suggestion).render(
+        <StrictMode>
+            <LocaleProvider locale={locale} path={window.location.pathname}>
+                <PageScopedEffects />
+                <LocaleSuggestion />
+            </LocaleProvider>
+        </StrictMode>,
+    );
 }

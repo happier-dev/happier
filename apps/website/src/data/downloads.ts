@@ -94,6 +94,21 @@ export const ANDROID_APK_URL =
 export const ANDROID_PLAY_TESTING_OPT_IN_URL =
     'https://play.google.com/apps/testing/dev.happier.app';
 
+/**
+ * The public Play listing — WHICH DOES NOT EXIST YET.
+ *
+ * This is here because the badge above it now leads with Play and keeps the APK
+ * as the secondary choice, on the plan that the site and the listing go public
+ * together. Until that happens this URL 404s for everyone, which is precisely
+ * the failure the docblock above spent a paragraph arguing against.
+ *
+ * SO: do not deploy the site with this badge before the listing is live. If the
+ * two ever have to ship apart, swap the Android badge's primary href back to
+ * ANDROID_APK_URL — the popover already offers the other one either way, so it
+ * is a one-line change and nothing else moves.
+ */
+export const ANDROID_PLAY_URL = 'https://play.google.com/store/apps/details?id=dev.happier.app';
+
 export const WEB_APP_URL = 'https://app.happier.dev/';
 export const DOCS_URL = 'https://docs.happier.dev/';
 export const GUIDES_URL = 'https://guides.happier.dev/';

@@ -1,6 +1,6 @@
 import { PROVIDERS } from '../data/providers';
 import type { ProviderId } from '../data/providers';
-import { useTheme } from '../components/ThemeContext';
+import { useTheme } from '../islands/themeStore';
 
 type Placement = {
     providerId: ProviderId;

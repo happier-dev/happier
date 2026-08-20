@@ -5,6 +5,7 @@ import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useLocalePath } from '../i18n';
+import { Island } from '../islands';
 
 /**
  * /agents
@@ -150,7 +151,7 @@ export function AgentsIndex() {
             <Prose heading={PAGE_PROSE.agentsIndex.p13} data-section="agents-cta">
                 <P>{rich(PAGE_PROSE.agentsIndex.p6, { 1: (c: ReactNode) => <code className="font-mono">{c}</code>, 2: (c: ReactNode) => <code className="font-mono">{c}</code>, 3: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
-                    <InstallCommand />
+                    <Island name="install-command" component={InstallCommand} />
                 </div>
             </Prose>
         </PageShell>

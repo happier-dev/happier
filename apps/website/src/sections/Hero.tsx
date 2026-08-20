@@ -1,3 +1,4 @@
+import { Island } from '../islands';
 import { RevealText } from '../components/RevealText';
 import { HeroHeadline } from '../components/HeroHeadline';
 import { InstallCommand } from '../components/InstallCommand';
@@ -21,9 +22,9 @@ export function Hero() {
 
     return (
         <section className="relative isolate overflow-hidden" data-section="hero">
-            <HeroBackdrop />
+            <Island name="hero-backdrop" component={HeroBackdrop} />
 
-            <Nav />
+            <Island name="nav" component={Nav} />
 
             <div className="relative mx-auto grid min-h-[78vh] max-w-[1460px] grid-cols-1 content-center items-center gap-10 px-6 pb-0 pt-20 lg:grid-cols-12 lg:gap-12 lg:px-10 lg:pb-0 lg:pt-24">
                 {/* Left — copy */}
@@ -40,16 +41,19 @@ export function Hero() {
                         />
                     </div>
 
-                    <div className="mt-5 lg:hidden">
-                        <ProviderMarkRow size={18} />
+                    {/* Tightened on mobile: this row, plus the install block below it,
+                        put ~74px between the subhead and the first button — nearly three
+                        times the 28px the subhead itself sits below the headline. */}
+                    <div className="mt-3 lg:hidden">
+                        <Island name="provider-mark-row" component={ProviderMarkRow} props={{ size: 18 }} />
                     </div>
 
-                    <div className="mt-8 flex flex-col items-start gap-3">
-                        <InstallCommand />
+                    <div className="mt-4 flex flex-col items-start gap-3 md:mt-8">
+                        <Island name="install-command" component={InstallCommand} />
                     </div>
 
                     <div className="mt-4">
-                        <DownloadBadges webApp />
+                        <Island name="download-badges" component={DownloadBadges} props={{ webApp: true }} />
                     </div>
 
                     <div className="mt-4">
@@ -61,7 +65,7 @@ export function Hero() {
                     so it keeps clear of the headline at every desktop width. */}
                 <div className="hidden lg:col-span-6 lg:block">
                     <div className="relative ml-auto aspect-[1.08] w-full max-w-[520px] lg:max-w-[660px] lg:-translate-y-6 xl:max-w-[760px]">
-                        <HeroStage />
+                        <Island name="hero-stage" component={HeroStage} />
                     </div>
                 </div>
             </div>

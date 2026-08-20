@@ -1,4 +1,4 @@
-import { useTheme } from '../components/ThemeContext';
+import { useTheme } from '../islands/themeStore';
 import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
 import { DiscordMembers } from '../components/DiscordMembers';

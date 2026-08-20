@@ -1,4 +1,3 @@
-import { Home } from '../pages/Home';
 import { mount } from './_mount';
 
 /**
@@ -12,4 +11,4 @@ import { mount } from './_mount';
  * gains a translation, src/routes.tsx grows `locales`, routeManifest() emits a
  * second entry for it, and the build asks for src/entries/zh-Hans--home.tsx.
  */
-mount('en', <Home />);
+mount('en');

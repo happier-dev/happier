@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { Island } from '../islands';
 import { TerminalBackground } from './TerminalBackground';
-import { ThemeProvider } from './ThemeContext';
 import { Footer } from '../sections/Footer';
 import { Nav } from '../sections/Nav';
 
@@ -19,17 +19,21 @@ import { Nav } from '../sections/Nav';
  * way a one-page site breaks when it grows a second page.
  */
 export function PageShell({ children }: { children: ReactNode }) {
+    /*
+     * The three interactive parts of the chrome are islands; `children` — the
+     * page itself — is prose and is never handed to React in the browser. That
+     * split is the whole point: the prerendered <main> stays exactly as it is
+     * served, and only the nav, the canvas and the footer cost JavaScript.
+     */
     return (
-        <ThemeProvider>
-            <div className="relative min-h-screen">
-                <TerminalBackground />
-                <div className="relative z-[2]">
-                    <Nav variant="static" isHome={false} />
-                    <main>{children}</main>
-                    <Footer isHome={false} />
-                </div>
+        <div className="relative min-h-screen">
+            <Island name="terminal-background" component={TerminalBackground} />
+            <div className="relative z-[2]">
+                <Island name="nav" component={Nav} props={{ variant: 'static', isHome: false }} />
+                <main>{children}</main>
+                <Island name="footer" component={Footer} props={{ isHome: false }} />
             </div>
-        </ThemeProvider>
+        </div>
     );
 }
 
@@ -50,7 +54,7 @@ export function PageHeader({
     standfirst: ReactNode;
 }) {
     return (
-        <header className="mx-auto max-w-[1400px] px-6 pb-10 pt-16 md:px-10 md:pb-14 md:pt-24">
+        <header className="mx-auto max-w-[1400px] px-6 pb-6 pt-16 md:px-10 md:pb-8 md:pt-24">
             <div className="max-w-[880px]">
                 <div
                     className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
@@ -86,7 +90,17 @@ export function Prose({
 }) {
     return (
         <section id={id} data-section={dataSection} className="relative">
-            <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10 md:py-14">
+            {/*
+                Section rhythm on a reference page, not a landing page.
+
+                Each Prose block used to pay py-10 / md:py-14, and so did the
+                header above the first one — so consecutive headings sat 80px
+                apart on a phone and 112px apart on a desktop, with the reader
+                scrolling past empty column to reach the next thing they came
+                for. The marketing pages earn that much air because their
+                sections are arguments; these are a manual.
+            */}
+            <div className="mx-auto max-w-[1400px] px-6 py-6 md:px-10 md:py-8">
                 <div className="max-w-[760px]">
                     {heading ? (
                         <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">

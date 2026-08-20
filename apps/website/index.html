@@ -140,6 +140,27 @@
         -->
         <script>
             document.documentElement.classList.add('js');
+            /*
+             * The theme, before first paint, for the same reason as `js` above.
+             *
+             * `<html class="dark|light">` IS the theme state — src/islands/themeStore.ts
+             * reads it rather than owning a useState. That inverts what
+             * ThemeContext used to do (state seeded from localStorage, class
+             * written by an effect afterwards), and it fixes a flash that
+             * existed before islands: the effect ran after hydration, so a
+             * visitor who chose light last week was served the dark palette and
+             * watched it swap when the bundle landed.
+             *
+             * Wrapped in try/catch because Safari private mode throws on
+             * localStorage access; the default is the dark palette the CSS
+             * already ships, so a throw costs nothing.
+             */
+            try {
+                var t = window.localStorage.getItem('happier:theme');
+                document.documentElement.classList.add(t === 'light' ? 'light' : 'dark');
+            } catch (e) {
+                document.documentElement.classList.add('dark');
+            }
         </script>
 
         <!--

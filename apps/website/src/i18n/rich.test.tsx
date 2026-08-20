@@ -65,7 +65,16 @@ describe('rich()', () => {
      * is neither.
      */
     it('renders an unknown slot as literal text rather than dropping it', () => {
-        expect(render(rich('a <2>b</2> c', code))).toBe('a &lt;2&gt;b&lt;/2&gt; c');
+        const out = render(rich('a <2>b</2> c', code));
+        // Asserted as "no tag was opened", not as an exact byte string. React
+        // escapes `>` to `&gt;`; Preact leaves it as `>`, which is equally valid
+        // HTML — only `<` and `&` have to be escaped in text content. Pinning
+        // the exact output made this a test of the renderer rather than of the
+        // behaviour, and it broke on a swap that changed nothing that matters.
+        expect(out).toContain('a &lt;2');
+        expect(out).toContain('b&lt;/2');
+        expect(out).toContain(' c');
+        expect(out).not.toMatch(/<[a-z/]/i);
     });
 
     it('renders an unknown value as its own placeholder', () => {
@@ -79,8 +88,13 @@ describe('rich()', () => {
     });
 
     it('escapes markup that arrives inside a value', () => {
-        expect(render(rich('{x}', undefined, { x: '<script>alert(1)</script>' }))).toBe(
-            '&lt;script&gt;alert(1)&lt;/script&gt;',
-        );
+        const out = render(rich('{x}', undefined, { x: '<script>alert(1)</script>' }));
+        // The property that matters is that NO element was created — the `<` is
+        // escaped, so the parser can never open a tag. Checked directly rather
+        // than by comparing against one renderer's exact entity choices.
+        expect(out).not.toMatch(/<\s*script/i);
+        expect(out).not.toMatch(/<[a-z/]/i);
+        expect(out).toContain('&lt;script');
+        expect(out).toContain('alert(1)');
     });
 });

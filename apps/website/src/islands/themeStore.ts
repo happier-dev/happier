@@ -73,6 +73,19 @@ const listeners = new Set<() => void>();
 let snapshot: ThemeName | null = null;
 
 function getSnapshot(): ThemeName {
+    /*
+     * SSR-safe here rather than relying on the third argument to
+     * useSyncExternalStore. React calls `getServerSnapshot` while rendering on
+     * the server; preact/compat's implementation takes only (subscribe,
+     * getSnapshot) and ignores it — so with the Preact alias in place the
+     * build-time renderer called this function and died on `document is not
+     * defined`, in the slicer, with no component named.
+     *
+     * Guarding the snapshot itself makes the store correct under either
+     * renderer and removes a dependency on which one is aliased in.
+     * getServerSnapshot stays for React's benefit and returns the same value.
+     */
+    if (typeof document === 'undefined') return 'dark';
     if (snapshot === null) snapshot = readFromDocument();
     return snapshot;
 }

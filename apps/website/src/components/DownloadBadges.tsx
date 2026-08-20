@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useTheme } from './ThemeContext';
+import { useTheme } from '../islands/themeStore';
 
 /**
  * Download badges row.
@@ -25,6 +25,7 @@ import { useTheme } from './ThemeContext';
 
 import {
     ANDROID_APK_URL,
+    ANDROID_PLAY_URL,
     APP_STORE_URL,
     DESKTOP_PLATFORMS,
     DESKTOP_RELEASES_PAGE,
@@ -88,14 +89,19 @@ const AppleIcon = (
 );
 
 /**
- * Android is a direct APK download, not a store badge.
+ * Android leads with Play and keeps the APK one click away.
  *
- * There is no Google Play listing to link to: `dev.happier` 404s and has never
- * existed, and `dev.happier.app` is a closed testing track that 404s for
- * everyone who is not already an opted-in tester. Shipping a Play badge that
- * dead-ends is worse than shipping no badge — so this reads "Android APK ·
- * Direct download", which is exactly what it is, and what the 2,056 people who
- * have already downloaded it did.
+ * This badge used to be APK-only, and the reason was good: there was no public
+ * listing to link to, and a Play badge that dead-ends is worse than no badge.
+ * That changes the day the listing goes public, which is the same day this site
+ * does — see ANDROID_PLAY_URL in src/data/downloads.ts, which carries the
+ * warning about shipping the two apart.
+ *
+ * It is a SPLIT button rather than a straight swap, built the same way the
+ * desktop one is, because the APK is not a legacy path being retired: 2,056
+ * people downloaded it against 762 Android users in PostHog over 90 days, and
+ * some of them are choosing it deliberately. Play is the default because most
+ * people want the store; the chevron is there because some people want the file.
  */
 const AndroidIcon = (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className="h-7 w-7">
@@ -164,6 +170,16 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
     const [archDetected, setArchDetected] = useState(false);
     const [popoverOpen, setPopoverOpen] = useState(false);
     const desktopWrapperRef = useRef<HTMLDivElement | null>(null);
+    /*
+     * The Android menu holds ONE item, so unlike the desktop one it does not
+     * need a portal, a position tracker or a resize listener — those exist over
+     * there because a four-item menu can be clipped by an overflow ancestor.
+     * A single absolutely-positioned item inside the relative wrapper cannot
+     * meaningfully be, and duplicating that machinery for it would be three
+     * more effects to keep in step for no behaviour.
+     */
+    const androidWrapperRef = useRef<HTMLDivElement | null>(null);
+    const [androidOpen, setAndroidOpen] = useState(false);
     const popoverRef = useRef<HTMLDivElement | null>(null);
     const [popoverPos, setPopoverPos] = useState<{ left: number; top: number } | null>(null);
 
@@ -219,6 +235,22 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
         };
     }, [popoverOpen]);
 
+    useEffect(() => {
+        if (!androidOpen) return;
+        function handleClickOutside(event: MouseEvent) {
+            if (!androidWrapperRef.current?.contains(event.target as Node)) setAndroidOpen(false);
+        }
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === 'Escape') setAndroidOpen(false);
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        document.addEventListener('keydown', handleEscape);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('keydown', handleEscape);
+        };
+    }, [androidOpen]);
+
     // Track the anchor button's viewport position so the portaled popover
     // stays glued to it on scroll/resize.
     useLayoutEffect(() => {
@@ -265,12 +297,6 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
             label: 'App Store',
             icon: AppleIcon,
         },
-        {
-            href: ANDROID_APK_URL,
-            eyebrow: PAGE_PROSE.downloadBadges.p6,
-            label: 'Android APK',
-            icon: AndroidIcon,
-        },
     ];
 
     return (
@@ -298,6 +324,79 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                     </span>
                 </a>
             ))}
+
+            {/* Android split button: Play by default, APK behind the chevron. */}
+            <div ref={androidWrapperRef} className="relative">
+                <div
+                    className="inline-flex items-stretch overflow-hidden rounded-2xl border"
+                    style={BADGE_STYLE}
+                >
+                    <a
+                        href={ANDROID_PLAY_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group flex items-center gap-2.5 px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
+                        style={{ color: 'var(--fg)' }}
+                    >
+                        <span className="shrink-0" aria-hidden>
+                            {AndroidIcon}
+                        </span>
+                        <span className="flex flex-col leading-[1.1]">
+                            <span
+                                className="text-[9.5px] font-medium uppercase tracking-[0.12em]"
+                                style={{ color: 'var(--muted)' }}
+                            >
+                                {PAGE_PROSE.downloadBadges.p11}
+                            </span>
+                            <span className="text-[14px] font-semibold tracking-tight">
+                                Google Play
+                            </span>
+                        </span>
+                    </a>
+
+                    <div
+                        className="my-2 w-px self-stretch"
+                        style={{ background: 'var(--card-border)' }}
+                        aria-hidden
+                    />
+
+                    <button
+                        onClick={() => setAndroidOpen((prev) => !prev)}
+                        className="grid place-items-center px-2.5 transition-opacity hover:opacity-80"
+                        style={{ color: 'var(--fg)' }}
+                        aria-label={PAGE_PROSE.downloadBadges.p10}
+                        aria-expanded={androidOpen}
+                        aria-haspopup="menu"
+                    >
+                        <ChevronIcon open={androidOpen} />
+                    </button>
+                </div>
+
+                {androidOpen ? (
+                    <div
+                        role="menu"
+                        className="absolute left-0 top-full z-50 mt-2 min-w-[240px] rounded-2xl border p-1.5"
+                        style={BADGE_STYLE}
+                    >
+                        <a
+                            href={ANDROID_APK_URL}
+                            target="_blank"
+                            rel="noreferrer"
+                            role="menuitem"
+                            onClick={() => setAndroidOpen(false)}
+                            className="flex flex-col gap-0.5 rounded-xl px-3 py-2 transition-colors hover:bg-[var(--card)]"
+                            style={{ color: 'var(--fg)' }}
+                        >
+                            <span className="text-[13.5px] font-semibold tracking-tight">
+                                Android APK
+                            </span>
+                            <span className="text-[11.5px]" style={{ color: 'var(--muted)' }}>
+                                {PAGE_PROSE.downloadBadges.p6}
+                            </span>
+                        </a>
+                    </div>
+                ) : null}
+            </div>
 
             {/* Desktop split button + popover */}
             <div ref={desktopWrapperRef} className="relative">

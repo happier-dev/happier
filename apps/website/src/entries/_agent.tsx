@@ -1,5 +1,4 @@
 import { AGENTS_BY_SLUG } from '../data/agents';
-import { AgentDetail } from '../pages/AgentDetail';
 import type { Locale } from '../i18n/locales';
 import { mount } from './_mount';
 
@@ -26,8 +25,9 @@ export function mountAgentPage(locale: Locale, slug: string): void {
                 'delete it — the route it hydrates does not exist.',
         );
     }
-    // `agent` above is looked up only to FAIL FAST on a slug that names nothing;
-    // the page resolves its own record from useSiteData(), because this one is
-    // the English catalogue. See the docblock on AgentDetail.
-    mount(locale, <AgentDetail slug={agent.slug} />);
+    // `agent` above is looked up only to FAIL FAST on a slug that names nothing.
+    // The page itself is never imported here any more: it is prose, it is
+    // already in the prerendered HTML, and mount() only wires up the islands.
+    void agent;
+    mount(locale);
 }

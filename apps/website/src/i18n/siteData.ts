@@ -95,6 +95,31 @@ function overridesFor(locale: Locale): Readonly<Record<string, string>> {
     return OVERRIDES.get(locale) ?? {};
 }
 
+/**
+ * BUILD TOOLING ONLY — which namespaces a render actually touched.
+ *
+ * scripts/i18n-slice-overlays.mjs needs to know, per route, which of the 15
+ * data modules that page reads, so it can ship that route's client entry the
+ * translations for those and no others. It cannot work that out from the
+ * rendered HTML: RevealText and HeroHeadline split prose into one span per word
+ * (see src/i18n/segmentWords.ts), so a translated sentence never appears in the
+ * document as a contiguous string. Matching on the output found nothing and
+ * every route failed the slicer's gate.
+ *
+ * Reading is the reliable signal, and the namespace is the granularity the
+ * consumer already uses — `const { pageProse } = useSiteData()` is a property
+ * access this Proxy can see.
+ *
+ * Inert in every build: the recorder is null unless a tool sets it, and the
+ * Proxy is only constructed while it is set. Nothing ships behind this.
+ */
+let namespaceReads: Set<string> | null = null;
+
+export function __recordNamespaceReads(sink: Set<string> | null): void {
+    namespaceReads = sink;
+    cache.clear();
+}
+
 export function siteDataFor(locale: Locale): SiteData {
     if (locale === DEFAULT_LOCALE) return MODULES;
 
@@ -112,6 +137,15 @@ export function siteDataFor(locale: Locale): SiteData {
         next[ns] = out;
     }
     const built = next as SiteData;
+    if (namespaceReads) {
+        const sink = namespaceReads;
+        return new Proxy(built, {
+            get(target, prop, receiver) {
+                if (typeof prop === 'string') sink.add(prop);
+                return Reflect.get(target, prop, receiver);
+            },
+        }) as SiteData;
+    }
     cache.set(locale, built);
     return built;
 }

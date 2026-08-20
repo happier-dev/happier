@@ -1,4 +1,4 @@
-import { useTheme } from './ThemeContext';
+import { useTheme } from '../islands/themeStore';
 import { useSiteData } from '../i18n/siteData';
 
 type ProviderMarkRowProps = Readonly<{

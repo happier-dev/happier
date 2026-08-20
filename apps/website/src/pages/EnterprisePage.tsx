@@ -5,6 +5,7 @@ import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useLocalePath } from '../i18n';
+import { Island } from '../islands';
 
 /**
  * /enterprise
@@ -120,7 +121,7 @@ export function EnterprisePage() {
             <Prose heading={PAGE_PROSE.enterprisePage.p16} data-section="enterprise-cta">
                 <P>{rich(PAGE_PROSE.enterprisePage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</P>
                 <div data-cta-location="call-to-action">
-                    <InstallCommand />
+                    <Island name="install-command" component={InstallCommand} />
                 </div>
                 <P>{rich(PAGE_PROSE.enterprisePage.p6, { 1: (c: ReactNode) => <a href={ENTERPRISE_DEPLOY_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a>, 2: (c: ReactNode) => <a href={ENTERPRISE_DOCS_URL} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> })}</P>
             </Prose>
