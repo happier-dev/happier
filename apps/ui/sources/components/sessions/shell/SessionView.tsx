@@ -183,6 +183,7 @@ import {
     continueSessionWithArmedAgent,
     reconcileArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
+    type ArmedAgentContinuationInputCustody,
     type ArmedAgentContinuationLabels,
     type ArmedAgentContinuationNotice,
 } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
@@ -325,26 +326,65 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { StorageState } from '@/sync/store/types';
 
-function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: string | null): boolean {
-    if (!localId) return false;
-
-    const state = storage.getState();
-    const pending = state.sessionPending[sessionId];
-    const hasCanonicalPending = [...(pending?.messages ?? []), ...(pending?.discarded ?? [])].some((message) => (
-        message.source === 'server_pending' && message.localId === localId
-    ));
-    if (hasCanonicalPending) return true;
+/**
+ * Where one submitted localId has got to, canonically — the single reader for
+ * both questions the transition asks about it: whether it was admitted at all,
+ * and whether anything has carried it yet.
+ *
+ * They are answered together because they come from the same two store slices,
+ * and because a queued-input signal that cannot see `delivered` outlives the
+ * message it describes: the armed outcome stays on screen for the life of the
+ * Session, so a Session that answers and later idles out would otherwise be
+ * reported as one whose message never went.
+ */
+function selectCanonicalOutboundHandoffForLocalId(
+    state: StorageState,
+    sessionId: string,
+    localId: string | null,
+): ArmedAgentContinuationInputCustody {
+    if (!localId) return 'absent';
 
     const sessionMessages = state.sessionMessages[sessionId];
     const messagesById = sessionMessages?.messagesById ?? sessionMessages?.messagesMap;
-    if (!messagesById) return false;
-
-    return Object.values(messagesById).some((message) => (
+    // The transcript is checked FIRST: a materialized row is the stronger fact,
+    // and a pending row can briefly survive its own materialization.
+    const isDelivered = messagesById !== undefined && Object.values(messagesById).some((message) => (
         message.kind === 'user-text'
         && message.localId === localId
         && !isRecoveredHistoryTranscriptObservationProvenance(message.transcriptObservationProvenance)
     ));
+    if (isDelivered) return 'delivered';
+
+    const pending = state.sessionPending[sessionId];
+    // `discarded` still proves admission, but nothing is waiting on a runtime
+    // for it, so it does not count as queued.
+    const isQueued = (pending?.messages ?? []).some((message) => (
+        message.source === 'server_pending' && message.localId === localId
+    ));
+    if (isQueued) return 'queued';
+    return (pending?.discarded ?? []).some((message) => (
+        message.source === 'server_pending' && message.localId === localId
+    )) ? 'delivered' : 'absent';
+}
+
+/**
+ * The same reader sampled once, for the imperative callers that ask at a single
+ * instant (a failed outbound handoff deciding whether restoring the composer is
+ * safe). A subscriber must use the selector above instead: this answer is stale
+ * the moment the pending row or the transcript row lands.
+ */
+function readCanonicalOutboundHandoffForLocalId(
+    sessionId: string,
+    localId: string | null,
+): ArmedAgentContinuationInputCustody {
+    return selectCanonicalOutboundHandoffForLocalId(storage.getState(), sessionId, localId);
+}
+
+/** The admission half of the reader above, for callers that only ask that. */
+function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: string | null): boolean {
+    return readCanonicalOutboundHandoffForLocalId(sessionId, localId) !== 'absent';
 }
 import {
     isHiddenSystemSession,
@@ -3301,14 +3341,35 @@ function SessionViewLoaded({
         return () => { cancelled = true; };
     }, [armedContinuationAwaitingReconcile, sessionId, sessionRouteServerId]);
 
-    // Canonical facts are read at the moment reconciliation reports them settled,
-    // which is exactly when they can have changed. Reading canonical admission
-    // imperatively keeps this off a transcript-wide subscription that would
-    // re-derive on every streamed row for a banner that changes about twice.
-    //
     // `sessionRuntimeStatusSource` is the same live runtime-status owner
     // `isSessionActive` reads further down; this is not a second interpretation
     // of it, just an earlier read of the one source.
+    //
+    // Canonical custody of the submitted localId is SUBSCRIBED here rather than
+    // sampled inside the memo below. Both facts it reads — the pending row and
+    // the transcript row — land AFTER the transition call returns, so a
+    // disposition memoized on the outcome and the liveness flag alone is decided
+    // while custody is still `absent` and is never re-decided when it arrives.
+    // That is how the one arm that ends with the reader's message queued behind
+    // no runtime reached a real Session and said nothing at all.
+    //
+    // Selected down to the tri-state so the store's own equality check keeps a
+    // per-row transcript update off this render path, and short-circuited to
+    // `absent` while no armed outcome exists so a Session with no switch in
+    // flight pays nothing for it.
+    const armedContinuationInputLocalId = armedContinuationOutcome?.kind === 'outcome'
+        ? armedContinuationOutcome.localId
+        : null;
+    const armedContinuationInputCustody = storage(
+        React.useCallback(
+            (state: StorageState) => selectCanonicalOutboundHandoffForLocalId(
+                state,
+                sessionId,
+                armedContinuationInputLocalId,
+            ),
+            [armedContinuationInputLocalId, sessionId],
+        ),
+    );
     const armedContinuationDisposition = React.useMemo(() => {
         if (armedContinuationOutcome === null) return null;
         if (armedContinuationOutcome.kind === 'refusal') return null;
@@ -3323,10 +3384,7 @@ function SessionViewLoaded({
             ? {
                 currentAgentId: liveComposerState.agentId,
                 sessionActive: sessionRuntimeStatusSource.active === true,
-                inputAdmitted: hasCanonicalOutboundHandoffForLocalId(
-                    sessionId,
-                    armedContinuationOutcome.localId,
-                ),
+                input: armedContinuationInputCustody,
             }
             : null;
         return reconcileArmedAgentContinuationDisposition({
@@ -3335,7 +3393,12 @@ function SessionViewLoaded({
             targetAgentId: armedContinuationOutcome.targetAgentId,
             facts,
         });
-    }, [armedContinuationOutcome, liveComposerState.agentId, sessionId, sessionRuntimeStatusSource.active]);
+    }, [
+        armedContinuationInputCustody,
+        armedContinuationOutcome,
+        liveComposerState.agentId,
+        sessionRuntimeStatusSource.active,
+    ]);
     // Memoized because it feeds the composer badge list: a fresh object every
     // render would invalidate that memo on every turn commit for a banner that
     // changes about twice in a Session's life.
@@ -3553,14 +3616,26 @@ function SessionViewLoaded({
         machinePresence: sessionMachineRecord
             ? (isMachineOnline(sessionMachineRecord) ? 'online' as const : 'offline' as const)
             : 'unknown' as const,
+        // The Session's transcript sequence, which only a written transcript
+        // record advances. Zero is therefore the one state in which a switch
+        // provably carries nothing — and it is read from the Session row the
+        // screen already holds rather than from a transcript page that may not
+        // be loaded.
+        hasConversationToCarry: session.seq > 0,
     }), [hasWriteAccess, session, sessionAgentCurrentTargetKey, sessionMachineRecord]);
     // `session.continuation.inspect` is answered by the machine hosting the
-    // Session, and only for as long as this realtime connection lasts.
+    // Session, so an answer only holds for as long as BOTH runtimes behind it do:
+    // this realtime connection, and the daemon that answered. A daemon that
+    // restarts leaves the socket untouched, so its own generation — the machine
+    // record's daemon-state version, the same currentness fact CLI detection keys
+    // on — has to be part of the scope or the rail keeps offering targets the
+    // send path already refuses.
     const agentContinuationMachine = React.useMemo(() => ({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         serverId: sessionRouteServerId,
         connectionGeneration: socketConnectionGeneration,
-    }), [machineId, sessionRouteServerId, socketConnectionGeneration]);
+        daemonGeneration: sessionMachineRecord?.daemonStateVersion ?? null,
+    }), [machineId, sessionMachineRecord?.daemonStateVersion, sessionRouteServerId, socketConnectionGeneration]);
     // What a target Agent's own model/mode/config detail resolves against. Same
     // machine, server and folder as this Session, so the models offered for the
     // target are the models it would actually run with here.
@@ -3857,7 +3932,7 @@ function SessionViewLoaded({
                 serverId: resolveServerIdForSessionIdFromLocalCache(sid) ?? sessionRouteServerId,
             }),
         }),
-        [buildSessionHref, router]
+        [navigateToSession, sessionRouteServerId]
     );
 
     // Inactive session resume state
@@ -4372,11 +4447,46 @@ function SessionViewLoaded({
     }, [session.accessLevel, session.active, session.canApprovePermissions, session.presence]);
     const openApprovalRequests = useOpenApprovalArtifactsForSession(sessionId);
 
+    // The armed switch's half of "this input is in the queue and nothing is
+    // running to take it". The disposition owner decides it; the two effects
+    // below only route it, and neither re-decides it.
+    const armedContinuationAwaitingRuntime = armedContinuationDisposition?.awaitingRuntime === true;
+
     React.useEffect(() => {
         if (!pendingQueueResumeFailed) return;
         if (!isSessionActive) return;
+        // A live runtime retracts the ordinary send's signal — but not one the
+        // disposition owner is still asserting. `target_start_failed` is the
+        // daemon's own proof that the target never started, and letting a
+        // client-side liveness read clear it here would both weaken a definite
+        // daemon arm and fight the router below for the same boolean. It yields
+        // to canonical custody instead: `resolveAwaitingRuntime` stops asserting
+        // the moment the message is demonstrably carried.
+        if (armedContinuationAwaitingRuntime) return;
         setPendingQueueResumeFailed(false);
-    }, [isSessionActive, pendingQueueResumeFailed]);
+    }, [armedContinuationAwaitingRuntime, isSessionActive, pendingQueueResumeFailed]);
+
+    // The armed switch's half of the same fact: this input is in the queue and
+    // nothing is running to take it. It is handed to the queued-message owner
+    // directly above rather than restated by a second banner, and it is WATCHED
+    // rather than sampled once at send time — `accepted` only means the spawn
+    // was acknowledged, so the target can die minutes later (the incident that
+    // exposed this had the runtime fail 94 seconds after a switch that reported
+    // success, and the reader was told nothing at all). The disposition owner
+    // decides; this only routes, and the effect above retracts it once canonical
+    // custody shows the message was actually carried.
+    React.useEffect(() => {
+        if (!armedContinuationAwaitingRuntime) return;
+        // `isResumable` is a capability of the recovery this banner offers, not a
+        // second opinion on whether the message is waiting. Liveness deliberately
+        // is NOT re-checked here: the disposition owner already weighed it for the
+        // arms decided from client facts, and for the arm the daemon proved
+        // (`target_start_failed`) re-checking it would let a stale Session view
+        // silence a fact the daemon established — which is exactly how this arm
+        // reached a real reader saying nothing.
+        if (!isResumable) return;
+        setPendingQueueResumeFailed(true);
+    }, [armedContinuationAwaitingRuntime, isResumable]);
 
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
     const cliAvailability = useCLIDetection(machineId ?? null, {

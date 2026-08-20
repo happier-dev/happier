@@ -24,6 +24,10 @@ const fetchMoreArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
@@ -161,6 +165,7 @@ describe('Archived sessions route', () => {
             folderAssignmentsBySessionId: {},
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            attentionStandingsBySessionId: {},
             orderEntriesByScopeKey: {},
             labelsByLabelKey: {},
             ...overrides,

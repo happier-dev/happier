@@ -9,15 +9,8 @@ import { readConnectedServiceStateSharingManifest } from '@/daemon/connectedServ
 import {
   findCodexRolloutFileById,
   isMatchingCodexRolloutFileName,
+  normalizeCodexVendorResumeId,
 } from '@/backends/codex/utils/codexSessionFiles';
-
-function normalizeVendorResumeId(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.includes('/') || trimmed.includes('\\')) return null;
-  return trimmed;
-}
 
 async function statFile(path: string): Promise<boolean> {
   try {
@@ -64,7 +57,7 @@ function resolveMappingDestinationPaths(params: Readonly<{
 export async function verifyResumeReachableCodex(
   input: VerifyResumeReachableInput,
 ): Promise<VerifyResumeReachableResult> {
-  const vendorResumeId = normalizeVendorResumeId(input.vendorResumeId);
+  const vendorResumeId = normalizeCodexVendorResumeId(input.vendorResumeId);
   if (!vendorResumeId) {
     return { ok: false, reason: 'codex_session_file_not_found' };
   }

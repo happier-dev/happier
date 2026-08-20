@@ -636,7 +636,12 @@ export function useInSessionAgentPickerControls(
                         cwd: params.detail.cwd,
                         profileId: params.detail.profileId ?? null,
                         settings: params.detail.settings,
-                        modelSummary: t('session.agentContinuation.detailDescription'),
+                        // The same disclosure, told truthfully for this Session:
+                        // an empty transcript has no conversation to carry, so the
+                        // line keeps only the half that still holds.
+                        modelSummary: params.source.hasConversationToCarry
+                            ? t('session.agentContinuation.detailDescription')
+                            : t('session.agentContinuation.detailDescriptionEmpty'),
                         selection: readTargetSelection(entry.targetKey),
                         onSelectionChange: (next) => {
                             setSelectionByTargetKey((current) => {

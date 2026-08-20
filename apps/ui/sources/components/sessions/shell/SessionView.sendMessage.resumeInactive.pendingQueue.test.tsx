@@ -127,7 +127,10 @@ const themeColors = vi.hoisted(() => ({
 let authCredentials: any = { token: 't', secret: 's' };
 const pendingFireAndForget: Promise<unknown>[] = [];
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));

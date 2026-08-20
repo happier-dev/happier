@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
 
 const fetchSessionByIdCompat = vi.hoisted(() => vi.fn());
-const fetchEncryptedTranscriptMessages = vi.hoisted(() => vi.fn());
+const fetchEncryptedTranscriptMessagesPage = vi.hoisted(() => vi.fn());
 
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
@@ -12,7 +12,7 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 
 vi.mock('@/session/replay/fetchEncryptedTranscriptMessages', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/replay/fetchEncryptedTranscriptMessages')>(),
-  fetchEncryptedTranscriptMessages,
+  fetchEncryptedTranscriptMessagesPage,
 }));
 
 import { buildReplaySeededSpawnRecipe } from './buildReplaySeededSpawnRecipe';
@@ -30,7 +30,7 @@ const ADMITTED_FORK_CUTOFF = 4;
 describe('buildReplaySeededSpawnRecipe', () => {
   beforeEach(() => {
     fetchSessionByIdCompat.mockReset();
-    fetchEncryptedTranscriptMessages.mockReset();
+    fetchEncryptedTranscriptMessagesPage.mockReset();
     fetchSessionByIdCompat.mockResolvedValue({
       id: 'sess_parent',
       seq: SOURCE_HEAD_SEQ,
@@ -45,13 +45,13 @@ describe('buildReplaySeededSpawnRecipe', () => {
       agentStateVersion: 0,
       dataEncryptionKey: null,
     });
-    fetchEncryptedTranscriptMessages.mockResolvedValue([
+    fetchEncryptedTranscriptMessagesPage.mockResolvedValue({ hasMore: false, nextBeforeSeq: null, nextAfterSeq: null, messages: [
       {
         seq: 1,
         createdAt: 1,
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'a question' } } },
       },
-    ]);
+    ] });
   });
 
   it('records the retrieval-resolved cutoff as lineage by default', async () => {

@@ -63,7 +63,9 @@ You can manually change that state from:
 - the session header action menu
 - the Session info quick actions
 
-Use **Mark as unread** to keep a session in your attention list after you have opened it. Use **Mark as read** to clear unread attention for a session.
+Use **Mark as unread** when a session still holds activity you have not taken in. Use **Mark as read** to clear unread attention for a session.
+
+To keep a session near the top after you have read it, use **Keep in Needs attention** instead: it holds the session in the session list's attention area, whatever its read state, until you remove it.
 
 If you mark the session unread while you are already inside it, Happier keeps it unread for that current view instead of immediately marking it read again. Closing and reopening the session is treated as a new viewing intent, so the session can become read again when it is visible and focused.
 
@@ -176,6 +178,21 @@ The bottom session tab bar can include:
 Switching cockpit tabs is treated as changing workspace surfaces, not as drilling deeper into browser/native history. Opening a file, Review, a commit, or a transcript file link opens the **Tabs** surface as a detail, so back can return to the list you came from.
 
 You can switch back to the legacy phone layout from **Settings → Session → Mobile session layout → Classic**.
+
+### Swipe between sessions
+
+In the cockpit, a horizontal swipe across the bottom band moves you to another session without going back to the list. Swipe left for the next session, right for the previous one.
+
+The order is the session list order you last saw, so it follows whatever sorting, grouping, and filtering the list is currently using. Swiping walks the same sequence you would get by returning to the list and tapping the row above or below.
+
+Two things stay the same:
+
+- back still returns to the session list, not to the session you just came from, so swiping does not stack up history
+- the gesture only reacts to clearly horizontal movement, so scrolling vertically from the bottom band still scrolls
+
+This is a mobile app gesture. The web and desktop clients keep using the list and their own navigation, and there is no on-screen control for it in the app — it is a shortcut for moving through a few sessions quickly, not a replacement for the session list.
+
+You can turn it off from **Settings → Session → Mobile session layout → Swipe between sessions**.
 
 ### Persistent tab/workspace state
 

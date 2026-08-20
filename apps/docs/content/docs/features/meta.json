@@ -12,6 +12,7 @@
     "session-resume",
     "resume-provider-sessions",
     "session-handoff",
+    "continue-with-another-agent",
     "attach-to-session",
     "prompts-and-skills",
     "inbox-and-approvals",

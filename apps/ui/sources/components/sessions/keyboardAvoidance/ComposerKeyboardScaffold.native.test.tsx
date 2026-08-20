@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -121,6 +121,25 @@ async function withNativePlatform<TPlatform extends 'android' | 'ios', TResult>(
     }
 }
 
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+function findViewByTestID(screen: RenderedScreen, testID: string) {
+    return screen.tree.root
+        .findAllByType('View' as never)
+        .find((node) => node.props.testID === testID);
+}
+
+function resolveStyleBackgroundColor(style: unknown): string | undefined {
+    const flattened = Array.isArray(style) ? style.flat() : [style];
+    let backgroundColor: string | undefined;
+    for (const entry of flattened) {
+        if (entry && typeof entry === 'object' && typeof (entry as { backgroundColor?: unknown }).backgroundColor === 'string') {
+            backgroundColor = (entry as { backgroundColor: string }).backgroundColor;
+        }
+    }
+    return backgroundColor;
+}
+
 describe('ComposerKeyboardScaffold native', () => {
     beforeEach(() => {
         modalState.insideModalBoundary = false;
@@ -228,6 +247,90 @@ describe('ComposerKeyboardScaffold native', () => {
         );
         expect(hasExplicitHeight).toBe(false);
         expect(hasFlexZero).toBe(false);
+
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('paints an opaque surface by default so every existing bar and sheet is unchanged', async () => {
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="newSession"
+                headerHeight={44}
+                testID="scaffold"
+                composerTestID="composer-host"
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+        );
+
+        expect(resolveStyleBackgroundColor(findViewByTestID(screen, 'scaffold')?.props.style)).toBeTruthy();
+        expect(resolveStyleBackgroundColor(
+            findComposerAnimatedView(screen.tree, 'composer-host')?.props.style,
+        )).toBeTruthy();
+
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('paints nothing when the surface is transparent so the screen behind stays visible', async () => {
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="newSession"
+                headerHeight={0}
+                surface="transparent"
+                testID="scaffold"
+                composerTestID="composer-host"
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+        );
+
+        // Both the root and the absolutely-positioned composer wrapper paint `surface.base` in the
+        // opaque case. A transparent presentation needs BOTH gone, or the screen behind is covered
+        // by an opaque strip even though the navigator stopped painting one.
+        expect(resolveStyleBackgroundColor(findViewByTestID(screen, 'scaffold')?.props.style)).toBeUndefined();
+        expect(resolveStyleBackgroundColor(
+            findComposerAnimatedView(screen.tree, 'composer-host')?.props.style,
+        )).toBeUndefined();
+
+        act(() => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('drops the sheet-shaped iOS height cap when the surface is transparent', async () => {
+        const screen = await withNativePlatform('ios', async () => {
+            const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+            return renderScreen(
+                <ComposerKeyboardScaffold
+                    safeAreaTop={62}
+                    mode="newSession"
+                    headerHeight={0}
+                    surface="transparent"
+                    testID="scaffold"
+                    composer={<React.Fragment>composer</React.Fragment>}
+                >
+                    <React.Fragment>content</React.Fragment>
+                </ComposerKeyboardScaffold>,
+            );
+        });
+
+        // The cap exists only because a cold `pageSheet` could push the bottom-anchored composer
+        // below the visible screen. A transparent presentation has no sheet frame and no header, so
+        // a window-derived clamp there is stale geometry. The sheet path keeps it (test above).
+        const scaffold = findViewByTestID(screen, 'scaffold');
+        const flattened = Array.isArray(scaffold!.props.style) ? scaffold!.props.style.flat() : [scaffold!.props.style];
+        const hasMaxHeight = flattened.some(
+            (entry: unknown) => entry && typeof entry === 'object' && typeof (entry as { maxHeight?: unknown }).maxHeight === 'number',
+        );
+        expect(hasMaxHeight).toBe(false);
 
         act(() => {
             screen.tree.unmount();

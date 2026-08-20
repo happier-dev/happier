@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionStopOutcomeSchema, type SessionStopOutcome } from '@happier-dev/protocol';
+import {
+  SessionStopOutcomeSchema,
+  readSessionAgentTransitionDividerV1,
+  type SessionStopOutcome,
+} from '@happier-dev/protocol';
 import type { SessionAgentTransitionRequestV1 } from '@happier-dev/protocol';
 
 /**
@@ -26,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   resolveReplaySeedDraft: vi.fn(),
   resolveTrustedSessionAttachmentLocalImagePaths: vi.fn(),
   findTranscriptEncryptedMessageByLocalIdV2: vi.fn(),
+  bootstrapAccountSettingsContext: vi.fn(),
+  readAgentNativeResumeRecord: vi.fn(),
+  writeAgentNativeResumeRecord: vi.fn(),
   callOrder: [] as string[],
 }));
 
@@ -58,6 +65,22 @@ vi.mock('@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths', 
 }));
 vi.mock('@/api/session/transcriptMessageLookup', () => ({
   findTranscriptEncryptedMessageByLocalIdV2: mocks.findTranscriptEncryptedMessageByLocalIdV2,
+}));
+// The account-settings bootstrap is an HTTP boundary. The connected-services
+// default resolution beneath it — the canonical creation-time owner the
+// transition reuses — runs for real.
+vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+  bootstrapAccountSettingsContext: mocks.bootstrapAccountSettingsContext,
+}));
+// Protected files on disk are the genuine boundary of the native-return record.
+// The eligibility decision, the current-view projection and the seed threading
+// above them are code under test and run for real.
+vi.mock('@/session/handoff/metadata/localAgentNativeResumeRecordStore', () => ({
+  createLocalAgentNativeResumeRecordStoreAt: () => ({
+    resolveAgentNativeResumeRecordPath: () => '/dev/null',
+    readAgentNativeResumeRecord: mocks.readAgentNativeResumeRecord,
+    writeAgentNativeResumeRecord: mocks.writeAgentNativeResumeRecord,
+  }),
 }));
 vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
   tryDecryptSessionMetadata: (params: { rawSession: { metadata: string } }) =>
@@ -196,6 +219,8 @@ function primeHappyPath(metadata: Record<string, unknown> = sourceMetadata()): v
     mocks.callOrder.push('resume');
     return { ok: true };
   });
+  // No configured connected-services default for any Agent unless a test says so.
+  mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
 }
 
 describe('runSessionAgentTransition', () => {
@@ -204,6 +229,10 @@ describe('runSessionAgentTransition', () => {
       if (typeof value === 'function' && 'mockReset' in value) (value as { mockReset: () => void }).mockReset();
     }
     mocks.callOrder.length = 0;
+    // No machine-local record unless a test writes one: every target is fresh
+    // by default, which is the structurally important case.
+    mocks.readAgentNativeResumeRecord.mockResolvedValue(null);
+    mocks.writeAgentNativeResumeRecord.mockResolvedValue(undefined);
   });
 
   describe('pre-effect rejections leave the source running', () => {
@@ -487,6 +516,89 @@ describe('runSessionAgentTransition', () => {
       const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
       const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
       expect(written.replaySeedV1).toMatchObject({ seedText: 'bounded brief', sourceCutoffSeqInclusive: 100 });
+    });
+
+    /**
+     * A connected-service binding is Agent-scoped: it names a `serviceId` the
+     * SOURCE Agent's catalog declares, and every reader resolves it against the
+     * Session's CURRENT Agent. Observed live — `openai-codex`/`codex6` survived a
+     * switch to `claude`, so the daemon spawn-preflighted the wrong service's
+     * credential and the target's runtime registration reconciled to
+     * `generation_application_scope_service_unsupported`; `/session-started`
+     * answered 503 twenty times and the freshly started Claude runtime died with
+     * the Session already committed to Claude.
+     */
+    describe('connected-service binding', () => {
+      const SOURCE_BOUND = {
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'team' },
+          },
+        },
+        connectedServicesUpdatedAt: 11,
+        connectedServiceMaterializationIdentityV1: { v: 1, id: 'csm_source', createdAtMs: 1 },
+      } as const;
+
+      it('rebinds the target Agent from the account default instead of carrying the source binding', async () => {
+        primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+        mocks.bootstrapAccountSettingsContext.mockResolvedValue({
+          settings: {
+            connectedServicesDefaultAuthByAgentIdV1: {
+              v: 1,
+              bindingsByAgentId: {
+                codex: {
+                  v: 1,
+                  bindingsByServiceId: {
+                    'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        await runSessionAgentTransition({ credentials, request: request() });
+
+        const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+        const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+        const bindings = (written.connectedServices as { bindingsByServiceId: Record<string, unknown> })
+          .bindingsByServiceId;
+        expect(bindings['claude-subscription']).toBeUndefined();
+        expect(bindings['openai-codex']).toEqual({ source: 'connected', selection: 'group', groupId: 'happier' });
+        // The materialized credential home is per-binding; reusing the source's
+        // id would point the target at the departed Agent's home.
+        expect(written.connectedServiceMaterializationIdentityV1).not.toMatchObject({ id: 'csm_source' });
+        expect(written.connectedServicesUpdatedAt).not.toBe(11);
+      });
+
+      it('leaves the target on native auth when the account configures no default for it', async () => {
+        primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+        mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: {} });
+
+        await runSessionAgentTransition({ credentials, request: request() });
+
+        const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+        const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+        expect(written.connectedServices).toBeUndefined();
+        expect(written.connectedServicesUpdatedAt).toBeUndefined();
+        expect(written.connectedServiceMaterializationIdentityV1).toBeUndefined();
+      });
+
+      it('degrades to native rather than failing a transition whose source is already stopped', async () => {
+        // The settings read happens after the confirmed stop. Failing here would
+        // strand a Session whose source is gone; native is what a Session created
+        // for this Agent gets when no default is readable.
+        primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+        mocks.bootstrapAccountSettingsContext.mockRejectedValue(new Error('settings unavailable'));
+
+        const result = await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+        const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+        const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+        expect(written.connectedServices).toBeUndefined();
+      });
     });
 
     /**
@@ -775,9 +887,19 @@ describe('runSessionAgentTransition', () => {
       };
       expect(dividerPayload.role).toBe('agent');
       expect(dividerPayload.content.type).toBe('event');
-      expect(dividerPayload.content.data).toMatchObject({
-        type: 'message',
-        sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+      expect(dividerPayload.content.data).toMatchObject({ type: 'message' });
+      // Asserted through the CANONICAL reader, not a literal key. The sidecar key
+      // and its schema have one owner; a writer that spells either of them itself
+      // seals a row nothing downstream can recognize as a divider.
+      expect(readSessionAgentTransitionDividerV1(dividerPayload.content.data)).toEqual({
+        v: 1,
+        fromAgentId: 'claude',
+        toAgentId: 'codex',
+        // The exact bound the brief was built from, recorded on the boundary it
+        // created. It is the only input to the context pass that outlives the
+        // cutover — the seed text is blanked the instant the target accepts it —
+        // so without it the boundary can never be explained after the fact.
+        sourceCutoffSeqInclusive: 100,
       });
     });
   });
@@ -855,7 +977,12 @@ describe('runSessionAgentTransition', () => {
     const matchingDivider = {
       type: 'message',
       message: 'Continued with another Agent.',
-      sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+      sessionAgentTransitionV1: {
+        v: 1,
+        fromAgentId: 'claude',
+        toAgentId: 'codex',
+        sourceCutoffSeqInclusive: 29_979,
+      },
     };
 
     it('never reports a no-effect rejection once the Session already is the target', async () => {
@@ -929,7 +1056,12 @@ describe('runSessionAgentTransition', () => {
         dividerLookup({
           type: 'message',
           message: 'Continued with another Agent.',
-          sessionAgentTransitionV1: { v: 1, fromAgentId: 'opencode', toAgentId: 'codex' },
+          sessionAgentTransitionV1: {
+            v: 1,
+            fromAgentId: 'opencode',
+            toAgentId: 'codex',
+            sourceCutoffSeqInclusive: 29_979,
+          },
         }),
       );
 
@@ -1004,6 +1136,219 @@ describe('runSessionAgentTransition', () => {
 
       expect(result).toEqual({ type: 'rejected', code: 'same_target', sourceEffect: 'none' });
       expect(mocks.findTranscriptEncryptedMessageByLocalIdV2).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The retrieval pointer.
+   *
+   * The brief is a bounded TAIL, and the target Agent has no way to learn that
+   * the rest of the conversation is reachable, where it lives, or which slice it
+   * is already holding — so it either works from the tail alone or pages the
+   * transcript from the start and re-reads its own prompt.
+   */
+  describe('retrieval pointer', () => {
+    function readRetrievalArgument(): {
+      sessionId?: string;
+      renderInvocation?: ((cursorSeq: number | null) => string) | null;
+      nativeTranscriptPath?: string | null;
+    } | null | undefined {
+      return (mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as { retrieval?: never }).retrieval;
+    }
+
+    it('hands the Replay owner an invocation the TARGET Agent can actually run', async () => {
+      primeHappyPath();
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      const retrieval = readRetrievalArgument();
+      expect(retrieval?.sessionId).toBe(SESSION_ID);
+      expect(retrieval?.renderInvocation?.(4_200)).toContain('session.transcript.get');
+      expect(retrieval?.renderInvocation?.(4_200)).toContain('"direction":"before"');
+    });
+
+    it('never names a native log this machine cannot open', async () => {
+      // Claude prunes and rotates transcripts, so a recorded path routinely
+      // outlives its file; pointing at it spends the reader's turn on nothing.
+      // The fixture path does not exist, which is exactly that case.
+      primeHappyPath();
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(readRetrievalArgument()?.nativeTranscriptPath).toBeNull();
+    });
+
+    it('carries the SOURCE Agent’s own session log while it is still in the current view', async () => {
+      // The cutover projection clears the source Agent's continuity keys, so the
+      // brief is the last reader that can see the log at all.
+      const { mkdtempSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const logPath = join(mkdtempSync(join(tmpdir(), 'happier-native-log-')), 'session.jsonl');
+      writeFileSync(logPath, '{}\n');
+      primeHappyPath(sourceMetadata({ claudeTranscriptPath: logPath }));
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(readRetrievalArgument()?.nativeTranscriptPath).toBe(logPath);
+    });
+  });
+
+  /**
+   * Same-machine native return (`AM-24`, `AM-26`).
+   *
+   * Two behaviours, and they are the whole feature:
+   *
+   * 1. A returning Agent RESUMES the native conversation it left rather than
+   *    starting fresh. Observable in exactly one place: the committed target
+   *    current view either carries that Agent's recorded vendor resume id or it
+   *    does not, and the ordinary inactive-resume owner reads it from there.
+   * 2. The replay handed to that returning Agent is BOUNDED by the transcript
+   *    head it last saw, so it is told what happened while it was away instead
+   *    of being re-sent a conversation it still holds.
+   *
+   * There is deliberately no continuity proof and no decision-time `stat()`: a
+   * dead vendor id fails loudly at the first turn, as any Happier resume does.
+   */
+  describe('same-machine native return', () => {
+    function readSeedSource(): Record<string, unknown> | undefined {
+      return (mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as { source?: Record<string, unknown> })?.source;
+    }
+
+    function readCommittedTargetView(): Record<string, unknown> {
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      return JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+    }
+
+    function codexSourceMetadata(): Record<string, unknown> {
+      return {
+        path: '/work/repo',
+        host: 'mac',
+        machineId: 'machine-1',
+        flavor: 'codex',
+        codexSessionId: 'codex-native-1',
+        permissionMode: 'default',
+      };
+    }
+
+    it('records the PRE-stop transcript head as the departing Agent boundary', async () => {
+      // The head moves during the stop, and the two are not interchangeable: a
+      // row that lands between the record and the confirmed stop may never have
+      // reached the departing Agent. Over-estimating skips it PERMANENTLY;
+      // under-estimating costs one re-replayed turn.
+      const metadata = sourceMetadata();
+      primeHappyPath(metadata);
+      mocks.fetchSessionByIdCompat
+        .mockResolvedValueOnce(rawSession(metadata, { seq: 100 }))
+        .mockResolvedValue(rawSession(metadata, { seq: 140 }));
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(mocks.writeAgentNativeResumeRecord).toHaveBeenCalledWith({
+        happierSessionId: SESSION_ID,
+        agentId: 'claude',
+        identity: { v: 1, vendorResumeId: 'claude-native-1' },
+        departureSeqInclusive: 100,
+      });
+      // Control: the brief runs to the POST-stop head, so the fixture really
+      // does distinguish the two.
+      expect(readSeedSource()?.upToSeqInclusive).toBe(140);
+    });
+
+    it('writes the record before the stop, so a stop that never confirms cannot lose it', async () => {
+      primeHappyPath();
+      mocks.writeAgentNativeResumeRecord.mockImplementation(async () => {
+        mocks.callOrder.push('record');
+      });
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(mocks.callOrder.indexOf('record')).toBeGreaterThanOrEqual(0);
+      expect(mocks.callOrder.indexOf('record')).toBeLessThan(mocks.callOrder.indexOf('stop'));
+    });
+
+    it('removes the record when the departing Agent has no resumable conversation', async () => {
+      // A stale record left behind would let a later return resume a native
+      // session this Session no longer corresponds to.
+      primeHappyPath(sourceMetadata({ claudeSessionId: undefined }));
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(mocks.writeAgentNativeResumeRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'claude', identity: null }),
+      );
+    });
+
+    it('never fails the transition over the record', async () => {
+      primeHappyPath();
+      mocks.writeAgentNativeResumeRecord.mockRejectedValue(new Error('disk is full'));
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+    });
+
+    /**
+     * The structurally impossible case, and the one that must never regress: a
+     * FRESH target never ran this Session, so there is no record, therefore no
+     * bound, therefore the FULL replay. There is no bound to starve it with.
+     */
+    it('hands the brief no bound and the target no resume id when the target is fresh', async () => {
+      primeHappyPath();
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(mocks.readAgentNativeResumeRecord).toHaveBeenCalledWith({
+        happierSessionId: SESSION_ID,
+        agentId: 'codex',
+      });
+      expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
+      const written = readCommittedTargetView();
+      expect(written.flavor).toBe('codex');
+      expect(written.codexSessionId).toBeUndefined();
+      expect(written.claudeSessionId).toBeUndefined();
+    });
+
+    it('resumes the returning Agent conversation and bounds the replay to the away delta', async () => {
+      primeHappyPath(codexSourceMetadata());
+      mocks.readAgentNativeResumeRecord.mockResolvedValue({
+        identity: { v: 1, vendorResumeId: 'claude-native-9' },
+        departureSeqInclusive: 55,
+      });
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({ expectedCurrentAgentId: 'codex', selection: { v: 1, agentId: 'claude' } }),
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(readSeedSource()?.returningAgentLastSeenSeq).toBe(55);
+      const written = readCommittedTargetView();
+      expect(written.flavor).toBe('claude');
+      // Written through the current-view projector, which is the only writer of
+      // a flat resume key: exactly one Agent's key may be present.
+      expect(written.claudeSessionId).toBe('claude-native-9');
+      expect(written.codexSessionId).toBeUndefined();
+    });
+
+    it('refuses a recorded id the shared eligibility owner will not resume', async () => {
+      // The record decides nothing on its own: whether an id may be resumed is
+      // the ordinary inactive-resume question, answered by one owner.
+      primeHappyPath(codexSourceMetadata());
+      mocks.readAgentNativeResumeRecord.mockResolvedValue({
+        identity: { v: 1, vendorResumeId: '   ' },
+        departureSeqInclusive: 55,
+      });
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({ expectedCurrentAgentId: 'codex', selection: { v: 1, agentId: 'claude' } }),
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
+      expect(readCommittedTargetView().claudeSessionId).toBeUndefined();
     });
   });
 });

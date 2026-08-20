@@ -63,7 +63,14 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     sessionReplayEnabled: {
         schema: z.boolean(),
-        default: false,
+        // Default ON. Replay is the only fork strategy available to an Agent
+        // whose provider declares `sessionFork: unsupported` (Claude Code,
+        // among others), and the fork gate is `native || replay` — so
+        // defaulting this off removed the fork affordance entirely for exactly
+        // the sessions this setting exists to serve. The same machinery is
+        // already default-on for the in-place Agent switch. A user can still
+        // turn it off.
+        default: true,
         description: 'Enable app-level transcript replay for sessions that cannot be vendor-resumed',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
@@ -306,6 +313,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Where sessions waiting for the user or ready to review appear in the session list',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListAttentionStandingDefaultV1: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Whether sessions stay in the session list attention section until the user removes them',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     sessionListWorkingPlacementModeV1: {
         schema: z.enum(SESSION_LIST_WORKING_PLACEMENT_MODE_VALUES),

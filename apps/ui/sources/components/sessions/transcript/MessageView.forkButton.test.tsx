@@ -9,6 +9,7 @@ import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const routerNavigateSpy = vi.fn();
 const forkSessionSpy = vi.fn();
 const openSessionForkStrategyFlowSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn();
@@ -115,6 +116,7 @@ installMessageViewCommonModuleMocks({
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const routerMock = createExpoRouterMock();
     routerMock.spies.push.mockImplementation((value: unknown) => routerPushSpy(value));
+    routerMock.spies.navigate.mockImplementation((value: unknown, options?: unknown) => routerNavigateSpy(value, options));
     return routerMock.module;
   },
   storage: async (importOriginal) => {
@@ -244,13 +246,15 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => false,
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache')>()),
   resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
 }));
 
 describe('MessageView (fork button)', () => {
   beforeEach(() => {
     routerPushSpy.mockReset();
+    routerNavigateSpy.mockReset();
     forkSessionSpy.mockReset();
     openSessionForkStrategyFlowSpy.mockReset();
     ensureSessionVisibleSpy.mockReset();
@@ -546,7 +550,8 @@ describe('MessageView (fork button)', () => {
 
     const flowArgs = openSessionForkStrategyFlowSpy.mock.calls[0]?.[0] as any;
     await act(async () => { await flowArgs.navigateToSession('child-1'); });
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
+    expect(routerNavigateSpy).toHaveBeenCalledWith('/session/child-1?serverId=server-a', expect.any(Object));
+    expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
   });
 
   it('carries the replay seed settings the account resolves', async () => {

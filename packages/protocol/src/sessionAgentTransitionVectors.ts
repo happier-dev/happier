@@ -259,20 +259,17 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         type: 'available',
         protocolVersion: 1,
         sameSessionTransition: true,
-        nativeReturn: true,
       },
-      /** The predecessor minimum: fresh target, no native return. */
+      /** The predecessor minimum: fresh target. */
       predecessorMinimum: {
         type: 'available',
         protocolVersion: 1,
         sameSessionTransition: true,
-        nativeReturn: false,
       },
       noneSupported: {
         type: 'available',
         protocolVersion: 1,
         sameSessionTransition: false,
-        nativeReturn: false,
       },
       unavailableOperation: { type: 'unavailable', reason: 'operation_unavailable' },
       unavailableSession: { type: 'unavailable', reason: 'unsupported_session' },
@@ -283,13 +280,11 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
       missingFlag: {
         type: 'available',
         protocolVersion: 1,
-        sameSessionTransition: true,
       },
       unknownFlag: {
         type: 'available',
         protocolVersion: 1,
         sameSessionTransition: true,
-        nativeReturn: true,
         transcriptExport: true,
       },
       unknownReason: { type: 'unavailable', reason: 'machine_offline' },
@@ -297,7 +292,6 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         type: 'available',
         protocolVersion: 2,
         sameSessionTransition: true,
-        nativeReturn: true,
       },
     },
     /**
@@ -332,13 +326,50 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
     unreservedLocalIds: ['local_01', 'agent-transition', 'x-agent-transition:local_01'],
     payload: {
       valid: {
-        minimal: { v: 1, fromAgentId: 'codex', toAgentId: 'claude' },
+        /**
+         * The transcript cutoff the activation brief was built from is part of
+         * the minimum, not an addition to it. It is the ONE fact that survives
+         * the cutover and lets a reader rebuild the handed-over context:
+         * `seedText` is blanked the moment the target accepts it, so a divider
+         * without the cutoff could never explain its own boundary.
+         */
+        minimal: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 29_979,
+        },
+        /** Zero is "nothing was carried over" — a recorded fact, not an absence. */
+        emptySourceCutoff: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 0,
+        },
       },
       invalid: {
         unknownKey: { v: 1, fromAgentId: 'codex', toAgentId: 'claude', modelId: 'gpt-5' },
         missingTo: { v: 1, fromAgentId: 'codex' },
         blankFrom: { v: 1, fromAgentId: '  ', toAgentId: 'claude' },
         wrongVersion: { v: 2, fromAgentId: 'codex', toAgentId: 'claude' },
+        /**
+         * The cutoff is REQUIRED. The only writer that ever omitted it is an
+         * unreleased intermediate build of this feature, and a sidecar that
+         * cannot name its own bound is not a divider any reader should trust.
+         */
+        missingSourceCutoff: { v: 1, fromAgentId: 'codex', toAgentId: 'claude' },
+        negativeSourceCutoff: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: -1,
+        },
+        fractionalSourceCutoff: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 1.5,
+        },
       },
     },
     /**
@@ -348,7 +379,12 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
     agentEvent: {
       type: 'message',
       message: 'Continued with another Agent.',
-      sessionAgentTransitionV1: { v: 1, fromAgentId: 'codex', toAgentId: 'claude' },
+      sessionAgentTransitionV1: {
+        v: 1,
+        fromAgentId: 'codex',
+        toAgentId: 'claude',
+        sourceCutoffSeqInclusive: 29_979,
+      },
     },
     /** An ordinary message event must not be read as a divider. */
     plainMessageAgentEvent: { type: 'message', message: 'Continued with another Agent.' },
@@ -357,6 +393,18 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
       type: 'message',
       message: 'Continued with another Agent.',
       sessionAgentTransitionV1: { v: 1, fromAgentId: 'codex' },
+    },
+    /**
+     * A sidecar with both Agent ids but no cutoff: the shape an unreleased
+     * intermediate build of this feature wrote. It is rejected like any other
+     * malformed sidecar, so the row degrades through the SAME already-designed
+     * path an older reader takes — the whole sidecar is dropped and the stored
+     * prose is rendered. There is no third state for it to land in.
+     */
+    cutoffLessSidecarAgentEvent: {
+      type: 'message',
+      message: 'Continued with another Agent.',
+      sessionAgentTransitionV1: { v: 1, fromAgentId: 'codex', toAgentId: 'claude' },
     },
   },
 

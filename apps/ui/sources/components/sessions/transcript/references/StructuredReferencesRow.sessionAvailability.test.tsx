@@ -11,8 +11,9 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 
 // Hoisted: the real storage barrel pulls `expo-router` in during module mocking, which happens
 // before any file-level `const` is initialized.
-const routerMockState = vi.hoisted(() => ({ push: vi.fn() }));
+const routerMockState = vi.hoisted(() => ({ push: vi.fn(), navigate: vi.fn() }));
 const routerPushSpy = routerMockState.push;
+const routerNavigateSpy = routerMockState.navigate;
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
@@ -43,7 +44,7 @@ vi.hoisted(async () => {
         },
         router: async () => {
             const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-            return createExpoRouterMock({ router: { push: routerMockState.push } }).module;
+            return createExpoRouterMock({ router: { push: routerMockState.push, navigate: routerMockState.navigate } }).module;
         },
         storage: async (importOriginal) => {
             const original = await importOriginal<typeof import('@/sync/domains/state/storage')>();
@@ -85,6 +86,7 @@ let previousState: ReturnType<typeof storage.getState>;
 
 beforeEach(() => {
     routerPushSpy.mockClear();
+    routerNavigateSpy.mockClear();
     previousState = storage.getState();
 });
 
@@ -135,7 +137,7 @@ describe('StructuredReferencesRow session availability', () => {
         expect(screen.getTextContent()).not.toContain('message.sessionReferenceUnavailable');
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:archived-target');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/archived-target');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/archived-target', expect.any(Object));
     });
 
     /**
@@ -161,6 +163,7 @@ describe('StructuredReferencesRow session availability', () => {
         expect(screen.getTextContent()).toContain('Release prep');
 
         expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(routerNavigateSpy).not.toHaveBeenCalled();
     });
 
     it('prefers the live title over the composed label while the session is known', async () => {

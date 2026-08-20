@@ -303,7 +303,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     // check is not repeated here.
     const agentTransitionDivider = readSessionAgentTransitionDividerV1(props.event);
     if (agentTransitionDivider) {
-        return <AgentTransitionDividerRow divider={agentTransitionDivider} />;
+        return <AgentTransitionDividerRow divider={agentTransitionDivider} sessionId={props.sessionId ?? null} />;
     }
 
     let iconName: IconName = 'info';

@@ -9,6 +9,17 @@ export function TranscriptSeparatorRow(props: Readonly<{
   testID?: string;
   iconName: IconName;
   title: string;
+  /**
+   * A caller-composed title run, rendered in the title's place.
+   *
+   * The default title is one string in one `Text`, which is right for every row
+   * whose label is only words. A label that has to interleave non-text runs —
+   * the Agent-transition divider sets each Agent's logo before its name — cannot
+   * be expressed that way, and duplicating this row to host one is worse than
+   * letting the caller own that slot. `title` stays the accessible name whatever
+   * is drawn, so a screen reader reads the sentence either way.
+   */
+  titleContent?: React.ReactNode;
   titleTestID?: string;
   subtitle?: string | null;
   rightAccessory?: React.ReactNode;
@@ -26,9 +37,11 @@ export function TranscriptSeparatorRow(props: Readonly<{
     <>
       <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} />
       <View style={styles.textStack}>
-        <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
-          {props.title}
-        </Text>
+        {props.titleContent ?? (
+          <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
+            {props.title}
+          </Text>
+        )}
         {props.subtitle ? (
           <Text style={[styles.subtitle, { color: theme.colors.text.secondary }]} numberOfLines={1}>
             {props.subtitle}
@@ -56,7 +69,10 @@ export function TranscriptSeparatorRow(props: Readonly<{
             onPress={props.onPress}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? props.title}
-            hitSlop={chipChrome === 'minimal' ? 10 : undefined}
+            // The chip is ~30pt tall at its own padding, below a comfortable
+            // touch target, and it is the whole control when it is pressable.
+            // The minimal chrome has no padding of its own and needs more.
+            hitSlop={chipChrome === 'minimal' ? 10 : 6}
             style={({ pressed }) => [
               styles.chip,
               chipChrome === 'minimal' ? styles.chipMinimal : null,
@@ -85,6 +101,16 @@ export function TranscriptSeparatorRow(props: Readonly<{
     </View>
   );
 }
+
+/**
+ * The separator title's type ramp, exported so a caller that composes its own
+ * title run sets it in the same face, size and weight as every other separator
+ * rather than restating the numbers.
+ */
+export const TRANSCRIPT_SEPARATOR_TITLE_TEXT_STYLE = {
+  fontSize: 12,
+  fontWeight: '600',
+} as const;
 
 const styles = StyleSheet.create((_theme) => ({
   container: {
@@ -131,8 +157,7 @@ const styles = StyleSheet.create((_theme) => ({
     gap: 2,
   },
   title: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...TRANSCRIPT_SEPARATOR_TITLE_TEXT_STYLE,
   },
   subtitle: {
     fontSize: 12,

@@ -287,7 +287,7 @@ describe('VoiceSurface', () => {
 
     await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'common.open' }), 'common.open');
 
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/carrier-s1');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/carrier-s1', expect.any(Object));
   });
 
   it('shows the hidden voice conversation icon when the binding appears after the surface renders', async () => {
@@ -488,7 +488,7 @@ describe('VoiceSurface', () => {
     await pressTestInstanceAsync(openConversation, 'common.open');
 
     expect(ensureVoiceBindingSpy).not.toHaveBeenCalled();
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session', expect.any(Object));
   });
 
   it('does not render the session voice surface inside a hidden voice conversation session', async () => {
@@ -821,7 +821,7 @@ describe('VoiceSurface', () => {
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       requestedTargetSessionId: 's1',
     });
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/voice-root-s1');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/voice-root-s1', expect.any(Object));
   });
 
   it('does not disable the stop button while connecting (escape hatch)', async () => {

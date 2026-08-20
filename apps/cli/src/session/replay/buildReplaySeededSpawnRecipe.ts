@@ -66,7 +66,11 @@ export type BuildReplaySeededSpawnRecipeParams = Readonly<{
   strategy: HappierReplayStrategy;
   /** Extra creation metadata merged UNDER the canonical envelopes. */
   extraMetadata?: Record<string, unknown>;
-  recentMessagesCount?: number;
+  /**
+   * Released count bound. Absent means the character budget is the only content
+   * bound; `null` says so explicitly.
+   */
+  recentMessagesCount?: number | null;
   maxSeedChars?: number;
   candidateLimit?: number;
   maxTextChars?: number;
@@ -97,7 +101,9 @@ export async function buildReplaySeededSpawnRecipe(
         : {}),
     },
     strategy: params.strategy,
-    recentMessagesCount: params.recentMessagesCount ?? configuration.replaySeedCandidateLimit,
+    // A caller-supplied count is a released contract and still binds; absent,
+    // the character budget is the only bound.
+    recentMessagesCount: params.recentMessagesCount ?? null,
     maxSeedChars: typeof params.maxSeedChars === 'number'
       ? params.maxSeedChars
       : configuration.replaySeedMaxChars,

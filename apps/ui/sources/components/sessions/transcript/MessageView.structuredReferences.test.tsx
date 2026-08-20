@@ -9,6 +9,7 @@ import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const routerNavigateSpy = vi.fn();
 const referenceTargetState = vi.hoisted(() => ({
     sessions: {} as Record<string, SessionReferenceTarget | undefined>,
 }));
@@ -16,7 +17,7 @@ const referenceTargetState = vi.hoisted(() => ({
 installMessageViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
+        return createExpoRouterMock({ router: { push: routerPushSpy, navigate: routerNavigateSpy } }).module;
     },
     storage: async (importOriginal) => {
         const { createStorageModuleMock, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
@@ -88,6 +89,7 @@ describe('MessageView structured references', () => {
             sess_42: { deleted: false, metadata: { name: 'Release prep', path: '/w', host: 'h' } },
         };
         routerPushSpy.mockClear();
+        routerNavigateSpy.mockClear();
     });
 
     afterEach(() => {
@@ -109,7 +111,7 @@ describe('MessageView structured references', () => {
         expect(screen.getTextContent()).toContain('Release prep');
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:sess_42');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess_42');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_42', expect.any(Object));
     });
 
     it('renders and navigates an envelope-backed session reference in the AGENT branch', async () => {
@@ -126,7 +128,7 @@ describe('MessageView structured references', () => {
         expect(chip).toBeTruthy();
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:sess_42');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess_42');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_42', expect.any(Object));
     });
 
     it('renders the SAME text as plain text when no envelope entry backs it, in BOTH branches (INV-5)', async () => {

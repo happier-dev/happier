@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
 import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 
 export const ApprovalSessionContextCard = React.memo(function ApprovalSessionContextCard(props: Readonly<{
     session: Session | null;
@@ -18,7 +18,7 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     requesterAgentId: string | null;
     requesterSurface: string;
 }>) {
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const { theme } = useUnistyles();
     const sessionTitle = props.session ? getSessionName(props.session) : null;
     const displayPath = props.session
@@ -51,7 +51,7 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
                         testID="approvals.open-session"
                         accessibilityRole="button"
                         accessibilityLabel={t('runs.openSession')}
-                        onPress={() => router.push(`/session/${props.session!.id}`)}
+                        onPress={() => { void navigateToSession(props.session!.id); }}
                         style={({ pressed }) => [styles.openButton, pressed && styles.openButtonPressed]}
                     >
                         <Icon name="arrow-square-out" size={16} color={theme.colors.text.primary} />

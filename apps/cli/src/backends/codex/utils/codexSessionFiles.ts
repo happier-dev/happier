@@ -26,6 +26,22 @@ export function resolveCodexNativeSessionsRoot(env: NodeJS.ProcessEnv): string {
   return join(resolveConfiguredCodexHome(env), 'sessions');
 }
 
+/**
+ * A Codex thread id, or nothing.
+ *
+ * The id becomes a file-name SUFFIX in every search below, so one carrying a
+ * path separator is not a thread id and must never be searched for. Shared by
+ * every caller that turns an id into a file so the guard cannot drift between
+ * them.
+ */
+export function normalizeCodexVendorResumeId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.includes('/') || trimmed.includes('\\')) return null;
+  return trimmed;
+}
+
 function compareDescending(a: string, b: string): number {
   return b.localeCompare(a);
 }

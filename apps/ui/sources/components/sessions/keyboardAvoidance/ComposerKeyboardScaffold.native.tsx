@@ -23,16 +23,24 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
         safeAreaBottom: props.safeAreaBottom,
     });
     const { style: contentPropsStyle, ...contentProps } = props.contentProps ?? {};
+    // A transparent scaffold is presented over the screen behind it, so it paints no ground of
+    // its own; whatever it is presented over stays visible.
+    const isTransparentSurface = props.surface === 'transparent';
+    const surfaceBackgroundColor = isTransparentSurface ? undefined : theme.colors.surface.base;
     const newSessionScaffoldMaxHeight = React.useMemo(() => {
         if (props.mode !== 'newSession') return undefined;
         if (Platform.OS !== 'ios') return undefined;
+        // The cap below is window-derived geometry that exists only to survive a cold `pageSheet`
+        // presentation. A transparent presentation has no sheet frame and no header, so applying it
+        // there would clamp against a header that is not rendered.
+        if (isTransparentSurface) return undefined;
         if (typeof props.safeAreaTop !== 'number' || !Number.isFinite(props.safeAreaTop)) return undefined;
         const safeTop = Math.max(0, props.safeAreaTop);
         const headerHeight = typeof props.headerHeight === 'number' && Number.isFinite(props.headerHeight)
             ? Math.max(0, props.headerHeight)
             : 0;
         return Math.max(0, Math.round(windowDimensions.height - safeTop - headerHeight));
-    }, [props.headerHeight, props.mode, props.safeAreaTop, windowDimensions.height]);
+    }, [isTransparentSurface, props.headerHeight, props.mode, props.safeAreaTop, windowDimensions.height]);
 
     // Composer translateY = the keyboard/safe-area inset. The root scaffold inherits the native
     // modal content frame; adding a separate window-derived sheet height can overflow cold modal
@@ -55,7 +63,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 onLayout={handleScaffoldLayout}
                 testID={props.testID}
                 style={[
-                    { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base },
+                    { flex: 1, minHeight: 0, backgroundColor: surfaceBackgroundColor },
                     typeof newSessionScaffoldMaxHeight === 'number' ? { maxHeight: newSessionScaffoldMaxHeight } : null,
                     props.style,
                 ]}
@@ -76,7 +84,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                             left: 0,
                             right: 0,
                             bottom: 0,
-                            backgroundColor: theme.colors.surface.base,
+                            backgroundColor: surfaceBackgroundColor,
                         },
                         composerAnimatedStyle,
                     ]}

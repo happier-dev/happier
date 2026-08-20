@@ -102,6 +102,12 @@ export const RPC_METHODS = {
    * nothing; the mutation revalidates every fact.
    */
   SESSION_CONTINUATION_INSPECT: 'session.continuation.inspect',
+  /**
+   * Read-only rebuild of the activation brief one transition divider stands
+   * for. Runs the same bounded context pass the transition ran, bounded by the
+   * divider's recorded cutoff.
+   */
+  SESSION_AGENT_TRANSITION_BRIEF_PREVIEW: 'session.agentTransition.briefPreview',
   BASH: 'bash',
   PREVIEW_ENV: 'preview-env',
   READ_FILE: 'readFile',

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
+import {
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWireMaxSeedCharsSchema,
+} from './replaySeedBudget.js';
 
 export const HappierReplayStrategySchema = z.enum(['recent_messages', 'summary_plus_recent']);
 export type HappierReplayStrategy = z.infer<typeof HappierReplayStrategySchema>;
@@ -21,8 +25,8 @@ export const SessionContinueWithReplayRequestSchema = z
   .object({
     previousSessionId: z.string().min(1),
     strategy: HappierReplayStrategySchema.optional(),
-    recentMessagesCount: z.number().int().min(1).max(500).optional(),
-    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
+    recentMessagesCount: HappierReplayRecentMessagesCountSchema.optional(),
+    maxSeedChars: HappierReplayWireMaxSeedCharsSchema.optional(),
     seedMode: HappierReplaySeedModeSchema.optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })

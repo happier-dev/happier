@@ -14,6 +14,7 @@ import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 const backSpy = vi.fn();
 const pushSpy = vi.fn();
+const navigateSpy = vi.fn();
 const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
@@ -204,7 +205,7 @@ installApprovalCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            router: { back: backSpy, push: pushSpy },
+            router: { back: backSpy, push: pushSpy, navigate: navigateSpy },
         }).module;
     },
     text: async () => {
@@ -279,6 +280,7 @@ describe('ApprovalDetailScreen', () => {
     beforeEach(() => {
         backSpy.mockReset();
         pushSpy.mockReset();
+        navigateSpy.mockReset();
         executeSpy.mockClear();
         createDefaultActionExecutorSpy.mockReset();
         fetchArtifactWithBodySpy.mockClear();
@@ -317,7 +319,8 @@ describe('ApprovalDetailScreen', () => {
             await screen.pressByTestIdAsync('approvals.open-session');
         });
 
-        expect(pushSpy).toHaveBeenCalledWith('/session/session-1');
+        expect(navigateSpy).toHaveBeenCalledWith('/session/session-1', expect.any(Object));
+        expect(navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('places the primary approve action before the reject action', async () => {

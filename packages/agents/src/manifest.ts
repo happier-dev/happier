@@ -44,7 +44,14 @@ export const AGENTS_CORE = {
                 anthropic: ['token'],
             },
         },
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'claudeSessionId' },
+        resume: {
+            vendorResume: 'supported',
+            vendorResumeIdField: 'claudeSessionId',
+            // The Agent's own session-log POINTER for the handoff brief, not a
+            // resume gate (`AM-24`). The predecessor key name is retained
+            // deliberately — see `AgentResumeConfig`.
+            vendorResumeContinuityProofField: 'claudeTranscriptPath',
+        },
         sessionStorage: { direct: true, persisted: true },
         sessionCapabilities: {
             sessionListing: 'supported',

@@ -12,7 +12,8 @@ Common examples:
 - disable bug report upload features,
 - disable pet companions or synced custom pet libraries,
 - disable connected services entirely,
-- disable only connected-services quota surfaces while keeping basic connected auth enabled.
+- disable only connected-services quota surfaces while keeping basic connected auth enabled,
+- disable in-place Agent switching inside a live session.
 
 Clients (mobile/web/desktop) adapt to advertised flags so disabled features do not appear as active workflows.
 
@@ -49,8 +50,23 @@ To disable account pet library sync while still allowing built-in and local pets
 HAPPIER_FEATURE_PETS_SYNC__ENABLED=0
 ```
 
+## Continue with another Agent
+
+`sessions.agentSwitching` controls whether a live session can change the coding Agent running it in place.
+
+The server **allows it by default**, so this flag is an opt-out. Clients fail closed: a server that does not advertise the flag offers no switch targets at all.
+
+To disable it for every connected client:
+
+```bash
+HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED=0
+```
+
+See [Continue with another Agent](/docs/features/continue-with-another-agent) for what the feature does and for the daemon-side context budget.
+
 ## Related pages
 
+- [Continue with another Agent](/docs/features/continue-with-another-agent)
 - [Pets](/docs/features/pets)
 - [Connected services](/docs/features/connected-services)
 - [Friends](/docs/features/friends)

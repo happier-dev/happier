@@ -45,11 +45,12 @@ export type SessionContinuationInspections = Readonly<{
  * one: a closed gate, a read-only or external Session, an offline machine or a
  * Session with no other Agent asks nothing at all.
  *
- * **One connection, one answer.** Answers are cached against the realtime
- * connection and machine state they were read over, and discarded when either
- * changes, because inspection reserves nothing and re-reading is the only way it
- * stays true. Caching also matters for a negative: the machine RPC already retries
- * once on `METHOD_NOT_AVAILABLE`, so an old daemon costs two round trips per ask.
+ * **One runtime pair, one answer.** Answers are cached against the realtime
+ * connection, the daemon generation, and the machine state they were read over,
+ * and discarded when any of them changes, because inspection reserves nothing and
+ * re-reading is the only way it stays true. Caching also matters for a negative:
+ * the machine RPC already retries once on `METHOD_NOT_AVAILABLE`, so an old daemon
+ * costs two round trips per ask.
  *
  * **Never asks a machine known to be offline.** That answer is already held, and
  * waiting out a transport timeout to rediscover it would leave the row reading
@@ -67,13 +68,18 @@ export function useSessionContinuationInspections(
     const serverId = machine.serverId;
     const offline = machinePresence === 'offline';
     // Everything an answer is only valid within. Session and machine are obvious;
-    // the generation makes a reconnect re-ask, and presence makes a machine that
-    // bounced re-ask rather than trust what its previous daemon said.
+    // the connection generation makes a reconnect re-ask, the daemon generation
+    // makes a daemon that restarted under a live connection re-ask, and presence
+    // makes a machine that bounced re-ask rather than trust what its previous
+    // daemon said. Both generations are load-bearing: a restarting daemon never
+    // disturbs this client's socket, so the connection generation alone leaves
+    // the rail advertising an answer nothing on the machine still stands behind.
     const scopeKey = [
         sessionId,
         machineId ?? '',
         serverId ?? '',
         machine.connectionGeneration ?? '',
+        machine.daemonGeneration ?? '',
         machinePresence,
     ].join(' ');
     const scopeRef = React.useRef<Readonly<{ key: string; asked: Set<string> }>>(

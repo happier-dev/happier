@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -89,7 +90,7 @@ function normalizeSessionId(value: unknown): string | null {
 
 export function VoiceQaScreen() {
   const { theme } = useUnistyles();
-  const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const appState = useStoreSnapshot(storage);
   const voiceSessionState = useStoreSnapshot(useVoiceSessionStore);
   const targetState = useStoreSnapshot(useVoiceTargetStore);
@@ -295,7 +296,7 @@ export function VoiceQaScreen() {
                   title={t('common.open')}
                   size="normal"
                   display="inverted"
-                  onPress={() => router.push(`/session/${boundConversationSessionId}` as any)}
+                  onPress={() => { void navigateToSession(boundConversationSessionId); }}
                 />
               ) : null}
             </View>

@@ -1141,8 +1141,8 @@ export const en = {
         online: 'online',
         working: 'working...',
         workingRetained: 'working, awaiting updates…',
-        backgroundActive: ({ count }: { count: number }) => `${count} running in background`,
         keptInAttention: 'Kept in attention',
+        backgroundActive: ({ count }: { count: number }) => `${count} running in background`,
         activityUnknown: 'activity status unavailable',
         readyForReview: 'ready for review',
         offline: 'offline',
@@ -3934,11 +3934,11 @@ export const en = {
         openCockpit: 'Open cockpit',
         openClassicView: 'Open classic view',
         tabs: 'Tabs',
-    },
         previousSession: 'Previous session',
         nextSession: 'Next session',
         sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' of ' + total,
         switchedToSession: ({ name, position, total }: { name: string; position: number; total: number }) => 'Switched to ' + name + ', ' + position + ' of ' + total,
+    },
 
     settingsAppearance: {
       tabBarAppearance: {
@@ -4806,8 +4806,34 @@ export const en = {
             detailTitle: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             sendLabel: ({ agent }: { agent: string }) => `Continue with ${agent}`,
             detailDescription: 'Your recent conversation carries over as text; images and files don’t. Nothing is sent until your next message.',
+            detailDescriptionEmpty: 'There’s no conversation to carry over yet. Nothing is sent until your next message.',
             announcement: ({ agent }: { agent: string }) => `${agent} selected for the next message. Nothing has been sent.`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Continued this Session from ${from_} to ${to}`,
+            handedOver: {
+                open: 'Show the context handed over here',
+                title: 'Context handed over',
+                /**
+                 * The card is a reconstruction, not a stored copy. Saying so is
+                 * not a disclaimer — nothing is kept, so a card that implied it
+                 * was showing the sent bytes would be claiming more than it can.
+                 *
+                 * The second sentence names what the rebuild leaves OUT, and it
+                 * is load-bearing for the same reason. The departing Agent's
+                 * tracked work and its own session log are Agent-scoped current
+                 * state: the switch cleared them and the next Agent republishes
+                 * into the same keys, so the machine omits them rather than hand
+                 * back today's live values as though they had crossed the
+                 * boundary. A silent omission would read as "there was none".
+                 */
+                reconstructed: 'Rebuilt now from this Session’s transcript, not stored at the time — so it can differ from what was sent. What the previous Agent was tracking, and its own log, can’t be rebuilt, so they are left out.',
+                loading: 'Rebuilding…',
+                empty: 'Nothing was carried over. There was no earlier conversation to replay.',
+                unavailableOperation: 'Update or reconnect the CLI on this machine to rebuild this.',
+                unavailableSource: 'Happier couldn’t read this Session’s transcript, so this can’t be rebuilt.',
+                unreachable: 'Happier couldn’t reach the machine that hosts this Session.',
+                retryAction: 'Try again',
+                jumpAction: 'Go to the last message included',
+            },
             checking: 'Checking availability…',
             unavailable: {
                 unsupportedSession: ({ agent }: { agent: string }) => `This Session can’t continue with ${agent}.`,
@@ -4871,6 +4897,12 @@ export const en = {
                 configure: {
                     title: 'Configure a new session',
                     subtitle: 'Pick a different agent, model, machine or folder, and carry this conversation over.',
+                },
+                unavailable: {
+                    nativeAgent: 'This agent cannot branch its own conversation.',
+                    nativeFromMessage: 'This agent can branch the whole conversation, but not from an earlier message.',
+                    replayOff: 'Session replay is turned off in Settings.',
+                    replaySettingsAction: 'Replay settings',
                 },
                 progress: {
                     creatingNative: 'Creating the native fork…',
@@ -5763,6 +5795,8 @@ export const en = {
         selectionAddTags: 'Add tags',
         selectionRemoveTags: 'Remove tags',
         selectionSetTags: 'Set tags',
+        selectionKeepInAttention: 'Keep in Needs attention',
+        selectionRemoveFromAttention: 'Remove from Needs attention',
         selectionAddTagsPromptTitle: 'Add tags',
         selectionRemoveTagsPromptTitle: 'Remove tags',
         selectionSetTagsPromptTitle: 'Set tags',
@@ -5800,8 +5834,6 @@ export const en = {
         browseSourceCodexUserHome: 'My Codex home',
         browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
         browseSourceClaudeDefault: 'Default Claude config',
-        selectionKeepInAttention: 'Keep in Needs attention',
-        selectionRemoveFromAttention: 'Remove from Needs attention',
         browseSourceOpenCodeDefault: 'Default OpenCode server',
         browseCandidates: 'Available sessions',
         browseNoMachines: 'No machines are available for direct sessions yet.',
@@ -5887,6 +5919,10 @@ export const en = {
         markSessionReadSubtitle: 'Clear unread attention for this session',
         markSessionUnread: 'Mark as unread',
         markSessionUnreadSubtitle: 'Keep this session in your unread list',
+        keepInAttention: 'Keep in Needs attention',
+        keepInAttentionSubtitle: 'Keeps it here even after you read it',
+        removeFromAttention: 'Remove from Needs attention',
+        removeFromAttentionSubtitle: 'Let it move down the list again when read',
         executionRunsSubtitle: 'See Subagents for this session',
         automationsTitle: 'Automations',
         automationsSubtitle: 'Manage scheduled messages for this session',
@@ -5926,10 +5962,6 @@ export const en = {
         rawJsonDevMode: 'Raw JSON (Dev Mode)',
         sessionStatus: 'Session Status',
         fullSessionObject: 'Full Session Object',
-        keepInAttention: 'Keep in Needs attention',
-        keepInAttentionSubtitle: 'Keeps it here even after you read it',
-        removeFromAttention: 'Remove from Needs attention',
-        removeFromAttentionSubtitle: 'Let it move down the list again when read',
         controlledByUser: 'Controlled by User',
         pendingRequests: 'Pending Requests',
         activity: 'Activity',
@@ -7301,6 +7333,10 @@ settingsSession: {
 	              attentionPromotionModeGlobalSubtitle: 'Show one attention section above the rest',
 	              attentionPromotionModeWithinGroupsTitle: 'Move to top of current group',
 	              attentionPromotionModeWithinGroupsSubtitle: 'Keep sessions in their folder or workspace',
+	              attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
+	              attentionStandingDefaultEnabledSubtitle: 'Every session stays until you remove it',
+	              attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
+	              attentionStandingDefaultUnavailableSubtitle: 'Choose a placement in Sessions needing attention first',
 	              workingPlacementModeTitle: 'Working sessions',
 	              workingPlacementModeSubtitle: 'Choose where sessions that are currently working appear',
 	              workingPlacementModeOffTitle: 'Leave in normal position',
@@ -7340,10 +7376,6 @@ settingsSession: {
 	              headerIdentityDisplayNoneTitle: 'None',
 	              headerIdentityDisplayNoneSubtitle: 'Start the header with the session title.',
 	              activeColorTitle: 'Active title color',
-	              attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
-	              attentionStandingDefaultEnabledSubtitle: 'Every session stays until you remove it',
-	              attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
-	              attentionStandingDefaultUnavailableSubtitle: 'Choose a placement in Sessions needing attention first',
 	              activeColorSubtitle: 'Choose which sessions use the active title color.',
 	              activeColorActivityAndAttentionTitle: 'Activity and attention',
 	              activeColorActivityAndAttentionSubtitle: 'Use active color for working sessions and sessions that need attention.',
@@ -7390,6 +7422,11 @@ settingsSession: {
 	                  classicSubtitle: 'Use the legacy session screen layout.',
 	              },
 	          },
+	          cockpitSwipeNavigation: {
+	              title: 'Swipe between sessions',
+	              enabledSubtitle: 'Swipe across the bottom bar to change session',
+	              disabledSubtitle: 'Bottom-bar swipes stay inside the current session',
+	          },
           input: {
               title: 'Input appearance',
               footer: 'Configure the agent input bar appearance.',
@@ -7417,17 +7454,12 @@ settingsSession: {
               },
               mobileLayout: {
                   title: 'Mobile session layout',
-                  footer: 'Choose the phone layout used inside sessions.',
+                  footer: 'Choose the phone layout used inside sessions. In Cockpit, swiping left or right across the bottom bar moves to the next or previous session in the list order you last saw.',
               },
               agentPersonalization: {
                   title: 'Agent prompt instructions',
                   footer: 'Control prompt instructions that ask agents to name sessions and suggest replies.',
               },
-	          cockpitSwipeNavigation: {
-	              title: 'Swipe between sessions',
-	              enabledSubtitle: 'Swipe across the bottom bar to change session',
-	              disabledSubtitle: 'Bottom-bar swipes stay inside the current session',
-	          },
           },
           composer: {
               title: 'Composer and sending',
@@ -7931,6 +7963,8 @@ settingsSession: {
                   customTitle: 'Custom',
                   customBackendIdSubtitle: 'Enter a backend id (e.g. claude).',
                   customModelIdSubtitle: 'Enter a model id (e.g. default).',
+                  requiresModelNotice: 'Pick a summary model below. Without one, replay falls back to recent messages only.',
+                  requiresExecutionRunsNotice: 'Summaries need execution runs, which are off for this account. Replay will use recent messages only.',
               },
               recentMessagesTitle: 'Recent messages to include',
               recentMessagesPlaceholder: '16',

@@ -4,6 +4,40 @@ import Constants from 'expo-constants';
 // `flashList` is the explicit compatibility escape hatch.
 export type TranscriptLegendListSpikeSurface = 'off' | 'flashList';
 
+/**
+ * Which engine the session list's virtualized surface runs on.
+ *
+ * The transcript already runs on Legend; this is the same engine reached through the shared compat
+ * seam, so the app has one list engine rather than two.
+ *
+ * Defaults to `flashList`. `legendList` is reachable and works, but is NOT the default: see below.
+ *
+ * Legend measured better on cells re-mounting across a screen transition (22 rows/214ms on the first
+ * session open and none on repeats, against 25-26 rows on every navigation under FlashList). It also
+ * blanks the list in narrow cases that FlashList never showed, and after a full investigation the
+ * cause is still not understood.
+ *
+ * WHAT IS KNOWN, so nobody re-walks it:
+ * - The engine does NOT lose its state. Holding Legend's own scroll state across the transition
+ *   (through its `renderScrollComponent` seam) kept `scroll 1044 / start 22 / end 38` intact and the
+ *   peeked list was STILL blank — the viewport was showing content 0-715, where the engine had
+ *   rendered nothing. So the native scroll view moved and the engine faithfully followed it.
+ * - The list does NOT unmount. A mount/unmount probe fired zero times across navigation.
+ * - Ruled out by experiment: `recycleItems` (blanks at both values), `maintainVisibleContentPosition`
+ *   (enabling it changed nothing), a zero-height layout on deactivation (`scrollLength` never left
+ *   716), and `detachPreviousScreen` (a JS-stack option that native-stack does not accept).
+ *   `contentInsetAdjustmentBehavior: 'never'` helps but is not sufficient (0/5 -> 3/4, then 3/6).
+ * - Legend issues NO scroll command of its own: instrumenting `doScrollTo` recorded zero calls
+ *   across 18 consecutive clean cycles.
+ *
+ * FlashList never showed this because it always agrees with the native offset by construction, so it
+ * cannot render into a band the viewport is not showing. That is the whole difference.
+ *
+ * The seam stays so this is a one-line flip in either direction. Evidence:
+ * `.project/reviews/2026-08-19-legend-session-list-blank/sentinel-scroll-offset.md`.
+ */
+export type SessionListVirtualizedEngine = 'flashList' | 'legendList';
+
 export type SyncTuning = Readonly<{
     messageLargeGapSeq: number;
     messageMaxIncrementalPagesOnResume: number;
@@ -23,6 +57,7 @@ export type SyncTuning = Readonly<{
     transcriptWebHotTailItemCount: number;
     transcriptNativeHotTailItemCount: number;
     transcriptLegendListSpikeSurface: TranscriptLegendListSpikeSurface;
+    sessionListVirtualizedEngine: SessionListVirtualizedEngine;
     transcriptMaxTurnEntriesPerListItem: number;
     transcriptWebInitialPinStabilizeMs: number;
     transcriptWebInitialPinRetryIntervalMs: number;
@@ -215,6 +250,13 @@ function readSessionRealtimeProjectionMode(obj: Record<string, unknown>): SyncTu
     return value === 'disabled' || value === 'shadow' || value === 'enabled' ? value : null;
 }
 
+function readSessionListVirtualizedEngine(obj: Record<string, unknown>): SessionListVirtualizedEngine | null {
+    const value = obj.sessionListVirtualizedEngine;
+    if (value === 'legendList') return 'legendList';
+    if (value === 'flashList') return 'flashList';
+    return null;
+}
+
 function readTranscriptLegendListSpikeSurface(obj: Record<string, unknown>): TranscriptLegendListSpikeSurface | null {
     const value = obj.transcriptLegendListSpikeSurface;
     if (value === 'flashList') return 'flashList';
@@ -284,6 +326,7 @@ export function loadSyncTuning(opts?: {
         // .project/plans/native-streaming-hot-cold-split-scoping.md (§ON-path device findings).
         transcriptNativeHotTailItemCount: 4,
         transcriptLegendListSpikeSurface: 'off',
+        sessionListVirtualizedEngine: 'flashList',
         transcriptMaxTurnEntriesPerListItem: 8,
         transcriptWebInitialPinStabilizeMs: 1500,
         transcriptWebInitialPinRetryIntervalMs: 250,
@@ -395,6 +438,7 @@ export function loadSyncTuning(opts?: {
         transcriptWebHotTailItemCount: readNumber(merged, 'transcriptWebHotTailItemCount', { min: 1, max: 200 }) ?? defaults.transcriptWebHotTailItemCount,
         transcriptNativeHotTailItemCount: readNumber(merged, 'transcriptNativeHotTailItemCount', { min: 0, max: 200 }) ?? defaults.transcriptNativeHotTailItemCount,
         transcriptLegendListSpikeSurface: readTranscriptLegendListSpikeSurface(merged) ?? defaults.transcriptLegendListSpikeSurface,
+        sessionListVirtualizedEngine: readSessionListVirtualizedEngine(merged) ?? defaults.sessionListVirtualizedEngine,
         transcriptMaxTurnEntriesPerListItem: readNumber(merged, 'transcriptMaxTurnEntriesPerListItem', { min: 0, max: 200 }) ?? defaults.transcriptMaxTurnEntriesPerListItem,
         transcriptWebInitialPinStabilizeMs: readNumber(merged, 'transcriptWebInitialPinStabilizeMs', { min: 0, max: 20_000 }) ?? defaults.transcriptWebInitialPinStabilizeMs,
         transcriptWebInitialPinRetryIntervalMs: readNumber(merged, 'transcriptWebInitialPinRetryIntervalMs', { min: 16, max: 2000 }) ?? defaults.transcriptWebInitialPinRetryIntervalMs,

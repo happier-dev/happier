@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import { attachSocketEventCollector, SocketEventCollector, type CapturedEvent } from './socketEventCollector';
 
@@ -91,8 +92,32 @@ export class SocketCollector {
     });
   }
 
-  async rpcCall<T = RpcResponseEnvelope>(method: string, params: string, timeoutMs = 30_000): Promise<T> {
-    return await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, { method, params }, timeoutMs);
+  /**
+   * `authorization` is required by the server for every session-write RPC
+   * (`resolveSocketRpcSessionWriteAuthorizationMethod`); without it the call is
+   * refused with `RPC_FORBIDDEN` before it reaches any machine. Optional here so
+   * the many non-session-write callers stay unchanged.
+   */
+  async rpcCall<T = RpcResponseEnvelope>(
+    method: string,
+    params: string,
+    timeoutMs?: number,
+    authorization?: SocketRpcAuthorizationContext,
+  ): Promise<T> {
+    const ackTimeoutMs = typeof timeoutMs === 'number' ? timeoutMs : 30_000;
+    return await this.emitWithAck(
+      SOCKET_RPC_EVENTS.CALL,
+      {
+        method,
+        params,
+        // An explicit budget is the caller's for BOTH hops. Sending it only on
+        // the ack would leave the server forwarding on its own 30s default and
+        // answering `RPC_TIMEOUT` while the caller was still waiting.
+        ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+        ...(authorization ? { authorization } : {}),
+      },
+      ackTimeoutMs,
+    );
   }
 
   emit(event: string, data: unknown): void {

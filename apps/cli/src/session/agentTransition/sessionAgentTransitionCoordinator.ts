@@ -1,10 +1,11 @@
 import {
   SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
+  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
+  SessionAgentTransitionDividerV1Schema,
   beginSessionAgentTransitionEffects,
   buildSessionAgentTransitionDividerLocalId,
   readPendingLocalId,
-  readDisplayableSessionWorkStateV1,
-  readSessionAgentTransitionDividerV1,
+  readSessionAgentTransitionDividerFromStoredRecordV1,
   rejectUndispatchedSessionAgentTransition,
   sanitizeSessionUserMessageSendMeta,
   type SessionAgentTransitionCurrentViewCommitted,
@@ -24,13 +25,18 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
+import {
+  createConnectedServiceMaterializationIdentity,
+} from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
 import type { Credentials } from '@/persistence';
 import { resolveTrustedSessionAttachmentLocalImagePaths } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
-import { resolveReplaySeedDraft, type ReplaySeedDraftResolution } from '@/session/replay/resolveReplaySeedDraft';
 import { admitSessionUserMessageToPendingQueue } from '@/session/services/admitSessionUserMessage';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import {
+  resolveSessionAgentSpawnConnectedServicesDefaults,
+} from '@/session/services/spawn/normalizeSessionAgentSpawnActionRequest';
 import { waitForSessionIdle } from '@/session/services/waitForSessionIdle';
 import {
   decryptStoredSessionPayload,
@@ -45,6 +51,14 @@ import { resolveSessionControlStopTimeoutMs } from '@/session/transport/shared/s
 import { logger } from '@/ui/logger';
 
 import {
+  captureDepartingAgentNativeResumeRecord,
+  createLocalAgentNativeResumeRecordStore,
+  readAgentNativeReturnAccountSettings,
+  resolveAgentNativeReturnIdentity,
+  type LocalAgentNativeResumeRecordStore,
+} from './agentNativeReturn';
+import { buildSessionAgentTransitionActivationBrief } from './buildSessionAgentTransitionActivationBrief';
+import {
   hasCanonicalHostedTranscript,
   resolveSessionContinuationTargetAgent,
 } from './sessionContinuationInspection';
@@ -55,11 +69,20 @@ import {
  *   strict idle -> confirmed stop -> target current-view commit -> divider
  *   -> exact input into Pending custody -> fresh target activation
  *
- * The target is ALWAYS fresh here. This tree stores no machine-local native
- * resume record, so there is nothing to return to; the source Agent's flat
- * resume key is dropped by the current-view projector and the target starts
- * from a bounded Replay brief carried in `metadata.replaySeedV1`, which the
- * existing seed owner prefixes onto the first provider-accepted prompt.
+ * A target that has run this Session on THIS machine before returns to the
+ * native conversation it left: its vendor session id and the transcript head it
+ * last saw are kept in a machine-local record written at its departure, the
+ * current-view projector republishes that id as the target's single flat resume
+ * key, and the Replay brief carries only the away-delta (`AM-24`, `AM-26`).
+ * Every other target — including every target that never ran this Session — is
+ * fresh: the source Agent's flat resume key is dropped by the projector and the
+ * target starts from the FULL bounded Replay brief carried in
+ * `metadata.replaySeedV1`, which the existing seed owner prefixes onto the first
+ * provider-accepted prompt.
+ *
+ * There is no continuity proof and no pre-check of the recorded conversation: a
+ * dead vendor id fails loudly at the first turn, exactly as any other Happier
+ * resume does, and the user can switch back through the in-session picker.
  *
  * Two orderings differ from a naive reading of the design, and both are
  * deliberate predecessor contracts:
@@ -86,6 +109,13 @@ export type SessionAgentTransitionCoordinatorDeps = Readonly<{
   /** Bounded quiescence window before the stop. Defaults to the session-control stop budget. */
   idleTimeoutMs?: number;
   now?: () => number;
+  /**
+   * Machine-local native-return records. Defaults to the daemon's own protected
+   * local state; injected only where the disk boundary has to be stood in for.
+   */
+  localAgentNativeResumeRecordStore?: LocalAgentNativeResumeRecordStore;
+  /** This Account's settings, for the shared vendor-resume eligibility gates. */
+  readAccountSettings?: () => Record<string, unknown> | null;
 }>;
 
 // Result arms are built ONLY through the effect-stage handle threaded down the
@@ -104,13 +134,43 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** One normalization for every transcript head this flow reads. */
+function readTranscriptHeadSeq(rawSession: Readonly<{ seq?: unknown }>): number {
+  return typeof rawSession.seq === 'number' && Number.isFinite(rawSession.seq)
+    ? Math.max(0, Math.floor(rawSession.seq))
+    : 0;
+}
+
 function buildDividerContent(params: Readonly<{
   mode: 'plain' | 'e2ee';
   ctx: Parameters<typeof encryptSessionPayload>[0]['ctx'];
   dividerLocalId: string;
   fromAgentId: string;
   toAgentId: string;
+  /**
+   * The transcript cutoff the activation brief was built from, `0` when the
+   * pass carried nothing over.
+   *
+   * Required at the schema too, not just here: this is the only input to the
+   * context pass that outlives the cutover — `replaySeedV1.seedText` is blanked
+   * the instant the target accepts it — so a writer that may omit it is a
+   * writer that can silently make the boundary unexplainable. A sidecar without
+   * it does not read as a divider at all.
+   */
+  sourceCutoffSeqInclusive: number;
 }>): SessionStoredMessageContent {
+  // The sidecar goes through the contract owner's schema and key on the way OUT,
+  // not only on the way in. The schema trims and bounds both ids, and the single
+  // canonical reader strict-parses with it, so a writer that spelled the key or
+  // skipped the parse could seal a row nothing downstream recognizes as a
+  // divider: no separator, no attribution boundary, and a reserved localId
+  // permanently occupied by a non-divider that no retry can replace.
+  const sidecar = SessionAgentTransitionDividerV1Schema.parse({
+    v: 1,
+    fromAgentId: params.fromAgentId,
+    toAgentId: params.toAgentId,
+    sourceCutoffSeqInclusive: params.sourceCutoffSeqInclusive,
+  });
   const payload = {
     role: 'agent',
     content: {
@@ -119,11 +179,7 @@ function buildDividerContent(params: Readonly<{
       data: {
         type: 'message',
         message: SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
-        sessionAgentTransitionV1: {
-          v: 1,
-          fromAgentId: params.fromAgentId,
-          toAgentId: params.toAgentId,
-        },
+        [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: sidecar,
       },
     },
   };
@@ -136,6 +192,51 @@ function buildDividerContent(params: Readonly<{
     // the message owner reconciles it as the same row instead of overwriting it.
     c: encryptSessionPayload({ ctx: params.ctx, payload, idempotencyKey: params.dividerLocalId }),
   };
+}
+
+/**
+ * Moves the Session's connected-service auth binding onto the target Agent.
+ *
+ * The projector cleared the source's binding, its `updatedAt` and the
+ * materialized credential home that carried it, because all three name a
+ * `serviceId` the SOURCE Agent's catalog declares. What replaces them is
+ * resolved by the SAME owner a new Session uses — the account's stored
+ * per-Agent connected-services default — so the transition never becomes a
+ * second place where a Session's binding is decided.
+ *
+ * A target with no configured default resolves to `null`, which is the honest
+ * result: the Session continues on the target's native CLI auth, exactly as a
+ * Session created for that Agent would.
+ *
+ * A fresh identity is minted whenever a binding is written, for the same reason
+ * fork mints one: the materialized home is per-binding, and an existing-Session
+ * spawn that carries connected bindings without an identity is refused outright
+ * by the daemon (`missing_identity_and_resume_state`).
+ *
+ * This runs after the confirmed stop, so a failure here must never fail the
+ * transition: settings that cannot be read or are malformed degrade to native
+ * rather than stranding a Session whose source is already gone.
+ */
+async function applyTargetConnectedServiceBinding(params: Readonly<{
+  credentials: Credentials;
+  targetAgentId: AgentId;
+  targetMetadata: Record<string, unknown>;
+}>): Promise<void> {
+  const resolved = await resolveSessionAgentSpawnConnectedServicesDefaults({
+    credentials: params.credentials,
+    backendTarget: { kind: 'builtInAgent', agentId: params.targetAgentId },
+  }).catch((error: unknown) => {
+    logger.debug('[AGENT TRANSITION] Target connected-service default unavailable', {
+      agentId: params.targetAgentId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  if (!resolved) return;
+  params.targetMetadata.connectedServices = resolved.connectedServices;
+  params.targetMetadata.connectedServicesUpdatedAt = resolved.connectedServicesUpdatedAt;
+  params.targetMetadata.connectedServiceMaterializationIdentityV1 =
+    createConnectedServiceMaterializationIdentity();
 }
 
 /**
@@ -218,6 +319,14 @@ async function admitInputAndActivateTarget(params: Readonly<{
     }
   }
 
+  // `accepted` means the current view and divider committed and this localId
+  // received canonical admission. It does NOT say the target came up: the resume
+  // above passes no `waitForReady`, so it returns on an acknowledged spawn and a
+  // runtime that dies seconds later still produced this arm. A real Session's
+  // runtime died 94 seconds past this line while the client had been told
+  // `accepted`, and said nothing. The client reads the runtime's absence from
+  // canonical Session state instead (`resolveAwaitingRuntime` in
+  // `continueSessionWithArmedAgent.ts`) rather than trusting this arm for it.
   return committed.accepted();
 }
 
@@ -225,25 +334,6 @@ type DividerEvidence =
   | Readonly<{ status: 'present'; matches: boolean }>
   | Readonly<{ status: 'absent' }>
   | Readonly<{ status: 'unknown' }>;
-
-/**
- * The stored-record shape a row MUST have before this daemon will call it the
- * transition's own divider.
- *
- * `readSessionAgentTransitionDividerV1` reads the agent-event PAYLOAD; on its
- * own it says nothing about the record carrying that payload. The divider is
- * always written as a `role:'agent'` / `content.type:'event'` record, so a
- * user-role (or non-event) row planted at the reserved localId with a matching
- * sidecar must never be read as ours.
- */
-function readTransitionDividerFromStoredRecord(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as { role?: unknown; content?: unknown };
-  if (record.role !== 'agent') return null;
-  const content = record.content as { type?: unknown; data?: unknown } | undefined;
-  if (!content || content.type !== 'event') return null;
-  return readSessionAgentTransitionDividerV1(content.data);
-}
 
 async function readDividerEvidence(params: Readonly<{
   token: string;
@@ -272,7 +362,7 @@ async function readDividerEvidence(params: Readonly<{
   } catch {
     return { status: 'unknown' };
   }
-  const divider = readTransitionDividerFromStoredRecord(record);
+  const divider = readSessionAgentTransitionDividerFromStoredRecordV1(record);
   if (!divider) return { status: 'unknown' };
   return {
     status: 'present',
@@ -362,6 +452,9 @@ export async function runSessionAgentTransition(params: Readonly<{
   deps?: SessionAgentTransitionCoordinatorDeps;
 }>): Promise<SessionAgentTransitionResultV1> {
   const now = params.deps?.now ?? Date.now;
+  const localAgentNativeResumeRecordStore =
+    params.deps?.localAgentNativeResumeRecordStore ?? createLocalAgentNativeResumeRecordStore();
+  const readAccountSettings = params.deps?.readAccountSettings ?? readAgentNativeReturnAccountSettings;
   const { request } = params;
   const localId = readPendingLocalId(request.input.localId);
   // No usable correlation id, so the transition was never dispatched at all.
@@ -473,6 +566,25 @@ export async function runSessionAgentTransition(params: Readonly<{
   if (!preStopSession) return effects.rejected('forbidden');
   if (preStopSession.metadataVersion !== rawSession.metadataVersion) return effects.rejected('stale_selection');
 
+  // 7.2 step 4. The departing Agent's native pair is both current and committed
+  // at this instant — the version check above just proved the preflight bytes
+  // are still the committed ones — so this is where a later return to it becomes
+  // possible. It never gates the transition and never takes an exit.
+  await captureDepartingAgentNativeResumeRecord({
+    store: localAgentNativeResumeRecordStore,
+    sessionId: request.sessionId,
+    sourceAgentId,
+    sourceMetadata: metadata,
+    accountSettings: readAccountSettings(),
+    // The head as it stands HERE, before the stop — the boundary the departing
+    // Agent's own conversation covers (`AM-26`). Deliberately not the post-stop
+    // head the brief runs to: a row that lands between this instant and the
+    // confirmed stop may never have reached the departing Agent, and
+    // over-estimating the boundary skips it PERMANENTLY, while under-estimating
+    // costs one re-replayed turn.
+    departureSeqInclusive: readTranscriptHeadSeq(preStopSession),
+  });
+
   const stop = await requestSessionStop({
     credentials: params.credentials,
     idOrPrefix: request.sessionId,
@@ -544,39 +656,43 @@ export async function runSessionAgentTransition(params: Readonly<{
     return stopped.sourceStopped('cutover_conflict');
   }
 
+  // 7.3 step 1: native eligibility FIRST, before any context decision. The
+  // inversion is a stated risk spot — choosing a narrower context bound and only
+  // then discovering that native return is unavailable omits history the fresh
+  // target needs, and nothing in the result would say so.
+  const nativeReturn = await resolveAgentNativeReturnIdentity({
+    store: localAgentNativeResumeRecordStore,
+    sessionId: request.sessionId,
+    targetAgentId,
+    sourceMetadata: stoppedMetadata,
+    accountSettings: readAccountSettings(),
+  });
+
   // Bounded context through the existing Replay owner. The transcript head is
   // read AFTER the confirmed stop, so a late source row remains canonical
   // history even when it missed this brief.
-  const transcriptHeadSeq = typeof stoppedSession.seq === 'number' && Number.isFinite(stoppedSession.seq)
-    ? Math.max(0, Math.floor(stoppedSession.seq))
-    : 0;
-  const seed = await resolveReplaySeedDraft({
+  const transcriptHeadSeq = readTranscriptHeadSeq(stoppedSession);
+  const seed = await buildSessionAgentTransitionActivationBrief({
     credentials: params.credentials,
-    cwd: workspacePath,
-    source: {
-      // The Session is the same one; only the Agent running it changed. Asking
-      // through `fork_chain` passed this Session as its own `previousSessionId`,
-      // and the seed then told the target Agent it was continuing from a
-      // previous Happy session — printing this Session's id as its predecessor.
-      // Retrieval is identical; only the framing the seed can honestly make
-      // differs.
-      kind: 'same_session_agent_change',
-      sessionId: request.sessionId,
-      upToSeqInclusive: transcriptHeadSeq,
-    },
-    strategy: 'recent_messages',
-    recentMessagesCount: configuration.replaySeedCandidateLimit,
-    maxSeedChars: configuration.replaySeedMaxChars,
-    candidateLimit: configuration.replaySeedCandidateLimit,
-    // Section 8's other half. The cutover projection clears `sessionWorkStateV1` — the target
-    // republishes its own — and the items are a structured projection rather than transcript
-    // prose, so this is the last reader that can carry the in-flight plan across. Read through the
-    // canonical display-safe reader: a malformed projection is no snapshot, not a raw object
-    // forwarded into another Agent's prompt.
-    workState: readDisplayableSessionWorkStateV1(stoppedMetadata.sessionWorkStateV1),
-  }).catch((error: unknown): ReplaySeedDraftResolution => {
-    if (isAuthenticationError(error)) throw error;
-    return { status: 'unavailable' };
+    sessionId: request.sessionId,
+    sourceAgentId,
+    targetAgentId,
+    workspacePath,
+    // The Session is stopped on the source Agent, so its current view IS the
+    // departing Agent's — and only right here. The cutover projection below
+    // clears the source Agent's own keys and the next Agent republishes into
+    // them, so this is the last instant its tracked work and native log can be
+    // read at all. The read-only rebuild that runs afterwards passes `null` and
+    // omits them rather than reading whatever now sits in the same keys.
+    departingAgentCurrentView: stoppedMetadata,
+    transcriptHeadSeqInclusive: transcriptHeadSeq,
+    // Only on a native return, and only from the resolved record: the target is
+    // resuming the conversation it left, so the replay carries the delta since
+    // that departure instead of restating history the target already holds
+    // (`AM-26`). A target with no usable record hands `null` here and gets the
+    // FULL replay — a fresh target can never be starved to an away-delta,
+    // because there is no bound to starve it with.
+    returningAgentLastSeenSeq: nativeReturn?.departureSeqInclusive ?? null,
   });
   // Only a genuinely failed bounded retrieval may fail a transition whose
   // source is already stopped. An EMPTY source — a fresh Session where the user
@@ -590,6 +706,11 @@ export async function runSessionAgentTransition(params: Readonly<{
   const nowMs = now();
   const targetMetadata = projectCurrentAgentSessionView({
     metadata: stoppedMetadata,
+    // The projector is the ONE writer of a flat vendor resume key, so a native
+    // return travels through it rather than through a second writer beside it:
+    // that is what keeps the one-identity invariant true by construction.
+    // Absent, the target stays fresh — the predecessor behaviour.
+    nativeResumeId: nativeReturn?.identity.vendorResumeId ?? null,
     target: {
       agentId: targetAgentId,
       ...(request.selection.modelId ? { modelId: request.selection.modelId } : {}),
@@ -616,6 +737,11 @@ export async function runSessionAgentTransition(params: Readonly<{
   } else {
     delete targetMetadata.replaySeedV1;
   }
+  await applyTargetConnectedServiceBinding({
+    credentials: params.credentials,
+    targetAgentId,
+    targetMetadata,
+  });
 
   const dividerLocalId = buildSessionAgentTransitionDividerLocalId(localId);
   const cutover = await commitSessionAgentTransitionCutover({
@@ -640,6 +766,11 @@ export async function runSessionAgentTransition(params: Readonly<{
         dividerLocalId,
         fromAgentId: sourceAgentId,
         toAgentId: targetAgentId,
+        // The exact bound the brief above was built from, recorded on the
+        // boundary it created. A source with nothing replayable is `0` rows
+        // carried — a fact, not a missing one, and the reader must be able to
+        // say so rather than fall back to "this boundary recorded nothing".
+        sourceCutoffSeqInclusive: seed.status === 'seeded' ? seed.sourceCutoffSeqInclusive : 0,
       }),
     },
   });

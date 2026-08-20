@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 
 import { Image } from 'expo-image';
 import { Typography } from '@/constants/Typography';
@@ -48,7 +50,7 @@ function resolveSessionIdFromPathname(pathname: string | null | undefined): stri
 }
 
 export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: any }>) {
-  const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
   const { theme } = useUnistyles();
   const styles = stylesheet;
@@ -376,7 +378,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
                       nextSessionId = rebound.conversationSessionId;
                     }
                   }
-                  router.push(`/session/${nextSessionId}` as any);
+                  await navigateToSession(nextSessionId);
                 })(), { tag: 'VoiceSurface.openConversation' });
               }}
               style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, styles.iconAction as any]}

@@ -42,7 +42,14 @@ function sourceMetadata(): Record<string, unknown> {
     sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
     forkV1: { v: 1, parentSessionId: 'parent', parentCutoffSeqInclusive: 7 },
     handoffV1: { v: 1, lineage: 'x' },
-    connectedServices: { v: 1, bindingsByServiceId: {} },
+    connectedServices: {
+      v: 1,
+      bindingsByServiceId: {
+        'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'team' },
+      },
+    },
+    connectedServicesUpdatedAt: 11,
+    connectedServiceMaterializationIdentityV1: { v: 1, id: 'materialized-home-1' },
     summary: { text: 'a summary', updatedAt: 3 },
   };
 }
@@ -113,8 +120,27 @@ describe('projectCurrentAgentSessionView', () => {
     expect(next.profileId).toBe('work');
     expect(next.forkV1).toEqual({ v: 1, parentSessionId: 'parent', parentCutoffSeqInclusive: 7 });
     expect(next.handoffV1).toEqual({ v: 1, lineage: 'x' });
-    expect(next.connectedServices).toEqual({ v: 1, bindingsByServiceId: {} });
     expect(next.summary).toEqual({ text: 'a summary', updatedAt: 3 });
+  });
+
+  it('clears the source Agent connected-service binding and its materialized home identity', () => {
+    // A connected-service binding names a service the SOURCE Agent's catalog
+    // supports. Carried across, the Session declares the target Agent while
+    // still bound to `claude-subscription`/`openai-codex` the target cannot
+    // apply: the daemon spawn-preflights the wrong service's credential, the
+    // runtime registers a binding whose generation reconciliation resolves to
+    // `generation_application_scope_service_unsupported`, and `/session-started`
+    // answers 503 until the freshly started target dies.
+    const next = projectCurrentAgentSessionView({
+      metadata: sourceMetadata(),
+      target: { agentId: 'codex', updatedAtMs: UPDATED_AT },
+    });
+
+    expect(next.connectedServices).toBeUndefined();
+    expect(next.connectedServicesUpdatedAt).toBeUndefined();
+    // The materialized credential home belongs to the source Agent's binding;
+    // reusing its id would point the target at the departed Agent's home.
+    expect(next.connectedServiceMaterializationIdentityV1).toBeUndefined();
   });
 
   it('clears the source Agent MCP selection and usage-limit recovery record', () => {
@@ -205,6 +231,12 @@ describe('projectCurrentAgentSessionView — handoff carry policy', () => {
     sessionWorkStateV1: { v: 1 },
     slashCommands: ['/compact'],
     modelOverrideV1: { v: 1, updatedAt: 1, modelId: 'sonnet' },
+    connectedServices: {
+      v: 1,
+      bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' } },
+    },
+    connectedServicesUpdatedAt: 11,
+    connectedServiceMaterializationIdentityV1: { v: 1, id: 'materialized-home-1' },
     path: '/repo/source',
   } as const;
 
@@ -237,6 +269,11 @@ describe('projectCurrentAgentSessionView — handoff carry policy', () => {
     expect(next.sessionWorkStateV1).toEqual({ v: 1 });
     expect(next.slashCommands).toEqual(['/compact']);
     expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 1, modelId: 'sonnet' });
+    // The SAME Agent moves machines, so its connected-service binding and the
+    // materialized home that carries those credentials are still true.
+    expect(next.connectedServices).toEqual(HANDOFF_SOURCE.connectedServices);
+    expect(next.connectedServicesUpdatedAt).toBe(11);
+    expect(next.connectedServiceMaterializationIdentityV1).toEqual({ v: 1, id: 'materialized-home-1' });
   });
 
   it('still clears everything Agent-scoped under the default transition policy', () => {

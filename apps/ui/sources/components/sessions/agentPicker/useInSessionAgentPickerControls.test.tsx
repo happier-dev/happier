@@ -93,6 +93,7 @@ const supportedSource: SessionAgentContinuationSourceState = {
     storageKind: 'persisted',
     canEditSession: true,
     machinePresence: 'online',
+    hasConversationToCarry: true,
 };
 
 const detailContext = {
@@ -106,13 +107,13 @@ const onlineMachine: SessionAgentContinuationMachineTarget = {
     machineId: 'machine-1',
     serverId: 'server-1',
     connectionGeneration: 1,
+    daemonGeneration: 1,
 };
 
 const AVAILABLE = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: true,
-    nativeReturn: false,
 } as const;
 
 type HookProps = Readonly<{
@@ -374,6 +375,23 @@ describe('useInSessionAgentPickerControls', () => {
         expect(detailModelSummaryRef.current).toBe(t('session.agentContinuation.detailDescription'));
         expect(detailModelSummaryRef.current).toContain('as text');
         expect(detailModelSummaryRef.current).toContain('images and files');
+    });
+
+    it('does not promise a carry-over on a Session with nothing to carry', async () => {
+        // Same disclosure, one Session earlier: on an empty transcript there is
+        // no conversation, so the sentence that reassures a reader mid-thread
+        // states something the switch cannot do. Only the half that is still
+        // true survives.
+        const hook = await renderControls({
+            source: { ...supportedSource, hasConversationToCarry: false },
+        });
+        await openPicker(hook);
+
+        optionsOf(hook.getCurrent())[1]?.renderDetailContent?.();
+
+        expect(detailModelSummaryRef.current).toBe(t('session.agentContinuation.detailDescriptionEmpty'));
+        expect(detailModelSummaryRef.current).not.toContain('carries over');
+        expect(detailModelSummaryRef.current).toContain('Nothing is sent');
     });
 
     it('arms nothing until a row is deliberately selected', async () => {
@@ -807,6 +825,24 @@ describe('useInSessionAgentPickerControls', () => {
         const [, codexOption] = optionsOf(hook.getCurrent());
         expect(codexOption?.disabled).toBe(false);
         expect(codexOption?.onSelectImmediate).toBeTypeOf('function');
+    });
+
+    it('re-inspects after the machine reports a new daemon, not only after a reconnect', async () => {
+        // A daemon that restarts under a live realtime connection answers the
+        // next inspection differently while `connectionGeneration` never moves.
+        // That is exactly the window the reported defect lived in: the rail kept
+        // offering targets the send path then refused as unsupported, for as long
+        // as the client stayed connected.
+        const hook = await renderControls();
+        await openPicker(hook);
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({ machine: { ...onlineMachine, daemonGeneration: 2 } });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(2);
     });
 
     it('shows no Agent rail at all when nothing in this Session can be switched to', async () => {

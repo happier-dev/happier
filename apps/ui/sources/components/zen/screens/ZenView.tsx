@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
@@ -22,6 +24,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 export const ZenView = React.memo(() => {
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const params = useLocalSearchParams();
@@ -247,7 +250,7 @@ export const ZenView = React.memo(() => {
                             {linkedSessions.map((link, index) => (
                                 <Pressable
                                     key={link.sessionId}
-                                    onPress={() => { router.dismissAll(); router.push(`/session/${link.sessionId}`); }}
+                                    onPress={() => { router.dismissAll(); void navigateToSession(link.sessionId); }}
                                     style={[styles.linkedSession, { backgroundColor: theme.colors.surface.elevated }]}
                                 >
                                     <Icon name="chat-circle" size={16} color={theme.colors.text.secondary} />

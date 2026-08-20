@@ -74,26 +74,26 @@ const supportedSource: SessionAgentContinuationSourceState = {
     storageKind: 'persisted',
     canEditSession: true,
     machinePresence: 'online',
+    hasConversationToCarry: true,
 };
 
 const onlineMachine: SessionAgentContinuationMachineTarget = {
     machineId: 'machine-1',
     serverId: 'server-1',
     connectionGeneration: 1,
+    daemonGeneration: 1,
 };
 
 const AVAILABLE = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: true,
-    nativeReturn: false,
 } as const;
 
 const UNSUPPORTED = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: false,
-    nativeReturn: false,
 } as const;
 
 type HookProps = Readonly<{

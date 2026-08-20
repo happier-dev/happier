@@ -125,6 +125,17 @@ export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     },
 }) as PrismaClientType;
 
+/**
+ * The dialect the process is actually running against, or null before init.
+ *
+ * Exposed for the few places that must emit dialect-specific SQL (identifier quoting and
+ * parameter placeholders differ across Postgres, SQLite and MySQL). Everything else should keep
+ * going through Prisma, which handles those differences itself.
+ */
+export function getActiveDbProvider(): DbProvider | null {
+    return _provider;
+}
+
 export function initDbPostgres(): void {
     if (_db || _pglite || _pgliteServer) {
         throw new Error("Database client is already initialized.");

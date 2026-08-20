@@ -11,6 +11,10 @@ const mockSessions = vi.hoisted(() => ({
 }));
 
 vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -77,5 +81,39 @@ describe('Recent sessions route', () => {
         pressable.props.onPress();
 
         expect(mockNavigateToSession).toHaveBeenCalledWith('session-1', { serverId: 'server-recent' });
+    });
+
+    it('publishes a server-scoped navigation cursor for the order it renders', async () => {
+        mockSessions.all = [
+            {
+                id: 'session-1',
+                serverId: 'server-recent',
+                active: true,
+                updatedAt: 2_000,
+                metadata: { name: 'Recent Session', path: '/tmp/recent' },
+            },
+            {
+                id: 'session-2',
+                serverId: 'server-recent',
+                active: true,
+                updatedAt: 1_000,
+                metadata: { name: 'Older Session', path: '/tmp/older' },
+            },
+        ];
+
+        const { readSessionNavigationCursor, resetSessionNavigationCursorForTests } = await import(
+            '@/sync/domains/session/navigation/sessionNavigationCursorStore'
+        );
+        resetSessionNavigationCursorForTests();
+
+        const Screen = (await import('@/app/(app)/session/recent')).default;
+        await renderScreen(<Screen />);
+
+        const cursor = readSessionNavigationCursor();
+        expect(cursor?.identity.origin).toBe('recent');
+        expect(cursor?.entries.map((entry) => entry.sessionKey)).toEqual([
+            'server-recent:session-1',
+            'server-recent:session-2',
+        ]);
     });
 });

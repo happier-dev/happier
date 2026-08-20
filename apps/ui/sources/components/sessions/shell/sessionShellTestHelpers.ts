@@ -25,6 +25,8 @@ export type SessionItemTestRowModelInput = Readonly<{
     currentUserId?: string | null;
     showServerBadge?: boolean;
     pinned?: boolean;
+    attentionStanding?: boolean;
+    attentionStandingEnabled?: boolean;
     selected?: boolean;
     isFirst?: boolean;
     isLast?: boolean;
@@ -140,6 +142,8 @@ export function createSessionItemTestRowModel(
         },
         isSelected: input.selected ?? false,
         isPinned: input.pinned ?? false,
+        isAttentionStanding: input.attentionStanding ?? false,
+        attentionStandingEnabled: input.attentionStandingEnabled ?? false,
         isArchived: session.archivedAt != null,
         isActive: session.active === true,
         hasUnreadMessages: false,

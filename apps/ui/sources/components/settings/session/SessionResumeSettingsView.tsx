@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
+import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -16,8 +17,13 @@ import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { Icon } from '@/components/ui/icons/Icon';
 
-const SESSION_REPLAY_MAX_SEED_CHARS_MIN = 500;
-const SESSION_REPLAY_MAX_SEED_CHARS_MAX = 200_000;
+/**
+ * Bounds come from the one Replay-budget owner in the Protocol. Below the floor
+ * the seed builder correctly produces nothing, so a screen that let a smaller
+ * number be typed was offering a setting that silently turned Replay off.
+ */
+const SESSION_REPLAY_MAX_SEED_CHARS_MIN = HAPPIER_REPLAY_SEED_MIN_CHARS;
+const SESSION_REPLAY_MAX_SEED_CHARS_MAX = HAPPIER_REPLAY_SEED_MAX_CHARS;
 
 function sanitizeNumericInput(value: string): string {
     return String(value).replace(/[^0-9]/g, '');
@@ -38,16 +44,39 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
-    const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
     const [sessionReplayMaxSeedChars, setSessionReplayMaxSeedChars] = useSettingMutable('sessionReplayMaxSeedChars');
     const [sessionReplaySummaryRunnerV1, setSessionReplaySummaryRunnerV1] = useSettingMutable('sessionReplaySummaryRunnerV1');
     const [openReplayMenu, setOpenReplayMenu] = React.useState(false);
     const [sessionReplayMaxSeedCharsDraft, setSessionReplayMaxSeedCharsDraft] = React.useState(() =>
         formatIntegerSettingValue(sessionReplayMaxSeedChars),
     );
+    /**
+     * "Summary + recent" only reaches the daemon as a summary when a runner is
+     * forwarded, and the fork resolver forwards one only when execution runs
+     * are on AND a runner is set. Either gap silently degrades the strategy to
+     * recent-only, so the screen states the unmet requirement instead of
+     * letting the user discover it from a fork that looks wrong.
+     */
+    const summaryRunnerRequirement: 'satisfied' | 'needs_execution_runs' | 'needs_model' =
+        !executionRunsEnabled
+            ? 'needs_execution_runs'
+            : sessionReplaySummaryRunnerV1 ? 'satisfied' : 'needs_model';
+    const summaryRunnerRequirementNotice = summaryRunnerRequirement === 'needs_execution_runs'
+        ? t('settingsSession.replayResume.summaryRunner.requiresExecutionRunsNotice')
+        : summaryRunnerRequirement === 'needs_model'
+            ? t('settingsSession.replayResume.summaryRunner.requiresModelNotice')
+            : null;
     const replayStrategyOptions = [
         { key: 'recent_messages', title: t('settingsSession.replayResume.strategy.recentTitle'), subtitle: t('settingsSession.replayResume.strategy.recentSubtitle') },
-        { key: 'summary_plus_recent', title: t('settingsSession.replayResume.strategy.summaryRecentTitle'), subtitle: t('settingsSession.replayResume.strategy.summaryRecentSubtitle') },
+        {
+            key: 'summary_plus_recent',
+            title: t('settingsSession.replayResume.strategy.summaryRecentTitle'),
+            // Execution runs off is the one gap the user cannot close from this
+            // screen, so it is disclosed before the choice rather than after.
+            subtitle: summaryRunnerRequirement === 'needs_execution_runs'
+                ? `${t('settingsSession.replayResume.strategy.summaryRecentSubtitle')} ${t('settingsSession.replayResume.summaryRunner.requiresExecutionRunsNotice')}`
+                : t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
+        },
     ] as const;
     const commitSessionReplayMaxSeedCharsDraft = React.useCallback(() => {
         const sanitized = sanitizeNumericInput(sessionReplayMaxSeedCharsDraft);
@@ -112,21 +141,16 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                                 setOpenReplayMenu(false);
                             }}
                         />
-                        <View style={[styles.inputContainer, { paddingTop: 0 }]}>
-                            <Text style={styles.fieldLabel}>{t('settingsSession.replayResume.recentMessagesTitle')}</Text>
-                            <TextInput
-                                style={styles.textInput}
-                                placeholder={t('settingsSession.replayResume.recentMessagesPlaceholder')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                value={String(sessionReplayRecentMessagesCount ?? '')}
-                                keyboardType={Platform.select({ ios: 'number-pad', default: 'numeric' }) as any}
-                                onChangeText={(value) => {
-                                    const next = Number(String(value).replace(/[^0-9]/g, ''));
-                                    if (!Number.isFinite(next)) return;
-                                    setSessionReplayRecentMessagesCount(Math.max(1, Math.min(500, Math.floor(next))) as any);
-                                }}
-                            />
-                        </View>
+                        {summaryRunnerRequirementNotice && sessionReplayStrategy === 'summary_plus_recent' ? (
+                            <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                                <Text
+                                    testID="settings-session-replay-summaryRunner-requirement"
+                                    style={styles.fieldNotice}
+                                >
+                                    {summaryRunnerRequirementNotice}
+                                </Text>
+                            </View>
+                        ) : null}
                         <View style={[styles.inputContainer, { paddingTop: 0 }]}>
                             <Text style={styles.fieldLabel}>{t('settingsSession.replayResume.maxSeedCharsTitle')}</Text>
                             <TextInput
@@ -179,6 +203,12 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 13,
         color: theme.colors.text.secondary,
         marginBottom: 4,
+    },
+    fieldNotice: {
+        ...Typography.default('regular'),
+        fontSize: 13,
+        lineHeight: 18,
+        color: theme.colors.state.warning.foreground,
     },
     textInput: {
         ...Typography.default('regular'),

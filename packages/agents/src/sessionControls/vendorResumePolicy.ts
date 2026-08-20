@@ -61,6 +61,36 @@ export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metad
   return trimmed;
 }
 
+/**
+ * This Agent's own on-disk session log for the Session, as its catalog declares
+ * the slot — never a vendor key named by the caller.
+ *
+ * A POINTER, not a gate (`AM-24`): the Agent-transition brief offers it to the
+ * successor so the successor can read what the predecessor wrote. Native resume
+ * does not consult it, and a missing log never refuses a resume.
+ *
+ * The path is MACHINE-LOCAL, so only a consumer that can prove it is on the same
+ * machine may use it, and it is cleared from the current view at an Agent
+ * cutover: a reader that needs it must read before the projection runs. The
+ * caller verifies the file still exists; Agents prune and rotate their logs.
+ */
+export function resolveAgentNativeTranscriptPathFromSessionMetadata(
+  agentId: AgentId,
+  metadata: unknown,
+): string | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+  const resume = AGENTS_CORE[agentId]?.resume;
+  const field = resume && 'vendorResumeContinuityProofField' in resume
+    ? resume.vendorResumeContinuityProofField ?? null
+    : null;
+  if (!field) return null;
+  const raw = record[field];
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed && isAbsolutePathLike(trimmed) ? trimmed : null;
+}
+
 export function evaluateVendorResumeEligibility(input: Readonly<{
   agentId: AgentId;
   metadata: unknown;

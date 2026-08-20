@@ -22,6 +22,8 @@ export function buildAgentTransitionDividerLocalId(submittedLocalId: string): st
 export function createAgentTransitionDividerEventFixture(overrides: Readonly<{
     fromAgentId?: string;
     toAgentId?: string;
+    /** The recorded cutoff. Required on the wire, so the default supplies one. */
+    sourceCutoffSeqInclusive?: number;
     message?: string;
     sidecar?: unknown;
 }> = {}): Record<string, unknown> {
@@ -32,6 +34,7 @@ export function createAgentTransitionDividerEventFixture(overrides: Readonly<{
             v: 1,
             fromAgentId: overrides.fromAgentId ?? 'claude',
             toAgentId: overrides.toAgentId ?? 'codex',
+            sourceCutoffSeqInclusive: overrides.sourceCutoffSeqInclusive ?? 29_979,
         },
     };
 }

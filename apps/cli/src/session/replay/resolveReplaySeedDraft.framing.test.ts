@@ -60,7 +60,11 @@ describe('resolveReplaySeedDraft — truthful framing', () => {
     expect(resolved.status).toBe('seeded');
     if (resolved.status !== 'seeded') return;
     expect(resolved.seedDraft).not.toContain('Previous session id:');
-    expect(resolved.seedDraft).toContain('Session id: session-1');
+    // Since the container restructure the same-Session identity is the
+    // `<session_context>` attribute rather than a `Session id:` body line; a
+    // `previous_session` id deliberately never becomes the container identity,
+    // which is what makes this assertion discriminating.
+    expect(resolved.seedDraft).toContain('session_id="session-1"');
     // The chain walk is unchanged: this Session is still the starting point.
     expect(mocks.hydrateReplayDialogFromForkChain).toHaveBeenCalledWith(
       expect.objectContaining({ startingSessionId: 'session-1', upToSeqInclusive: 9 }),
@@ -95,5 +99,70 @@ describe('resolveReplaySeedDraft — truthful framing', () => {
     expect(resolved.status).toBe('seeded');
     if (resolved.status !== 'seeded') return;
     expect(resolved.seedDraft).not.toContain('could not be read');
+  });
+
+  /**
+   * Native return (`AM-26`). Both halves are load-bearing: the retrieval is
+   * bounded so the delta is what gets carried, and the FRAME states the
+   * boundary, so a target told it holds seq X can go and fetch seq X.
+   */
+  it('bounds the retrieval and states the boundary when the target returns to its own conversation', async () => {
+    mocks.hydrateReplayDialogFromForkChain.mockResolvedValueOnce(hydrated());
+
+    const resolved = await resolve({
+      kind: 'same_session_agent_change',
+      sessionId: 'session-1',
+      upToSeqInclusive: 9,
+      returningAgentLastSeenSeq: 4,
+    });
+
+    expect(mocks.hydrateReplayDialogFromForkChain).toHaveBeenCalledWith(
+      expect.objectContaining({ afterSeqExclusive: 4 }),
+    );
+    expect(resolved.status).toBe('seeded');
+    if (resolved.status !== 'seeded') return;
+    expect(resolved.seedDraft).toContain('- Transcript seq when you last ran this session: 4');
+    expect(resolved.seedDraft).toContain('- Replay covers: transcript seq 5');
+  });
+
+  /**
+   * The structurally impossible case: a FRESH target never ran this Session, so
+   * it has no departure record, no bound, and must get the FULL replay.
+   */
+  it('hands the walk no bound when the target never ran this Session', async () => {
+    mocks.hydrateReplayDialogFromForkChain.mockResolvedValueOnce(hydrated());
+
+    const resolved = await resolve({
+      kind: 'same_session_agent_change',
+      sessionId: 'session-1',
+      upToSeqInclusive: 9,
+    });
+
+    expect(mocks.hydrateReplayDialogFromForkChain).toHaveBeenCalledWith(
+      expect.not.objectContaining({ afterSeqExclusive: expect.anything() }),
+    );
+    expect(resolved.status).toBe('seeded');
+    if (resolved.status !== 'seeded') return;
+    expect(resolved.seedDraft).not.toContain('- Transcript seq when you last ran this session:');
+  });
+
+  it.each([
+    ['a negative bound', -1],
+    ['a fractional bound', 4.5],
+  ])('treats %s as no bound rather than as a coerced one', async (_label, returningAgentLastSeenSeq) => {
+    mocks.hydrateReplayDialogFromForkChain.mockResolvedValueOnce(hydrated());
+
+    const resolved = await resolve({
+      kind: 'same_session_agent_change',
+      sessionId: 'session-1',
+      returningAgentLastSeenSeq,
+    });
+
+    expect(mocks.hydrateReplayDialogFromForkChain).toHaveBeenCalledWith(
+      expect.not.objectContaining({ afterSeqExclusive: expect.anything() }),
+    );
+    expect(resolved.status).toBe('seeded');
+    if (resolved.status !== 'seeded') return;
+    expect(resolved.seedDraft).not.toContain('- Transcript seq when you last ran this session:');
   });
 });

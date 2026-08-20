@@ -155,8 +155,5 @@ export async function inspectSessionContinuation(params: Readonly<{
     // `same_target` is reported as available-but-not-a-transition: the picker
     // shows the current Agent as selected rather than as an error.
     sameSessionTransition: support.type === 'supported',
-    // This tree stores no machine-local inactive native record. The target is
-    // always fresh, by design.
-    nativeReturn: false,
   };
 }

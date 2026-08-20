@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getUserProfile, sendFriendRequest, removeFriend } from '@/sync/api/social/apiFriends';
@@ -29,6 +31,7 @@ export default function UserProfileScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
     const { credentials } = useAuth();
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const { theme } = useUnistyles();
     const sessions = useAllSessions();
     const sharingSupported = useSessionSharingSupport();
@@ -246,7 +249,7 @@ export default function UserProfileScreen() {
                                 title={session.metadata?.name || session.metadata?.path || t('sessionHistory.title')}
                                 subtitle={t('session.sharing.viewOnly')}
                                 icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.accent.blue} />}
-                                onPress={() => router.push(`/session/${session.id}`)}
+                                onPress={() => { void navigateToSession(session.id); }}
                             />
                         ))
                     ) : (

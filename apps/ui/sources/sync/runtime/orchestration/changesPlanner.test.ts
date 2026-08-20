@@ -256,6 +256,24 @@ describe('planSyncActionsFromChanges', () => {
         });
     });
 
+    it('refreshes the session list for attention-standing organization hints the same way pins do', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'session',
+                entityId: 's-standing',
+                hint: { sessionOrganization: true, scope: 'attentionStandings', sessionIds: ['s-standing'] },
+            }),
+        ]);
+
+        expect(planned.invalidate.sessions).toBe(true);
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(planned.sessionOrganization).toMatchObject({
+            mode: 'snapshot',
+            assignmentSessionIds: ['s-standing'],
+        });
+    });
+
     it('records unknown kinds as unsupported without treating them as safe invalidations', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),

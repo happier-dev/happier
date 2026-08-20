@@ -341,7 +341,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             for (const scope of readHintOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
             const hint = change.hint;
             if (isRecord(hint)) {
-                if (hint.scope === 'pins') {
+                if (hint.scope === 'pins' || hint.scope === 'attentionStandings') {
                     invalidateSessions = true;
                 }
                 organizationIncludeFolders = organizationIncludeFolders || hint.scope === 'folders';

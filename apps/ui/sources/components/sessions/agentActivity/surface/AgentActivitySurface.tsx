@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
+
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import { SessionWorkflowRunPanel } from '@/components/sessions/workState/SessionWorkflowRunPanel';
@@ -124,7 +125,7 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         onOpenSubagent,
         testID,
     } = props;
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const workingLimit = props.workingLimit ?? null;
     // Read the two accessors out of the model, because both keep ONE identity for the life of the
     // host while the model object itself changes on every session tick. A callback closed over the
@@ -295,9 +296,7 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         const openLaunchingCommand = launch !== null && launch.seq !== null
             ? () => {
                 onNavigateAway?.();
-                router.push(
-                    `/session/${encodeURIComponent(sessionId)}?jumpSeq=${launch.seq}` as never,
-                );
+                void navigateToSession(sessionId, { query: { jumpSeq: launch.seq } });
             }
             : undefined;
         return (
@@ -312,9 +311,9 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
         onNavigateAway,
         openTarget,
         previewBodyCache,
+        navigateToSession,
         readBackgroundTaskForEntry,
         readTarget,
-        router,
         sessionId,
         testID,
     ]);

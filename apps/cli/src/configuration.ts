@@ -16,7 +16,7 @@ import {
   resolveManagedCliReleaseChannelSync,
 } from '@happier-dev/cli-common/firstPartyRuntime'
 import { CANONICAL_DAEMON_STATE_BASENAME } from '@/daemon/ownership/daemonOwnershipPaths'
-import { createServerUrlComparableKey } from '@happier-dev/protocol'
+import { createServerUrlComparableKey, HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol'
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 
@@ -324,6 +324,10 @@ class Configuration {
   public readonly replaySeedMaxChars: number
   // Replay transcript fetch size for seed hydration (best-effort; bounded by server /v1/messages limit).
   public readonly replaySeedCandidateLimit: number
+  // Requests ONE seed hydration may spend walking the transcript backwards.
+  public readonly replaySeedMaxTranscriptRequests: number
+  // Wall clock for that whole walk (it runs while the user is waiting).
+  public readonly replaySeedTranscriptDeadlineMs: number
 
   // Startup coordinator / deferred session buffering (fast-start).
   public readonly startupTimingEnabled: boolean
@@ -890,13 +894,36 @@ class Configuration {
       min: 1, max: 500, default: 500,
     });
     // Default: 120k chars. Hard bounds protect providers from oversized replay seeds.
-    // Min 500 keeps the prompt meaningful; max 200k is a safety cap.
+    // Max 200k is a safety cap. The min is not a round number for its own sake:
+    // the builder's frame floor is 814 characters after the container
+    // restructure (pinned in `happierReplayPrompt.spec.ts`), and below the floor
+    // it correctly returns NO seed rather than a frame with no transcript under
+    // it. A clamp beneath that floor therefore promises an operator a prompt it
+    // cannot deliver — the old min of 500 did exactly that. 1024 sits above the
+    // measured floor with room for the frame to grow; if the frame text grows
+    // past it, that spec's floor assertion fails first and names this clamp.
+    // Caller-supplied `maxSeedChars` on the wire is NOT clamped here and may be
+    // lower; the builder owns its contract at every budget.
     this.replaySeedMaxChars = resolveIntEnvWithBounds('HAPPIER_REPLAY_MAX_SEED_CHARS', {
-      min: 500, max: 200_000, default: 120_000,
+      min: HAPPIER_REPLAY_SEED_MIN_CHARS, max: HAPPIER_REPLAY_SEED_MAX_CHARS, default: 120_000,
     });
     // Default: 500 (server max). Min 50 ensures meaningful context; max 500 matches server enforcement.
     this.replaySeedCandidateLimit = resolveIntEnvWithBounds('HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT', {
       min: 50, max: 500, default: 500,
+    });
+    // Default: 8 requests per hydration. `/v1/sessions/:id/messages` is shared and
+    // rate-limited per user, and the walk is bounded by CHARACTERS, not requests —
+    // 8 full pages is what it takes to fill the default 120k budget even when the
+    // server ignores the role filter and the yield collapses to raw-row density.
+    // The ceiling is per hydration, never per chain segment.
+    this.replaySeedMaxTranscriptRequests = resolveIntEnvWithBounds('HAPPIER_REPLAY_SEED_MAX_TRANSCRIPT_REQUESTS', {
+      min: 1, max: 24, default: 8,
+    });
+    // Default: 15s for the whole walk. The per-request timeout is 10s, so an
+    // unbounded walk could sit for 80s in a path that runs AFTER the source
+    // runtime was stopped and while the user is waiting for the switch.
+    this.replaySeedTranscriptDeadlineMs = resolveIntEnvWithBounds('HAPPIER_REPLAY_SEED_TRANSCRIPT_DEADLINE_MS', {
+      min: 1_000, max: 120_000, default: 15_000,
     });
 
     const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();

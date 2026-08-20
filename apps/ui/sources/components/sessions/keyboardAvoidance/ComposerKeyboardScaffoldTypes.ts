@@ -8,6 +8,18 @@ import type {
 
 export type ComposerKeyboardScaffoldMode = 'session' | 'newSession';
 
+/**
+ * Whether the scaffold paints its own ground.
+ *
+ * `opaque` (the default) fills the root and the composer wrapper with `surface.base`, which is what
+ * every bar and sheet in the app expects. `transparent` paints neither, so a screen presented as a
+ * transparent modal can show what is behind it.
+ *
+ * This is deliberately NOT derived from `mode`: the new-session wizard is also `newSession` and
+ * keeps its opaque sheet.
+ */
+export type ComposerKeyboardScaffoldSurface = 'opaque' | 'transparent';
+
 export type ComposerKeyboardScaffoldProps = Readonly<{
     accessibilityLabel?: string;
     accessibilityRole?: AccessibilityRole;
@@ -24,5 +36,7 @@ export type ComposerKeyboardScaffoldProps = Readonly<{
     safeAreaTop?: number;
     safeAreaBottom?: number;
     style?: StyleProp<ViewStyle>;
+    /** Defaults to `opaque`. See `ComposerKeyboardScaffoldSurface`. */
+    surface?: ComposerKeyboardScaffoldSurface;
     testID?: string;
 }>;

@@ -22,6 +22,7 @@ const REDACTED_LABEL = 'curl -H "Authorization: [REDACTED]" https://example.test
 const LAUNCH_SEQ = 12;
 
 const routerPush = vi.hoisted(() => vi.fn());
+const routerNavigate = vi.hoisted(() => vi.fn());
 const listSessionSystemRecords = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
@@ -52,7 +53,7 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: () => `/session/${SESSION_ID}`,
-        router: { push: routerPush },
+        router: { push: routerPush, navigate: routerNavigate },
     }).module;
 });
 
@@ -193,6 +194,7 @@ describe('SessionRightPanelAgentsView background tasks', () => {
     beforeEach(() => {
         previousStorageState = storage.getState();
         routerPush.mockReset();
+        routerNavigate.mockReset();
         listSessionSystemRecords.mockReset();
         listSessionSystemRecords.mockResolvedValue(backgroundTaskRecordPage());
     });
@@ -225,7 +227,7 @@ describe('SessionRightPanelAgentsView background tasks', () => {
         await act(async () => {
             screen.findByTestId(`${detailTestId}:open-command`)?.props.onPress();
         });
-        expect(routerPush).toHaveBeenCalledWith(`/session/${SESSION_ID}?jumpSeq=${LAUNCH_SEQ}`);
+        expect(routerNavigate).toHaveBeenCalledWith(`/session/${SESSION_ID}?jumpSeq=${LAUNCH_SEQ}`, expect.any(Object));
 
         await screen.unmount();
     });

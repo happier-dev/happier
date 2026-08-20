@@ -1,13 +1,13 @@
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { resolveMotionPresentation, resolveMotionSpring } from '@/components/ui/motion';
+import { describeMotionSpring, resolveMotionPresentation } from '@/components/ui/motion';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
@@ -15,11 +15,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 import {
     resolveAgentContinuationSubmitPresentation,
-    resolveArmedComposerContinuation,
+    resolveArmedSubmitContinuation,
 } from './agentContinuationSubmitPresentation';
-
-/** The circular send affordance's box, unchanged. */
-const SUBMIT_CIRCLE_SIZE = 32;
 
 /**
  * The submit control's touch target reaches above and below its box.
@@ -30,7 +27,6 @@ const SUBMIT_CIRCLE_SIZE = 32;
  * lands inside the clip.
  */
 const SUBMIT_HIT_SLOP = { top: 5, bottom: 10, left: 0, right: 0 } as const;
-const SUBMIT_CLIP_EXTRA_HEIGHT = SUBMIT_HIT_SLOP.top + SUBMIT_HIT_SLOP.bottom;
 
 const stylesheet = StyleSheet.create(() => ({
     shapeClip: {
@@ -46,73 +42,65 @@ const stylesheet = StyleSheet.create(() => ({
         paddingTop: SUBMIT_HIT_SLOP.top,
         paddingBottom: SUBMIT_HIT_SLOP.bottom,
     },
-    shapeContent: {
-        flexShrink: 0,
-    },
 }));
 
 /**
- * A box that follows its content's width instead of jumping to it.
+ * A box that travels to its content's size instead of jumping to it.
  *
  * The send control has two shapes — a circular send, and the armed
  * "Continue with {Agent}" button that hugs its logo and label — and swapping
  * between them is a change of several pixels to nearly two hundred. Snapping
- * reads as a glitch; this springs, on the app's own `rowEnter` physics, so the
+ * reads as a glitch; this travels, on the app's own `rowEnter` physics, so the
  * change reads as the control becoming something else.
  *
- * It measures rather than being told: the content lays out at its natural width
- * (`flexShrink: 0` inside a clipped row), reports it, and the wrapper travels to
- * it. That keeps one mechanism for both directions and for a label that changes
- * while armed, and it needs no second copy of the pill's metrics.
+ * The wrapper is plain content-sized layout, and the travel is a Reanimated
+ * layout transition over it. It is deliberately NOT the obvious shape — measure
+ * the content, then spring an animated `width`/`height` towards it — because that
+ * shape contains a loop the browser hides:
  *
- * Reduced motion is not decided here — `resolveMotionSpring` stamps the policy,
- * and `rowEnter` settles instantly under it, so the shape still changes and only
- * the travel is removed.
+ *   the content is laid out inside the very box being animated, so a single-line
+ *   label can only be as wide as the width the box currently has; each frame
+ *   therefore measured a little wider, re-targeted the animation just ahead of
+ *   where it had reached, and the target chased the value.
+ *
+ * On an iPhone 17 Pro (iOS 26.3, debug bundle) that converged asymptotically over
+ * ~1.13s in visible steps, against the ~265ms `rowEnter` settles in — the reported
+ * "very saccaded and slow". `flexShrink: 0` does not prevent it, and neither does
+ * taking the content out of flow: `position: 'absolute'` still measured 162 → 213
+ * and climbing, one report per frame. Web never showed it, because there a
+ * non-shrinking child with single-line text keeps its max-content width, so the
+ * measurement was stable and the same code ran cleanly in ~350ms.
+ *
+ * A layout transition has no measurement to feed back: the wrapper is laid out at
+ * its natural size once and Reanimated interpolates the frame. Measured the same
+ * way afterwards: ~0.13s, monotonic.
+ *
+ * Reduced motion is not decided here — `resolveMotionPresentation` owns that, and
+ * `composerSubmitShape` settles instantly under it, so the shape still changes and
+ * only the travel is removed. `ReduceMotion.Never` on the transition itself says
+ * the library must not second-guess that answer by reading the device setting a
+ * second time, exactly as the spring resolver does.
  */
 function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
     const styles = stylesheet;
     const reducedMotion = useReducedMotionPreference();
-    const [contentSize, setContentSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
-    const width = useSharedValue(SUBMIT_CIRCLE_SIZE);
-    const height = useSharedValue(SUBMIT_CIRCLE_SIZE + SUBMIT_CLIP_EXTRA_HEIGHT);
-    const targetWidth = contentSize?.width ?? SUBMIT_CIRCLE_SIZE;
-    // The clip is taller than the control by exactly the reach of its hit area, so
-    // the box it animates to is the content plus that reach.
-    const targetHeight = (contentSize?.height ?? SUBMIT_CIRCLE_SIZE) + SUBMIT_CLIP_EXTRA_HEIGHT;
-
-    React.useEffect(() => {
-        // Whether this animation travels at all is the reduced-motion table's answer,
-        // never a local `!reducedMotion`. The spring's physics come from the role.
-        const settleInstantly = resolveMotionPresentation('composerSubmitShape', reducedMotion) === 'settleInstantly';
-        if (settleInstantly) {
-            width.value = targetWidth;
-            height.value = targetHeight;
-            return;
+    const layout = React.useMemo(() => {
+        if (resolveMotionPresentation('composerSubmitShape', reducedMotion) === 'settleInstantly') {
+            return undefined;
         }
-        const spring = resolveMotionSpring('rowEnter', { reducedMotion });
-        width.value = withSpring(targetWidth, spring);
-        height.value = withSpring(targetHeight, spring);
-    }, [height, reducedMotion, targetHeight, targetWidth, width]);
-
-    const animatedStyle = useAnimatedStyle(() => ({ width: width.value, height: height.value }));
+        // The role's own physics, read from the motion owner rather than restated:
+        // its perceptual settle and its damping are what the transition is built from.
+        const { settleMs, dampingRatio } = describeMotionSpring('rowEnter');
+        return LinearTransition
+            .springify()
+            .duration(Math.round(settleMs))
+            .dampingRatio(dampingRatio)
+            .reduceMotion(ReduceMotion.Never);
+    }, [reducedMotion]);
 
     return (
-        <Animated.View style={[styles.shapeClip, animatedStyle]}>
-            <View
-                style={styles.shapeContent}
-                onLayout={(event) => {
-                    const measuredWidth = Math.round(event.nativeEvent.layout.width);
-                    const measuredHeight = Math.round(event.nativeEvent.layout.height);
-                    if (measuredWidth <= 0 || measuredHeight <= 0) return;
-                    setContentSize((current) => (
-                        current?.width === measuredWidth && current?.height === measuredHeight
-                            ? current
-                            : { width: measuredWidth, height: measuredHeight }
-                    ));
-                }}
-            >
-                {props.children}
-            </View>
+        <Animated.View layout={layout} style={styles.shapeClip}>
+            {props.children}
         </Animated.View>
     );
 }
@@ -141,16 +129,24 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
 }>) {
     const { theme } = useUnistyles();
     const showStopWhenEmpty = !props.hasSendableContent && !props.micPressHandler && props.canStop === true;
+    /*
+     * With nothing to send, a composer that has Voice hands this button to the
+     * microphone — `submitPress` routes there before it ever reaches Stop, whether
+     * or not the mic is already listening. Text takes the button back.
+     */
+    const micHoldsSubmit = Boolean(props.micPressHandler) && !props.hasSendableContent;
 
     // The armed switch only reaches the button while the button is actually a
-    // send. The mic and Stop states are other actions, and labelling them
+    // send. The mic and Stop are other actions, and labelling either
     // "Continue with {Agent}" would promise something that press does not do.
-    // The composer's engine chip reads the SAME decision, so the two cannot say
-    // different things about the armed target.
-    const armedTarget = resolveArmedComposerContinuation({
+    // An empty composer is NOT one of those: with no mic and no running turn the
+    // control is still the send, just an inert one, so it keeps naming the switch
+    // it would take.
+    // The composer's engine chip reads the SAME armed target and only skips this
+    // narrowing, so the two cannot name different Agents.
+    const armedTarget = resolveArmedSubmitContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
-        hasSendableContent: props.hasSendableContent,
-        dictationHoldsSubmit: Boolean(props.micPressHandler) && props.micActive,
+        otherActionHoldsSubmit: micHoldsSubmit || showStopWhenEmpty,
     });
     const armedContinuation = armedTarget
         ? resolveAgentContinuationSubmitPresentation({
@@ -171,27 +167,38 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     }, [props.hasSendableContent, props.micPressHandler, props.onSend, props.onStop, showStopWhenEmpty]);
 
     if (armedContinuation) {
+        const mark = armedContinuation.markAgentId ? (
+            // The same mark the Agent rail used to offer this target, at the
+            // registry's own optical size and tinted by the button's token, so
+            // it reads at the weight the reader just saw.
+            <AgentIcon
+                agentId={armedContinuation.markAgentId}
+                size={armedContinuation.markSize}
+                color={theme.colors.button.primary.tint}
+            />
+        ) : undefined;
         return (
             <AgentInputSubmitShape>
                 <RoundButton
                     testID={props.testID}
                     size="small"
-                    // The words, visible and accessible. Pressing this does not only
-                    // send — it continues the Session with another Agent — and a
-                    // control that changes what a Session runs says so on its face
-                    // rather than only in a popover the reader has dismissed.
-                    title={armedContinuation.accessibilityLabel}
+                    // "Continue with [mark]". Pressing this does not only send — it
+                    // continues the Session with another Agent — so the control says
+                    // so on its face rather than only in a popover the reader has
+                    // dismissed. The Agent's identity is carried once, by the mark
+                    // standing where the sentence names it, which keeps the control
+                    // from growing to the width of the longest name in the catalog.
+                    title={armedContinuation.label}
+                    // The full sentence, always in words: this press commits an Agent
+                    // switch, and a glyph reads as nothing to a screen reader.
                     accessibilityLabel={armedContinuation.accessibilityLabel}
-                    leading={armedContinuation.markAgentId ? (
-                        // The same mark the Agent rail used to offer this target, at the
-                        // registry's own optical size and tinted by the button's token, so
-                        // it reads at the weight the reader just saw.
-                        <AgentIcon
-                            agentId={armedContinuation.markAgentId}
-                            size={armedContinuation.markSize}
-                            color={theme.colors.button.primary.tint}
-                        />
-                    ) : undefined}
+                    // Named but not yet pressable. The circular send explains that
+                    // same state with this exact hint, and the armed shape is the
+                    // same control, so it says the same thing rather than leaving a
+                    // screen reader with a disabled button and no reason.
+                    accessibilityHint={props.hasSendableContent ? undefined : t('session.inputPlaceholder')}
+                    leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
+                    trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
                     loading={props.isSending}
                     disabled={props.disabled}
                     onPress={submitPress}

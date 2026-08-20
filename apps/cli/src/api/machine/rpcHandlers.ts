@@ -24,6 +24,7 @@ import {
   SessionAgentTransitionRequestV1Schema,
   rejectUndispatchedSessionAgentTransition,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
+  SessionAgentTransitionBriefPreviewRequestV1Schema,
   SessionContinuationInspectionRequestV1Schema,
   SessionContinueWithReplayRpcParamsSchema,
   SessionForkRpcParamsSchema,
@@ -40,6 +41,7 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { runSessionAgentTransition } from '@/session/agentTransition/sessionAgentTransitionCoordinator';
+import { previewSessionAgentTransitionBrief } from '@/session/agentTransition/previewSessionAgentTransitionBrief';
 import { inspectSessionContinuation } from '@/session/agentTransition/sessionContinuationInspection';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { readReplaySeededCreationFailure } from '@/session/replay/replaySeededCreationFailure';
@@ -1509,7 +1511,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
       // retrieval resolves for itself.
       lineageCutoffSeqInclusive: effectiveCutoffSeqInclusive,
       strategy: replaySummaryRunner ? 'summary_plus_recent' : 'recent_messages',
-      recentMessagesCount: configuration.replaySeedCandidateLimit,
+      // No count bound: the seed is bounded by CHARACTERS. Passing the page-size
+      // knob here as a message count is what capped the window at 500 turns in
+      // front of a 120k-character budget.
+      recentMessagesCount: null,
       ...(typeof parsed.data.replayMaxSeedChars === 'number'
         ? { maxSeedChars: parsed.data.replayMaxSeedChars }
         : {}),
@@ -1708,6 +1713,25 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
     return await inspectSessionContinuation({ credentials, request: parsed.data });
   });
+
+  rpcHandlerManager.registerHandler(
+    RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW,
+    async (raw: unknown) => {
+      const parsed = SessionAgentTransitionBriefPreviewRequestV1Schema.safeParse(raw);
+      if (!parsed.success) {
+        return { type: 'unavailable', reason: 'unsupported_session' };
+      }
+      const credentials = await readCredentials().catch(() => null);
+      // A process with no credentials cannot read the Session at all, which is
+      // the same standing as a Session this machine cannot address. It is
+      // deliberately NOT `empty`: reporting "nothing was carried over" because
+      // we could not look is the one answer this surface must never give.
+      if (!credentials) {
+        return { type: 'unavailable', reason: 'unsupported_session' };
+      }
+      return await previewSessionAgentTransitionBrief({ credentials, request: parsed.data });
+    },
+  );
 
   // Register stop daemon handler
   rpcHandlerManager.registerHandler(RPC_METHODS.STOP_DAEMON, () => {

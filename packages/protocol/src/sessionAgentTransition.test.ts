@@ -301,9 +301,31 @@ describe('session agent transition divider', () => {
       .not.toBe(V.result.valid.partialDividerMissing.code);
   });
 
+  it('requires the source cutoff and rejects a sidecar that omits it', () => {
+    // The cutoff is the only surviving input a reader can rebuild the
+    // handed-over context from: `replaySeedV1.seedText` is blanked the instant
+    // the target Agent accepts it. If the sidecar drops it, the boundary can
+    // never be explained after the fact.
+    expect(readSessionAgentTransitionDividerV1(V.divider.agentEvent)?.sourceCutoffSeqInclusive)
+      .toBe(29_979);
+    // Only an unreleased intermediate build ever wrote a cutoff-less sidecar,
+    // so there is no third "recorded no bound" state to model. It degrades
+    // through the already-designed path: strict parse fails, the whole sidecar
+    // is dropped, and the row renders its stored prose.
+    expect(readSessionAgentTransitionDividerV1(V.divider.cutoffLessSidecarAgentEvent)).toBeNull();
+    // Zero is a recorded bound and stays a divider — it must not collapse into
+    // the rejected case.
+    expect(
+      readSessionAgentTransitionDividerV1({
+        ...V.divider.agentEvent,
+        sessionAgentTransitionV1: V.divider.payload.valid.emptySourceCutoff,
+      })?.sourceCutoffSeqInclusive,
+    ).toBe(0);
+  });
+
   it('reads the sidecar only from a well-formed transition message event', () => {
     expect(readSessionAgentTransitionDividerV1(V.divider.agentEvent))
-      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude', sourceCutoffSeqInclusive: 29_979 });
     expect(readSessionAgentTransitionDividerV1(V.divider.plainMessageAgentEvent)).toBeNull();
     expect(readSessionAgentTransitionDividerV1(V.divider.malformedSidecarAgentEvent)).toBeNull();
     expect(readSessionAgentTransitionDividerV1({ type: 'switch', mode: 'local' })).toBeNull();
@@ -320,7 +342,7 @@ describe('session agent transition divider', () => {
 
     const content = (parsed.data as { content: { data: unknown } }).content;
     expect(readSessionAgentTransitionDividerV1(content.data))
-      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude', sourceCutoffSeqInclusive: 29_979 });
   });
 
   it('is not a new agent-event variant, so a released reader keeps rendering it', () => {
@@ -335,7 +357,7 @@ describe('session agent transition divider', () => {
     expect((parsed.data as { message: string }).message).toBe(V.divider.message);
     // ... and its passthrough preserves the sidecar rather than dropping the row.
     expect((parsed.data as Record<string, unknown>)[V.divider.sidecarKey])
-      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude', sourceCutoffSeqInclusive: 29_979 });
   });
 });
 

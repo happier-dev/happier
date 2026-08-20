@@ -1,3 +1,5 @@
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+
 import type { SocketCollector } from '../socketClient';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { unwrapSerializedJsonValue } from '../unwrapSerializedJsonValue';
@@ -15,7 +17,12 @@ export function unwrapDataKeyRpcResult(result: DataKeyRpcResult, context = 'data
 }
 
 type RpcSocket = {
-  rpcCall: <T = unknown>(method: string, params: string, timeoutMs?: number) => Promise<T>;
+  rpcCall: <T = unknown>(
+    method: string,
+    params: string,
+    timeoutMs?: number,
+    authorization?: SocketRpcAuthorizationContext,
+  ) => Promise<T>;
 };
 
 type RpcResponseEnvelope = {
@@ -26,12 +33,27 @@ type RpcResponseEnvelope = {
 };
 
 export function createDataKeyRpcClient(socket: RpcSocket, dataKey: Uint8Array): {
-  call: (method: string, payload: unknown, timeoutMs?: number) => Promise<DataKeyRpcResult>;
+  /**
+   * `authorization` is required by the server for a session-write method
+   * (`resolveSocketRpcSessionWriteAuthorizationMethod`); without it the call is
+   * refused with `RPC_FORBIDDEN` before it reaches the machine.
+   */
+  call: (
+    method: string,
+    payload: unknown,
+    timeoutMs?: number,
+    authorization?: SocketRpcAuthorizationContext,
+  ) => Promise<DataKeyRpcResult>;
 } {
   return {
-    call: async (method: string, payload: unknown, timeoutMs?: number) => {
+    call: async (
+      method: string,
+      payload: unknown,
+      timeoutMs?: number,
+      authorization?: SocketRpcAuthorizationContext,
+    ) => {
       const params = encryptDataKeyBase64(payload, dataKey);
-      const res = await socket.rpcCall<RpcResponseEnvelope>(method, params, timeoutMs);
+      const res = await socket.rpcCall<RpcResponseEnvelope>(method, params, timeoutMs, authorization);
       if (!res || typeof res !== 'object') {
         return { ok: false, error: 'invalid-rpc-response' };
       }

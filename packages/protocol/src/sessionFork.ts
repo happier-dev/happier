@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 import { SessionForkPointSchema, type SessionForkPoint } from './sessionForkPoint.js';
+import { HappierReplayWireMaxSeedCharsSchema } from './replaySeedBudget.js';
 
 /**
  * The cutoff is owned by the zero-dependency `./sessionForkPoint.js` module, but
@@ -44,7 +45,7 @@ export const SessionForkRpcParamsSchema = z
     forkPoint: SessionForkPointSchema,
     strategy: SessionForkStrategySchema.optional(),
     replaySummaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
-    replayMaxSeedChars: z.number().int().min(200).max(200_000).optional(),
+    replayMaxSeedChars: HappierReplayWireMaxSeedCharsSchema.optional(),
     /**
      * Stable idempotency key for the fork request. Retries of the SAME user
      * action (e.g. transport-timeout retries inside the machine RPC layer)

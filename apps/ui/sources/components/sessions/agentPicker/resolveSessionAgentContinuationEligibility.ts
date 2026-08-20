@@ -73,6 +73,14 @@ export type SessionAgentContinuationSourceState = Readonly<{
     storageKind: SessionStorageKind;
     canEditSession: boolean;
     machinePresence: SessionContinuationMachinePresenceV1;
+    /**
+     * Whether this Session has a transcript for a switch to carry across.
+     *
+     * The switch is offered either way — a Session with nothing yet is exactly
+     * where changing Agent is cheapest — but the disclosure that reassures a
+     * reader mid-thread is a claim, and on an empty transcript it is a false one.
+     */
+    hasConversationToCarry: boolean;
 }>;
 
 /**
@@ -80,14 +88,28 @@ export type SessionAgentContinuationSourceState = Readonly<{
  * may be trusted.
  *
  * Inspection is only meaningful on the machine hosting the Session, and it grants
- * no authority, so an answer is cached for exactly one realtime connection.
- * `connectionGeneration` changes when that connection is re-established, which
- * discards every answer read over the previous one.
+ * no authority, so an answer is only as good as the pair of runtimes it was read
+ * across. Either generation moving discards every answer read before it.
  */
 export type SessionAgentContinuationMachineTarget = Readonly<{
     machineId: string | null;
     serverId: string | null;
+    /**
+     * This client's realtime connection. It changes when the connection is
+     * re-established.
+     */
     connectionGeneration: number | null;
+    /**
+     * The machine's daemon, as the machine record already reports it.
+     *
+     * The two generations are independent, and only this one moves when the
+     * daemon restarts under a live connection — the window in which the rail kept
+     * advertising targets the send path then refused as `unsupported_operation`,
+     * because the answers it was showing came from a daemon that no longer
+     * existed. This is the same daemon-currentness fact CLI detection keys its own
+     * cache on, not a second notion of it.
+     */
+    daemonGeneration: number | null;
 }>;
 
 /**

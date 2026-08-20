@@ -8,6 +8,8 @@ import type {
     TranscriptViewportMode,
     TranscriptViewportScrollReason,
 } from '../transcriptViewportTypes';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+
 import type { TranscriptViewportTransactionOutcome } from '../transcriptViewportOwnership';
 import { nativeEntryRestoreObservationMatches } from '../nativeEntryRestoreObservationPolicy';
 import {
@@ -476,6 +478,15 @@ export function createEntryRestoreOwner(): EntryRestoreOwner {
             return closeEffects(params.sessionId, platform);
         }
         if (directive.action !== 'issue-correction-write') return [];
+        // A correction write is the transcript visibly MOVING after it was placed: the
+        // initial write went to an estimated content height and the measured one differed.
+        // It is the reason session open still hides behind a first-paint placeholder, so
+        // it has to be countable before that placeholder can be removed — "reveal warm
+        // transcripts instantly" is only safe while this stays at zero.
+        syncPerformanceTelemetry.count('ui.sessions.transcript.entryRestore.correctionWrite', {
+            native: platform === 'native' ? 1 : 0,
+            web: platform === 'web' ? 1 : 0,
+        });
         return correctionEffects(writeContext, params, platform);
     }
 

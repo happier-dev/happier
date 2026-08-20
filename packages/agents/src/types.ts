@@ -103,6 +103,27 @@ export type ConnectedServicesProviderStateSharingCapability = Readonly<{
 export type AgentResumeConfig = Readonly<{
     vendorResume: VendorResumeSupportLevel;
     vendorResumeIdField?: VendorResumeIdField | null;
+    /**
+     * Session-metadata key where this Agent publishes its OWN on-disk session-log
+     * path for the current vendor resume id, when it keeps one (Claude's
+     * `claudeTranscriptPath`).
+     *
+     * A POINTER, never a gate (`AM-24`): its only consumer is the Agent-transition
+     * brief, which offers the successor the predecessor's log. It gates nothing —
+     * an Agent that declares no key still resumes natively, and a missing or
+     * pruned log costs the seed one line.
+     *
+     * Declared here rather than named by any consumer so the one host that hands
+     * the path to a successor Agent never branches on a vendor key, and a new
+     * Agent's log becomes reachable by declaring it. It is a MACHINE-LOCAL path:
+     * usable only by a successor running on the same machine.
+     *
+     * The NAME is predecessor vocabulary from the retired continuity-proof
+     * mechanism and is kept deliberately: it is one key in a projection shared
+     * with the successor tree, and renaming it on one side only would leave the
+     * runtime reading an absent key and silently drop the pointer.
+     */
+    vendorResumeContinuityProofField?: string | null;
     experimentalResumePolicy?: 'disabled_by_default' | 'runtime_checked';
 }>;
 

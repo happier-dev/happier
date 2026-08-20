@@ -5,6 +5,10 @@ import { ConnectedServiceBindingsV1Schema } from './connect/connectedServiceBind
 import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 import { AcpConfigOptionOverridesV1Schema } from './sessionMetadata/metadataOverridesV1.js';
+import {
+  HappierReplayRecentMessagesCountSchema,
+  HappierReplayWireMaxSeedCharsSchema,
+} from './replaySeedBudget.js';
 
 export const ExecutionRunIntentSchema = z.enum([
   'review',
@@ -100,8 +104,8 @@ export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', 
     previousSessionId: z.string().min(1),
     transcriptEpoch: z.number().int().min(0),
     strategy: HappierReplayStrategySchema.optional(),
-    recentMessagesCount: z.number().int().min(1).max(500).optional(),
-    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
+    recentMessagesCount: HappierReplayRecentMessagesCountSchema.optional(),
+    maxSeedChars: HappierReplayWireMaxSeedCharsSchema.optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
     // CL-2: passthrough like every sibling wire schema in this file — a newer peer adding a replay
     // field must not make an older daemon reject the ENTIRE run-start request.

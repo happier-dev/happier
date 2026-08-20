@@ -3,6 +3,7 @@ import { SessionSynopsisV1Schema } from '@happier-dev/protocol';
 import { extractSemanticTranscriptItem } from '../services/transcript/extractSemanticTranscriptItem';
 import type { TranscriptRawRow } from '../services/transcript/semanticTranscriptItem';
 import { tryResolveDecryptedTranscriptPayload } from '../services/transcript/transcriptHistoryRows';
+import type { SessionEncryptionContext } from '../transport/encryption/sessionEncryptionContext';
 import type { HappierReplayDialogItem } from './types';
 
 type RawTranscriptRow = Readonly<{
@@ -45,22 +46,28 @@ function truncateReplayText(text: string, maxChars: number | undefined): string 
 function resolveReplayDecryptedPayload(params: Readonly<{
   row: RawTranscriptRow;
   encryptionKey?: Uint8Array;
-  encryptionVariant?: 'dataKey';
+  encryptionVariant?: SessionEncryptionContext['encryptionVariant'];
 }>): unknown | null {
   const content = params.row.content;
   if (!content || typeof content !== 'object') return null;
   if ((content as { t?: unknown }).t === 'plain') return (content as { v?: unknown }).v ?? null;
-  if (!params.encryptionKey || params.encryptionVariant !== 'dataKey') return null;
+  if (!params.encryptionKey || !params.encryptionVariant) return null;
   return tryResolveDecryptedTranscriptPayload({
     content,
-    ctx: { encryptionKey: params.encryptionKey, encryptionVariant: 'dataKey' },
+    ctx: { encryptionKey: params.encryptionKey, encryptionVariant: params.encryptionVariant },
   });
 }
 
 export function decryptTranscriptReplayCore(params: Readonly<{
   rows: readonly RawTranscriptRow[];
   encryptionKey?: Uint8Array;
-  encryptionVariant?: 'dataKey';
+  /**
+   * Which scheme opens these rows, as the canonical session-crypto owner
+   * resolves it. Hardcoding `dataKey` here silently made a legacy-secret
+   * Account's e2ee transcript unreadable, which the Agent transition then
+   * reported as `context_unavailable` — after it had stopped the source.
+   */
+  encryptionVariant?: SessionEncryptionContext['encryptionVariant'];
   maxTextChars?: number;
   maxDialogItems?: number;
 }>): Readonly<{
@@ -111,7 +118,7 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         index,
         ctx: {
           encryptionKey: params.encryptionKey ?? new Uint8Array(0),
-          encryptionVariant: params.encryptionVariant === 'dataKey' ? 'dataKey' : 'legacy',
+          encryptionVariant: params.encryptionVariant ?? 'legacy',
         },
         options: {
           mode: 'transcript',
@@ -151,7 +158,11 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   const bounded = out.length > maxDialogItems ? out.slice(out.length - maxDialogItems) : out;
 
   return {
-    dialog: bounded.map(({ seq: _seq, ...rest }) => rest),
+    // The row seq is carried, not dropped: it is the anchor the replay seed
+    // gives the target Agent to page BACKWARDS from, and it is already resolved
+    // here for ordering. Discarding it forced every consumer above to guess
+    // which slice of the transcript the seed was holding.
+    dialog: bounded,
     latestSynopsisText: bestSynopsis?.synopsis ?? null,
     unreadableRowCount,
   };

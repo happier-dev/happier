@@ -2542,15 +2542,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     /**
      * The armed Agent switch, as the composer is presenting it right now.
      *
-     * One decision, shared with the send control, so the chip and the button
-     * cannot say different things about the same choice: the picker showing a
-     * checkmark on Sonnet 4.6 while the chip still read GPT 5.6 Sol is the defect
-     * this removes.
+     * One owner, shared with the send control, so the chip and the button cannot
+     * name different Agents: the picker showing a checkmark on Sonnet 4.6 while
+     * the chip still read GPT 5.6 Sol is the defect this removes. The chip reads
+     * the arm itself — selection is the arming, so it changes with the rail rather
+     * than waiting for a keystroke — while the button additionally requires that
+     * pressing it would take the switch.
      */
     const armedComposerTarget = resolveArmedComposerContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
-        hasSendableContent,
-        dictationHoldsSubmit: Boolean(micPressHandler) && micActive,
     });
     /**
      * The mark on the engine chip: the armed Agent while one is armed, otherwise

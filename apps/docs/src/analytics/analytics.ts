@@ -45,19 +45,20 @@ let started = false;
 let loading = false;
 
 /**
- * `navigator.globalPrivacyControl` is the CCPA/CPRA-recognised successor to DNT
- * and is what Firefox and Brave actually send; `doNotTrack` is kept for the
- * browsers and extensions that still only set it.
+ * `navigator.globalPrivacyControl` ONLY, deliberately — `doNotTrack` used to be
+ * checked here too and is not any more.
+ *
+ * GPC is a recognised opt-out under CCPA/CPRA, Colorado and Connecticut, and
+ * Brave and DuckDuckGo send it by default. DNT binds nobody: the W3C
+ * discontinued the spec in 2019, Safari removed the property outright the same
+ * year (it had become a fingerprinting vector), and Firefox has retired its
+ * checkbox in favour of GPC. Honouring it only dropped traffic — skewed towards
+ * the privacy-minded developers these docs are written for.
  */
 function browserRefuses(): boolean {
     if (typeof navigator === 'undefined') return true;
-    const nav = navigator as Navigator & {
-        globalPrivacyControl?: boolean;
-        msDoNotTrack?: string;
-    };
-    if (nav.globalPrivacyControl === true) return true;
-    const dnt = nav.doNotTrack ?? nav.msDoNotTrack ?? (window as { doNotTrack?: string }).doNotTrack;
-    return dnt === '1' || dnt === 'yes';
+    const nav = navigator as Navigator & { globalPrivacyControl?: boolean };
+    return nav.globalPrivacyControl === true;
 }
 
 /** Reads the visitor's stored refusal. Storage failures mean "not opted out". */

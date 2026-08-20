@@ -6,7 +6,7 @@ const readCredentials = vi.hoisted(() => vi.fn());
 const fetchSessionByIdCompat = vi.hoisted(() => vi.fn());
 const getOrCreateSessionByTag = vi.hoisted(() => vi.fn());
 const fetchSessionById = vi.hoisted(() => vi.fn());
-const fetchEncryptedTranscriptMessages = vi.hoisted(() => vi.fn());
+const fetchEncryptedTranscriptMessagesPage = vi.hoisted(() => vi.fn());
 const spawnDaemonSession = vi.hoisted(() => vi.fn());
 const archiveSessionByIdBestEffort = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -24,7 +24,7 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 
 vi.mock('@/session/replay/fetchEncryptedTranscriptMessages', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/replay/fetchEncryptedTranscriptMessages')>(),
-  fetchEncryptedTranscriptMessages,
+  fetchEncryptedTranscriptMessagesPage,
 }));
 
 vi.mock('@/daemon/controlClient', async (importOriginal) => ({
@@ -56,7 +56,7 @@ function primeSourceTranscript(): void {
     agentStateVersion: 0,
     dataEncryptionKey: null,
   });
-  fetchEncryptedTranscriptMessages.mockResolvedValue([
+  fetchEncryptedTranscriptMessagesPage.mockResolvedValue({ hasMore: false, nextBeforeSeq: null, nextAfterSeq: null, messages: [
     {
       seq: 1,
       createdAt: 1,
@@ -72,7 +72,7 @@ function primeSourceTranscript(): void {
       createdAt: 3,
       content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'latest question' } } },
     },
-  ]);
+  ] });
 }
 
 /**
@@ -120,7 +120,7 @@ describe('continueSessionWithReplay — canonical creation delegation', () => {
     fetchSessionByIdCompat.mockReset();
     getOrCreateSessionByTag.mockReset();
     fetchSessionById.mockReset();
-    fetchEncryptedTranscriptMessages.mockReset();
+    fetchEncryptedTranscriptMessagesPage.mockReset();
     spawnDaemonSession.mockReset();
     archiveSessionByIdBestEffort.mockClear();
     readCredentials.mockResolvedValue({
@@ -216,7 +216,7 @@ describe('continueSessionWithReplay — canonical creation delegation', () => {
     // has no reason to exist, but the refusal now names the real reason: the
     // hydrator distinguishes "read it, there is nothing" from "could not read
     // it", so this path must not claim a hydration failure that did not happen.
-    fetchEncryptedTranscriptMessages.mockResolvedValue([]);
+    fetchEncryptedTranscriptMessagesPage.mockResolvedValue({ messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null });
     const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as SpawnSessionResult));
 
     const result = await continueSessionWithReplay(

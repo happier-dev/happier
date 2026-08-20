@@ -59,6 +59,16 @@ import type {
 const LEGEND_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
 // Compile-time constant: only its identity churned, and it is read on every Legend render.
 const LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION = { data: true, size: true } as const;
+/**
+ * The live shape of `maintainScrollAtEnd`. Unlike its sibling above it cannot be a module
+ * constant: `isMaintainingScrollAtEnd` reads the INSTANCE's held-intent ref, so the object is
+ * built once per mount instead (`maintainScrollAtEndOptionRef`) and the render only chooses
+ * between it and `false`.
+ */
+type LegendMaintainScrollAtEndOption = Readonly<{
+    animated: false;
+    isMaintainingScrollAtEnd: () => boolean;
+}>;
 // Last-resort scalar, NOT a calibrated row height. Legend resolves a row size as
 // measured -> getEstimatedItemSize (the app's measurement runtime, wired below) ->
 // per-type average -> this scalar, so it only reaches rows none of those can answer.
@@ -291,6 +301,19 @@ function LegendListTranscriptRendererInner<TItem>(
         React.useRef<TranscriptRendererNativePhysicalViewportCapture | null>(null);
     const nativePhysicalViewportObservationRef = React.useRef<object | null>(null);
     const explicitJumpTakeoverOperationRef = React.useRef<TranscriptExplicitJumpOperationId | null>(null);
+    // Native prop: `react-native-unistyles` installs `nativeProps_DEPRECATED` stickily, so a fresh
+    // object here deep-copies on every commit of a styled family. Built once per mount because the
+    // predicate closes over `heldScrollIntentRef` only — a ref, so it is already stable and reads
+    // the live intent at call time. `useRef` rather than `useMemo`: identity is guaranteed for the
+    // instance's lifetime, and React may discard a memo.
+    const maintainScrollAtEndOptionRef = React.useRef<LegendMaintainScrollAtEndOption | null>(null);
+    if (maintainScrollAtEndOptionRef.current === null) {
+        maintainScrollAtEndOptionRef.current = {
+            animated: false,
+            isMaintainingScrollAtEnd: () => heldScrollIntentRef.current?.kind === 'end',
+        };
+    }
+    const maintainScrollAtEndOption = maintainScrollAtEndOptionRef.current;
     const [, renderPositioningPhase] = React.useReducer((revision: number) => revision + 1, 0);
     const pendingViewportCauseRef = React.useRef<TranscriptViewportMutationCause>('layout');
     const webScrollbarDragCleanupRef = React.useRef<(() => void) | null>(null);
@@ -2914,10 +2937,7 @@ function LegendListTranscriptRendererInner<TItem>(
         // corrector, which repositions a frame later (the visible send jiggle).
         maintainScrollAtEnd: explicitJumpTakeoverOperationRef.current === null
             && heldScrollIntentRef.current?.kind === 'end'
-            ? {
-                animated: false,
-                isMaintainingScrollAtEnd: () => heldScrollIntentRef.current?.kind === 'end',
-            }
+            ? maintainScrollAtEndOption
             : false,
         maintainScrollAtEndThreshold: props.frame.rendererOptions.continuousFollow.endThresholdRatio,
         maintainVisibleContentPosition: LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION,

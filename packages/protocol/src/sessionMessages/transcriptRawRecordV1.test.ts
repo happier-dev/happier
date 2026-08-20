@@ -284,6 +284,7 @@ describe('TranscriptRawRecordV1Schema', () => {
         v: 1,
         fromAgentId: 'claude',
         toAgentId: 'codex',
+        sourceCutoffSeqInclusive: 29_979,
       },
     } as unknown as TranscriptRawAgentEventV1)).toEqual({
       affectsUnread: false,
@@ -331,6 +332,7 @@ describe('TranscriptRawRecordV1Schema', () => {
         v: 1,
         fromAgentId: 'claude',
         toAgentId: 'codex',
+        sourceCutoffSeqInclusive: 29_979,
       },
     } as unknown as TranscriptRawAgentEventV1)).toEqual({
       affectsUnread: true,
@@ -1314,7 +1316,12 @@ describe('agent-transition divider attention', () => {
   const divider = {
     type: 'message',
     message: 'Continued with another Agent.',
-    sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+    sessionAgentTransitionV1: {
+      v: 1,
+      fromAgentId: 'claude',
+      toAgentId: 'codex',
+      sourceCutoffSeqInclusive: 29_979,
+    },
   };
 
   it('silences an event carrying the transition sidecar', () => {

@@ -77,9 +77,6 @@ describe('inspectSessionContinuation', () => {
       type: 'available',
       protocolVersion: 1,
       sameSessionTransition: true,
-      // Always fresh in this tree: there is no machine-local native record to
-      // return to, so advertising native return would be a false promise.
-      nativeReturn: false,
     });
   });
 

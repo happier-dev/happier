@@ -49,6 +49,12 @@ import type { TranscriptListShellRef } from './types';
  * `requestHeldIntentSettle`, so the dataset layout effect re-opened the window on every commit on
  * top of the observer's. The third pins the geometry-carrying direction so neither fix can silently
  * disable the corrector.
+ *
+ * The last test pins the OTHER per-commit cost this file measures: the identity of the maintenance
+ * props handed to the native list. `react-native-unistyles` installs `nativeProps_DEPRECATED`
+ * stickily, so a fresh object on a styled family deep-copies on every commit - a content-free
+ * commit must therefore hand the list the SAME `maintainScrollAtEnd` and
+ * `maintainVisibleContentPosition` values it handed it before.
  */
 
 type Row = string;
@@ -283,6 +289,36 @@ describe('Legend transcript renderer idle frame cost', () => {
         await advance(SETTLE_WINDOW_OBSERVATION_MS);
 
         expect(movementAuthorityInvalidationCount).toBeGreaterThan(0);
+    });
+
+    it('hands the native list the same maintenance prop identities across a content-free commit', async () => {
+        const { controller, screen: mounted } = await mountIdleTranscript();
+        const readMaintenanceProps = () => {
+            const listProps = mounted.root.findByType(LegendNative.LegendList as never).props as Readonly<{
+                maintainScrollAtEnd: unknown;
+                maintainVisibleContentPosition: unknown;
+            }>;
+            return listProps;
+        };
+
+        const before = readMaintenanceProps();
+        // The transcript opens at the tail, so maintenance is live: this is the shape whose
+        // identity actually reaches the native list, not the `false` short-circuit.
+        expect(before.maintainScrollAtEnd).toMatchObject({ animated: false });
+
+        await act(async () => {
+            controller.commitWithoutGeometryNews();
+            await Promise.resolve();
+        });
+        await advance(SETTLE_WINDOW_OBSERVATION_MS);
+
+        const after = readMaintenanceProps();
+        // `maintainVisibleContentPosition` is the already-hoisted sibling: it proves this harness
+        // can observe identity at all, so the `maintainScrollAtEnd` assertion is discriminating.
+        expect(after.maintainVisibleContentPosition).toBe(before.maintainVisibleContentPosition);
+        expect(after.maintainScrollAtEnd).toBe(before.maintainScrollAtEnd);
+        expect((after.maintainScrollAtEnd as { isMaintainingScrollAtEnd: () => boolean })
+            .isMaintainingScrollAtEnd()).toBe(true);
     });
 
     it('still opens the settle window when a commit carries new rows', async () => {

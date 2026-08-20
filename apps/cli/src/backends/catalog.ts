@@ -323,6 +323,26 @@ export function resolveConnectedServiceCandidatePersistedSessionFile(
   return entry?.resolveConnectedServiceCandidatePersistedSessionFile?.({ metadata }) ?? null;
 }
 
+/**
+ * Where the Agent named by `agentId` would keep its own log for `vendorResumeId`
+ * on this machine, when it derives that path rather than persisting it.
+ *
+ * The answer is a CANDIDATE: the provider knows the naming and layout rule, not
+ * whether the file survived. The caller verifies it against the filesystem
+ * before naming it to anyone, exactly as it does for a persisted proof path. A
+ * provider that declares no derivation answers `null`, which is the same "no
+ * log" callers already handle.
+ */
+export async function resolveAgentNativeSessionLogPathThroughCatalog(
+  agentId: AgentId | null | undefined,
+  input: Readonly<{ vendorResumeId: string }>,
+): Promise<string | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  if (!entry?.resolveAgentNativeSessionLogPath) return null;
+  return await entry.resolveAgentNativeSessionLogPath(input) ?? null;
+}
+
 export async function getSessionGoalControlAdapter(agentId?: AgentId | null): Promise<SessionGoalControlAdapter | null> {
   const catalogId = resolveCatalogAgentId(agentId);
   const entry = AGENTS[catalogId];

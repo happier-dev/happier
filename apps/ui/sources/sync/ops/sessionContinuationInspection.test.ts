@@ -13,7 +13,6 @@ const AVAILABLE = {
     type: 'available',
     protocolVersion: 1,
     sameSessionTransition: true,
-    nativeReturn: false,
 } as const;
 
 function inspect() {

@@ -32,9 +32,9 @@ From there, use the dedicated entries to open:
 
 The root Session screen keeps the controls that affect how you work day to day:
 
-- **Session list** behavior such as density, grouping, hidden inactive sessions, and tags
+- **Session list** behavior such as density, grouping, hidden inactive sessions, tags, and where sessions needing attention appear
 - **New session shortcut** behavior such as whether project shortcuts reuse the newest project session selections
-- **Mobile session layout** for choosing the phone session cockpit or the classic focused-screen layout
+- **Mobile session layout** for choosing the phone session cockpit or the classic focused-screen layout, and for turning the cockpit's swipe-between-sessions gesture on or off
 - **Message sending** behavior such as interrupt vs queue/pending strategies
 - **Composer input behavior** such as **Enter to Send**
 - **Message history** scope as a dropdown
@@ -45,6 +45,25 @@ The root Session screen keeps the controls that affect how you work day to day:
 - **Attach / local-control launch defaults** such as tmux and Windows remote session mode
 
 This keeps the root screen focused on common workflow choices instead of mixing them with large advanced settings groups.
+
+## Session list attention settings
+
+The **Activity and status signals** group on the root **Session** screen decides how the session list treats sessions that want something from you.
+
+**Sessions needing attention** chooses where those sessions appear:
+
+- **Leave in normal position** (the default): the list stays exactly as grouped and sorted
+- **Group at top**: one **Needs attention** section above the rest of the list
+- **Move to top of current group**: sessions rise inside their own folder or workspace group instead
+
+**Keep sessions in Needs attention** sets what happens to a session once it no longer needs you:
+
+- **off** (the default): the session leaves the attention area, and you hold back the ones you care about with **Keep in Needs attention** from the session actions
+- **on**: every session stays until you choose **Remove from Needs attention**
+
+A per-session choice wins over that default in both directions. Both settings are account-wide, so they follow you to your other devices.
+
+Full guide: [Session read and unread state](./session-read-state)
 
 ## Session handoff settings
 
@@ -279,6 +298,16 @@ Classic keeps the older focused-screen layout for phone-sized sessions.
 Use Classic if you prefer opening Files, Git, Terminal, and details as separate focused routes instead of switching through the cockpit tab bar.
 
 You can change the setting at any time from **Settings → Session → Mobile session layout**.
+
+### Swipe between sessions
+
+**Swipe between sessions** is on by default and also synced with your account.
+
+While it is on, a horizontal swipe across the bottom band of the cockpit moves to the next or previous session in the session list order you last saw, without going back to the list first. Back still returns to the list.
+
+Turn it off if you would rather keep bottom-band swipes out of the way. The setting only affects the mobile app cockpit; the web and desktop clients are unaffected.
+
+Full description: [Swipe between sessions](/docs/clients/app#swipe-between-sessions).
 
 ### Message history
 

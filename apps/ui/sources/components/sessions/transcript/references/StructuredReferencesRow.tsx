@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
 
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -91,7 +91,7 @@ const SessionReferenceChip = React.memo((props: Readonly<{
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const target = useSessionReferenceTarget(props.sessionId);
 
     // The live title wins over the label captured when the reference was composed, so a renamed
@@ -108,8 +108,8 @@ const SessionReferenceChip = React.memo((props: Readonly<{
     const title = liveTitle ?? props.label;
 
     const openSession = React.useCallback(() => {
-        router.push(`/session/${encodeURIComponent(props.sessionId)}` as never);
-    }, [props.sessionId, router]);
+        void navigateToSession(props.sessionId);
+    }, [navigateToSession, props.sessionId]);
 
     const testID = `transcript-session-reference:${props.sessionId}`;
 

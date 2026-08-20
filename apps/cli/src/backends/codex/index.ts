@@ -86,6 +86,11 @@ export const agent = {
     await (await import('@/backends/codex/connectedServices/verifyResumeReachableCodex')).verifyResumeReachableCodex(input),
   resolveConnectedServiceCandidatePersistedSessionFile: ({ metadata }) =>
     resolveCodexConnectedServiceCandidatePersistedSessionFile({ metadata }),
+  // Codex persists no transcript path, so the handoff brief can only name its log
+  // by deriving it from the vendor resume id the caller already resolved.
+  resolveAgentNativeSessionLogPath: async ({ vendorResumeId }) =>
+    await (await import('@/backends/codex/utils/resolveCodexNativeSessionLogPath'))
+      .resolveCodexNativeSessionLogPath({ vendorResumeId }),
   getDirectSessionProviderOps: async () => (await import('@/backends/codex/directSessions/providerOps')).codexDirectSessionProviderOps,
   getSessionGoalControlAdapter: async () => codexAppServerGoalControlAdapter,
   getSessionCatalogControlAdapter: async () => codexAppServerCatalogControlAdapter,

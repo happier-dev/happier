@@ -1,6 +1,6 @@
 ---
 title: Session read and unread state
-description: Understand unread session badges, Mark as unread, Mark as read, and what happens when the session is already open.
+description: Understand unread session badges, Mark as unread, Mark as read, keeping a session in Needs attention, and what happens when the session is already open.
 ---
 
 Happier tracks whether each session has transcript activity you have not viewed yet.
@@ -28,21 +28,50 @@ When the session is currently unread, Happier shows **Mark as read**.
 
 ## What Mark as unread does
 
-Use **Mark as unread** when you want a session to stay visible as something to revisit.
+Use **Mark as unread** when the session still holds activity you have not actually taken in.
 
 For example:
 
-- you opened a session but want to come back later
-- you read enough to know it still needs attention
-- you want to keep a session in your unread workflow after triaging it
+- you opened a session by accident and want it to count as new again
+- you skimmed the last turn and want to read it properly later
 
 When you mark a session unread, Happier moves your read position to just before the latest committed transcript activity. The transcript does not change, and no message is created or deleted.
+
+Marking a session unread is not a good way to keep a session in front of you after you have read it, because opening it again clears the unread state and the session drops back down the list. Use [Keep in Needs attention](#keeping-a-session-in-needs-attention) for that.
 
 ## What Mark as read does
 
 Use **Mark as read** when the session no longer needs unread attention.
 
 Happier moves your read position to the latest committed transcript activity. The unread badge clears for that session unless newer activity arrives afterwards.
+
+## Keeping a session in Needs attention
+
+Read state tracks whether you have seen a session yet. It is a poor fit for a session you have already read and still want near the top, because reading it is exactly what clears the signal.
+
+**Keep in Needs attention** covers that case directly. A session you keep stays in the attention area of the session list whatever its read state, until you remove it.
+
+- **Keep in Needs attention** holds the session there after you read it.
+- **Remove from Needs attention** lets it move back down the list again.
+
+You will find it with the other session actions, alongside **Mark as unread**. Session-list multi-select offers the same choice for several sessions at once.
+
+A kept session shows **Kept in attention** as its status line, so it stays distinguishable from a session that is in the attention area because it is unread, ready, or waiting on you. Kept sessions also sort after those, so a session that genuinely needs you still comes first.
+
+Your choice is stored per session on the server, so it follows you across devices and browser windows for the same account.
+
+### Turning the attention area on
+
+The attention area itself comes from **Settings → Session → Sessions needing attention**, which is **Leave in normal position** by default. Set it to **Group at top** or **Move to top of current group** first; until then nothing is promoted and keeping a session has nothing to hold it in.
+
+### Choosing the default
+
+**Settings → Session → Keep sessions in Needs attention** decides what happens to sessions you have not made a choice about:
+
+- **off** (the default): sessions leave the attention area as soon as they no longer need you, and you keep the ones you care about one at a time
+- **on**: every session stays in the attention area until you remove it, which turns the area into a list you clear by hand
+
+A per-session choice always wins over the default, in both directions: a session you removed stays out of the attention area even when the default is on.
 
 ## When the session is already open
 

@@ -372,6 +372,22 @@ export type AgentCatalogEntry = Readonly<{
     input: ConnectedServicePersistedSessionCandidateParams,
   ) => string | null;
   /**
+   * Optional provider-owned derivation of this Agent's own session log for a
+   * vendor resume id.
+   *
+   * The handoff brief may point the incoming Agent at the log the departing one
+   * kept. An Agent that PERSISTS that path declares
+   * `vendorResumeContinuityProofField` and generic code reads it out of metadata
+   * without naming a vendor key; this hook is for an Agent that persists nothing
+   * and can only DERIVE the path — Codex names its rollout file after the thread
+   * id under a date-partitioned sessions root. The caller resolves the vendor
+   * resume id and verifies the returned path against the filesystem; the provider
+   * owns only the "where would that id's log be" step.
+   */
+  resolveAgentNativeSessionLogPath?: (
+    input: Readonly<{ vendorResumeId: string }>,
+  ) => Promise<string | null> | string | null;
+  /**
    * Optional provider-owned goal control adapter for inactive/offline local sessions.
    *
    * Generic CLI/session code resolves this through the catalog so provider-specific

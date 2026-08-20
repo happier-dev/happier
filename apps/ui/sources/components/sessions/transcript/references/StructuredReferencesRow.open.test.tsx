@@ -8,6 +8,7 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 (globalThis as any).__DEV__ = false;
 
 const routerPushSpy = vi.fn();
+const routerNavigateSpy = vi.fn();
 const flashListCompatMockState = vi.hoisted(() => ({
     mappingKeyCalls: [] as Array<Readonly<{ index: number; itemKey: string | number | bigint }>>,
 }));
@@ -42,7 +43,7 @@ vi.hoisted(async () => {
         router: async () => {
             const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
             const expoRouterMock = createExpoRouterMock({
-                router: { push: routerPushSpy },
+                router: { push: routerPushSpy, navigate: routerNavigateSpy },
             });
             return expoRouterMock.module;
         },
@@ -76,6 +77,7 @@ describe('StructuredReferencesRow', () => {
         sessionStoreState.sessions = {};
         sessionStoreState.deletedSessionIds = [];
         routerPushSpy.mockClear();
+        routerNavigateSpy.mockClear();
     });
 
     it('routes reference chip keys through the FlashList mapping helper', async () => {
@@ -175,7 +177,8 @@ describe('StructuredReferencesRow', () => {
         expect(screen.getTextContent()).not.toContain('Title at compose time');
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:other-session');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/other-session');
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/other-session', expect.any(Object));
+        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
     it('keeps the composed label when a present session has no resolved metadata', async () => {

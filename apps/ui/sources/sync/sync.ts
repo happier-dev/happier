@@ -224,7 +224,6 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { projectManager } from './runtime/orchestration/projectManager';
 import { clearMountedSessionRealtimeScmConsumerScopes } from './runtime/sessionRealtimeScmConsumers';
-import { registerSessionTranscriptDerivedCacheClear } from './runtime/sessionTranscriptDerivedCaches';
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
@@ -854,6 +853,7 @@ type SessionOrganizationSyncState = Pick<
     | 'sessionOrganizationFolderAssignmentsBySessionKey'
     | 'sessionOrganizationTagsByTagKey'
     | 'sessionOrganizationTagAssignmentsBySessionKey'
+    | 'sessionOrganizationAttentionStandingsBySessionKey'
     | 'sessionOrganizationOrderEntriesByScopeKey'
     | 'sessionOrganizationLabelsByLabelKey'
 >;
@@ -872,6 +872,7 @@ function buildOrganizationProjectionForServer(
         folderAssignmentsBySessionKey: state.sessionOrganizationFolderAssignmentsBySessionKey,
         tagsByTagKey: state.sessionOrganizationTagsByTagKey,
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
+        attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     }, normalizedServerId);
@@ -931,7 +932,6 @@ class Sync {
       private readonly usesPersistentDesktopSync = isTauriDesktop();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
-    private detachEncryptionTranscriptCacheClear: (() => void) | null = null;
     private sessionsSync: InvalidateSync;
     private fetchSessionsInFlight: { generation: number; promise: Promise<void> } | null = null;
     private fetchMoreSessionsInFlight: Promise<void> | null = null;
@@ -1488,7 +1488,6 @@ class Sync {
 
       private configureEncryptionRuntime(encryption: Encryption, accountId: string): void {
           const serverId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
-          this.attachEncryptionTranscriptCacheRelease(encryption);
           encryption.configureAesBatchConcurrencyLimit(this.syncTuning.encryptionAesBatchConcurrencyLimit);
           // Routing is NOT set here. It arrives with the instance: Encryption resolves it
           // from SyncTuning at construction, so every instance — active, server-scoped RPC,
@@ -1507,12 +1506,32 @@ class Sync {
           }
       }
 
-      private attachEncryptionTranscriptCacheRelease(encryption: Encryption): void {
-          this.detachEncryptionTranscriptCacheClear?.();
-          this.detachEncryptionTranscriptCacheClear = registerSessionTranscriptDerivedCacheClear((sessionId) => {
-              encryption.clearSessionCache(sessionId);
-          });
-      }
+      /**
+       * Decrypted plaintext deliberately does NOT hang off the transcript-derived-cache
+       * seam.
+       *
+       * That seam exists for memo caches whose entries root store objects — the
+       * per-session message arrays in `sync/store/hooks.ts` keep a `SessionMessages`
+       * entry alive through `sourceRef`s, so dropping the store entry without clearing
+       * them frees nothing. A `DecryptedMessage` is a plain record and roots none of
+       * that, so it never belonged to that concern.
+       *
+       * Registering it there conflated two different lifetimes and cost far more than it
+       * saved: bounded retention eviction (`evictSessionMessages`) fires the seam, so
+       * every evicted transcript ALSO threw away plaintext whose validity had not
+       * changed at all — the cache is keyed by `(messageId, ciphertext fingerprint)` and
+       * stays correct across an eviction. Returning to the session then paid full
+       * decryption again. Measured on device 2026-08-18, returning to a session parked
+       * past the retention grace: `toDecrypt 368, cached 0` — a 0% hit rate and 1.6s of
+       * re-decryption for memory that the encryption cache's own byte budget was already
+       * bounding.
+       *
+       * The two lifetimes that genuinely invalidate plaintext still clear it, each at its
+       * own owner: a session key change (`initializeSessionEncryption`) and session
+       * deletion (`removeSessionEncryption`, reached from the delete path in
+       * `syncSessions`). Size is bounded by the cache's LRU byte budget. Nothing here
+       * needs a third opinion.
+       */
 
     setMessageTransport(transport: SyncMessageTransport): void {
         this.messageTransport = transport;
@@ -5941,7 +5960,7 @@ class Sync {
 
       public async fetchUserMessageHistoryPage(
           sessionId: string,
-          options?: Readonly<{ beforeSeq?: number | null; limit?: number }>,
+          options?: Readonly<{ beforeSeq?: number | null; limit?: number; turnProjection?: boolean }>,
       ): Promise<FetchUserMessageHistoryPageResult> {
           const normalizedSessionId = String(sessionId ?? '').trim();
           if (!normalizedSessionId) return { status: 'not_ready' };
@@ -5953,6 +5972,7 @@ class Sync {
               sessionEncryptionMode,
               beforeSeq: options?.beforeSeq ?? null,
               limit: options?.limit ?? USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+              ...(options?.turnProjection === true ? { turnProjection: true } : {}),
               request: this.createSessionMessagesRequest(normalizedSessionId),
               getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
           });
@@ -6888,6 +6908,7 @@ class Sync {
                                     includeFolders: plan.includeFolders,
                                     includeTags: plan.includeTags,
                                     includeLabels: plan.includeLabels,
+                                    includeAttentionStandings: true,
                                     assignmentSessionIds: plan.assignmentSessionIds,
                                     folderIds: plan.folderIds,
                                     tagIds: plan.tagIds,

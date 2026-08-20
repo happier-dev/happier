@@ -373,6 +373,7 @@ export {
 } from './sessionControls/publish.js';
 export {
   resolveVendorResumeIdFromSessionMetadata,
+  resolveAgentNativeTranscriptPathFromSessionMetadata,
   evaluateVendorResumeEligibility,
   type VendorResumeEligibility,
   type VendorResumeEligibilityReasonCode,
@@ -393,8 +394,14 @@ export {
 export {
   buildHappierReplayPromptFromDialog,
   fitHappierReplaySeedWithinTotalBudget,
+  measureHappierReplayDialogLineChars,
+  planHappierReplayTranscriptCharBudget,
+  HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,
   type HappierReplayContinuity,
   type HappierReplayDialogItem,
+  type HappierReplayFrameParams,
+  type HappierReplayInlinedTranscriptRangeV1,
+  type HappierReplayRetrievalPointerV1,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';
 export {

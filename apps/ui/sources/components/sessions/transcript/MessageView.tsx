@@ -20,7 +20,7 @@ import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommitted
 import { shouldShowTranscriptRowActions, shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/messageCopyVisibility';
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import type { StructuredMessageRendererParams } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
-import { usePathname, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
@@ -103,7 +103,6 @@ type SessionFileDeepLinkRouter = Pick<ReturnType<typeof useRouter>, 'push'>;
 
 function pushSessionFileDeepLink(
   router: SessionFileDeepLinkRouter,
-  _currentPathname: string | null | undefined,
   params: SessionFileDeepLinkParams,
 ): void {
   const href = buildSessionFileDeepLink(params);
@@ -121,7 +120,7 @@ function useStructuredMessageJumpHandler(
   }, [router]);
 
   const handler = React.useCallback((target: Parameters<NonNullable<StructuredMessageRendererParams['onJumpToAnchor']>>[0]) => {
-    pushSessionFileDeepLink(routerRef.current, null, {
+    pushSessionFileDeepLink(routerRef.current, {
       sessionId,
       filePath: target.filePath,
       source: target.source,
@@ -506,7 +505,6 @@ function UserTextBlock(props: {
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
-  const pathname = usePathname();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const handleJumpToAnchor = useStructuredMessageJumpHandler(props.sessionId, props.canOpenFiles);
 
@@ -544,8 +542,8 @@ function UserTextBlock(props: {
     });
   }, [attachmentsMeta]);
   const handleOpenAttachmentPath = React.useCallback((filePath: string) => {
-    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-  }, [pathname, props.sessionId, router]);
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
 
   const unsupportedContentText = unsupportedContentMeta
     ? resolveUnsupportedContentText({
@@ -610,6 +608,7 @@ function UserTextBlock(props: {
   const selectionRow = useOptionalTranscriptSelectionRow(props.message.id);
   const selectionModeActionsVisible = selectionEnabled && selectionRow.isSelectionMode;
   const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
+  const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const workspacePath = props.messageDisplayCommon.workspacePath;
   const handleMarkdownLinkPress = React.useCallback((url: string) => {
@@ -617,15 +616,15 @@ function UserTextBlock(props: {
     const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
     if (!resolved) return false;
     const anchor = resolved.anchor ?? null;
-    pushSessionFileDeepLink(router, pathname, {
+    pushSessionFileDeepLink(router, {
       sessionId: props.sessionId,
       filePath: resolved.filePath,
       ...(anchor ? { source: 'file' as const, anchor } : {}),
     });
     return true;
-  }, [pathname, props.canOpenFiles, props.sessionId, router, workspacePath]);
+  }, [props.canOpenFiles, props.sessionId, router, workspacePath]);
   const seq = resolveTranscriptMessageSeq(props.message);
-  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled, agentSwitchingEnabled });
   const forkSemantics = React.useMemo(() => {
     if (seq == null) return null;
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
@@ -973,7 +972,6 @@ function AgentTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const fallbackTextSelectable = shouldEnableFallbackTextNativeSelection(Platform.OS);
   const router = useRouter();
-  const pathname = usePathname();
   const handleJumpToAnchor = useStructuredMessageJumpHandler(props.sessionId, props.canOpenFiles);
   const isVoiceAgentTurn = React.useMemo(() => {
     const envelope = parseHappierMetaEnvelope(props.message.meta);
@@ -1007,8 +1005,8 @@ function AgentTextBlock(props: {
   const sessionMediaInlineImages = parsedSessionMediaMeta.inlineImages;
   const unavailableSessionMedia = parsedSessionMediaMeta.unavailableMedia;
   const handleOpenMediaPath = React.useCallback((filePath: string) => {
-    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-  }, [pathname, props.sessionId, router]);
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
   const unsupportedContentText = unsupportedContentMeta
     ? resolveUnsupportedContentText({
       presentation: resolveUnsupportedContentPresentation({
@@ -1086,6 +1084,7 @@ function AgentTextBlock(props: {
   }
 
   const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
+  const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const workspacePath = props.messageDisplayCommon.workspacePath;
   const handleMarkdownLinkPress = React.useCallback((url: string) => {
@@ -1093,15 +1092,15 @@ function AgentTextBlock(props: {
     const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
     if (!resolved) return false;
     const anchor = resolved.anchor ?? null;
-    pushSessionFileDeepLink(router, pathname, {
+    pushSessionFileDeepLink(router, {
       sessionId: props.sessionId,
       filePath: resolved.filePath,
       ...(anchor ? { source: 'file' as const, anchor } : {}),
     });
     return true;
-  }, [pathname, props.canOpenFiles, props.sessionId, router, workspacePath]);
+  }, [props.canOpenFiles, props.sessionId, router, workspacePath]);
   const seq = resolveTranscriptMessageSeq(props.message);
-  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled, agentSwitchingEnabled });
   const forkSemantics = React.useMemo(() => {
     if (seq == null) return null;
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
@@ -1509,8 +1508,18 @@ function ForkMessageButton(props: {
       sourceMessageId: props.messageId,
       sourcePreview: restored,
       writeForkInitialPrompt: true,
+      // DELIBERATELY NOT routed through `useNavigateToSession`, unlike the other 21 session-open
+      // call sites. This is a transcript ROW, rendered hundreds of times, and importing the
+      // session-opening owner here hangs this file's suites outright — bisected on a clean base,
+      // one variable: the module import alone reproduces it, while the hook call and the call site
+      // do not, and each of the owner's own imports is harmless in isolation.
+      //
+      // The migration would have bought this one fork-completion navigation server scoping and a
+      // singular history entry. That is real but small, and not worth putting the owner's module
+      // graph inside the hottest render surface in the app. If it is wanted later, pass an opener
+      // down from the host rather than importing the owner here.
       navigateToSession: (childSessionId) => {
-        router.push(`/session/${childSessionId}` as never);
+        router.push((`/session/${childSessionId}`) as any);
       },
       navigateToNewSession: (route) => {
         router.push(route as any);
@@ -1646,8 +1655,6 @@ function ToolCallBlock(props: {
   toolChromeCommon: TranscriptToolChromeCommon;
   toolRouteCommon: TranscriptToolRouteCommon;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
   const structuredPinHost = useRowActionHoverHost();
   const handleJumpToAnchor = useStructuredMessageJumpHandler(
     props.sessionId,

@@ -3,6 +3,8 @@ import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { useAllSessions } from '@/sync/store/hooks';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -25,6 +27,7 @@ import { groupMemorySearchHitsBySession } from './groupMemorySearchHitsBySession
 export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const machines = useAllMachines();
     const allSessions = useAllSessions();
@@ -241,7 +244,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                                     key={`${hit.sessionId}:${hit.seqFrom}:${hit.seqTo}:${idx}`}
                                     onPress={() => {
                                         const jumpSeq = typeof hit.seqFrom === 'number' ? Math.max(0, Math.trunc(hit.seqFrom)) : 0;
-                                        router.push(`/session/${encodeURIComponent(String(hit.sessionId))}?jumpSeq=${encodeURIComponent(String(jumpSeq))}` as any);
+                                        void navigateToSession(String(hit.sessionId), { query: { jumpSeq } });
                                     }}
                                     style={{
                                         padding: 12,

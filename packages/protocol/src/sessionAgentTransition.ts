@@ -356,8 +356,6 @@ export const SessionContinuationInspectionV1Schema = z.discriminatedUnion('type'
       protocolVersion: z.literal(1),
       /** In-place transition on the source machine. */
       sameSessionTransition: z.boolean(),
-      /** Same-Session only: an inactive native Agent conversation can be resumed. */
-      nativeReturn: z.boolean(),
     })
     .strict(),
   z
@@ -409,6 +407,102 @@ export function resolveSessionContinuationUnavailablePresentationV1(
   if (params.machinePresence === 'online') return 'update_cli';
   return 'update_or_reconnect';
 }
+
+/* ------------------------------------------------------------------------- *
+ * Handed-over context preview
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Rebuilds the activation brief one transition divider stands for.
+ *
+ * Nothing is stored to show: `replaySeedV1.seedText` is blanked the instant the
+ * target Agent accepts it, and the metadata record keeps one seed per Session,
+ * so a twice-switched Session has already lost the first. The divider's
+ * `sourceCutoffSeqInclusive` is the surviving input, and running the SAME
+ * bounded context pass over it reproduces what the target was handed without
+ * persisting a second copy of the conversation.
+ *
+ * It runs on the machine because that is where the pass runs: the retrieval
+ * walks the fork chain, opens the Session's stored content and decodes every
+ * provider dialect through the daemon's transcript decoder. A client that
+ * re-derived the dialog from its own rendered transcript would be a SECOND
+ * decision-maker about what the Agent was sent, free to disagree with the first
+ * — which is the one thing a surface claiming to show the handoff must not be.
+ *
+ * Read-only and effect-free: it reserves nothing, writes nothing, and grants no
+ * authority. A stale answer can only mislead a label.
+ */
+export const SessionAgentTransitionBriefPreviewRequestV1Schema = z
+  .object({
+    v: z.literal(1),
+    sessionId: z.string().trim().min(1),
+    /** The divider's recorded cutoff. Bounds the pass exactly as the transition did. */
+    sourceCutoffSeqInclusive: z.number().int().nonnegative(),
+    /**
+     * The boundary's two Agents, exactly as the divider records them.
+     *
+     * They are part of the boundary's identity, not decoration: the brief the
+     * transition built is composed for a specific reader, so the retrieval
+     * pointer it carries depends on which Agent is arriving, and the departing
+     * Agent's own recorded native transcript path depends on which Agent left.
+     * Rebuilding against today's current Agent would compose a brief for the
+     * wrong reader.
+     */
+    sourceAgentId: z.string().trim().min(1).max(128),
+    targetAgentId: z.string().trim().min(1).max(128),
+  })
+  .strict();
+export type SessionAgentTransitionBriefPreviewRequestV1 =
+  z.infer<typeof SessionAgentTransitionBriefPreviewRequestV1Schema>;
+
+/**
+ * `operation_unavailable` is the collapsed transport outcome, exactly as in
+ * {@link SessionContinuationInspectionUnavailableReasonV1Schema}: METHOD_NOT_AVAILABLE
+ * is produced both by a daemon predating the operation and by an unreachable
+ * machine, and the same client-side presentation owner splits them.
+ *
+ * `source_unreadable` is the daemon's own answer: the bounded retrieval failed
+ * or the Session's content could not be opened, so what it holds is unknown.
+ * That is NOT `empty`, and collapsing the two would show "nothing was carried
+ * over" for a conversation that was.
+ */
+export const SessionAgentTransitionBriefPreviewUnavailableReasonV1Schema = z.enum([
+  'operation_unavailable',
+  'unsupported_session',
+  'source_unreadable',
+]);
+export type SessionAgentTransitionBriefPreviewUnavailableReasonV1 =
+  z.infer<typeof SessionAgentTransitionBriefPreviewUnavailableReasonV1Schema>;
+
+export const SessionAgentTransitionBriefPreviewV1Schema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('rebuilt'),
+      protocolVersion: z.literal(1),
+      /**
+       * The rebuilt brief, byte-for-byte as the builder composes it for a real
+       * transition. Bounded by the same configured seed cap, so it cannot be
+       * larger than what the transition itself would have sent.
+       */
+      briefText: z.string().min(1).max(1_000_000),
+    })
+    .strict(),
+  /** The pass ran and the source carried nothing replayable. */
+  z
+    .object({
+      type: z.literal('empty'),
+      protocolVersion: z.literal(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('unavailable'),
+      reason: SessionAgentTransitionBriefPreviewUnavailableReasonV1Schema,
+    })
+    .strict(),
+]);
+export type SessionAgentTransitionBriefPreviewV1 =
+  z.infer<typeof SessionAgentTransitionBriefPreviewV1Schema>;
 
 /* ------------------------------------------------------------------------- *
  * Armed composer intent

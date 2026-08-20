@@ -41,6 +41,28 @@ export const SessionAgentTransitionDividerV1Schema = z
     v: z.literal(1),
     fromAgentId: z.string().trim().min(1).max(128),
     toAgentId: z.string().trim().min(1).max(128),
+    /**
+     * The source transcript cutoff the activation brief was built from — the
+     * `upToSeqInclusive` the bounded context pass actually used.
+     *
+     * It is here because it is the ONLY input to that pass which survives the
+     * cutover. `replaySeedV1.seedText` is blanked the instant the target Agent
+     * accepts it, and the metadata record holds one seed per Session, so a
+     * Session switched twice keeps only the newest. Without a per-boundary
+     * cutoff, "what was this Agent actually handed?" is unanswerable after the
+     * fact, and a reader that guessed from the divider's own seq would be wrong
+     * for every row admitted between the confirmed stop and the divider write.
+     *
+     * `0` means the pass carried nothing over — a recorded fact, not an absence.
+     *
+     * REQUIRED. The only writer that ever omitted it is an unreleased
+     * intermediate build of this feature, so accepting a cutoff-less sidecar
+     * would buy nothing and cost a third state every reader has to model. Such a
+     * sidecar fails the strict parse and the row degrades through the path this
+     * shape was already designed for: the whole sidecar is dropped and the
+     * stored prose is rendered, exactly as in an older reader.
+     */
+    sourceCutoffSeqInclusive: z.number().int().nonnegative(),
   })
   .strict();
 export type SessionAgentTransitionDividerV1 = z.infer<typeof SessionAgentTransitionDividerV1Schema>;
@@ -78,4 +100,28 @@ export function readSessionAgentTransitionDividerV1(
   if (sidecar === undefined) return null;
   const parsed = SessionAgentTransitionDividerV1Schema.safeParse(sidecar);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The stored-record shape a row MUST have before any process calls it a
+ * transition divider.
+ *
+ * {@link readSessionAgentTransitionDividerV1} reads the agent-event PAYLOAD; on
+ * its own it says nothing about the record carrying that payload. The divider is
+ * always written as a `role:'agent'` / `content.type:'event'` record, so a
+ * user-role (or non-event) row planted at the reserved localId with a matching
+ * sidecar must never be read as one. The server's cutover owner and the daemon's
+ * divider-evidence reader both answer that question — about the same rows, in
+ * different processes — so they answer it HERE rather than each re-deriving the
+ * wrapper checks.
+ */
+export function readSessionAgentTransitionDividerFromStoredRecordV1(
+  value: unknown,
+): SessionAgentTransitionDividerV1 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as { role?: unknown; content?: unknown };
+  if (record.role !== 'agent') return null;
+  const content = record.content as { type?: unknown; data?: unknown } | undefined;
+  if (!content || content.type !== 'event') return null;
+  return readSessionAgentTransitionDividerV1(content.data);
 }

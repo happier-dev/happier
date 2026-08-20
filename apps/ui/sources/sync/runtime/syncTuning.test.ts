@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { loadSyncTuning } from './syncTuning';
 
 describe('loadSyncTuning', () => {
+    it('keeps the session list on FlashList by default, and honours an explicit engine override', () => {
+        // Legend blanks the list in narrow cases that FlashList never showed, and the cause is not
+        // understood — see the long note on the type for everything already ruled out. The seam stays
+        // so the engine can be flipped back for investigation without a code change.
+        expect(loadSyncTuning().sessionListVirtualizedEngine).toBe('flashList');
+
+        expect(loadSyncTuning({
+            env: { EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({ sessionListVirtualizedEngine: 'legendList' }) },
+        }).sessionListVirtualizedEngine).toBe('legendList');
+    });
+
     it('keeps default message decrypt batches small enough for responsive page hydration', () => {
         const tuning = loadSyncTuning();
 

@@ -65,6 +65,26 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
     expect(failed.status).toBe('unavailable');
   });
 
+  /**
+   * An empty dialog that is KNOWN to be incomplete is not an empty source: what
+   * the chain holds is unknown. Only the retrieval owner can see the hole —
+   * every skip beneath it is a `continue` — so `historyIncomplete` is the fact
+   * that keeps "nothing to carry over" apart from "it could not be read".
+   *
+   * It is load-bearing for the same consumer as the rest of this file: the
+   * transition has already stopped the source, so calling an unreadable source
+   * empty would commit the switch and tell the reader everything worked while
+   * silently dropping the whole conversation.
+   */
+  it('reports an empty dialog that is known to be incomplete as unavailable, not an empty source', async () => {
+    mocks.hydrateReplayDialogFromForkChain.mockResolvedValueOnce({
+      dialog: [],
+      sourceCutoffSeqInclusive: 0,
+      historyIncomplete: true,
+    });
+    expect((await resolve()).status).toBe('unavailable');
+  });
+
   it('reports a dialog that yields no usable prompt text as an empty source, not a failure', async () => {
     // Retrieval succeeded; the rows simply carry nothing replayable. Nothing
     // failed, so nothing may be reported as unavailable.

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
@@ -14,7 +14,7 @@ export function ForkDividerRow(props: Readonly<{
   parentCutoffSeqInclusive: number;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
-  const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const parentSession = useSession(props.parentSessionId);
   const dividerId = `${props.parentSessionId}:${props.childSessionId}`;
   const parentName = parentSession ? getSessionName(parentSession) : null;
@@ -25,8 +25,8 @@ export function ForkDividerRow(props: Readonly<{
 
   const handleOpenParent = React.useCallback(() => {
     const seq = Math.max(0, Math.trunc(props.parentCutoffSeqInclusive));
-    router.push((`/session/${props.parentSessionId}?jumpSeq=${seq}`) as any);
-  }, [props.parentCutoffSeqInclusive, props.parentSessionId, router]);
+    void navigateToSession(props.parentSessionId, { query: { jumpSeq: seq } });
+  }, [navigateToSession, props.parentCutoffSeqInclusive, props.parentSessionId]);
 
   return (
     <TranscriptSeparatorRow

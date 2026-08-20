@@ -34,7 +34,7 @@ We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfur
 
 **On happier.dev, docs.happier.dev and guides.happier.dev**
 - **No cookies and no visitor ID**: The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
-- **Do Not Track and Global Privacy Control are honoured**: If your browser sends either signal, analytics never start at all.
+- **Global Privacy Control is honoured**: If your browser sends the GPC signal — Brave and DuckDuckGo do by default — analytics never start at all.
 - **First-party only**: Analytics requests go to a path on the site you are already reading and are forwarded to PostHog from our own server. The pages make no third-party requests.
 - **No IP addresses**: Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept; the address itself is never stored.
 - **What is recorded**: which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.

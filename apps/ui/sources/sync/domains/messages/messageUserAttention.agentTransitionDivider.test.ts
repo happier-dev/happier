@@ -23,7 +23,12 @@ import {
  * the shared `agentEventAttentionImpact` owner rather than testing it locally.
  */
 
-function dividerEvent(sidecar: unknown = { v: 1, fromAgentId: 'claude', toAgentId: 'codex' }) {
+function dividerEvent(sidecar: unknown = {
+    v: 1,
+    fromAgentId: 'claude',
+    toAgentId: 'codex',
+    sourceCutoffSeqInclusive: 29_979,
+}) {
     return {
         type: 'message',
         message: 'Continued with another Agent.',

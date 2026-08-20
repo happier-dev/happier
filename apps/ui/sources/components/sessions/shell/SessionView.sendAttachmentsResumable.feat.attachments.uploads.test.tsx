@@ -64,6 +64,12 @@ const sessionPendingMessagesState = vi.hoisted(() => ({
 const sessionTranscriptIdsState = vi.hoisted(() => ({
     current: [] as string[],
 }));
+// The store slice the canonical custody reader consults, kept separate from the
+// `useSessionPendingMessages` hook state so a case can model the real ordering:
+// the transition RPC answers first, and the pending row syncs afterwards.
+const sessionPendingStoreState = vi.hoisted(() => ({
+    current: {} as Record<string, { messages: any[]; discarded: any[]; isLoaded: boolean }>,
+}));
 const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 const draftHookState = vi.hoisted(() => ({
     valuesBySessionId: new Map<string, string>(),
@@ -74,7 +80,10 @@ const pendingFireAndForget: Promise<unknown>[] = [];
 
 const resolveSessionComposerSendMock = vi.fn((..._args: any[]) => ({ kind: 'send', text: 'hello' }));
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -407,7 +416,7 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleStub({
             storage: createStorageStoreStub(() => ({
                     sessions: { s1: sessionState.session },
-                    sessionPending: {},
+                    sessionPending: sessionPendingStoreState.current,
                     sessionMessages: {},
                     machines: {
                         m1: {
@@ -616,6 +625,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         chatListPropsSpy.mockClear();
         sessionPendingMessagesState.current = [];
         sessionPendingMessagesState.listeners.clear();
+        sessionPendingStoreState.current = {};
         armedContinuationState.intent = null;
         armedContinuationState.localId = null;
         clearArmedContinuationSpy.mockClear();
@@ -2111,16 +2121,101 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             return screen;
         }
 
+        /**
+         * The real ordering: the daemon answers, and the canonical pending row
+         * for that exact localId reaches this client a beat later. Notifying the
+         * pending-message listeners is the sync arriving — the same re-render the
+         * store publishes in production.
+         */
+        function syncPendingRowForLocalId(localId: string) {
+            sessionPendingStoreState.current = {
+                s1: { messages: [{ source: 'server_pending', localId }], discarded: [], isLoaded: true },
+            };
+            act(() => {
+                for (const listener of sessionPendingMessagesState.listeners) listener();
+            });
+        }
+
+        it('tells the reader when the switch left their message queued behind no runtime', async () => {
+            // The arm a real Session hit: the cutover committed, the exact localId
+            // reached canonical admission, and NO runtime came up — so `accepted`
+            // is the whole of what the daemon can claim. It carries no notice by
+            // design, on the contract that the queued-message owner states the
+            // fact instead. That contract can only hold if custody is WATCHED:
+            // the pending row lands after this call returns, and a disposition
+            // decided once against `absent` is never re-decided. It was not, and
+            // the reader was told nothing at all.
+            const screen = await sendArmedAndReadBanner({ type: 'accepted', localId: 'armed-local-id' });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                // Nothing yet, correctly: no canonical fact has arrived.
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed')).toHaveLength(0);
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                const banner = screen.findAllByTestId('session-pendingQueue-resumeFailed');
+                expect(banner.length).toBeGreaterThan(0);
+                expect(screen.getTextContent()).toContain('session.pendingQueuedResumeFailedTitle');
+                // Never an invitation to send the same input twice: the only action
+                // is the Session's own resume owner, which drains the queue.
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed-retry').length).toBeGreaterThan(0);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not let a live Session view silence an activation failure the daemon proved', async () => {
+            // `target_start_failed` is the daemon's own account: the input was
+            // admitted and the target then failed to start. A client-side liveness
+            // read must never weaken a definite daemon arm, so this must be stated
+            // even while this client still believes the Session is running.
+            sessionState.session.active = true;
+            sessionState.session.presence = 'online';
+            armedContinuationState.intent = {
+                v: 1,
+                mode: 'same_session',
+                sourceAgentId: 'codex',
+                selection: { v: 1, agentId: 'claude' },
+            };
+            armedContinuationState.localId = 'armed-local-id';
+            modalAlertSpy.mockClear();
+            runSessionAgentTransitionSpy.mockImplementationOnce(async () => ({
+                type: 'partially_applied',
+                localId: 'armed-local-id',
+                applied: 'current_view_committed',
+                code: 'target_start_failed',
+            }) as any);
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            pendingFireAndForget.length = 0;
+            if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+            try {
+                await sendOneAttachment(screen.tree);
+                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
         it('reports a committed switch as a composer warning, never as a dismissible error', async () => {
             // This arm is a partial SUCCESS: the Session really did move to the
             // target and only the message failed. Reporting it as "Error" behind an
             // OK button — and discarding the fact once dismissed — is the original
             // defect, so the assertion is on both halves.
+            // `divider_missing` rather than `target_start_failed`: the latter now
+            // rides the queued-input contract (the daemon proved the input was
+            // admitted before activation was even attempted), which the two cases
+            // above own. Every OTHER code at this depth still leaves the message
+            // unsent, and those are what this asserts.
             const screen = await sendArmedAndReadBanner({
                 type: 'partially_applied',
                 localId: 'armed-local-id',
                 applied: 'current_view_committed',
-                code: 'target_start_failed',
+                code: 'divider_missing',
             });
             try {
                 expect(modalAlertSpy).not.toHaveBeenCalled();
@@ -2146,7 +2241,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 type: 'partially_applied',
                 localId: 'armed-local-id',
                 applied: 'current_view_committed',
-                code: 'target_start_failed',
+                code: 'divider_missing',
             });
             try {
                 resumeSessionSpy.mockClear();

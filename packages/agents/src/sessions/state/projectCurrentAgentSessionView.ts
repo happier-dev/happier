@@ -19,9 +19,9 @@ import { AGENT_IDS, type AgentId } from '../../types.js';
  * This projector is intentionally CLEAR-LIST driven rather than carry-list
  * driven: session metadata is an open record shared by many owners, so an
  * allow-list would silently drop unrelated facts (workspace location, handoff
- * lineage, fork/replay metadata, connected services) the transition must
- * preserve. What it removes is exactly the set of Agent-scoped facts and
- * current-runtime projections that describe a runtime which no longer exists.
+ * lineage, fork/replay metadata) the transition must preserve. What it removes
+ * is exactly the set of Agent-scoped facts and current-runtime projections that
+ * describe a runtime which no longer exists.
  */
 
 /** Agent-scoped continuity/proof facts that are not the flat resume key itself. */
@@ -41,6 +41,30 @@ const AGENT_SCOPED_CONTINUITY_KEYS = [
   'acpTransportV1',
   'acpHistoryImportV1',
   'providerSessionInfoV1',
+] as const;
+
+/**
+ * The Session's connected-service auth binding and the materialized credential
+ * home that carries it.
+ *
+ * These are Agent-scoped, not Session-global: a binding names a `serviceId`
+ * the SOURCE Agent's catalog declares, and every reader resolves it against the
+ * Session's CURRENT Agent. Left in place across a transition, the Session
+ * declares the target while still bound to a service the target cannot apply —
+ * observed live as `openai-codex`/`codex6` surviving a switch to `claude`:
+ * the daemon spawn-preflighted the wrong service's credential, the target's
+ * runtime registration reconciled to
+ * `generation_application_scope_service_unsupported`, and `/session-started`
+ * answered 503 until the freshly started target died.
+ *
+ * The target's own binding is established by the caller through the canonical
+ * creation-time resolver, because it comes from the account's per-Agent stored
+ * default and this projector is pure.
+ */
+const AGENT_SCOPED_CONNECTED_SERVICE_KEYS = [
+  'connectedServices',
+  'connectedServicesUpdatedAt',
+  'connectedServiceMaterializationIdentityV1',
 ] as const;
 
 /**
@@ -145,10 +169,23 @@ export function projectCurrentAgentSessionView(params: Readonly<{
   metadata: Record<string, unknown>;
   target: CurrentAgentSessionViewTargetV1;
   /**
-   * Native resume id to write for the target. Omitted means a FRESH target,
-   * which is the Agent transition's contract in this tree — the predecessor
-   * discards an inactive Agent's native state rather than storing it. Physical
-   * handoff supplies the id it just established on the target machine.
+   * Native resume id to write for the target, and the ONLY writer of a flat
+   * vendor resume key — which is what keeps the one-identity invariant true by
+   * construction rather than by convention.
+   *
+   * Three callers supply one:
+   *
+   * - the same-Session Agent transition, on a NATIVE RETURN — the target ran
+   *   this Session on this machine before, so its own recorded conversation id
+   *   is republished here and the ordinary inactive-resume owner reads it back
+   *   out (`AM-24`);
+   * - physical Session handoff, with the id it just established on the target
+   *   machine;
+   * - nobody else.
+   *
+   * Omitted or empty means a FRESH target: the source Agent's key is dropped
+   * above and nothing replaces it. That is what every target with no record
+   * gets, including every target that never ran this Session.
    */
   nativeResumeId?: string | null;
   /** Defaults to `clear`; physical Session handoff passes `carry`. */
@@ -163,6 +200,7 @@ export function projectCurrentAgentSessionView(params: Readonly<{
     for (const key of AGENT_SCOPED_CONTINUITY_KEYS) delete next[key];
     for (const key of CURRENT_RUNTIME_PROJECTION_KEYS) delete next[key];
     for (const key of AGENT_SELECTION_KEYS) delete next[key];
+    for (const key of AGENT_SCOPED_CONNECTED_SERVICE_KEYS) delete next[key];
   }
 
   next.flavor = params.target.agentId;
