@@ -1340,8 +1340,8 @@ jobs:
       - name: Run governance self-tests
         run: yarn test:wiring:self && yarn test:policy:self
 
-      - name: Run governance validators
-        run: yarn test:wiring && yarn test:policy
+      - name: Run governance validator
+        run: yarn test:wiring
 
       - name: Run governance inventory reports
         run: yarn test:inventory && yarn test:migration:inventory

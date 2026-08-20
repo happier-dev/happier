@@ -90,13 +90,16 @@ const CLI_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration\.t
 const SERVER_INTEGRATION_RE = /\.(?:integration\.(?:test|spec)|real\.integration\.test)\.ts$/;
 const UNIT_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
-const ROOT_UNIT_PACKAGE_PREFIXES = [
+const ROOT_UNIT_PREFIXES = [
+  'apps/docs/',
+  'packages/privacy-kit/',
   'packages/protocol/',
   'packages/transfers/',
   'packages/agents/',
   'packages/cli-common/',
   'packages/connection-supervisor/',
   'packages/relay-server/',
+  'packages/sherpa-native/',
 ];
 
 export function resolveFeatureTagIssue(relativePath: string): string | null {
@@ -147,6 +150,7 @@ export function classifyTestFile(relativePath: string): LaneId | null {
     if (relativePath.startsWith('packages/tests/scripts/') && /\.test\.mjs$/.test(relativePath)) {
       return 'test:e2e:ui:wsrepl:lima:self';
     }
+    if (relativePath.includes('/suites/contracts/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     if (relativePath.includes('/suites/ui-e2e/')) return /\.spec\.ts$/.test(relativePath) ? 'test:e2e:ui' : null;
     if (relativePath.includes('/suites/providers/')) return /\.test\.ts$/.test(relativePath) ? 'test:providers' : null;
     if (relativePath.includes('/suites/stress/')) return /\.test\.ts$/.test(relativePath) ? 'test:stress' : null;
@@ -162,7 +166,7 @@ export function classifyTestFile(relativePath: string): LaneId | null {
     return /\.test\.mjs$/.test(relativePath) ? 'release-runtime:test' : null;
   }
 
-  if (ROOT_UNIT_PACKAGE_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) {
+  if (ROOT_UNIT_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) {
     return UNIT_TEST_RE.test(relativePath) ? 'test' : null;
   }
 

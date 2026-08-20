@@ -24,6 +24,35 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile('apps/stack/scripts/runtime.real.integration.test.mjs'), 'stack:test:real-integration');
 });
 
+test('classifies package-local unit and contract tests through their existing root lanes', () => {
+  const rootUnitTests = [
+    'apps/docs/scripts/build.test.mjs',
+    'apps/docs/scripts/checkContent.test.mjs',
+    'apps/docs/scripts/generateAgentReference.test.mjs',
+    'apps/docs/scripts/generateRateLimitReference.test.mjs',
+    'packages/privacy-kit/src/modules/crypto/deriveKey.test.ts',
+    'packages/privacy-kit/src/modules/crypto/hmac_sha512.spec.ts',
+    'packages/privacy-kit/src/modules/crypto/pbkdf2_sha512.spec.ts',
+    'packages/privacy-kit/src/modules/formats/base64.spec.ts',
+    'packages/privacy-kit/src/modules/formats/text.test.ts',
+    'packages/privacy-kit/src/modules/tokens/ephemeral.spec.ts',
+    'packages/privacy-kit/src/modules/tokens/persistent.spec.ts',
+    'packages/privacy-kit/src/modules/tree/keyTree.spec.ts',
+    'packages/sherpa-native/scripts/resolve-sherpa-checksum.test.mjs',
+    'packages/sherpa-native/scripts/sherpa-checksum-integration.test.mjs',
+    'packages/sherpa-native/scripts/sherpa-native-build-configuration.test.mjs',
+  ];
+
+  for (const filePath of rootUnitTests) {
+    assert.equal(classifyTestFile(filePath), 'test', filePath);
+  }
+
+  assert.equal(
+    classifyTestFile('packages/tests/suites/contracts/runtimeActivityProjection.test.ts'),
+    'test:e2e:core:fast',
+  );
+});
+
 test('accepts valid feature ids and flags invalid ones', () => {
   const validFeatureId = FEATURE_IDS[0];
   assert.equal(resolveFeatureTagIssue(`apps/server/sources/app/features/example.feat.${validFeatureId}.spec.ts`), null);
