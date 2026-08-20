@@ -1,5 +1,4 @@
 import {
-  applyCodingPromptBehaviorOverrideToSettings,
   buildCodingSessionPromptPlanBaseV1,
   buildPromptPlanDiagnosticsV1,
   buildPromptPlanV1,
@@ -14,9 +13,9 @@ import {
   resolveCliPromptStackSystemAppendBlocks,
   type PromptArtifactRecord,
 } from '@/agent/promptLibrary/resolveCliPromptStackSystemAppendBlocks';
-import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
+import { resolveSessionCodingPromptSettings } from './resolveSessionCodingPromptSettings';
 
 type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactRecord | null>;
 export type { PromptArtifactRecord };
@@ -61,19 +60,10 @@ export async function resolveEffectiveCodingPromptPlan(
       ? args.memoryRecallGuidanceEnabled
       : await resolveCliMemoryRecallGuidanceEnabled();
 
-  // Resolve the selected profile's per-profile coding prompt behavior override (if any)
-  // and merge it over the global account settings for base-prompt rendering only.
-  // The override is agent-agnostic; resolution is by profile id and non-throwing, so an
-  // unknown / incompatible / built-in profile simply falls back to the global default.
-  const selectedProfileId = typeof args.profileId === 'string' ? args.profileId.trim() : '';
-  const selectedProfileOverride = selectedProfileId
-    ? readProfilesFromAccountSettings(settings).customProfiles
-        .find((profile) => profile.id === selectedProfileId)?.codingPromptBehaviorV1 ?? null
-    : null;
-  const basePromptSettings = applyCodingPromptBehaviorOverrideToSettings({
-    settings,
-    override: selectedProfileOverride,
-  });
+  // One resolved coding-prompt behavior decision per spawn: the selected profile's
+  // override merged over global account settings. Both the base prompt blocks and the
+  // tool-delivery appendix consume this merged record so they can never disagree.
+  const basePromptSettings = resolveSessionCodingPromptSettings({ settings, profileId: args.profileId });
 
   const basePlan = buildCodingSessionPromptPlanBaseV1({
     settings: basePromptSettings,
@@ -108,7 +98,9 @@ export async function resolveEffectiveCodingPromptPlan(
       delivery: toolDelivery,
       sessionId,
       directory,
-      settings,
+      // Merged settings (profile override applied): the appendix must honor the same
+      // resolved coding-prompt behavior as the base blocks above.
+      settings: basePromptSettings,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,
