@@ -78,6 +78,10 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                 : t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
         },
     ] as const;
+    const maxSeedCharsRangeNotice = t('settingsSession.replayResume.maxSeedCharsRange', {
+        min: SESSION_REPLAY_MAX_SEED_CHARS_MIN,
+        max: SESSION_REPLAY_MAX_SEED_CHARS_MAX,
+    });
     const commitSessionReplayMaxSeedCharsDraft = React.useCallback(() => {
         const sanitized = sanitizeNumericInput(sessionReplayMaxSeedCharsDraft);
         if (sanitized.length === 0) {
@@ -160,10 +164,23 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 value={sessionReplayMaxSeedCharsDraft}
                                 keyboardType={Platform.select({ ios: 'number-pad', default: 'numeric' }) as any}
+                                // The visible label is not attached to the field, and the
+                                // commit below moves an out-of-range number to the nearest
+                                // limit. A field that adjusts what was typed has to say so
+                                // and name its bounds first, or the adjustment reads as the
+                                // setting being ignored.
+                                accessibilityLabel={t('settingsSession.replayResume.maxSeedCharsTitle')}
+                                accessibilityHint={maxSeedCharsRangeNotice}
                                 onChangeText={(value) => setSessionReplayMaxSeedCharsDraft(sanitizeNumericInput(value))}
                                 onBlur={commitSessionReplayMaxSeedCharsDraft}
                                 onEndEditing={commitSessionReplayMaxSeedCharsDraft}
                             />
+                            <Text
+                                testID="settings-session-replay-maxSeedChars-range"
+                                style={styles.fieldNotice}
+                            >
+                                {maxSeedCharsRangeNotice}
+                            </Text>
                         </View>
                         {executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' ? (
                             <View style={[styles.inputContainer, { paddingTop: 0 }]}>

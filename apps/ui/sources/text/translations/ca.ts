@@ -833,7 +833,6 @@ export const ca: TranslationStructure = {
     runs: {
         title: 'Execucions',
         empty: 'Encara no hi ha execucions.',
-                notRebuildable: "Aquí es va transmetre context, però la transcripció d’aquesta sessió ja no el conté, així que no es pot reconstruir.",
         groupLabel: ({ groupId }: { groupId: string }) => `Grup ${groupId}`,
         showFinished: 'Mostra les finalitzades',
         unknownMachine: 'Màquina desconeguda',
@@ -4835,6 +4834,7 @@ deps: {
                 loading: "S’està reconstruint…",
                 empty: "No s’ha transferit res. No hi havia cap conversa anterior per reproduir.",
                 unavailableOperation: "Actualitza o torna a connectar la CLI en aquesta màquina per reconstruir-ho.",
+                notRebuildable: "Aquí es va transmetre context, però la transcripció d’aquesta sessió ja no el conté, així que no es pot reconstruir.",
                 unavailableSource: "Happier no ha pogut llegir la transcripció d’aquesta sessió, així que no ho pot reconstruir.",
                 unreachable: "Happier no ha pogut contactar amb la màquina que allotja aquesta sessió.",
                 retryAction: "Torna-ho a provar",
@@ -7860,6 +7860,7 @@ settingsSession: {
                 recentMessagesPlaceholder: '16',
                 maxSeedCharsTitle: 'Límit de mida del seed (chars)',
                 maxSeedCharsPlaceholder: '50000',
+                maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Entre ${min} i ${max} caràcters. Un número fora d’aquest interval es desa com al límit més proper.`,
             },
           handoff: settingsSessionHandoffTranslationExtensions.ca,
           sessionCreation: {

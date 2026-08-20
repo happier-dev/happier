@@ -753,7 +753,6 @@ export const fr: TranslationStructure = {
     runs: {
         title: 'Exécutions',
         empty: 'Aucun run pour l’instant.',
-                notRebuildable: "Du contexte a bien été transmis ici, mais la transcription de cette session ne le contient plus : impossible de le reconstruire.",
         groupLabel: ({ groupId }: { groupId: string }) => `Groupe ${groupId}`,
         showFinished: 'Afficher terminés',
         unknownMachine: 'Machine inconnue',
@@ -4819,6 +4818,7 @@ export const fr: TranslationStructure = {
                 loading: "Reconstruction…",
                 empty: "Rien n’a été transmis. Il n’y avait aucune conversation antérieure à rejouer.",
                 unavailableOperation: "Mettez à jour ou reconnectez la CLI sur cette machine pour reconstruire ceci.",
+                notRebuildable: "Du contexte a bien été transmis ici, mais la transcription de cette session ne le contient plus : impossible de le reconstruire.",
                 unavailableSource: "Happier n’a pas pu lire la transcription de cette session : impossible de reconstruire ceci.",
                 unreachable: "Happier n’a pas pu joindre la machine qui héberge cette session.",
                 retryAction: "Réessayer",
@@ -7960,6 +7960,7 @@ settingsSession: {
               recentMessagesPlaceholder: '16',
               maxSeedCharsTitle: 'Taille max du contexte de replay (caractères)',
               maxSeedCharsPlaceholder: '50000',
+              maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Entre ${min} et ${max} caractères. Un nombre hors de cette plage est enregistré à la limite la plus proche.`,
           },
           toolDetailLevel: {
               titleOnlyTitle: 'Titre seul',

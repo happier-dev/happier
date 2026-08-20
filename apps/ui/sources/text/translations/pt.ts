@@ -930,7 +930,6 @@ export const pt: TranslationStructure = {
   runs: {
     title: "Execuções",
     empty: "Nenhuma execução ainda.",
-          notRebuildable: "Foi transferido contexto aqui, mas a transcrição desta sessão já não o contém, por isso não pode ser reconstruído.",
     showFinished: "Mostrar finalizadas",
     unknownMachine: "Máquina desconhecida",
     failedToLoad: "Falha ao carregar execuções",
@@ -5286,6 +5285,7 @@ export const pt: TranslationStructure = {
           loading: "A reconstruir…",
           empty: "Nada foi transferido. Não havia conversa anterior para reproduzir.",
           unavailableOperation: "Atualize ou reconecte a CLI nesta máquina para reconstruir isto.",
+          notRebuildable: "Foi transferido contexto aqui, mas a transcrição desta sessão já não o contém, por isso não pode ser reconstruído.",
           unavailableSource: "O Happier não conseguiu ler a transcrição desta sessão, por isso não pode reconstruir isto.",
           unreachable: "O Happier não conseguiu contactar a máquina que aloja esta sessão.",
           retryAction: "Tentar novamente",
@@ -8558,6 +8558,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Limite de seed (caracteres)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Entre ${min} e ${max} caracteres. Um número fora deste intervalo é guardado como o limite mais próximo.`,
       },
       toolDetailLevel: {
         titleOnlyTitle: "Somente título",

@@ -27,6 +27,18 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 installSessionSettingsCommonModuleMocks({
+    // The shared mock answers a parameterized key with `{ key, params }`, a
+    // shape the real `t` can never return, and this view renders one such key
+    // as a child. Serialize it here rather than teaching the whole tree a new
+    // mock shape.
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => params
+                ? `${key}(${Object.entries(params).map(([name, value]) => `${name}=${String(value)}`).join(',')})`
+                : key,
+        });
+    },
     storage: async (importOriginal) => createStorageModuleMock({
         importOriginal,
         overrides: {
@@ -148,6 +160,21 @@ describe('SessionResumeSettingsView', () => {
     // seed is bounded by CHARACTERS. Only the compatibility-only
     // `continueWithReplay` ingress reads the count, so the control could not
     // change any outcome a user can reach. The stored key stays.
+    it('states the budget bounds it will clamp to, and names the field programmatically', async () => {
+        const mod = await import('./SessionResumeSettingsView');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const expectedRange =
+            `settingsSession.replayResume.maxSeedCharsRange(min=${HAPPIER_REPLAY_SEED_MIN_CHARS},max=${HAPPIER_REPLAY_SEED_MAX_CHARS})`;
+        const input = screen.findByTestId('settings-session-replay-maxSeedChars-input');
+        // A field that silently moves an out-of-range number to the nearest
+        // limit has to name its bounds, and the visible label is not attached
+        // to it.
+        expect(input?.props.accessibilityLabel).toBe('settingsSession.replayResume.maxSeedCharsTitle');
+        expect(input?.props.accessibilityHint).toBe(expectedRange);
+        expect(screen.findByTestId('settings-session-replay-maxSeedChars-range')?.props.children).toBe(expectedRange);
+    });
+
     it('does not render the recent-messages control that cannot affect any outcome', async () => {
         const mod = await import('./SessionResumeSettingsView');
         const screen = await renderSettingsView(React.createElement(mod.default));

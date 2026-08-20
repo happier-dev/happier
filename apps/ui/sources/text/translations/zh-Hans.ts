@@ -879,7 +879,6 @@ export const zhHans: TranslationStructure = {
   runs: {
     title: "运行",
     empty: "暂无运行记录。",
-          notRebuildable: "此处确实移交了上下文，但本会话的转录已不再包含它，因此无法重建。",
     groupLabel: ({ groupId }: { groupId: string }) => `组 ${groupId}`,
     showFinished: "显示已完成",
     unknownMachine: "未知机器",
@@ -4985,6 +4984,7 @@ export const zhHans: TranslationStructure = {
           loading: "正在重建…",
           empty: "没有移交任何内容。当时没有可重放的早期对话。",
           unavailableOperation: "请更新或重新连接这台机器上的 CLI 以重建此内容。",
+          notRebuildable: "此处确实移交了上下文，但本会话的转录已不再包含它，因此无法重建。",
           unavailableSource: "Happier 无法读取本会话的转录，因此无法重建此内容。",
           unreachable: "Happier 无法连接到托管本会话的机器。",
           retryAction: "重试",
@@ -8165,6 +8165,7 @@ settingsSession: {
       recentMessagesPlaceholder: "16",
       maxSeedCharsTitle: "重放 seed 限制（字符）",
       maxSeedCharsPlaceholder: "50000",
+      maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `${min} 到 ${max} 个字符。超出此范围的数值会保存为最接近的限值。`,
     },
     toolDetailLevel: {
       titleOnlyTitle: "仅标题",

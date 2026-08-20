@@ -751,7 +751,6 @@ export const en = {
     runs: {
         title: 'Runs',
         empty: 'No runs yet.',
-                notRebuildable: 'Context was carried over here, but this Session’s transcript no longer holds it — so it can’t be rebuilt.',
         groupLabel: ({ groupId }: { groupId: string }) => `Group ${groupId}`,
         showFinished: 'Show finished',
         unknownMachine: 'Unknown machine',
@@ -4830,6 +4829,7 @@ export const en = {
                 loading: 'Rebuilding…',
                 empty: 'Nothing was carried over. There was no earlier conversation to replay.',
                 unavailableOperation: 'Update or reconnect the CLI on this machine to rebuild this.',
+                notRebuildable: 'Context was carried over here, but this Session’s transcript no longer holds it — so it can’t be rebuilt.',
                 unavailableSource: 'Happier couldn’t read this Session’s transcript, so this can’t be rebuilt.',
                 unreachable: 'Happier couldn’t reach the machine that hosts this Session.',
                 retryAction: 'Try again',
@@ -7971,6 +7971,7 @@ settingsSession: {
               recentMessagesPlaceholder: '16',
               maxSeedCharsTitle: 'Replay seed size limit (chars)',
               maxSeedCharsPlaceholder: '50000',
+              maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Between ${min} and ${max} characters. A number outside this range is saved as the nearest limit.`,
           },
           toolDetailLevel: {
               titleOnlyTitle: 'Title only',

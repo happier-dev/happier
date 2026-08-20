@@ -879,7 +879,6 @@ export const it: TranslationStructure = {
   runs: {
     title: "Esecuzioni",
     empty: "Ancora nessuna esecuzione.",
-          notRebuildable: "Qui è stato trasferito del contesto, ma la trascrizione di questa sessione non lo contiene più, quindi non può essere ricostruito.",
     groupLabel: ({ groupId }: { groupId: string }) => `Gruppo ${groupId}`,
     showFinished: "Mostra completate",
     unknownMachine: "Macchina sconosciuta",
@@ -5508,6 +5507,7 @@ export const it: TranslationStructure = {
           loading: "Ricostruzione…",
           empty: "Non è stato trasferito nulla. Non c’era alcuna conversazione precedente da riprodurre.",
           unavailableOperation: "Aggiorna o riconnetti la CLI su questa macchina per ricostruirlo.",
+          notRebuildable: "Qui è stato trasferito del contesto, ma la trascrizione di questa sessione non lo contiene più, quindi non può essere ricostruito.",
           unavailableSource: "Happier non è riuscito a leggere la trascrizione di questa sessione, quindi non può ricostruirlo.",
           unreachable: "Happier non è riuscito a raggiungere la macchina che ospita questa sessione.",
           retryAction: "Riprova",
@@ -8760,6 +8760,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Limite seed (caratteri)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Tra ${min} e ${max} caratteri. Un numero fuori da questo intervallo viene salvato al limite più vicino.`,
       },
       toolDetailLevel: {
         titleOnlyTitle: "Solo titolo",

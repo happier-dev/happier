@@ -864,7 +864,6 @@ export const ja: TranslationStructure = {
   runs: {
     title: "実行",
     empty: "実行はまだありません。",
-          notRebuildable: "ここではコンテキストが引き継がれましたが、このセッションのトランスクリプトにはもう残っていないため、再構築できません。",
     showFinished: "完了した実行を表示",
     unknownMachine: "不明なマシン",
     failedToLoad: "実行の読み込みに失敗しました",
@@ -5435,6 +5434,7 @@ localTailscale: {
           loading: "再構築中…",
           empty: "引き継がれた内容はありません。再生できる以前の会話がありませんでした。",
           unavailableOperation: "これを再構築するには、このマシンの CLI を更新するか接続し直してください。",
+          notRebuildable: "ここではコンテキストが引き継がれましたが、このセッションのトランスクリプトにはもう残っていないため、再構築できません。",
           unavailableSource: "Happier はこのセッションのトランスクリプトを読み取れなかったため、これを再構築できません。",
           unreachable: "Happier はこのセッションをホストしているマシンに接続できませんでした。",
           retryAction: "再試行",
@@ -8676,6 +8676,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "リプレイ seed 上限（文字数）",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `${min}〜${max} 文字。この範囲外の数値は、最も近い上限または下限として保存されます。`,
       },
       toolDetailLevel: {
         titleOnlyTitle: "タイトルのみ",

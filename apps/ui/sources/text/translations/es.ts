@@ -881,7 +881,6 @@ export const es: TranslationStructure = {
   runs: {
     title: "Ejecuciones",
     empty: "Aún no hay ejecuciones.",
-          notRebuildable: "Aquí se transfirió contexto, pero la transcripción de esta sesión ya no lo contiene, así que no se puede reconstruir.",
     groupLabel: ({ groupId }: { groupId: string }) => `Grupo ${groupId}`,
     showFinished: "Mostrar finalizadas",
     unknownMachine: "Máquina desconocida",
@@ -5166,6 +5165,7 @@ export const es: TranslationStructure = {
           loading: "Reconstruyendo…",
           empty: "No se transfirió nada. No había conversación anterior que reproducir.",
           unavailableOperation: "Actualiza o reconecta la CLI en esta máquina para reconstruirlo.",
+          notRebuildable: "Aquí se transfirió contexto, pero la transcripción de esta sesión ya no lo contiene, así que no se puede reconstruir.",
           unavailableSource: "Happier no pudo leer la transcripción de esta sesión, así que no se puede reconstruir.",
           unreachable: "Happier no pudo contactar con la máquina que aloja esta sesión.",
           retryAction: "Reintentar",
@@ -8367,6 +8367,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Límite del seed (caracteres)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Entre ${min} y ${max} caracteres. Un número fuera de este rango se guarda como el límite más cercano.`,
       },
       handoff: settingsSessionHandoffTranslationExtensions.es,
       sessionCreation: {

@@ -9,6 +9,21 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+/**
+ * The shared mock answers a parameterized key with `{ key, params }`, a shape
+ * the real `t` can never return, and this screen renders one such key as a
+ * child. Serialize it for this suite rather than teaching the whole tree a new
+ * mock shape.
+ */
+const serializingTextModule = async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: Record<string, unknown>) => params
+            ? `${key}(${Object.entries(params).map(([name, value]) => `${name}=${String(value)}`).join(',')})`
+            : key,
+    });
+};
+
 installSessionSettingsEntryModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -18,6 +33,7 @@ installSessionSettingsEntryModuleMocks({
         });
     },
     featureEnabled: () => executionRunsEnabledState.enabled,
+    textModule: serializingTextModule,
 });
 
 const executionRunsEnabledState = { enabled: true };
@@ -45,6 +61,7 @@ beforeEach(() => {
     resetSessionSettingsEntryState();
     executionRunsEnabledState.enabled = true;
     sessionSettingsEntryState.options.featureEnabled = () => executionRunsEnabledState.enabled;
+    sessionSettingsEntryState.options.textModule = serializingTextModule;
     sessionSettingsEntryState.settingsState.sessionReplayEnabled = true;
     sessionSettingsEntryState.settingsState.sessionReplayStrategy = 'summary_plus_recent';
     sessionSettingsEntryState.settingsState.sessionReplayRecentMessagesCount = 100;

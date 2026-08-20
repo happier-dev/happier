@@ -1020,7 +1020,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     runs: {
         title: '執行',
         empty: '暫無執行記錄。',
-                    notRebuildable: "此處確實移交了脈絡，但本工作階段的逐字紀錄已不再包含它，因此無法重建。",
         showFinished: '顯示已完成',
         unknownMachine: '未知裝置',
         failedToLoad: '載入執行記錄失敗',
@@ -4499,6 +4498,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     loading: "正在重建…",
                     empty: "沒有移交任何內容。當時沒有可重播的先前對話。",
                     unavailableOperation: "請更新或重新連線這台機器上的 CLI 以重建此內容。",
+                    notRebuildable: "此處確實移交了脈絡，但本工作階段的逐字紀錄已不再包含它，因此無法重建。",
                     unavailableSource: "Happier 無法讀取本工作階段的逐字紀錄，因此無法重建此內容。",
                     unreachable: "Happier 無法連線到代管本工作階段的機器。",
                     retryAction: "重試",
@@ -7107,6 +7107,7 @@ settingsSession: {
               recentMessagesPlaceholder: '16',
               maxSeedCharsTitle: '重播種子大小上限（字元）',
               maxSeedCharsPlaceholder: '50000',
+              maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `${min} 到 ${max} 個字元。超出此範圍的數值會儲存為最接近的限值。`,
           },
           toolDetailLevel: {
               titleOnlyTitle: '僅標題',

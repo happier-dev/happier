@@ -908,7 +908,6 @@ export const ru: TranslationStructure = {
   runs: {
     title: "Запуски",
     empty: "Запусков пока нет.",
-          notRebuildable: "Здесь контекст был передан, но транскрипт этой сессии его больше не содержит, поэтому восстановить его нельзя.",
     showFinished: "Показывать завершённые",
     unknownMachine: "Неизвестная машина",
     failedToLoad: "Не удалось загрузить запуски",
@@ -5654,6 +5653,7 @@ export const ru: TranslationStructure = {
           loading: "Восстановление…",
           empty: "Ничего не было передано. Не было предыдущего разговора для воспроизведения.",
           unavailableOperation: "Обновите или переподключите CLI на этой машине, чтобы восстановить это.",
+          notRebuildable: "Здесь контекст был передан, но транскрипт этой сессии его больше не содержит, поэтому восстановить его нельзя.",
           unavailableSource: "Happier не смог прочитать транскрипт этой сессии, поэтому восстановить это нельзя.",
           unreachable: "Happier не смог связаться с машиной, где размещена эта сессия.",
           retryAction: "Повторить",
@@ -8421,6 +8421,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Лимит seed (символы)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `От ${min} до ${max} символов. Число вне этого диапазона сохраняется как ближайшая граница.`,
       },
       toolDetailLevel: {
         titleOnlyTitle: "Только заголовок",

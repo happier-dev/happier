@@ -904,7 +904,6 @@ export const pl: TranslationStructure = {
     runs: {
       title: "Uruchomienia",
       empty: "Brak uruchomień.",
-          notRebuildable: "Kontekst został tutaj przekazany, ale transkrypcja tej sesji już go nie zawiera, więc nie da się go odtworzyć.",
         showFinished: "Pokaż zakończone",
         unknownMachine: "Nieznana maszyna",
         failedToLoad: "Nie udało się wczytać uruchomień",
@@ -5187,6 +5186,7 @@ export const pl: TranslationStructure = {
           loading: "Odtwarzanie…",
           empty: "Nic nie zostało przekazane. Nie było wcześniejszej rozmowy do odtworzenia.",
           unavailableOperation: "Zaktualizuj lub połącz ponownie CLI na tej maszynie, aby to odtworzyć.",
+          notRebuildable: "Kontekst został tutaj przekazany, ale transkrypcja tej sesji już go nie zawiera, więc nie da się go odtworzyć.",
           unavailableSource: "Happier nie mógł odczytać transkrypcji tej sesji, więc nie da się tego odtworzyć.",
           unreachable: "Happier nie mógł połączyć się z maszyną hostującą tę sesję.",
           retryAction: "Spróbuj ponownie",
@@ -8439,6 +8439,7 @@ settingsSession: {
         recentMessagesPlaceholder: "16",
         maxSeedCharsTitle: "Limit seed (znaki)",
         maxSeedCharsPlaceholder: "50000",
+        maxSeedCharsRange: ({ min, max }: { min: number; max: number }) => `Od ${min} do ${max} znaków. Liczba spoza tego zakresu zostanie zapisana jako najbliższa granica.`,
       },
       toolDetailLevel: {
         titleOnlyTitle: "Tylko tytuł",
