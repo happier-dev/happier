@@ -110,6 +110,8 @@ Do not use line count, five-line duplication, rule-of-three, one-use abstraction
 
 ## Architecture and maintainability
 
+When we talk about overengineering, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and look for disproportionate machinery that exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Assess whether the implementation is the simplest logic that satisfies the real requirements. Inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; prefer that owner-level change over another decision-maker, split-brain, similar-but-different, or parallel path.
+
 Use a complexity ledger for architecture-impacting changes:
 
 - **Added:** concepts, seams, adapters, dependencies, config, modes, states, branches, failure paths, and caller knowledge.

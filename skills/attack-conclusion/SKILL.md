@@ -21,6 +21,8 @@ Run the cheap attacks; an attack that is just worry is not an attack. If you can
 
 ## Architecture-impact attack
 
+When we talk about overengineering in this attack, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and look for disproportionate machinery that exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Test whether the change uses the simplest logic that satisfies the real requirements. Inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; reject a new split-brain, similar-but-different, or parallel path when an existing owner can satisfy the need.
+
 Run this only when the change establishes or moves an owner, crosses package boundaries, introduces persistence or concurrency, materially changes a public interface, or performs a substantial refactor. Skip it for routine local and mechanical work.
 
 Build a compact complexity ledger from the diff and affected callers:

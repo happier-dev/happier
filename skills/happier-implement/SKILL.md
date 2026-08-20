@@ -50,6 +50,8 @@ Dirty or concurrently edited files are normal and do not establish ownership. In
 
 ## 4. Select the smallest coherent systemic change
 
+When we talk about overengineering during implementation, the target is not the feature; it is the underlying logic. Start from the feature's real intent and requirements, preserve those outcomes, and implement the simplest logic that satisfies them. Do not invent disproportionate machinery for unreal, assumed, speculative, or unreachable requirements. Before adding logic, inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; do not create a split-brain, similar-but-different, or parallel path when an existing owner can satisfy the need.
+
 Prefer, in order, to add nothing when the complete outcome already holds; correct/reuse/refine/consolidate the canonical owner; use the language or platform; use an existing package-owned dependency; or add the smallest clear consumed implementation.
 
 Smallest coherent does not mean smallest diff. Update every materially affected caller, reader, writer, consumer, platform path, and compatibility direction. Remove or migrate active competing owners and bypasses when the authorized outcome makes them obsolete. Do not centralize coincidental similarity across distinct bounded contexts or absorb unrelated debt.

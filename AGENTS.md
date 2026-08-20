@@ -339,6 +339,7 @@ When touching provider behavior, read `docs/agents-catalog.md`.
 Before finalizing:
 
 - Preserve existing work: do not discard unrelated changes or switch branches in the primary checkout.
+- When we talk about overengineering, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and ask whether any disproportionate machinery exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Choose the simplest implementation that satisfies the real requirements. Before adding logic, inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; reject split-brain, similar-but-different, or parallel paths when an existing owner can satisfy the need.
 - Confirm the canonical owner, relevant consumers, and surrounding same-concept paths were inspected; refactor touched split-brains and do not leave a competing active implementation or bypass.
 - If behavior changed, prove RED → GREEN with the smallest meaningful owner-level test, mock only genuine system boundaries, and run relevant validation.
 - Report the outcome honestly, including failed or skipped checks, blockers, and residual risk.
