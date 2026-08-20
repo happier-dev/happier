@@ -1,7 +1,12 @@
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { mapPiSessionToDirectMessages } from './mapPiSessionToDirectMessages';
-import { decodePiForwardCursor, encodePiForwardCursor, loadPiSessionEntries } from './pagePiTranscript';
+import {
+  decodePiForwardCursor,
+  encodePiForwardCursor,
+  itemByteSize,
+  loadPiSessionEntries,
+} from './pagePiTranscript';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
 /**
@@ -77,7 +82,7 @@ export async function readAfterPiTranscript(params: Readonly<{
   for (let i = delivered; i < total; i += 1) {
     const item = items[i]!;
     if (pageItems.length >= maxItems) break;
-    const size = Buffer.byteLength(JSON.stringify(item.raw), 'utf8');
+    const size = itemByteSize(item);
     if (pageItems.length > 0 && bytesUsed + size > maxBytes) break;
     pageItems.push(item);
     bytesUsed += size;

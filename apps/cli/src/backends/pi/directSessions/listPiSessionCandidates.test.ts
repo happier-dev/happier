@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { listPiSessionCandidates } from './listPiSessionCandidates';
+import {
+  listPiSessionCandidates,
+  resolvePiDiscoveryConcurrencyBudget,
+} from './listPiSessionCandidates';
 
 const SESSION_A = '019f4a42-4617-767a-8e7c-189b454a0352';
 const SESSION_B = '019f53a6-c8cf-7a8c-a165-61d0dc6b42e7';
@@ -31,6 +34,14 @@ function userMsg(id: string, parentId: string | null, text: string): object {
 }
 
 describe('listPiSessionCandidates', () => {
+  it('keeps nested directory and file work inside one discovery concurrency budget', () => {
+    const budget = resolvePiDiscoveryConcurrencyBudget(64);
+
+    expect(budget.directoryConcurrency).toBeGreaterThan(0);
+    expect(budget.fileConcurrency).toBeGreaterThan(0);
+    expect(budget.directoryConcurrency * budget.fileConcurrency).toBeLessThanOrEqual(64);
+  });
+
   it('discovers sessions across cwd-encoded directories, sorted by mtime descending', async () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-'));
     writeSession(agentDir, '--proj-a--', `2024-12-03T14-00-00-000Z_${SESSION_A}.jsonl`, [header(SESSION_A, '/proj-a'), userMsg('m1', null, 'task in proj-a')], 1_700_000_100);
@@ -71,6 +82,10 @@ describe('listPiSessionCandidates', () => {
     const result = await listPiSessionCandidates({ source, env, limit: 10, searchTerm: SESSION_A });
     expect(result.candidates.map((c) => c.remoteSessionId)).toEqual([SESSION_A]);
     expect(result.candidates[0]!.title).toBe('find me');
+    expect(result.candidates[0]!.details).toEqual({
+      cwd: '/proj-a',
+      sessionDirName: '--proj-a--',
+    });
   });
 
   it('uses the header id when a valid session file has been renamed', async () => {

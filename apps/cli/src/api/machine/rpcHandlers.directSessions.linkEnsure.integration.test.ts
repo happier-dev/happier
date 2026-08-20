@@ -11,6 +11,7 @@ import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import type { Credentials } from '@/persistence';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 const { mockIo, readCredentialsMock } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -299,12 +300,12 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   it('creates a linked pi direct session with piSessionId metadata and an active-branch source', async () => {
     const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
 
-    const registered = new Map<string, (params: any) => Promise<any>>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
-        registered.set(method, handler);
+    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+      registerHandler: (method, handler) => {
+        registered.set(method, async (params) => handler(params as never));
       },
-    } as any;
+    };
 
     registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
 
@@ -318,7 +319,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       titleHint: 'Linked Pi Session',
       directoryHint: '/tmp/project-pi',
       source: { kind: 'piAgentDir' },
-    });
+    }) as { ok: boolean; created: boolean; sessionId: string };
 
     expect(res.ok).toBe(true);
     expect(res.created).toBe(true);

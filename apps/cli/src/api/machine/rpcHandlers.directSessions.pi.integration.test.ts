@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 vi.mock('@/configuration', () => ({
   configuration: {
@@ -82,16 +83,17 @@ describe('registerMachineDirectSessionsRpcHandlers: pi integration', () => {
     ]);
 
     registered = new Map();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => {
-        registered.set(method, handler);
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+      registerHandler: (method, handler) => {
+        registered.set(method, async (params) => handler(params as never));
       },
-    } as unknown as Parameters<typeof registerMachineDirectSessionsRpcHandlers>[0]['rpcHandlerManager'];
+    };
     registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    rmSync(agentDir, { recursive: true, force: true });
   });
 
   it('lists pi sessions through the daemon RPC wiring', async () => {

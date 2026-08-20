@@ -1,6 +1,5 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { readPiSessionHeader } from './readPiSessionHeader';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
 /**
@@ -20,7 +19,6 @@ export async function getPiDirectSessionWorkingDirectory(params: Readonly<{
   });
   if (!resolved) return null;
 
-  const header = await readPiSessionHeader(resolved.filePath);
-  const cwd = header?.cwd?.trim();
+  const cwd = resolved.header.cwd.trim();
   return cwd || null;
 }

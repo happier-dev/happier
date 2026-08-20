@@ -5248,7 +5248,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
         browseSourceClaudeDefault: "預設 Claude 設定",
         browseSourceOpenCodeDefault: "預設 OpenCode 伺服器",
-        browseSourcePiDefault: "預設 pi 代理目錄",
+        browseSourcePiDefault: "預設 Pi 代理目錄",
         browseCandidates: "可用工作階段",
         browseNoMachines: "目前尚無可用於直接工作階段的機器。",
         browseNoCandidates: "找不到這台機器與提供者對應的工作階段。",

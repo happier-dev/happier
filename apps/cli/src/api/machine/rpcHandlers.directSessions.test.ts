@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 const readCredentialsMock = vi.fn();
 const fetchSessionByIdMock = vi.fn();
@@ -111,12 +112,12 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       sessionId: 'sess_happy_direct',
     }));
     const stopSession = vi.fn(async () => true);
-    const registered = new Map<string, (params: any) => Promise<any>>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
-        registered.set(method, handler);
+    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+      registerHandler: (method, handler) => {
+        registered.set(method, async (params) => handler(params as never));
       },
-    } as any;
+    };
 
     registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
@@ -197,12 +198,12 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       sessionId: 'sess_happy_direct_pi',
     }));
     const stopSession = vi.fn(async () => true);
-    const registered = new Map<string, (params: any) => Promise<any>>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
-        registered.set(method, handler);
+    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+    const rpcHandlerManager: RpcHandlerRegistrar = {
+      registerHandler: (method, handler) => {
+        registered.set(method, async (params) => handler(params as never));
       },
-    } as any;
+    };
 
     const markerDir = join('/tmp/happier-test-home', 'tmp', 'daemon-sessions');
     const markerPath = join(markerDir, `pid-${process.pid}.json`);
@@ -227,7 +228,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
         machineId: 'm1',
         sessionId: 'sess_happy_direct_pi',
         forceStop: true,
-      });
+      }) as { ok: boolean };
 
       expect(res).toEqual({ ok: true });
       expect(stopSession).toHaveBeenCalledWith('sess_existing_pi_owner');
@@ -245,6 +246,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(spawnSession.mock.invocationCallOrder[0]);
     } finally {
       await rm(markerPath, { force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 

@@ -11,7 +11,10 @@ function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function makeFakePiRpcModelSelectionScript(dir: string): { scriptPath: string; receivedPath: string } {
+function makeFakePiRpcModelSelectionScript(
+  dir: string,
+  options: Readonly<{ failCatalogRefresh?: boolean }> = {},
+): { scriptPath: string; receivedPath: string } {
   const scriptPath = join(dir, 'fake-pi-rpc-model-selection.js');
   const receivedPath = join(dir, 'received.jsonl');
   const script = `
@@ -20,6 +23,7 @@ const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
 let currentModel = { id: 'glm-5.3', provider: 'zai', name: 'GLM' };
+let availableModelCalls = 0;
 
 rl.on('line', (line) => {
   let command;
@@ -41,6 +45,11 @@ rl.on('line', (line) => {
       });
       break;
     case 'get_available_models':
+      availableModelCalls += 1;
+      if (${JSON.stringify(options.failCatalogRefresh === true)} && availableModelCalls > 1) {
+        out({ id: command.id, type: 'response', command: 'get_available_models', success: false, error: 'catalog unavailable' });
+        break;
+      }
       out({
         id: command.id,
         type: 'response',
@@ -108,9 +117,11 @@ describe('PiRpcBackend (model selection)', () => {
     }
   });
 
-  async function startBackendWithCatalog(): Promise<{ sessionId: string; receivedPath: string; messages: AgentMessage[] }> {
+  async function startBackendWithCatalog(
+    options: Readonly<{ failCatalogRefresh?: boolean }> = {},
+  ): Promise<{ sessionId: string; receivedPath: string; messages: AgentMessage[] }> {
     tempDir = makeTempDir('happier-pi-rpc-model-selection-');
-    const { scriptPath, receivedPath } = makeFakePiRpcModelSelectionScript(tempDir);
+    const { scriptPath, receivedPath } = makeFakePiRpcModelSelectionScript(tempDir, options);
 
     backend = new PiRpcBackend({
       cwd: tempDir,
@@ -164,6 +175,21 @@ describe('PiRpcBackend (model selection)', () => {
       type: 'set_model',
       provider: 'lmstudio/hadees',
       modelId: 'muse-glimmer-30b@q5_k_m',
+    });
+  });
+
+  it('does not let an uncatalogued prefixed model override later bare-model provider selection', async () => {
+    const { sessionId, receivedPath } = await startBackendWithCatalog({ failCatalogRefresh: true });
+
+    await backend!.setSessionModel(sessionId, 'lmstudio/hadees/uncatalogued-model');
+    await backend!.setSessionModel(sessionId, 'zai/glm-5.3');
+    await backend!.setSessionModel(sessionId, 'uncatalogued-model');
+
+    const setModelCommands = readReceivedSetModelCommands(receivedPath);
+    expect(setModelCommands.at(-1)).toMatchObject({
+      type: 'set_model',
+      provider: 'zai',
+      modelId: 'uncatalogued-model',
     });
   });
 

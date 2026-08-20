@@ -2765,8 +2765,6 @@ export class PiRpcBackend implements AgentBackend {
       if (prefixProvider) {
         const modelId = modelIdRaw.slice(prefixProvider.length + 1).trim();
         if (modelId) {
-          this.modelProviderById.set(modelId, prefixProvider);
-          this.modelProviderById.set(`${prefixProvider}/${modelId}`, prefixProvider);
           return { provider: prefixProvider, modelId };
         }
       }

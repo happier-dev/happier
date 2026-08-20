@@ -15,7 +15,7 @@ function entry(partial: Partial<PiSessionEntry> & Pick<PiSessionEntry, 'type' | 
   } as PiSessionEntry;
 }
 
-const header = { type: 'session', id: 'root-uuid', timestamp: '2024-12-03T14:00:00.000Z', version: 3, cwd: '/proj' };
+const header: PiSessionEntry = { type: 'session', id: 'root-uuid', timestamp: '2024-12-03T14:00:00.000Z', version: 3, cwd: '/proj' };
 
 describe('piEntryContext', () => {
   describe('resolveActiveLeafId', () => {
@@ -37,7 +37,7 @@ describe('piEntryContext', () => {
     });
 
     it('returns null when there are no non-header entries', () => {
-      expect(resolveActiveLeafId([header as any])).toBeNull();
+      expect(resolveActiveLeafId([header])).toBeNull();
       expect(resolveActiveLeafId([])).toBeNull();
     });
   });
@@ -69,6 +69,15 @@ describe('piEntryContext', () => {
         entry({ type: 'message', id: 'b2c3d4e5', parentId: 'a1b2c3d4' }),
       ];
       expect(buildSessionPath(entries, 'bbbbbbbb').map((e) => e.id)).toEqual(['a1b2c3d4', 'bbbbbbbb']);
+    });
+
+    it('returns an empty path when an explicit leaf id is absent', () => {
+      const entries: PiSessionEntry[] = [
+        entry({ type: 'message', id: 'a1b2c3d4', parentId: null }),
+        entry({ type: 'message', id: 'b2c3d4e5', parentId: 'a1b2c3d4' }),
+      ];
+
+      expect(buildSessionPath(entries, 'missing-leaf')).toEqual([]);
     });
 
     it('returns [] when leafId is null', () => {

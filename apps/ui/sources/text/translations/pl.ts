@@ -6216,7 +6216,7 @@ export const pl: TranslationStructure = {
     browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
     browseSourceClaudeDefault: "Domyślna konfiguracja Claude",
     browseSourceOpenCodeDefault: "Domyślny serwer OpenCode",
-    browseSourcePiDefault: "Domyślny katalog agenta pi",
+    browseSourcePiDefault: "Domyślny katalog agenta Pi",
     browseCandidates: "Dostępne sesje",
     browseNoMachines: "Na razie nie ma dostępnych maszyn dla sesji bezpośrednich.",
     browseNoCandidates: "Nie znaleziono sesji dostawcy dla tej maszyny i dostawcy.",

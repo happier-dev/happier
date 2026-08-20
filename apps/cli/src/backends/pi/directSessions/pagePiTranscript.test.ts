@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { pagePiTranscript } from './pagePiTranscript';
+import { loadPiSessionEntries, pagePiTranscript } from './pagePiTranscript';
 
 const SESSION_ID = '019f4a42-4617-767a-8e7c-189b454a0352';
 
@@ -91,6 +91,33 @@ describe('pagePiTranscript', () => {
       Date.parse('2024-12-03T14:00:02.000Z'),
       Date.parse('2024-12-03T14:00:03.000Z'),
     ]);
+  });
+
+  it('preserves modern tree links when a valid header has no version', async () => {
+    const agentDir = freshAgentDir();
+    const versionlessHeader = {
+      type: 'session',
+      id: SESSION_ID,
+      timestamp: '2024-12-03T14:00:00.000Z',
+      cwd: '/proj',
+    };
+    const { source, env } = writeSession(agentDir, [
+      versionlessHeader,
+      msg('m1', null, 'user', 'prompt', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'abandoned', '2024-12-03T14:00:02.000Z'),
+      msg('m3', 'm1', 'assistant', 'active', '2024-12-03T14:00:03.000Z'),
+    ]);
+
+    const ordered = await importAll(source, env, { maxBytes: 1024 * 1024, maxItems: 10 });
+    expect(ordered.map((item) => item.id)).toEqual([
+      `pi:sessions/--proj--/2024-12-03T14-00-00-000Z_${SESSION_ID}.jsonl:m1`,
+      `pi:sessions/--proj--/2024-12-03T14-00-00-000Z_${SESSION_ID}.jsonl:m3`,
+    ]);
+  });
+
+  it('does not reinterpret non-missing filesystem failures as an empty session', async () => {
+    const directory = freshAgentDir();
+    await expect(loadPiSessionEntries(directory)).rejects.toMatchObject({ code: 'EISDIR' });
   });
 
   it('pages only the active branch, excluding the abandoned sibling', async () => {

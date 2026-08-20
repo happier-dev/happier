@@ -9,7 +9,6 @@ import { decodePiForwardCursor, encodePiForwardCursor } from './pagePiTranscript
 import { readAfterPiTranscript } from './readAfterPiTranscript';
 
 const SESSION_ID = '019f4a42-4617-767a-8e7c-189b454a0352';
-const FILE_REL = `projects/2024-12-03T14-00-00-000Z_${SESSION_ID}.jsonl`;
 
 function writeSession(agentDir: string, lines: readonly object[]): { source: DirectSessionsSource; env: NodeJS.ProcessEnv } {
   const sessionsDir = join(agentDir, 'sessions', '--proj--');
@@ -40,7 +39,7 @@ const LIMITS = { maxBytes: 1024 * 1024, maxItems: 100 };
 function expectForwardCursor(raw: string | null, delivered: number, anchorEntryId: string): void {
   const decoded = decodePiForwardCursor(raw ?? undefined);
   expect(decoded).toMatchObject({ v: 1, kind: 'piForward', delivered });
-  expect(decoded?.anchorItemId).toMatch(new RegExp(`:${anchorEntryId}$`));
+  expect(decoded?.anchorItemId?.endsWith(`:${anchorEntryId}`)).toBe(true);
 }
 
 async function withThreeMessages<T>(run: (params: { source: DirectSessionsSource; env: NodeJS.ProcessEnv }) => Promise<T>): Promise<T> {

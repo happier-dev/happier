@@ -63,10 +63,12 @@ export function buildSessionPath(
   if (leafId === null) return [];
   const index = indexEntries(entries);
   let leaf: PiSessionEntry | undefined;
-  if (leafId) {
+  if (leafId !== undefined) {
     leaf = index.get(leafId);
+    if (!leaf) return [];
+  } else {
+    leaf = nonHeaderEntries(entries).at(-1);
   }
-  leaf ??= nonHeaderEntries(entries).at(-1);
   if (!leaf) return [];
 
   const path: PiSessionEntry[] = [];

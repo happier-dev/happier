@@ -60,6 +60,18 @@ function resolvePiDiscoveryConcurrency(env: NodeJS.ProcessEnv): number {
   });
 }
 
+export function resolvePiDiscoveryConcurrencyBudget(totalConcurrency: number): Readonly<{
+  directoryConcurrency: number;
+  fileConcurrency: number;
+}> {
+  const total = Math.max(1, Math.trunc(totalConcurrency));
+  const directoryConcurrency = Math.max(1, Math.trunc(Math.sqrt(total)));
+  return {
+    directoryConcurrency,
+    fileConcurrency: Math.max(1, Math.trunc(total / directoryConcurrency)),
+  };
+}
+
 function resolvePiSearchCandidateLimit(env: NodeJS.ProcessEnv): number {
   return parsePositiveIntEnv({
     env,
@@ -111,6 +123,8 @@ export async function listPiSessionCandidates(params: Readonly<{
   const agentDir = resolvePiAgentDir({ source: params.source, env });
   const sessionsDir = join(agentDir, 'sessions');
   const concurrency = resolvePiDiscoveryConcurrency(env);
+  const { directoryConcurrency, fileConcurrency } =
+    resolvePiDiscoveryConcurrencyBudget(concurrency);
   const limit = Math.max(1, Math.trunc(params.limit));
   const offset = decodeIndexCursor(params.cursor);
 
@@ -127,7 +141,7 @@ export async function listPiSessionCandidates(params: Readonly<{
   // Phase 1: stat and identify every session file. Pi files can be renamed or copied, so the
   // header id is the canonical identity used to consolidate duplicate files before pagination.
   const discoveredSessions = (
-    await mapWithConcurrency(dirEntries, concurrency, async (dirEntry): Promise<DiscoveredPiSession[]> => {
+    await mapWithConcurrency(dirEntries, directoryConcurrency, async (dirEntry): Promise<DiscoveredPiSession[]> => {
       if (!dirEntry.isDirectory()) return [];
       if (dirEntry.isSymbolicLink()) return [];
       const dirName = typeof dirEntry.name === 'string' ? dirEntry.name : String(dirEntry.name);
@@ -140,7 +154,7 @@ export async function listPiSessionCandidates(params: Readonly<{
         return [];
       }
 
-      const sessions = await mapWithConcurrency(fileEntries, concurrency, async (fe): Promise<DiscoveredPiSession | null> => {
+      const sessions = await mapWithConcurrency(fileEntries, fileConcurrency, async (fe): Promise<DiscoveredPiSession | null> => {
         if (!fe.isFile()) return null;
         if (fe.isSymbolicLink()) return null;
         const fileName = typeof fe.name === 'string' ? fe.name : String(fe.name);
@@ -194,14 +208,14 @@ export async function listPiSessionCandidates(params: Readonly<{
         if (pageOffset > 0) {
           return { candidates: [], nextCursor: null };
         }
-        const exactHeader = await readPiSessionHeader(resolved.filePath).catch(() => null);
+        const relSegments = resolved.fileRelPath.split('/');
         const candidate = await buildPiCandidate({
           session: {
             id: rawSearchTerm,
-            remoteSessionId: exactHeader?.id?.trim() || rawSearchTerm,
-            cwd: exactHeader?.cwd?.trim() || null,
-            dirName: '',
-            fileName: '',
+            remoteSessionId: resolved.header.id.trim() || rawSearchTerm,
+            cwd: resolved.header.cwd.trim() || null,
+            dirName: relSegments.at(-2) ?? '',
+            fileName: relSegments.at(-1) ?? '',
             filePath: resolved.filePath,
             mtimeMs: Math.trunc(exactStat.mtimeMs),
           },

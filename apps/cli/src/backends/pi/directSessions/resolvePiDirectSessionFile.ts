@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
 import { resolvePiAgentDir } from './resolvePiAgentDir';
-import { readPiSessionHeader } from './readPiSessionHeader';
+import { readPiSessionHeader, type PiSessionHeader } from './readPiSessionHeader';
 
 export type ResolvedPiDirectSessionFile = Readonly<{
   filePath: string;
   fileRelPath: string;
+  header: PiSessionHeader;
 }>;
 
 type PiSessionFilePreference = Readonly<{
@@ -70,7 +71,12 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
     return null;
   }
 
-  let best: { filePath: string; fileRelPath: string; mtimeMs: number } | null = null;
+  let best: {
+    filePath: string;
+    fileRelPath: string;
+    header: PiSessionHeader;
+    mtimeMs: number;
+  } | null = null;
 
   for (const dirEntry of dirEntries) {
     if (!dirEntry.isDirectory()) continue;
@@ -94,7 +100,7 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
       const filePath = join(sessionsDir, dirName, name);
       try {
         const header = await readPiSessionHeader(filePath);
-        if (header?.id !== remoteSessionId) continue;
+        if (!header || header.id !== remoteSessionId) continue;
         const s = await stat(filePath);
         if (!s.isFile()) continue;
         if (!best || comparePiSessionFilePreference(
@@ -104,6 +110,7 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
           best = {
             filePath,
             fileRelPath: `sessions/${dirName}/${name}`.replace(/\\/g, '/'),
+            header,
             mtimeMs: Math.trunc(s.mtimeMs),
           };
         }
@@ -113,5 +120,7 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
     }
   }
 
-  return best ? { filePath: best.filePath, fileRelPath: best.fileRelPath } : null;
+  return best
+    ? { filePath: best.filePath, fileRelPath: best.fileRelPath, header: best.header }
+    : null;
 }

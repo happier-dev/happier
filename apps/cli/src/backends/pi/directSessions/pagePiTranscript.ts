@@ -60,8 +60,19 @@ export function decodePiForwardCursor(raw: string | undefined): PiForwardCursorV
 
 function normalizeLegacyPiEntries(records: readonly Record<string, unknown>[]): PiSessionEntry[] {
   const header = records.find((record) => record.type === 'session');
-  const version = typeof header?.version === 'number' ? header.version : 1;
-  if (version >= 2) return records.map((record) => record as PiSessionEntry);
+  const version = typeof header?.version === 'number' ? header.version : null;
+  if (version !== null && version >= 2) {
+    return records.map((record) => record as PiSessionEntry);
+  }
+  const nonHeaderRecords = records.filter((record) => record.type !== 'session');
+  const hasCompleteTreeLinks = nonHeaderRecords.length > 0 && nonHeaderRecords.every(
+    (record) => typeof record.id === 'string'
+      && record.id.trim().length > 0
+      && Object.hasOwn(record, 'parentId'),
+  );
+  if (version === null && hasCompleteTreeLinks) {
+    return records.map((record) => record as PiSessionEntry);
+  }
 
   const ids = records.map((record, index) => {
     if (record.type === 'session') return null;
@@ -83,7 +94,20 @@ function normalizeLegacyPiEntries(records: readonly Record<string, unknown>[]): 
  * branch cannot be resolved incrementally; the full entry list is required for the tree walk.
  */
 export async function loadPiSessionEntries(filePath: string): Promise<PiSessionEntry[]> {
-  const content = await readFile(filePath, 'utf8').catch(() => '');
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (
+      error
+      && typeof error === 'object'
+      && 'code' in error
+      && error.code === 'ENOENT'
+    ) {
+      return [];
+    }
+    throw error;
+  }
   const entries: Record<string, unknown>[] = [];
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
@@ -108,7 +132,7 @@ async function loadMappedItems(
   return mapPiSessionToDirectMessages({ entries, fileRelPath });
 }
 
-function itemByteSize(item: DirectTranscriptRawMessageV1): number {
+export function itemByteSize(item: DirectTranscriptRawMessageV1): number {
   try {
     return Buffer.byteLength(JSON.stringify(item.raw), 'utf8');
   } catch {
