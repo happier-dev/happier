@@ -2150,6 +2150,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
   });
 
   it('keeps an exhausted runtime-auth recovery dead-letter when in-band handling returns only generic verification', async () => {
+    const reportId = 'runtime-auth-report:exhausted-generic-verification';
     const recoveryClassification: ConnectedServiceRuntimeFailureClassification = {
       kind: 'usage_limit',
       serviceId: 'openai-codex',
@@ -2175,6 +2176,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       },
     });
     await runtimeAuthRecoveryScheduler.enqueueHandlerFailure({
+      reportId,
       sessionId: 'sess_1',
       switchesThisTurn: 0,
       classification: recoveryClassification,
@@ -2225,6 +2227,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         url: '/connected-service-runtime-auth/failure',
         headers: { 'x-happier-daemon-token': 'token' },
         payload: {
+          reportId,
           sessionId: 'sess_1',
           switchesThisTurn: 0,
           classification: recoveryClassification,
@@ -2844,11 +2847,13 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       name: 'exhausted',
       prepare: async (input: Readonly<{
         scheduler: RuntimeAuthRecoveryScheduler;
+        reportId: string;
         sessionId: string;
         classification: ConnectedServiceRuntimeFailureClassification;
         applyFailure: unknown;
       }>) => {
         await input.scheduler.enqueueApplyFailure({
+          reportId: input.reportId,
           sessionId: input.sessionId,
           switchesThisTurn: 1,
           classification: input.classification,
@@ -2863,11 +2868,13 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       name: 'cancelled',
       prepare: async (input: Readonly<{
         scheduler: RuntimeAuthRecoveryScheduler;
+        reportId: string;
         sessionId: string;
         classification: ConnectedServiceRuntimeFailureClassification;
         applyFailure: unknown;
       }>) => {
         await input.scheduler.enqueueApplyFailure({
+          reportId: input.reportId,
           sessionId: input.sessionId,
           switchesThisTurn: 1,
           classification: input.classification,
@@ -2883,9 +2890,11 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
       expectedDeadLetterEvents: 0,
     },
   ])('does not re-emit a terminal transcript event for an already $name recovery', async ({
+    name,
     prepare,
     expectedDeadLetterEvents,
   }) => {
+    const reportId = `runtime-auth-report:terminal-${name}`;
     const sessionId = 'sess_1';
     const classification = {
       kind: 'usage_limit',
@@ -2916,7 +2925,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         diagnostics.push(event);
       },
     });
-    await prepare({ scheduler, sessionId, classification, applyFailure });
+    await prepare({ scheduler, reportId, sessionId, classification, applyFailure });
 
     const handleConnectedServiceRuntimeAuthFailure = vi.fn(async () => ({
       status: 'switch_attempted',
@@ -2944,6 +2953,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         url: '/connected-service-runtime-auth/failure',
         headers: { 'x-happier-daemon-token': 'token' },
         payload: {
+          reportId,
           sessionId,
           switchesThisTurn: 2,
           classification,
