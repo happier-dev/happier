@@ -36,6 +36,11 @@
       "import": "./processInstance.mjs",
       "default": "./processInstance.mjs"
     },
+    "./runtimeImportProbePolicy": {
+      "types": "./runtimeImportProbePolicy.d.mts",
+      "import": "./runtimeImportProbePolicy.mjs",
+      "default": "./runtimeImportProbePolicy.mjs"
+    },
     "./links": {
       "types": "./dist/links.d.ts",
       "default": "./dist/links.js"

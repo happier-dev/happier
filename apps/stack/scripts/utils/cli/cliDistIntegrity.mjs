@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS } from '../../../../cli/scripts/runtimeImportProbePolicy.mjs';
+import { DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS } from '@happier-dev/cli-common/runtimeImportProbePolicy';
 
 export const CLI_DIST_INTEGRITY_PROBE_ENV = 'HAPPIER_CLI_DIST_INTEGRITY_PROBE';
 export const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';

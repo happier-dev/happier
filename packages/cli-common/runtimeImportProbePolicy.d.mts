@@ -1,0 +1,1 @@
+export declare const DEFAULT_CLI_RUNTIME_IMPORT_TIMEOUT_MS: 120000;
