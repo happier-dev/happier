@@ -195,6 +195,10 @@ function echoCreatedSessionRow(
   };
 }
 
+function emptyLatestSystemRecordResponse() {
+  return { status: 200, data: { record: null } };
+}
+
 describe('registerMachineRpcHandlers', () => {
   beforeEach(() => {
     // Many tests spy on axios.get; restore between tests so mockResolvedValueOnce
@@ -2273,12 +2277,13 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
+      .mockResolvedValueOnce(emptyLatestSystemRecordResponse() as any)
       .mockResolvedValueOnce({
         status: 200,
         data: {
           messages: [
-            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
       } as any);
@@ -2614,6 +2619,8 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
+      // hydrateReplayDialogFromForkChain -> fetch latest synopsis system record
+      .mockResolvedValueOnce(emptyLatestSystemRecordResponse() as any)
       // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
       .mockResolvedValueOnce({
         status: 200,
@@ -3183,6 +3190,8 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
+      // hydrateReplayDialogFromForkChain -> fetch latest synopsis system record
+      .mockResolvedValueOnce(emptyLatestSystemRecordResponse() as any)
       // hydrateReplayDialogFromTranscript -> fetchEncryptedTranscriptMessages
       .mockResolvedValueOnce({
         status: 200,
@@ -3236,7 +3245,7 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Session title: TITLE_ONLY_SUMMARY');
   });
 
   it('does not use metadata.summary.text as replay summary fallback for continueWithReplay', async () => {
@@ -3310,12 +3319,13 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
+      .mockResolvedValueOnce(emptyLatestSystemRecordResponse() as any)
       .mockResolvedValueOnce({
         status: 200,
         data: {
           messages: [
-            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
       } as any);
@@ -3355,7 +3365,7 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Session title: TITLE_ONLY_SUMMARY');
   });
 
   it('includes session synopsis artifacts in replay seed when replay summary is requested', async () => {
@@ -3430,6 +3440,8 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
+      // hydrateReplayDialogFromForkChain -> fetch latest synopsis system record
+      .mockResolvedValueOnce(emptyLatestSystemRecordResponse() as any)
       // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
       .mockResolvedValueOnce({
         status: 200,
@@ -4809,17 +4821,6 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
-      // hydrateReplayDialogFromForkChain(root) -> fetchEncryptedTranscriptMessages
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          messages: encryptedRootMessages.map((ciphertext, idx) => ({
-            seq: idx + 1,
-            createdAt: idx + 1,
-            content: { t: 'encrypted', c: ciphertext },
-          })),
-        },
-      } as any)
       // hydrateReplayDialogFromForkChain(child) -> fetchEncryptedTranscriptMessages
       .mockResolvedValueOnce({
         status: 200,
@@ -4827,6 +4828,17 @@ describe('registerMachineRpcHandlers', () => {
           messages: encryptedChildMessages.map((ciphertext, idx) => ({
             seq: idx + 1,
             createdAt: 20 + idx,
+            content: { t: 'encrypted', c: ciphertext },
+          })),
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain(root) -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: encryptedRootMessages.map((ciphertext, idx) => ({
+            seq: idx + 1,
+            createdAt: idx + 1,
             content: { t: 'encrypted', c: ciphertext },
           })),
         },

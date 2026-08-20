@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { respondTranscriptMessagesQueryRejection } from '@/testkit/transcript/transcriptMessagesRouteContract';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 describe('hydrateReplayDialogFromForkChain (integration)', () => {
@@ -97,6 +98,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
       }
       const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
       if (req.method === 'GET' && messagesMatch) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ messages: messages.get(messagesMatch[1]!) ?? [] }));
@@ -195,6 +197,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
       }
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         const beforeSeqRaw = url.searchParams.get('beforeSeq');
         const limitRaw = url.searchParams.get('limit');
         const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
@@ -302,6 +305,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
       }
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         const beforeSeqRaw = url.searchParams.get('beforeSeq');
         const limitRaw = url.searchParams.get('limit');
         const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
@@ -423,6 +427,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
       }
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         const beforeSeqRaw = url.searchParams.get('beforeSeq');
         const limitRaw = url.searchParams.get('limit');
         const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
@@ -542,6 +547,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
       }
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         const beforeSeqRaw = url.searchParams.get('beforeSeq');
         const limitRaw = url.searchParams.get('limit');
         const beforeSeq = beforeSeqRaw ? Number.parseInt(beforeSeqRaw, 10) : null;
@@ -666,6 +672,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         return;
       }
       if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ messages: [] }));
@@ -694,6 +701,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         return;
       }
       if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
@@ -721,6 +729,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         return;
       }
       if (url.pathname === '/v1/sessions/sess_empty_source/messages') {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
@@ -788,6 +797,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         return;
       }
       if (url.pathname === '/v1/sessions/sess_legacy_e2ee/messages') {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
@@ -952,6 +962,7 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
         return;
       }
       if (params.parentSessionId && url.pathname === `/v1/sessions/${params.parentSessionId}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         parentRequests.push('messages');
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -964,6 +975,7 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
         return;
       }
       if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+        if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         const rolesRaw = url.searchParams.get('roles');
         const beforeSeqRaw = url.searchParams.get('beforeSeq');
         const afterSeqRaw = url.searchParams.get('afterSeq');
@@ -1117,7 +1129,7 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
    * Native return (`AM-26`): the returning Agent already holds everything up to
    * the seq it last saw, so the walk starts just above it.
    */
-  it('bounds the walk server-side at the returning Agent departure seq', async () => {
+  it('bounds the walk at the returning Agent departure seq with a query the real route accepts', async () => {
     const rows = Array.from({ length: 10 }, (_unused, index) =>
       textRow(index + 1, index % 2 === 0 ? 'user' : 'agent', `turn-${index + 1}`));
 
@@ -1136,12 +1148,21 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
       },
     });
 
-    // Server-side, not a post-fetch filter: the walk must not page history it
-    // is going to discard, nor spend its request ceiling on it.
+    // Every page is asked for with a query the REAL route accepts. `beforeSeq`
+    // and `afterSeq` are mutually exclusive on
+    // `GET /v1/sessions/:sessionId/messages`, and this walk pages backwards, so
+    // the bound may never travel as `afterSeq`. Sending the pair 400'd every
+    // bounded fetch live while the double answered 200.
     expect(messageRequests.length).toBeGreaterThan(0);
     for (const request of messageRequests) {
-      expect(request.afterSeq).toBe(6);
+      expect(request.beforeSeq).not.toBeNull();
+      expect(request.afterSeq).toBeNull();
     }
+    // …and the bound is still a bound, not merely a post-hoc filter over a walk
+    // to the start of the Session: nothing below it is ever asked for, so the
+    // request ceiling is not spent on history the reader already holds.
+    expect(Math.min(...messageRequests.map((request) => request.beforeSeq ?? Number.POSITIVE_INFINITY)))
+      .toBeGreaterThan(6);
     expect(result?.dialog.map((item) => item.text)).toEqual([
       'turn-7', 'turn-8', 'turn-9', 'turn-10',
     ]);
@@ -1157,7 +1178,7 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
     expect(result?.historyIncomplete).toBe(false);
   });
 
-  it('bounds the pinned last-user lookup with the same departure seq', async () => {
+  it('bounds the pinned last-user lookup with a query the real route accepts', async () => {
     // The window is all agent output, so the pinned lookup fires. A user turn
     // from BEFORE the Agent left is already in its own conversation, and
     // pinning it as "the latest instruction" would restate a served ask.
@@ -1172,9 +1193,13 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
       afterSeqExclusive: 1,
     });
 
+    // The pinned lookup is the SECOND fetch on the native-return path, and the
+    // second one that used to pair `beforeSeq` with `afterSeq`. Both fetches
+    // have to carry the bound themselves.
     expect(messageRequests.some((request) => request.roles === 'user')).toBe(true);
     for (const request of messageRequests) {
-      expect(request.afterSeq).toBe(1);
+      expect(request.beforeSeq).not.toBeNull();
+      expect(request.afterSeq).toBeNull();
     }
     expect(result?.lastUserDialogItem).toBeNull();
 

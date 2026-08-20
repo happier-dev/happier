@@ -205,9 +205,14 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
    *
    * Set only when the reader already holds everything up to that seq — today
    * that is the same-Session Agent transition returning an Agent to its own
-   * native conversation (`AM-26`). The bound is server-side (`afterSeq`), not a
-   * post-fetch filter, so the walk neither pages history it will discard nor
-   * spends its request ceiling on it.
+   * native conversation (`AM-26`). The bound is enforced HERE, not by the
+   * server: this walk pages BACKWARDS with `beforeSeq`, and
+   * `GET /v1/sessions/:sessionId/messages` rejects `beforeSeq` and `afterSeq`
+   * together with `400 beforeSeq and afterSeq are mutually exclusive`. Sending
+   * both failed every bounded fetch. Rows at or below the bound are dropped
+   * from each page, and the backward cursor stops once it reaches the bound, so
+   * the walk still neither carries history it will discard nor spends its
+   * request ceiling paging below it.
    *
    * A bound also ENDS the chain here: it lives in this Session's seq space, so
    * a parent segment is entirely below it by construction. Reaching it is
@@ -285,7 +290,18 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       && params.afterSeqExclusive >= 0
       ? params.afterSeqExclusive
       : null;
-  const afterSeqParam = afterSeqExclusive === null ? {} : { afterSeq: afterSeqExclusive };
+  /**
+   * The departure bound applied to the rows a page actually returned.
+   *
+   * The route refuses `beforeSeq` together with `afterSeq`, and this walk needs
+   * `beforeSeq` to page backwards, so the lower bound cannot be a query
+   * parameter. Dropping the rows here and stopping the cursor at the bound
+   * below is the same window, asked for legally.
+   */
+  const withinDepartureBound = (rows: readonly RawTranscriptRow[]): readonly RawTranscriptRow[] =>
+    afterSeqExclusive === null
+      ? rows
+      : rows.filter((row) => typeof row.seq === 'number' && row.seq > afterSeqExclusive);
 
   const visited = new Set<string>();
   const segments: Array<{ sessionId: string; rawSession: any; upToSeqInclusive?: number }> = [];
@@ -455,7 +471,6 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
         sessionId: segment.sessionId,
         limit: pageSize,
         beforeSeq: cursor,
-        ...afterSeqParam,
         roles: REPLAY_DIALOG_MESSAGE_ROLES,
       }).catch((error) => {
         if (isAuthenticationError(error)) throw error;
@@ -477,7 +492,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       firstPage = false;
 
       const slice = decryptTranscriptReplaySlice({
-        rows: page.messages as readonly RawTranscriptRow[],
+        rows: withinDepartureBound(page.messages as readonly RawTranscriptRow[]),
         ...(ctx ?? {}),
         maxTextChars: params.maxTextChars,
         maxDialogItems: pageSize,
@@ -545,6 +560,13 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
         || nextCursor <= 0
         || nextCursor >= cursor
         || (page.nextBeforeSeq === null && page.messages.length < pageSize)
+        // The departure bound, as a stop rather than a query parameter: the
+        // next request would ask for `seq < nextCursor`, and once that is at or
+        // below the bound every row it could return is already in the returning
+        // Agent's own conversation. Same exhaustion, so `reachedSourceStart`
+        // still holds — reaching the bound is the start of the source for this
+        // reader.
+        || (afterSeqExclusive !== null && nextCursor <= afterSeqExclusive + 1)
       ) {
         segmentExhausted = true;
         break;
@@ -567,10 +589,6 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       sessionId: startingSegment.sessionId,
       limit: 1,
       beforeSeq: Math.max(0, sourceCutoffSeqInclusive + 1),
-      // Bounded the same way as the walk: a user turn from BEFORE the returning
-      // Agent left is already in that Agent's own conversation, and pinning it
-      // as "the latest instruction" would restate an ask it has already served.
-      ...afterSeqParam,
       roles: ['user'],
     }).catch((error) => {
       if (isAuthenticationError(error)) throw error;
@@ -578,7 +596,11 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     });
     if (pinnedPage) {
       const pinnedSlice = decryptTranscriptReplaySlice({
-        rows: pinnedPage.messages as readonly RawTranscriptRow[],
+        // Bounded the same way as the walk, and for the same reason it cannot be
+        // an `afterSeq`: a user turn from BEFORE the returning Agent left is
+        // already in that Agent's own conversation, and pinning it as "the
+        // latest instruction" would restate an ask it has already served.
+        rows: withinDepartureBound(pinnedPage.messages as readonly RawTranscriptRow[]),
         ...(startingCtx ?? {}),
         maxTextChars: params.maxTextChars,
         maxDialogItems: 1,

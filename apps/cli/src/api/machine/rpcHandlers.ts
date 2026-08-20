@@ -1508,9 +1508,12 @@ export function registerMachineRpcHandlers(params: Readonly<{
       cwd: normalizedDirectory,
       source: {
         sourceSessionId: parentSessionId,
-        forkPoint: forkPoint.type === 'seq'
-          ? { type: 'seq', upToSeqInclusive: effectiveCutoffSeqInclusive }
-          : { type: 'latest' },
+        // "Latest" is resolved ONCE, by this lifecycle, and this is that
+        // answer. Leaving the retrieval to re-resolve it made the child's
+        // CONTENT and its recorded LINEAGE answer to two different reads of
+        // the same live parent: a row committed between them entered the seed
+        // while the boundary still named the admitted cutoff.
+        forkPoint: { type: 'seq', upToSeqInclusive: effectiveCutoffSeqInclusive },
       },
       providerHintAgentId: agentRaw,
       // Persisted lineage keeps naming the exact fork point this lifecycle

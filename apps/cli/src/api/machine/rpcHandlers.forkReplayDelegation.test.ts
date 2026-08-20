@@ -226,6 +226,30 @@ describe('session.fork replay branch — canonical creation delegation', () => {
     expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
   });
 
+  it('bounds a `latest` fork seed by the cutoff the lifecycle already admitted', async () => {
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const handler = registerForkHandler(spawnSession);
+
+    const result = await handler({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    // Retrieval must not re-resolve "latest": a row committed after the
+    // lifecycle admitted the parent head would otherwise enter the child's seed
+    // while its recorded lineage still names that head.
+    expect(resolveReplaySeedDraft).toHaveBeenCalledWith(expect.objectContaining({
+      source: {
+        kind: 'fork_chain',
+        previousSessionId: 'sess_parent',
+        upToSeqInclusive: PARENT_HEAD_SEQ,
+      },
+    }));
+  });
+
   it('carries inherited fork overlays into creation metadata and spawn options', async () => {
     const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 'sess_child' } as const));
     const handler = registerForkHandler(spawnSession);
