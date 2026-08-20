@@ -753,6 +753,7 @@ export const fr: TranslationStructure = {
     runs: {
         title: 'Exécutions',
         empty: 'Aucun run pour l’instant.',
+                notRebuildable: "Du contexte a bien été transmis ici, mais la transcription de cette session ne le contient plus : impossible de le reconstruire.",
         groupLabel: ({ groupId }: { groupId: string }) => `Groupe ${groupId}`,
         showFinished: 'Afficher terminés',
         unknownMachine: 'Machine inconnue',

@@ -908,6 +908,7 @@ export const ru: TranslationStructure = {
   runs: {
     title: "Запуски",
     empty: "Запусков пока нет.",
+          notRebuildable: "Здесь контекст был передан, но транскрипт этой сессии его больше не содержит, поэтому восстановить его нельзя.",
     showFinished: "Показывать завершённые",
     unknownMachine: "Неизвестная машина",
     failedToLoad: "Не удалось загрузить запуски",

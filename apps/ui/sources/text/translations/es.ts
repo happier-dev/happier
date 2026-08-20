@@ -881,6 +881,7 @@ export const es: TranslationStructure = {
   runs: {
     title: "Ejecuciones",
     empty: "Aún no hay ejecuciones.",
+          notRebuildable: "Aquí se transfirió contexto, pero la transcripción de esta sesión ya no lo contiene, así que no se puede reconstruir.",
     groupLabel: ({ groupId }: { groupId: string }) => `Grupo ${groupId}`,
     showFinished: "Mostrar finalizadas",
     unknownMachine: "Máquina desconocida",

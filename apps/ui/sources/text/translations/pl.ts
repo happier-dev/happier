@@ -904,6 +904,7 @@ export const pl: TranslationStructure = {
     runs: {
       title: "Uruchomienia",
       empty: "Brak uruchomień.",
+          notRebuildable: "Kontekst został tutaj przekazany, ale transkrypcja tej sesji już go nie zawiera, więc nie da się go odtworzyć.",
         showFinished: "Pokaż zakończone",
         unknownMachine: "Nieznana maszyna",
         failedToLoad: "Nie udało się wczytać uruchomień",

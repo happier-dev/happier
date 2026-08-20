@@ -751,6 +751,7 @@ export const en = {
     runs: {
         title: 'Runs',
         empty: 'No runs yet.',
+                notRebuildable: 'Context was carried over here, but this Session’s transcript no longer holds it — so it can’t be rebuilt.',
         groupLabel: ({ groupId }: { groupId: string }) => `Group ${groupId}`,
         showFinished: 'Show finished',
         unknownMachine: 'Unknown machine',

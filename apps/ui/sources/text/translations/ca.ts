@@ -833,6 +833,7 @@ export const ca: TranslationStructure = {
     runs: {
         title: 'Execucions',
         empty: 'Encara no hi ha execucions.',
+                notRebuildable: "Aquí es va transmetre context, però la transcripció d’aquesta sessió ja no el conté, així que no es pot reconstruir.",
         groupLabel: ({ groupId }: { groupId: string }) => `Grup ${groupId}`,
         showFinished: 'Mostra les finalitzades',
         unknownMachine: 'Màquina desconeguda',

@@ -151,7 +151,8 @@ describe('Agent transition handed-over context card', () => {
             preview: { type: 'empty', protocolVersion: 1 },
         });
         const emptyScreen = await renderScreen(
-            <AgentTransitionHandedOverContextModal {...BASE} sourceCutoffSeqInclusive={7} />,
+            // Cutoff `0` is the recorded fact that nothing crossed the boundary.
+            <AgentTransitionHandedOverContextModal {...BASE} sourceCutoffSeqInclusive={0} />,
         );
         await flushHookEffects();
         expect(emptyScreen.findByTestId('agent-transition-handed-over-status')?.props.children)
@@ -166,6 +167,42 @@ describe('Agent transition handed-over context card', () => {
         );
         await flushHookEffects();
         expect(unreadableScreen.findByTestId('agent-transition-handed-over-status')?.props.children)
+            .toBe(t('session.agentContinuation.handedOver.unavailableSource'));
+    });
+
+    it('does not claim nothing was carried when the rebuild simply cannot reach it any more', async () => {
+        // The divider recorded a cutoff above zero, so context DID cross this
+        // boundary. An empty rebuild today is retention or a rollback, not a
+        // fact about the past.
+        previewMock.preview.mockResolvedValueOnce({
+            status: 'answered',
+            preview: { type: 'empty', protocolVersion: 1 },
+        });
+
+        const screen = await renderScreen(
+            <AgentTransitionHandedOverContextModal {...BASE} sourceCutoffSeqInclusive={7} />,
+        );
+        await flushHookEffects();
+
+        expect(screen.findByTestId('agent-transition-handed-over-status')?.props.children)
+            .toBe(t('session.agentContinuation.handedOver.notRebuildable'));
+    });
+
+    it('keeps the rebuild status in one polite live region so the answer is announced', async () => {
+        previewMock.preview.mockResolvedValueOnce({
+            status: 'answered',
+            preview: { type: 'unavailable', reason: 'source_unreadable' },
+        });
+
+        const screen = await renderScreen(
+            <AgentTransitionHandedOverContextModal {...BASE} sourceCutoffSeqInclusive={7} />,
+        );
+        await flushHookEffects();
+
+        const region = screen.findByTestId('agent-transition-handed-over-status-region');
+        expect(region?.props.accessibilityLiveRegion).toBe('polite');
+        expect(region?.props['aria-live']).toBe('polite');
+        expect(screen.findByTestId('agent-transition-handed-over-status')?.props.children)
             .toBe(t('session.agentContinuation.handedOver.unavailableSource'));
     });
 

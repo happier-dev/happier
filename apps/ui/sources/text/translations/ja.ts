@@ -864,6 +864,7 @@ export const ja: TranslationStructure = {
   runs: {
     title: "実行",
     empty: "実行はまだありません。",
+          notRebuildable: "ここではコンテキストが引き継がれましたが、このセッションのトランスクリプトにはもう残っていないため、再構築できません。",
     showFinished: "完了した実行を表示",
     unknownMachine: "不明なマシン",
     failedToLoad: "実行の読み込みに失敗しました",

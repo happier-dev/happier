@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { SessionAgentTransitionBriefPreviewV1 } from '@happier-dev/protocol';
 
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -91,6 +92,37 @@ export function AgentTransitionHandedOverContextModal(
 
     const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
 
+    /**
+     * The one sentence this card is currently saying about its own progress,
+     * whichever state produced it.
+     *
+     * `empty` is the answer that has to be read against the divider's recorded
+     * cutoff: above zero, context DID cross this boundary, so an empty rebuild
+     * today is retention or a rollback taking it out of reach — not a fact
+     * about the past. Only a recorded cutoff of `0` means nothing was carried.
+     */
+    const statusText = state.kind === 'loading'
+        ? t('session.agentContinuation.handedOver.loading')
+        : state.kind === 'unreachable'
+            ? t('session.agentContinuation.handedOver.unreachable')
+            : state.preview.type === 'empty'
+                ? (sourceCutoffSeqInclusive > 0
+                    ? t('session.agentContinuation.handedOver.notRebuildable')
+                    : t('session.agentContinuation.handedOver.empty'))
+                : state.preview.type === 'unavailable'
+                    ? (state.preview.reason === 'operation_unavailable'
+                        ? t('session.agentContinuation.handedOver.unavailableOperation')
+                        : t('session.agentContinuation.handedOver.unavailableSource'))
+                    : null;
+
+    // The card answers asynchronously and swaps one line for another in place,
+    // which a screen reader on the still-open modal never sees. Route it
+    // through the one canonical announcer rather than adding a second channel.
+    React.useEffect(() => {
+        if (!statusText) return;
+        announceAccessibilityMessage(statusText);
+    }, [statusText]);
+
     const retryable = state.kind === 'unreachable'
         || (state.kind === 'answered'
             && state.preview.type === 'unavailable'
@@ -108,11 +140,21 @@ export function AgentTransitionHandedOverContextModal(
                 </Text>
             </View>
 
-            {state.kind === 'loading' ? (
-                <View style={styles.status}>
-                    <ActivitySpinner size={14} color={theme.colors.text.secondary} />
-                    <Text style={[styles.statusText, { color: theme.colors.text.secondary }]}>
-                        {t('session.agentContinuation.handedOver.loading')}
+            {statusText ? (
+                <View
+                    testID="agent-transition-handed-over-status-region"
+                    style={styles.status}
+                    accessibilityLiveRegion="polite"
+                    {...({ role: 'status', 'aria-live': 'polite' } as Record<string, unknown>)}
+                >
+                    {state.kind === 'loading' ? (
+                        <ActivitySpinner size={14} color={theme.colors.text.secondary} />
+                    ) : null}
+                    <Text
+                        testID={state.kind === 'loading' ? undefined : 'agent-transition-handed-over-status'}
+                        style={[styles.statusText, { color: theme.colors.text.secondary }]}
+                    >
+                        {statusText}
                     </Text>
                 </View>
             ) : null}
@@ -153,35 +195,6 @@ export function AgentTransitionHandedOverContextModal(
                         </View>
                     ))}
                 </View>
-            ) : null}
-
-            {state.kind === 'answered' && state.preview.type === 'empty' ? (
-                <Text
-                    testID="agent-transition-handed-over-status"
-                    style={[styles.statusText, { color: theme.colors.text.secondary }]}
-                >
-                    {t('session.agentContinuation.handedOver.empty')}
-                </Text>
-            ) : null}
-
-            {state.kind === 'answered' && state.preview.type === 'unavailable' ? (
-                <Text
-                    testID="agent-transition-handed-over-status"
-                    style={[styles.statusText, { color: theme.colors.text.secondary }]}
-                >
-                    {state.preview.reason === 'operation_unavailable'
-                        ? t('session.agentContinuation.handedOver.unavailableOperation')
-                        : t('session.agentContinuation.handedOver.unavailableSource')}
-                </Text>
-            ) : null}
-
-            {state.kind === 'unreachable' ? (
-                <Text
-                    testID="agent-transition-handed-over-status"
-                    style={[styles.statusText, { color: theme.colors.text.secondary }]}
-                >
-                    {t('session.agentContinuation.handedOver.unreachable')}
-                </Text>
             ) : null}
 
             <View style={styles.actions}>
@@ -310,7 +323,9 @@ const styles = StyleSheet.create((_theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        minHeight: 40,
+        // The tree's minimum touch target; these are the card's only two
+        // controls and they sat below it at 40.
+        minHeight: 44,
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 10,

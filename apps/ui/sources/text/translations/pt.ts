@@ -930,6 +930,7 @@ export const pt: TranslationStructure = {
   runs: {
     title: "Execuções",
     empty: "Nenhuma execução ainda.",
+          notRebuildable: "Foi transferido contexto aqui, mas a transcrição desta sessão já não o contém, por isso não pode ser reconstruído.",
     showFinished: "Mostrar finalizadas",
     unknownMachine: "Máquina desconhecida",
     failedToLoad: "Falha ao carregar execuções",

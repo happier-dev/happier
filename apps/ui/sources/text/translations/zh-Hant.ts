@@ -1020,6 +1020,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     runs: {
         title: '執行',
         empty: '暫無執行記錄。',
+                    notRebuildable: "此處確實移交了脈絡，但本工作階段的逐字紀錄已不再包含它，因此無法重建。",
         showFinished: '顯示已完成',
         unknownMachine: '未知裝置',
         failedToLoad: '載入執行記錄失敗',

@@ -879,6 +879,7 @@ export const zhHans: TranslationStructure = {
   runs: {
     title: "运行",
     empty: "暂无运行记录。",
+          notRebuildable: "此处确实移交了上下文，但本会话的转录已不再包含它，因此无法重建。",
     groupLabel: ({ groupId }: { groupId: string }) => `组 ${groupId}`,
     showFinished: "显示已完成",
     unknownMachine: "未知机器",
