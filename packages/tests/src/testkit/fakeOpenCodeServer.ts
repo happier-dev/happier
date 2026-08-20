@@ -23,7 +23,7 @@ import { sleep, waitFor } from './timing';
  *
  * It deliberately reuses the existing core-e2e testkit (real server + daemon, run
  * dirs, auth, prompt enqueue) for the daemon-driven scenarios rather than inventing
- * a second harness — see `opencode.managedServerRestart.feat.providers.slow.e2e.test.ts`.
+ * a second harness — see `opencode.managedServerRestart.slow.e2e.test.ts`.
  */
 
 // ---------------------------------------------------------------------------
