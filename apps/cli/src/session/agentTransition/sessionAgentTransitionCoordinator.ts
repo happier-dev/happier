@@ -450,7 +450,11 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
 export async function runSessionAgentTransition(params: Readonly<{
   credentials: Credentials;
   request: SessionAgentTransitionRequestV1;
-  /** Exact daemon machine. A Session hosted elsewhere is not transitionable. */
+  /**
+   * This daemon's machine. A Session hosted elsewhere is not transitionable —
+   * but a Session whose recorded host THIS machine replaced is, because nothing
+   * re-homes the row (see `sessionIsHostedHere`).
+   */
   currentMachineId?: string | null;
   deps?: SessionAgentTransitionCoordinatorDeps;
 }>): Promise<SessionAgentTransitionResultV1> {
@@ -495,7 +499,12 @@ export async function runSessionAgentTransition(params: Readonly<{
   if (!hasCanonicalHostedTranscript(metadata)) return effects.rejected('unsupported_operation');
   // Same owner the inspection asks, so a Session can never be reported
   // switchable here and then stopped by a daemon that does not host it.
-  if (!sessionIsHostedHere({ currentMachineId: params.currentMachineId, rawSession, metadata })) {
+  if (!await sessionIsHostedHere({
+    currentMachineId: params.currentMachineId,
+    rawSession,
+    metadata,
+    credentials: params.credentials,
+  })) {
     return effects.rejected('unsupported_operation');
   }
 
