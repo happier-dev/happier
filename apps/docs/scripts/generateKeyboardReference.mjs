@@ -144,6 +144,14 @@ export async function renderKeyboardReferenceMarkdown({
     return rows.length ? `### ${group.title}\n\n| Action | Default |\n| --- | --- |\n${rows.join('\n')}` : null;
   }).filter(Boolean);
 
+  const off = [
+    shortcutsOn ? null : 'the shortcut registry',
+    paletteOn ? null : 'the command palette',
+  ].filter(Boolean);
+  const gateNotice = off.length
+    ? `${off.length === 2 ? 'Both' : 'This'} ${off.length === 2 ? 'features are' : 'feature is'} **off by default**: turn on ${off.join(' and ')} under **Settings → Keyboard shortcuts** before any binding below does anything.`
+    : 'Shortcuts are on by default.';
+
   const covered = new Set(GROUPS.flatMap((g) => Object.keys(g.commands)));
   const uncovered = [...commands.keys()].filter((id) => !covered.has(id));
 
@@ -163,9 +171,7 @@ differ between the web client and the native apps where the platform already
 claims a key.
 
 <Callout type="warn">
-  Both features are **off by default**. Turn on
-  ${shortcutsOn ? '' : '**Settings → Keyboard shortcuts**'}${shortcutsOn || paletteOn ? '' : ' and '}${paletteOn ? '' : '**the command palette**'}
-  before any of the bindings below do anything.
+  ${gateNotice}
 </Callout>
 
 \`Mod\` means Command on macOS and iOS, and Control everywhere else. Where a

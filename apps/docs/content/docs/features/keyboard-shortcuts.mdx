@@ -1,0 +1,100 @@
+---
+title: Keyboard shortcuts
+description: Every rebindable shortcut and the command palette, with the defaults for web and native.
+---
+
+Happier has 33 keyboard commands. Every one can be rebound, and the defaults
+differ between the web client and the native apps where the platform already
+claims a key.
+
+<Callout type="warn">
+  Both features are **off by default**: turn on the shortcut registry and the command palette under **Settings → Keyboard shortcuts** before any binding below does anything.
+</Callout>
+
+`Mod` means Command on macOS and iOS, and Control everywhere else. Where a
+binding is written literally as `Ctrl`, it is Control on every platform
+including macOS — that is deliberate, because the key is standing in for a
+platform convention rather than for "the modifier key".
+
+## The command palette
+
+The fastest way to reach anything without remembering a binding. It searches
+built-in commands, your custom prompts and Happier actions in one list.
+
+`Alt+K` (web) · `Mod+K` (everywhere else)
+
+## Shortcuts
+
+### Moving between sessions
+
+| Action | Default |
+| --- | --- |
+| Start a new session | `Alt+N` (web) · `Mod+Shift+N` (everywhere else) |
+| Next recently used session | `Alt+PageDown` (web) · `Ctrl+Tab` (everywhere else) |
+| Previous recently used session | `Alt+PageUp` (web) · `Ctrl+Shift+Tab` (everywhere else) |
+| Next session in the list | `Alt+ArrowDown` |
+| Previous session in the list | `Alt+ArrowUp` |
+
+### The session list
+
+| Action | Default |
+| --- | --- |
+| Move the focused session up | `Alt+Shift+ArrowUp` |
+| Move the focused session down | `Alt+Shift+ArrowDown` |
+| Move to a folder | `Alt+Shift+F` |
+| Move out to the workspace root | `Alt+Shift+R` |
+| Select or deselect the focused row | `Space` (web) |
+| Extend the selection up | `Shift+ArrowUp` (web) |
+| Extend the selection down | `Shift+ArrowDown` (web) |
+| Select every session | `Mod+A` (web) |
+| Clear the selection | `Escape` (web) |
+
+### Writing and sending
+
+| Action | Default |
+| --- | --- |
+| Jump to the composer | `Mod+I` |
+| Send now | `Mod+Enter` |
+| Queue without opening the composer | `Mod+Shift+Enter` |
+| Stop the current turn | `Mod+.` (web) · `Shift+Escape` (everywhere else) |
+| Cycle session mode | `Alt+Shift+M` |
+| Cycle permission mode | _Unbound by default_ |
+
+### Reading the transcript
+
+| Action | Default |
+| --- | --- |
+| Next message | _Unbound by default_ |
+| Previous message | _Unbound by default_ |
+| Jump to the top | `Home` |
+| Jump to the live tail | `End` |
+| Page up | `PageUp` |
+| Page down | `PageDown` |
+| Select every message | `Alt+Shift+A` |
+| Copy the selected messages | `Alt+Shift+C` |
+| Send the selection to another session | `Alt+Shift+S` |
+| Cancel the selection | `Escape` |
+
+### Everything else
+
+| Action | Default |
+| --- | --- |
+| Open the command palette | `Alt+K` (web) · `Mod+K` (everywhere else) |
+| Show this list in the app | `?` |
+| Open settings | _Unbound by default_ |
+
+Shortcuts respect focus. Most do nothing while you are typing in the composer,
+which is why sending has its own explicitly editable-safe binding rather than
+relying on you leaving the field first.
+
+## Changing them
+
+**Settings → Keyboard shortcuts** lists every command with its current binding
+and lets you set your own. Conflicts are detected as you assign them, and your
+choices are stored per device rather than synced, so a laptop and a desktop can
+differ.
+
+## Related
+
+- [Session settings](/features/session-settings)
+- [Prompts, skills, templates, and registries](/features/prompts-and-skills) — what else the palette can reach.
