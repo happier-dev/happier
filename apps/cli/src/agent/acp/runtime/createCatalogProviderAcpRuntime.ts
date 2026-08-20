@@ -135,7 +135,9 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     startupOverrides: params.startupOverrides,
     pendingQueue: {
       drainAfterStartOrLoad: true,
-      drainDuringTurn: params.inFlightSteer?.enabled === true,
+      // Exact pending actions such as send-now/interrupt must be claimable while a
+      // turn is in flight even when this catalog provider cannot steer.
+      drainDuringTurn: true,
       maxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
       inputConsumer: params.providerInputConsumer,
     },

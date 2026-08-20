@@ -684,7 +684,6 @@ export function createAcpRuntime(params: {
   };
 
   const startPendingPumpIfNeeded = () => {
-    if (!inFlightSteerEnabled) return;
     if (!params.pendingQueue) return;
     if (params.pendingQueue.drainDuringTurn !== true) return;
     if (pendingPumpController) return;

@@ -46,6 +46,33 @@ describe('createCatalogProviderAcpRuntime session identity ownership', () => {
     })).toThrow(/advertises vendor resume/i);
   });
 
+  it('runs the shared active-turn pending pump so send-now can interrupt when in-flight steer is unsupported', async () => {
+    const pumpPendingWhileActive = vi.fn(async ({ abortSignal }: { abortSignal: AbortSignal }) => {
+      await new Promise<void>((resolve) => {
+        if (abortSignal.aborted) return resolve();
+        abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    });
+    const runtime = createCatalogProviderAcpRuntime({
+      ...createParams(),
+      provider: 'grok',
+      loggerLabel: 'GrokACP',
+      providerInputConsumer: {
+        ...createParams().providerInputConsumer,
+        pumpPendingWhileActive,
+      },
+      sessionIdentity: { kind: 'manifest-metadata' },
+    });
+
+    expect(runtime.supportsInFlightSteer()).toBe(false);
+    runtime.beginTurn();
+    await vi.waitFor(() => {
+      expect(pumpPendingWhileActive).toHaveBeenCalledTimes(1);
+    });
+
+    await runtime.reset();
+  });
+
   it('runs the shared active-turn pending pump for a steer-capable catalog provider', async () => {
     const pumpPendingWhileActive = vi.fn(async ({ abortSignal }: { abortSignal: AbortSignal }) => {
       await new Promise<void>((resolve) => {

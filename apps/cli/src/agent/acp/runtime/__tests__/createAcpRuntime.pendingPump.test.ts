@@ -140,6 +140,45 @@ describe('createAcpRuntime pending queue pump', () => {
     await runtime.reset();
   });
 
+  it('starts the active-turn pending pump for send-now interrupt when in-flight steer is disabled', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    const drainPending = vi.fn(async (): Promise<DrainPendingResult> => ({
+      materialized: 0,
+      stoppedReason: 'no_pending',
+    }));
+    const pumpPendingWhileActive = vi.fn(async (opts: { abortSignal: AbortSignal }) => {
+      await new Promise<void>((resolve) => {
+        if (opts.abortSignal.aborted) return resolve();
+        opts.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    });
+    const runtime = createAcpRuntime({
+      provider: 'grok',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => {
+        throw new Error('backend should not be created for pending pump test');
+      },
+      pendingQueue: {
+        drainDuringTurn: true,
+        inputConsumer: { drainPending, pumpPendingWhileActive },
+      },
+    });
+
+    runtime.beginTurn();
+    await nextTick();
+
+    expect(runtime.supportsInFlightSteer()).toBe(false);
+    expect(pumpPendingWhileActive).toHaveBeenCalledTimes(1);
+
+    await runtime.reset();
+  });
+
   it('does not drain pending messages by default when a steer-capable turn begins', async () => {
     const { session } = createSessionClientWithMetadata();
 
