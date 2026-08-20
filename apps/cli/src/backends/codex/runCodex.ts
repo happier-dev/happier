@@ -2759,6 +2759,17 @@ export async function runCodex(opts: {
                 // earlier delivery evidence, so its successful return is the earliest UNAMBIGUOUS
                 // acceptance this seam offers. An abort before it returns keeps the seed live —
                 // the documented safety margin, not the completion gate this fix removes.
+                //
+                // Reviewed and deliberately NOT hoisted earlier. Unlike ACP
+                // (`onProviderPromptAccepted`) and the app-server
+                // (`setOnPromptAcceptedByProvider` -> `armedAppServerReplaySeedRetirement`), the
+                // legacy MCP seam has no localId-correlated acceptance callback. The only earlier
+                // candidate is a `codex/event` `task_started` notification, which carries Codex's
+                // own turn id and nothing that binds it to the prompt dispatched here; treating it
+                // as acceptance of THIS prompt would be a guess, and a wrong retirement destroys
+                // the carry-over context instead of duplicating it. This branch is still
+                // reachable — an explicit `codexBackendMode: 'mcp'` and the ACP-start failure
+                // fallback above both land here — so the retirement stays; it is only late.
                 confirmProviderAcceptedPromptForTurn(message.mode.model ?? null);
                 await awaitReplaySeedSettlement();
                 }
