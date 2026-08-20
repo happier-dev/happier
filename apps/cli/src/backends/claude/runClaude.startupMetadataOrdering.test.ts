@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
 import type { initializeRuntimeOverridesSynchronizer as initializeRuntimeOverridesSynchronizerFn } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import { createPermissionHandlerSessionStub } from '@/backends/claude/utils/permissionHandler.testkit';
 
 const agentStateUpdateSnapshots = vi.hoisted(() => [] as Array<{
     reason: string;
@@ -689,7 +690,9 @@ describe('runClaude startup metadata ordering', () => {
         let initialMode: LoopParams['initialClaudeUnifiedTerminalMode'];
         vi.mocked(loop).mockImplementationOnce(async (params: LoopParams) => {
             initialMode = params.initialClaudeUnifiedTerminalMode;
-            await params.onSessionReady(params.session);
+            const onSessionReady = params.onSessionReady;
+            if (!onSessionReady) throw new Error('Expected Claude session readiness callback');
+            await onSessionReady(createPermissionHandlerSessionStub('session-start').session);
             return 0;
         });
         const { runClaude } = await import('./runClaude');

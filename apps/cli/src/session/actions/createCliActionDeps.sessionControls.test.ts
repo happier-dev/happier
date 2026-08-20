@@ -803,6 +803,7 @@ describe('createCliActionDeps session controls', () => {
     const result = await deps.sessionSendMessage({
       sessionId: 'sess_2',
       message: 'hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       permissionModeOverride: 'not-a-mode',
     });
 
@@ -827,6 +828,7 @@ describe('createCliActionDeps session controls', () => {
     await deps.sessionSendMessage({
       sessionId: 'sess_1',
       message: 'hello',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
       modelOverride: ' model-a\t',
     });
 

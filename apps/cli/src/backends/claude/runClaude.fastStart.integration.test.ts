@@ -598,7 +598,7 @@ describe('runClaude fast-start', () => {
       expect(readinessCompleted).toBe(false);
       expect(initResolved).toBe(false);
 
-      catalogResult.resolve([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
+      catalogResult.resolve([{ id: 'claude-opus-9', name: 'Opus 9' }]);
       await waitFor(loopStarted.promise, loopStartWaitMs);
       if (testError) throw testError;
       expect(initResolved).toBe(false);
@@ -653,7 +653,7 @@ describe('runClaude fast-start', () => {
       await waitFor(new Promise<void>((resolve, reject) => {
         const startedAt = Date.now();
         const tick = () => {
-          if (lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0]) return resolve();
+          if (getLastRuntimeSessionClient()?.onUserMessage.mock.calls[0]?.[0]) return resolve();
           if (Date.now() - startedAt > 1_000) return reject(new Error('Timed out waiting for fast-start user handler'));
           setTimeout(tick, 0);
         };
@@ -662,7 +662,8 @@ describe('runClaude fast-start', () => {
 
       const launchModes: unknown[] = [];
       lastLoopOpts.messageQueue.push = vi.fn((_text: string, mode: unknown) => launchModes.push(mode));
-      const handler = lastRuntimeSessionClient?.onUserMessage.mock.calls[0]?.[0];
+      const handler = getLastRuntimeSessionClient()?.onUserMessage.mock.calls[0]?.[0];
+      if (!handler) throw new Error('fast-start user handler was not registered');
       await handler({
         content: { type: 'text', text: 'ship it' },
         localId: 'fast-effort-gated',

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createClaudePromptSubmitVerificationPolicy } from '@/backends/claude/unifiedTerminal/claudePromptSubmitVerification';
+import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 const recordTerminalHostKillAudit = vi.hoisted(() => vi.fn());
 const loggerWarn = vi.hoisted(() => vi.fn());
@@ -1138,7 +1139,7 @@ describe('createZellijTerminalHostAdapter', () => {
     )).resolves.toMatchObject({ status: 'injected', bytesWritten: Buffer.byteLength('line one\nline two') });
 
     expect(calls).toEqual([
-      'paste:terminal_1:line one\nline two:123',
+      `paste:terminal_1:line one\nline two:${resolveTerminalPromptWriteTimeoutMs('line one\nline two')}`,
       expect.stringMatching(/^enter:terminal_1:\d+$/),
     ]);
   });
@@ -1167,7 +1168,7 @@ describe('createZellijTerminalHostAdapter', () => {
       dumpScreen: async (params) => {
         calls.push(`dump:${params.paneId}`);
         dumpCount += 1;
-        return dumpCount === 1 ? '[Pasted text #1 +5999 lines]' : '';
+        return dumpCount <= 2 ? '❯ [Pasted text #1 +5999 lines]' : '';
       },
       closePane: async () => undefined,
       killSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
@@ -1198,9 +1199,11 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(calls).toEqual([
       'paste:terminal_1',
+      'dump:terminal_1',
       'enter:terminal_1',
       'dump:terminal_1',
       'enter:terminal_1',
+      'dump:terminal_1',
       'dump:terminal_1',
     ]);
   });
@@ -1227,7 +1230,7 @@ describe('createZellijTerminalHostAdapter', () => {
       dumpScreen: async (params) => {
         dumpCount += 1;
         calls.push(`dump:${params.paneId}`);
-        return dumpCount === 1 ? '[Pasted text #1 +40 lines]' : '';
+        return dumpCount <= 2 ? '❯ [Pasted text #1 +40 lines]' : '';
       },
       closePane: async () => undefined,
       killSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
@@ -1258,9 +1261,11 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(calls).toEqual([
       'paste:terminal_1',
+      'dump:terminal_1',
       'enter:terminal_1',
       'dump:terminal_1',
       'enter:terminal_1',
+      'dump:terminal_1',
       'dump:terminal_1',
     ]);
   });
@@ -1442,7 +1447,9 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(calls).toEqual([
       'paste:terminal_1',
+      'dump:terminal_1',
       'enter:terminal_1',
+      'dump:terminal_1',
       'dump:terminal_1',
     ]);
   });
@@ -1494,7 +1501,7 @@ describe('createZellijTerminalHostAdapter', () => {
     )).resolves.toMatchObject({ status: 'injected', bytesWritten: Buffer.byteLength('hello') });
 
     expect(calls).toEqual([
-      `write:terminal_1:hello:${DEFAULT_ZELLIJ_WRITE_BYTES_CHUNK_SIZE}:123`,
+      `write:terminal_1:hello:${DEFAULT_ZELLIJ_WRITE_BYTES_CHUNK_SIZE}:${resolveTerminalPromptWriteTimeoutMs('hello')}`,
       expect.stringMatching(/^enter:terminal_1:\d+$/),
     ]);
   });
@@ -1548,7 +1555,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(calls).toEqual([
       'paste',
-      'write:terminal_1:hello:123',
+      `write:terminal_1:hello:${resolveTerminalPromptWriteTimeoutMs('hello')}`,
       expect.stringMatching(/^enter:terminal_1:\d+$/),
     ]);
   });
@@ -4659,7 +4666,8 @@ describe('createZellijTerminalHostAdapter', () => {
       attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
     });
 
-    expect(liveness.paneScreenDumpError).toContain('ANTHROPIC_API_KEY=[redacted-token]');
+    expect(liveness.paneScreenDumpError).toContain('ANTHROPIC_API_KEY: [REDACTED]');
+    expect(liveness.paneScreenDumpError).toContain('authorization: bearer [REDACTED]');
     expect(liveness.paneScreenDumpError).not.toContain('sk-ant-secret-value');
     expect(liveness.paneScreenDumpError).not.toContain('provider-bearer-secret');
   });

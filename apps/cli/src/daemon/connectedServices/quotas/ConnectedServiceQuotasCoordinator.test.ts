@@ -9850,7 +9850,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'user@example.com',
       },
     });
-    const updateConnectedServiceCredentialHealth = vi.fn(async () => {});
+    const updateConnectedServiceCredentialHealth = vi.fn<
+      NonNullable<QuotaApi['updateConnectedServiceCredentialHealth']>
+    >(async () => {});
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),

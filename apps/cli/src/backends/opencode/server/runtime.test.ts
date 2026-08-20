@@ -36,6 +36,7 @@ import type { OpenCodeManagedServerIdentity, OpenCodeManagedServerIdentityChange
 import {
   createOpenCodeServerRuntimeClient,
   type OpenCodeGlobalEventDelivery,
+  type OpenCodeMcpStatus,
   type OpenCodeServerRuntimeClient,
 } from './client';
 import {
@@ -185,7 +186,7 @@ function createFakeClient(opts: Readonly<{
         }) as Record<string, unknown>,
       },
     ])),
-    mcpAdd: vi.fn(async (_input?: unknown) => ({ status: 'connected' as const })),
+    mcpAdd: vi.fn(async (_input?: unknown): Promise<OpenCodeMcpStatus> => ({ status: 'connected' })),
     mcpDisconnect: vi.fn(async (_input?: unknown) => {}),
     questionReply: vi.fn(async () => true),
     questionReject: vi.fn(async () => true),

@@ -58,7 +58,7 @@ describe('resolveClaudeModelProbeTarget', () => {
       getConnectedServiceCredentialPlain: async () => ({
         content: { t: 'plain', v: record },
         revisionSemantics: 'revisioned',
-        credentialRevision: 7,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
       }),
       listConnectedServiceAuthGroups: async () => [],
       getConnectedServiceAuthGroup: async () => null,

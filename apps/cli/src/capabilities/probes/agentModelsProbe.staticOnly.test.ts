@@ -21,7 +21,7 @@ const { createConfiguredAcpProbeBackendMock } = vi.hoisted(() => ({
 }));
 
 const { claudePreflightModelsProbeMock } = vi.hoisted(() => ({
-  claudePreflightModelsProbeMock: vi.fn(async () => null),
+  claudePreflightModelsProbeMock: vi.fn(async (): Promise<unknown | null> => null),
 }));
 
 vi.mock('./createConfiguredAcpProbeBackend', () => ({
