@@ -7,6 +7,11 @@ export const SESSION_ORGANIZATION_MAX_ID_LENGTH = 191;
 export const SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH = 191;
 
 export const SESSION_ORGANIZATION_MAX_PINNED_SESSIONS = 500;
+// Attention standing stores an explicit boolean per session, so a "remove from Needs attention"
+// against a true account default persists a row just like a "keep" does. The snapshot is the
+// first-paint payload every list refresh parses on the JS thread, so the collection is bounded like
+// every other one here; the write path rejects past the bound rather than letting the response grow.
+export const SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS = 500;
 export const SESSION_ORGANIZATION_MAX_FOLDERS = 500;
 export const SESSION_ORGANIZATION_MAX_TAGS = 500;
 export const SESSION_ORGANIZATION_MAX_LABELS = 1_000;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
   SESSION_ORGANIZATION_MAX_FOLDERS,
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
@@ -48,7 +49,7 @@ export const SessionOrganizationSnapshotSchema = z
     tagAssignments: z.array(SessionTagAssignmentSchema),
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),
     labels: z.array(SessionOrganizationLabelSchema).max(SESSION_ORGANIZATION_MAX_LABELS),
-    attentionStandings: z.array(SessionAttentionStandingSchema).optional(),
+    attentionStandings: z.array(SessionAttentionStandingSchema).max(SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS).optional(),
   })
   .strict();
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;
