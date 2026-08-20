@@ -1,5 +1,315 @@
 # Changelog
 
+## Release 2026-08-20.1 - 2026-08-20
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": {
+    "message": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+  },
+  "appStore": {
+    "whatsNew": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+  },
+  "playStore": {
+    "whatsNew": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+  },
+  "storyDeck": {
+    "summary": "Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable messaging."
+  }
+}
+-->
+
+Happier 0.2.10 brings together the public 0.2.x work completed since 0.2.1. It substantially expands how you choose Agents and models, manage accounts and quotas, work from your phone, follow goals and delegated work, organize sessions, review code, and continue work across Agents and machines.
+
+### Connected Services and account pools
+
+Connected Services let you link supported provider subscriptions, API keys and GitHub credentials to Happier once, then choose the appropriate account when starting compatible sessions across your machines.
+
+- Connect multiple Codex, Claude and other supported service profiles, give them recognizable labels and choose a default or session-specific account.
+- Reuse compatible credentials across machines without replacing the provider's global home on each machine.
+- See account health, remaining quota and reset times where the provider exposes them.
+- Choose between native provider authentication and a compatible Connected Service directly from the new-session flow.
+- Reconnect accounts when credentials expire or required permissions change.
+- Use Connected Services during supported session handoffs so the destination machine can materialize the required authentication.
+
+**Account pools** can group several accounts for the same service and choose which one should currently handle work.
+
+- Reorder pool members to set fallback priority and enable or disable individual accounts.
+- Choose priority-based, least-limited or manual selection.
+- Set a remaining-quota threshold for moving to a better account before the active account reaches its hard limit.
+- Bound how frequently a pool can switch accounts during a turn or within an hour.
+- See the pool's combined available capacity and the state of each member.
+
+Supported Codex and Claude sessions can adopt an account change without losing the Happier session. When one session discovers that the active pool account is exhausted or unavailable, the pool can select a replacement and make that choice available to the other sessions using it. Recovery can continue with the standard continuation prompt, a custom prompt, no additional prompt, or wait for the original account's reset when no replacement is available.
+
+Codex usage-reset credits can be inspected and applied from Happier where the service reports them. Account changes and meaningful recovery events remain visible in the session rather than happening as an unexplained background change.
+
+Core Connected Services is stable. Quota visibility and recovery remain capability-driven and depend on the selected service, backend and runtime.
+
+### Continue the same session with another Agent
+
+A hosted session can now **continue with another Agent without becoming a new Happier session**.
+
+Choose another Agent from the running session's picker, configure its model and options, then send your next message. That send stops the current Agent and commits the transition. The Happier session keeps the same id, transcript and settings, and a visible divider records where responsibility moved from one Agent to the next.
+
+The arriving Agent receives a bounded, text-only brief containing the recent conversation and useful pointers to earlier context. The handoff can also include the previous Agent's tracked plan as past context. Images and files from earlier turns are not copied into that generated brief, although attachments on the message that commits the switch are handled normally.
+
+If you later return to an Agent that previously ran the same session on the same machine, Happier resumes that Agent's provider session where supported and replays only the work that happened while it was away. If provider resume is unavailable, the Agent starts fresh with the full bounded handoff context instead.
+
+Switching is available only for hosted, writable sessions while the current Agent is idle and the hosting machine is reachable. It does not move the session to another machine and does not currently target Custom ACP backends. Direct and read-only sessions are excluded. The feature is server-advertised and enabled by default; older or incompatible servers and CLIs fail closed instead of presenting targets they cannot execute.
+
+### Goals, workflows, Agent Teams and work state
+
+Happier now presents the purpose of a session, its current foreground turn and its delegated work as related but distinct information.
+
+- Claude and Codex goals can show their active objective, time and token usage, optional budget progress, and controls to edit or cancel the goal.
+- Claude TodoWrite and Task activity, OpenCode todo snapshots, workflows and subagents feed shared work-state surfaces instead of separate provider-specific panels.
+- Workflow summaries show status, Agent count, duration and token use in the transcript and near the composer.
+- A unified Agent activity roster shows foreground work, background tasks, workflows and delegated Agents in one place.
+- Per-Agent details stay open while newer activity arrives, without reordering or dismissing the surface underneath you.
+- Foreground completion is distinguished from detached work that may continue afterward, so you can begin another turn without treating every background task as part of the same wait.
+- Ready notifications follow actual foreground completion rather than an individual subagent event.
+
+Claude Agent Teams can be created and managed from Happier. You can monitor teammates and active subagents, send a message directly to an individual teammate, add teammates to an existing team and follow their activity through the shared Agent surfaces.
+
+Agents can also use Happier's action system to create additional sessions, assign work, message permitted sessions, inspect status and history, and coordinate work in the same workspace. Sensitive actions can pause for an approval in the composer, while provider prompts are suppressed when Happier already owns the approval decision.
+
+Automations can target existing sessions or create new ones on a schedule, and now also support an explicit **Run now** action.
+
+### Mobile Cockpit and Swipe Teleport
+
+Mobile Cockpit puts the session's working surfaces into one phone-friendly shell.
+
+Depending on availability, its tabs cover:
+
+- the current Agent conversation
+- Files
+- Git
+- transcript navigation
+- open details and editor tabs
+- Terminal
+
+Each surface retains its own navigation state, and the session header stays present while you move between them. Opening a file, diff, review, terminal or transcript link takes you into the relevant detail surface without losing the surrounding session.
+
+**Swipe Teleport** provides direct movement across your active sessions. Swipe across the bottom bar to slide between sessions—keep going in one gesture to skip several, each one named as you pass it. You can stop on the session you want without repeatedly returning to the session list or performing a separate swipe for each intermediate session.
+
+A thumb-reachable new-session action also makes it faster to start related work from mobile. Background Cockpit tabs suspend unnecessary work, source-control state remains stable while switching tabs, and the classic focused-screen mobile layout remains available from session settings.
+
+### Agents, models and engine selection
+
+- **Cursor is now integrated as a first-class Agent choice**, with model discovery, runtime configuration, session resume, questions, todos, tasks and generated images mapped through Happier's shared surfaces.
+- **Grok Build is available as an experimental Agent integration.** It uses models advertised by the active Grok session, exposes reasoning controls only where supported, handles structured and freeform questions, and publishes generated images through Happier's session media.
+- **GitHub Copilot and Kiro join the Agent picker**, alongside continued support for Claude, Codex, OpenCode, Gemini, Qwen, Kimi, Auggie, Kilo and Pi.
+- **MiniMax profiles are built in** for its global and China endpoints, with compatible Claude and Codex configuration.
+- **Claude Opus 5 is available from the Claude model catalog.**
+- Happier can use live model lists where a backend exposes them and use its provider catalog where necessary.
+- Model-specific controls such as reasoning, effort, thinking or provider modes appear only when the selected model and runtime expose them.
+- Supported backends can accept a custom model id when you know an exact model that is not listed.
+- Favorite engine/model combinations appear in a dedicated Favorites section for quicker session creation. Availability is still checked against the selected machine, profile, authentication and current model list.
+- **Use CLI settings** remains available when you want the provider runtime to choose its configured model without a Happier override.
+
+New-session pickers now use a shared selection system for Agents, models, paths and worktrees. Project and session shortcuts can prefill the normal new-session flow without sending anything automatically:
+
+- A project's `+` action can reuse the newest session configuration from that project.
+- **New session with same setup** copies launch selections from a specific session.
+- Existing prompt and automation drafts are preserved while machine, folder, Agent, model, profile, permissions and compatible provider options are replaced.
+- Transcript history, resume targets, pending messages and running state are not copied.
+
+### Session organization and Needs Attention
+
+Folders, tags, pins, read state and attention choices are server-backed so they remain consistent across connected devices.
+
+- Create, rename, nest, move, focus and collapse folders.
+- Move sessions by drag and drop or through their context menus, including returning them to the workspace root.
+- Assign and filter by one or more tags.
+- Pin important active sessions.
+- Use multi-select to archive, delete, move, mark read or update attention handling for several sessions.
+- Mark a session read or unread from its row, header or Session info. Manually marking the currently open session unread remains effective for that viewing activation.
+
+**Keep in Needs attention** is separate from unread state. It keeps a session in the attention area after you have read it, until you explicitly remove it. Per-session choices override the account default and follow the session across devices.
+
+Kept sessions are identified separately from sessions that are waiting for you, ready for review, unread or failed, so immediate work can still sort ahead of sessions you chose to retain for later.
+
+### Code review, files and Git
+
+Happier's workspace surfaces now support a more complete review-to-action workflow.
+
+- Browse, search, create, upload, download, rename, delete, preview and edit workspace files.
+- Keep multiple file, editor, review and historical-diff tabs open without losing local state or position.
+- Review repository changes as a continuous diff set rather than opening every file separately.
+- Inspect repository, latest-turn, session-attributed or selected-for-commit changes where reliable evidence is available.
+- Initialize a Git repository from a folder that does not already have one.
+- Use experimental Git operations for staging, committing, fast-forward pulls, pushing, branch publication and switching, and managed stashes.
+- Publish a local repository to GitHub and open or reuse pull requests through a connected GitHub credential or authenticated local `gh` fallback.
+- Codex native review uses the provider's review API where the requested target can be represented safely, with normalized findings shown inside Happier.
+
+**Review comments** turn a visual diff review into structured instructions for an Agent.
+
+Add a comment to a specific line in a file or diff, collect comments across the workspace, edit or remove them, and choose which comments to include in the next prompt. Saved comments can be sent from the current session or from a new session in the same workspace.
+
+Each sent comment carries the file, line reference, surrounding snippet, comment text and a stable line-content hash where available. The resulting transcript card groups comments by file and includes a jump back to the reviewed location.
+
+Review comments and Git write operations remain experimental and are enabled separately under Settings, Features.
+
+### Session continuity, delivery and file transfer
+
+- Pending messages can wait while an Agent is busy, reconnecting or inactive and survive app or CLI restarts after the server accepts them.
+- Reorder, edit, remove or deliver a specific pending message immediately.
+- Happier chooses steering, interruption or normal delivery according to the runtime's available capabilities and explains blocked delivery states.
+- Sending to an inactive session can wake and resume it before delivery.
+- Browse existing Claude, Codex and OpenCode sessions on a connected machine, open them as provider-backed Direct sessions, or take over and sync them into Happier.
+- Fork a conversation from a chosen message. Happier uses native provider forks where available and bounded replay context elsewhere.
+- Hand off supported sessions between machines while retaining the Happier session id. Claude and OpenCode handoff are supported; Codex handoff remains experimental. Workspace transfer is optional.
+- Per-session drafts survive navigation and restarts, while arrow-key message history can recall earlier prompts without destroying the draft you were writing.
+
+Direct sessions remain experimental and require the owning machine to be reachable until they are imported or synced into Happier.
+
+File and workspace transfers use a shared encrypted, chunked transfer pipeline. When both machines have a viable direct route, transfers can move peer to peer without relaying file contents through the server. Web clients can use a machine's Tailscale Serve route where configured. When direct transfer is unavailable, the server relay provides a bounded fallback with explicit size limits rather than silently truncating data.
+
+The same transfer foundation supports prompt assets, attachments, workspace files, handoffs and file downloads. Routes are selected according to current reachability, while progress, cancellation and recovery remain visible to the initiating workflow.
+
+### Transcript navigation and content
+
+Transcripts now use the shared LegendList-based renderer across web and native clients, giving the main conversation, sidechains and read-only views consistent navigation behavior.
+
+Streaming can follow the live tail while still letting you scroll away to read earlier work. Loading older history preserves the visible area, reopening a session can restore your previous reading position, and automatic navigation respects reduced-motion preferences.
+
+Long sessions gain a navigation rail for earlier turns and pinned messages, including jumps to history that has not loaded yet. Transcript messages can also be selected, copied or sent into another session as a draft.
+
+Mermaid diagrams render on iOS and Android using a bundled, sanitized runtime. Streaming Markdown, tables, lists, code fences, math and selectable native text have also received broader presentation improvements.
+
+### Device linking, terminal pairing and restore
+
+Device setup and recovery now share a clearer linking flow.
+
+- **Add your phone** creates a QR flow from web or desktop settings so a mobile device can join the same Happier account and server.
+- QR restore flows preserve the intended server and pending account context while reconnecting or moving between devices.
+- Mobile can scan supported pairing and connection codes in app.
+- Codes and links avoid embedding loopback-only server addresses that another device cannot reach.
+- Server selection survives deep links, web hashes, account redirects and scanner navigation without replacing a working remote server with an unusable local address.
+
+Terminal pairing is authenticated. Provisioning responses can be sealed with a QR-only secret, attachment ownership is checked, and terminal hosts verify their session and socket authority before accepting control. Compatibility remains for supported older terminal flows.
+
+### Sharing, collaboration, retention and privacy
+
+Sharing and collaboration now have clearer authority and privacy boundaries.
+
+- Public and read-only transcripts expose only their permitted actions.
+- Approval delegation clears when a share becomes view-only.
+- Public capability URLs are redacted from logs, telemetry and server labels.
+- Share tokens become public only after creation completes.
+- Remote images require consent or an allowed proxy path.
+- File and media access grants are derived from the current session and share authority instead of being assumed.
+- Broad shell grants remain limited to simple commands.
+
+Session-message retention is configurable, and current cleanup behavior is disclosed in onboarding and settings. Server-side retention sweeps cover eligible session content and sidechain transcripts in bounded batches. Self-hosted operators can choose the storage and retention posture appropriate for their deployment.
+
+### Notifications and connectivity
+
+- Push permission follows explicit user intent rather than being requested merely because a notification-capable screen opened.
+- Required native-update notices remain visible, while stale downgrade notices are suppressed.
+- Account-switch, quota and authentication notifications respect existing notification preferences and quiet hours.
+- Notification operations are bounded so delivery failures do not leave session work waiting indefinitely.
+
+Connectivity supervision keeps authentication and endpoints current through credential refreshes and planned restarts. Sessions reconnect after refreshed credentials, planned server reloads appear as neutral reconnecting states, and brief machine unavailability produces a recoverable state rather than pretending an operation completed.
+
+### Desktop shell, avatars and interaction refresh
+
+Desktop, web and native surfaces now share a more consistent interaction language.
+
+- Custom theme profiles can be cloned, edited, imported and exported, with colors carried into editors, syntax highlighting, diffs and native system chrome.
+- Keyboard shortcut settings and the command palette bring built-in commands, custom prompts and Happier actions into one searchable surface.
+- Layered navigation transitions preserve route depth across web, iOS and Android.
+- Desktop editors follow the active theme, OTA status is available from the sidebar, notched Macs receive appropriate safe-area spacing, and startup and window restoration are more dependable.
+- App surfaces use a more consistent icon family, compact status treatments and refined picker, header and composer controls.
+- Avatar styles are deterministic across devices. Active sessions retain color, while completed and archived sessions use a quieter monochrome treatment.
+- Theme changes animate on supported desktop and web surfaces, while status motion and long-running animation honor visibility and reduced-motion policy.
+- The web app can be installed as a PWA.
+- French localization has been added.
+- Focus restoration, touch handling, responsive layouts and screen-reader announcements received broader refinement.
+
+A rich Markdown editor supports headings, emphasis, task lists, blockquotes, links, code blocks and slash commands, with a raw fallback when safe round-tripping is not possible. Tables, math, Mermaid and images are not yet supported by the rich editor itself.
+
+Generated images from supported Agents use durable session media and can render inline after reload.
+
+### Pets, memory and voice
+
+**Pets** are an optional experimental companion feature. Built-in and validated Codex-compatible pets can react to session activity in web, mobile and desktop shells.
+
+Desktop builds can use a draggable native overlay with session bubbles and submitted quick replies. Mobile pets support native dragging, safe areas, keyboard avoidance and reduced-motion behavior. Pets are off per account by default, and account-library synchronization requires a separate server feature.
+
+**Local Memory Search** can build a machine-local derived index from decrypted conversation content and use text search or optional embeddings to find earlier work. It is opt-in, experimental and scoped to the machine that owns the index rather than being a server-wide account index.
+
+Voice sessions use the current ElevenLabs realtime integration, with cleaner stop state, session-scoped approvals and more dependable handoff between voice and coding sessions.
+
+### Claude Unified, provider runtimes and session runners
+
+Claude Unified Terminal remains opt-in and runs the real Claude TUI through a shared terminal host.
+
+- Model, reasoning effort, permission mode and plan mode can be applied from Happier.
+- Permission requests, questions and plan-exit dialogs appear in Happier's normal approval surfaces.
+- Queued input can be injected without switching to a second Agent runtime.
+- Large-session resume can ask each time, resume from summary or resume the full provider session.
+- A blocked composer can be cleared only after explicit confirmation, without automatically erasing a real user draft.
+
+Provider runtimes received broader lifecycle and continuity upgrades:
+
+- OpenCode uses live runtime events for turn completion and keeps compaction summaries separate from normal assistant content.
+- Pi preserves pending work and authentication continuity across account changes and compaction.
+- Gemini participates in Connected Services authentication and usage-limit recovery.
+- ACP sessions provide clearer prompt completion and failure information.
+- Claude and Codex preserve provider session identity, model controls, permission routing and recovery state across supported restarts and resumes.
+
+Tracked sessions move to the current session runner after a CLI update or restart. The app can inspect runner status, restart a stale runner on its owning machine, and distinguish unsupported control from a failed resume or restart. A restart reports success only after the replacement runtime is ready.
+
+### CLI, daemon, development Stack and releases
+
+- `happier status` provides a read-only setup report covering authentication, relay health, service state, CLI installation and Connected Services.
+- `happier service start|stop|status|repair` gives explicit background-service control.
+- `happier doctor repair` can inspect and converge common installation and channel problems.
+- `happier resume`, `happier attach`, `happier session`, profiles and JSON control output expand terminal-driven workflows.
+- `/happier-diagnose`, System Status and richer bug-report diagnostics make it easier to capture actionable runtime evidence.
+- Terminal, tmux and zellij recovery, focus, pane cleanup and server switching have been strengthened.
+- Windows runtime discovery, home paths, command shims, service handling and terminal quoting received dedicated work.
+- Self-hosted deployments gain clearer readiness and database diagnostics, configurable SQLite limits, migration-only startup support, compressed UI delivery and additional database and authentication compatibility improvements.
+
+The development Stack can rebuild and reload the UI, server and CLI without unnecessarily dropping active sessions. Planned reloads show a server-restarting state, failed rebuilds preserve the last working server, and unchanged workspaces skip repeated installation work. Remote targets, tunnels, snapshots and local workers are supervised independently so one development target does not silently replace another.
+
+OTA and release preparation now bind builds and promotions to explicit source and candidate identities. Mobile OTA publication uses its prepared runtime, server and binary promotions verify the selected artifacts, and retries preserve the same authorized source rather than silently rebuilding different bytes. System Status can show the installed channel, version and pending updates.
+
+### Reliability, privacy and performance
+
+This release also includes focused improvements to provider resume and completion handling, reconnect recovery, draft and pending-message continuity, session-list efficiency, terminal lifecycle, and daemon service ownership.
+
+Large transcripts and session lists reuse more unchanged work, while inactive panels, polling and background surfaces do less unnecessary processing. Server and CLI maintenance reduces repeated database, migration, logging, authorization and filesystem work.
+
+Sensitive runtime identifiers and credentials are kept out of normal diagnostics, while unsupported or ambiguous operations return visible outcomes instead of being treated as success.
+
+Some features require matching 0.2.10 server or CLI support. When that support cannot be proven, the app hides the action, reports the limitation, or uses its documented compatibility behavior rather than claiming success.
+
+### Thank you
+
+Thank you to everyone who tested development releases, reported problems, suggested improvements and contributed code.
+
+- [@jaylfc](https://github.com/jaylfc) for Grok Build as a first-class coding Agent in [#195](https://github.com/happier-dev/happier/pull/195).
+- [@octo-patch](https://github.com/octo-patch) for the built-in MiniMax global and China profiles in [#212](https://github.com/happier-dev/happier/pull/212).
+- [@danljungstrom](https://github.com/danljungstrom) for Claude command preservation, transcript filtering, server compatibility and presence fixes, custom-model input, and runtime Claude model discovery in [#202](https://github.com/happier-dev/happier/pull/202), [#206](https://github.com/happier-dev/happier/pull/206), [#222](https://github.com/happier-dev/happier/pull/222), [#223](https://github.com/happier-dev/happier/pull/223), [#236](https://github.com/happier-dev/happier/pull/236), and [#237](https://github.com/happier-dev/happier/pull/237).
+- [@richwomanbtc](https://github.com/richwomanbtc) for Claude setup-token authentication and Agent-style TeX rendering in [#242](https://github.com/happier-dev/happier/pull/242) and [#261](https://github.com/happier-dev/happier/pull/261).
+- [@hubikj](https://github.com/hubikj) for restoring web QR readability and improving disabled-signup recovery in [#241](https://github.com/happier-dev/happier/pull/241) and [#260](https://github.com/happier-dev/happier/pull/260).
+- [@Miista](https://github.com/Miista) for reducing the relay-server Docker image in [#219](https://github.com/happier-dev/happier/pull/219).
+- [@DurdeuVlad](https://github.com/DurdeuVlad) for localizing unsupported transcript placeholders in [#209](https://github.com/happier-dev/happier/pull/209).
+- [@RobLoach](https://github.com/RobLoach) for CLI development tooling, Android keyboard sizing and native speech build fixes in [#162](https://github.com/happier-dev/happier/pull/162), [#163](https://github.com/happier-dev/happier/pull/163), [#164](https://github.com/happier-dev/happier/pull/164), and [#204](https://github.com/happier-dev/happier/pull/204).
+- [@Kunde21](https://github.com/Kunde21) for making malformed Claude assistant records fail softly in [#196](https://github.com/happier-dev/happier/pull/196).
+- [@HiddevH](https://github.com/HiddevH) for preventing SQLite WAL checkpoint starvation in [#190](https://github.com/happier-dev/happier/pull/190).
+- [@saketsawrav](https://github.com/saketsawrav) for serializing web terminal input in [#183](https://github.com/happier-dev/happier/pull/183).
+- [@jiuchuanll](https://github.com/jiuchuanll) for Codex title synchronization and native passthrough in [#168](https://github.com/happier-dev/happier/pull/168).
+- [@jr200](https://github.com/jr200) for preserving bridged MCP input schemas in [#167](https://github.com/happier-dev/happier/pull/167).
+- [@eusip](https://github.com/eusip) for resilient metadata writes and compressed mobile UI delivery in [#159](https://github.com/happier-dev/happier/pull/159) and [#158](https://github.com/happier-dev/happier/pull/158).
+- [@LightYear512](https://github.com/LightYear512) for resolving global Claude installations through the active runtime in [#153](https://github.com/happier-dev/happier/pull/153).
+- [@lucharo](https://github.com/lucharo) for the original cached-session-list idea.
+
+Thank you as well to [@karolzlot](https://github.com/karolzlot), [@Zeninexu](https://github.com/Zeninexu), [@KolorYan](https://github.com/KolorYan), [@Cheddies1](https://github.com/Cheddies1), and [@NeskireDK](https://github.com/NeskireDK) for co-authored feature and reliability work included in this release.
+
 ## Release 2026-08-09.1 - 2026-08-09
 
 <!-- happier-release-note-projections:v1
