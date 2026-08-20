@@ -7,7 +7,12 @@ import { mapPiSessionToDirectMessages } from './mapPiSessionToDirectMessages';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
 type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; endExclusive: number }>;
-type PiForwardCursorV1 = Readonly<{ v: 1; kind: 'piForward'; delivered: number }>;
+export type PiForwardCursorV1 = Readonly<{
+  v: 1;
+  kind: 'piForward';
+  delivered: number;
+  anchorItemId?: string | null;
+}>;
 
 function encodeBackwardCursor(value: PiBackwardCursorV1): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -32,18 +37,45 @@ export function encodePiForwardCursor(value: PiForwardCursorV1): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-export function decodePiForwardCursor(raw: string | undefined): number {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
+export function decodePiForwardCursor(raw: string | undefined): PiForwardCursorV1 | null {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object') return 0;
+    if (!parsed || typeof parsed !== 'object') return null;
     const value = parsed as Record<string, unknown>;
-    if (value.v !== 1 || value.kind !== 'piForward') return 0;
-    const delivered = typeof value.delivered === 'number' && Number.isFinite(value.delivered) ? value.delivered : 0;
-    return Math.max(0, Math.trunc(delivered));
+    if (value.v !== 1 || value.kind !== 'piForward') return null;
+    if (typeof value.delivered !== 'number' || !Number.isFinite(value.delivered) || value.delivered < 0) return null;
+    return {
+      v: 1,
+      kind: 'piForward',
+      delivered: Math.trunc(value.delivered),
+      ...(typeof value.anchorItemId === 'string' || value.anchorItemId === null
+        ? { anchorItemId: value.anchorItemId }
+        : {}),
+    };
   } catch {
-    return 0;
+    return null;
   }
+}
+
+function normalizeLegacyPiEntries(records: readonly Record<string, unknown>[]): PiSessionEntry[] {
+  const header = records.find((record) => record.type === 'session');
+  const version = typeof header?.version === 'number' ? header.version : 1;
+  if (version >= 2) return records.map((record) => record as PiSessionEntry);
+
+  const ids = records.map((record, index) => {
+    if (record.type === 'session') return null;
+    const existingId = typeof record.id === 'string' ? record.id.trim() : '';
+    return existingId || `legacy-${index}`;
+  });
+  let previousId: string | null = null;
+  return records.map((record, index) => {
+    if (record.type === 'session') return record as PiSessionEntry;
+    const id = ids[index]!;
+    const normalized: Record<string, unknown> = { ...record, id, parentId: previousId };
+    previousId = id;
+    return normalized as PiSessionEntry;
+  });
 }
 
 /**
@@ -52,20 +84,20 @@ export function decodePiForwardCursor(raw: string | undefined): number {
  */
 export async function loadPiSessionEntries(filePath: string): Promise<PiSessionEntry[]> {
   const content = await readFile(filePath, 'utf8').catch(() => '');
-  const entries: PiSessionEntry[] = [];
+  const entries: Record<string, unknown>[] = [];
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed) as unknown;
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        entries.push(parsed as PiSessionEntry);
+        entries.push(parsed as Record<string, unknown>);
       }
     } catch {
       // Skip malformed lines (matches pi's own parseSessionEntryLine).
     }
   }
-  return entries;
+  return normalizeLegacyPiEntries(entries);
 }
 
 async function loadMappedItems(
@@ -123,7 +155,12 @@ export async function pagePiTranscript(params: Readonly<{
   const total = items.length;
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
-  const tailCursor = encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: total });
+  const tailCursor = encodePiForwardCursor({
+    v: 1,
+    kind: 'piForward',
+    delivered: total,
+    anchorItemId: items.at(-1)?.id ?? null,
+  });
 
   // Backward paging uses an `endExclusive` cursor: each page delivers a contiguous block ending at
   // endExclusive, collected newest-first so byte-limit truncation cuts the OLDER end and the next

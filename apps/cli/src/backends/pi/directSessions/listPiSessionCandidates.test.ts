@@ -73,6 +73,28 @@ describe('listPiSessionCandidates', () => {
     expect(result.candidates[0]!.title).toBe('find me');
   });
 
+  it('uses the header id when a valid session file has been renamed', async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-renamed-'));
+    writeSession(agentDir, '--proj-a--', 'copied-session.jsonl', [header(SESSION_A, '/proj-a'), userMsg('m1', null, 'renamed')], 1_700_000_100);
+
+    const { source, env } = sourceEnv(agentDir);
+    const listed = await listPiSessionCandidates({ source, env, limit: 10 });
+    expect(listed.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
+
+    const exact = await listPiSessionCandidates({ source, env, limit: 10, searchTerm: SESSION_A });
+    expect(exact.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
+  });
+
+  it('terminates full search pagination when no candidates match', async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-no-match-'));
+    writeSession(agentDir, '--proj-a--', `2024-12-03T14-00-00-000Z_${SESSION_A}.jsonl`, [header(SESSION_A, '/proj-a'), userMsg('m1', null, 'alpha')], 1_700_000_100);
+
+    const { source, env } = sourceEnv(agentDir);
+    const result = await listPiSessionCandidates({ source, env, limit: 10, searchTerm: 'does-not-exist', searchMode: 'full' });
+    expect(result.candidates).toEqual([]);
+    expect(result.nextCursor).toBeNull();
+  });
+
   it('returns an empty candidate list when the agent dir has no sessions', async () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-empty-'));
     const { source, env } = sourceEnv(agentDir);

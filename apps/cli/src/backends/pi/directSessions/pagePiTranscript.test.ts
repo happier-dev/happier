@@ -69,6 +69,30 @@ describe('pagePiTranscript', () => {
     ]);
   });
 
+  it('reads legacy v1 linear sessions without dropping all but the final entry', async () => {
+    const agentDir = freshAgentDir();
+    const legacyHeader = { type: 'session', id: SESSION_ID, timestamp: '2024-12-03T14:00:00.000Z', cwd: '/proj' };
+    const legacyMessage = (role: string, text: string, ts: string) => ({
+      type: 'message',
+      timestamp: ts,
+      message: { role, content: [{ type: 'text', text }], timestamp: Date.parse(ts) },
+    });
+    const { source, env } = writeSession(agentDir, [
+      legacyHeader,
+      legacyMessage('user', 'one', '2024-12-03T14:00:01.000Z'),
+      legacyMessage('assistant', 'two', '2024-12-03T14:00:02.000Z'),
+      legacyMessage('user', 'three', '2024-12-03T14:00:03.000Z'),
+    ]);
+
+    const ordered = await importAll(source, env, { maxBytes: 1024 * 1024, maxItems: 10 });
+    expect(ordered).toHaveLength(3);
+    expect(ordered.map((item) => item.createdAtMs)).toEqual([
+      Date.parse('2024-12-03T14:00:01.000Z'),
+      Date.parse('2024-12-03T14:00:02.000Z'),
+      Date.parse('2024-12-03T14:00:03.000Z'),
+    ]);
+  });
+
   it('pages only the active branch, excluding the abandoned sibling', async () => {
     const agentDir = freshAgentDir();
     const { source, env } = writeSession(agentDir, [

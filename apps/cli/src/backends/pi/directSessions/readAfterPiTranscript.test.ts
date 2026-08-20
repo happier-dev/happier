@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { encodePiForwardCursor } from './pagePiTranscript';
+import { decodePiForwardCursor, encodePiForwardCursor } from './pagePiTranscript';
 import { readAfterPiTranscript } from './readAfterPiTranscript';
 
 const SESSION_ID = '019f4a42-4617-767a-8e7c-189b454a0352';
@@ -37,6 +37,12 @@ const THREE_MESSAGES = [
 
 const LIMITS = { maxBytes: 1024 * 1024, maxItems: 100 };
 
+function expectForwardCursor(raw: string | null, delivered: number, anchorEntryId: string): void {
+  const decoded = decodePiForwardCursor(raw ?? undefined);
+  expect(decoded).toMatchObject({ v: 1, kind: 'piForward', delivered });
+  expect(decoded?.anchorItemId).toMatch(new RegExp(`:${anchorEntryId}$`));
+}
+
 async function withThreeMessages<T>(run: (params: { source: DirectSessionsSource; env: NodeJS.ProcessEnv }) => Promise<T>): Promise<T> {
   const agentDir = freshAgentDir();
   const { source, env } = writeSession(agentDir, THREE_MESSAGES);
@@ -52,7 +58,7 @@ describe('readAfterPiTranscript cursor contract', () => {
       expect(res.items).toEqual([]);
       expect(res.truncated).toBe(false);
       // A resumable cursor at the end of the active branch: polling with it must replay nothing.
-      expect(res.nextCursor).toBe(encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 3 }));
+      expectForwardCursor(res.nextCursor, 3, 'cccc0001');
     });
   });
 
@@ -65,7 +71,7 @@ describe('readAfterPiTranscript cursor contract', () => {
       });
       expect(res.items).toEqual([]);
       expect(res.truncated).toBe(false);
-      expect(res.nextCursor).toBe(encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 3 }));
+      expectForwardCursor(res.nextCursor, 3, 'cccc0001');
     });
   });
 
@@ -78,7 +84,7 @@ describe('readAfterPiTranscript cursor contract', () => {
       });
       expect(res.items).toHaveLength(2);
       expect(res.truncated).toBe(false);
-      expect(res.nextCursor).toBe(encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 3 }));
+      expectForwardCursor(res.nextCursor, 3, 'cccc0001');
 
       const capped = await readAfterPiTranscript({
         source, env, remoteSessionId: SESSION_ID,
@@ -87,7 +93,7 @@ describe('readAfterPiTranscript cursor contract', () => {
       });
       expect(capped.items).toHaveLength(1);
       expect(capped.truncated).toBe(true);
-      expect(capped.nextCursor).toBe(encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 2 }));
+      expectForwardCursor(capped.nextCursor, 2, 'bbbb0001');
     });
   });
 
@@ -98,7 +104,37 @@ describe('readAfterPiTranscript cursor contract', () => {
       });
       expect(res.items).toEqual([]);
       expect(res.truncated).toBe(false);
-      expect(res.nextCursor).toBe(encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 3 }));
+      expectForwardCursor(res.nextCursor, 3, 'cccc0001');
     });
+  });
+
+  it('requests a full refetch when the active branch no longer contains the cursor anchor', async () => {
+    const agentDir = freshAgentDir();
+    const { source, env } = writeSession(agentDir, THREE_MESSAGES);
+    const initial = await readAfterPiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      cursor: encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: 2 }),
+      ...LIMITS,
+    });
+    expect(initial.items).toHaveLength(1);
+
+    writeSession(agentDir, [
+      header,
+      msg('aaaa0001', null, 'user', 'one', '2024-12-03T14:00:01.000Z'),
+      msg('dddd0001', 'aaaa0001', 'assistant', 'replacement branch', '2024-12-03T14:00:04.000Z'),
+    ]);
+
+    const afterBranchSwitch = await readAfterPiTranscript({
+      source,
+      env,
+      remoteSessionId: SESSION_ID,
+      cursor: initial.nextCursor!,
+      ...LIMITS,
+    });
+    expect(afterBranchSwitch.items).toEqual([]);
+    expect(afterBranchSwitch.truncated).toBe(true);
+    expect(afterBranchSwitch.nextCursor).not.toBeNull();
   });
 });

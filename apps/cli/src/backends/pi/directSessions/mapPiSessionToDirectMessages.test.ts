@@ -92,7 +92,7 @@ describe('mapPiSessionToDirectMessages', () => {
     expect(ids(items)).toEqual([`pi:${FILE_REL}:aaaa0001`, `pi:${FILE_REL}:bbbb0001`]);
   });
 
-  it('drops entries summarized before the latest compaction and emits the compaction as an event', () => {
+  it('preserves the full active-branch history around compaction and emits the compaction as an event', () => {
     const entries = [
       user('aaaa0001', null, 'old prompt'),
       assistant('summariz', 'aaaa0001', 'summarized away'),
@@ -102,16 +102,17 @@ describe('mapPiSessionToDirectMessages', () => {
     ];
     const items = mapPiSessionToDirectMessages({ entries, fileRelPath: FILE_REL });
 
-    // [compaction, kept00001, aftercmp] — aaaa0001 and summariz are dropped
     expect(ids(items)).toEqual([
-      `pi:${FILE_REL}:comp00001`,
+      `pi:${FILE_REL}:aaaa0001`,
+      `pi:${FILE_REL}:summariz`,
       `pi:${FILE_REL}:kept00001`,
+      `pi:${FILE_REL}:comp00001`,
       `pi:${FILE_REL}:aftercmp`,
     ]);
-    expect(items[0]!.messageRole).toBe('event');
-    expect((items[0]!.raw as any).role).toBe('agent');
-    expect((items[0]!.raw as any).content.data.type).toBe('summary');
-    expect((items[0]!.raw as any).content.data.summary).toBe('earlier work');
+    expect(items[3]!.messageRole).toBe('event');
+    expect((items[3]!.raw as any).role).toBe('agent');
+    expect((items[3]!.raw as any).content.data.type).toBe('summary');
+    expect((items[3]!.raw as any).content.data.summary).toBe('earlier work');
   });
 
   it('skips non-context entries (model_change, thinking_level_change, label, custom) entirely', () => {

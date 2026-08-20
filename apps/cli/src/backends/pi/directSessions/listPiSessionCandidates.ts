@@ -198,6 +198,7 @@ export async function listPiSessionCandidates(params: Readonly<{
 
   let searchIncomplete = false;
   let searchedPage: DirectSessionCandidateV1[] | null = null;
+  let searchedTotalCount: number | null = null;
 
   if (searchTerm) {
     if (params.searchMode === 'fast') {
@@ -206,6 +207,7 @@ export async function listPiSessionCandidates(params: Readonly<{
         const haystack = `${session.id} ${session.dirName}`.toLowerCase();
         return haystack.includes(searchTerm);
       });
+      searchedTotalCount = metadataMatches.length;
       const page = metadataMatches.slice(offset, offset + limit);
       searchedPage = await mapWithConcurrency(page, concurrency, (session) => buildPiCandidate({ session, env }));
     } else {
@@ -218,6 +220,7 @@ export async function listPiSessionCandidates(params: Readonly<{
         return haystack.includes(searchTerm) ? candidate : null;
       });
       const filtered = withTitles.filter((candidate): candidate is DirectSessionCandidateV1 => candidate !== null);
+      searchedTotalCount = filtered.length;
       searchedPage = filtered.slice(offset, offset + limit);
     }
   }
@@ -226,9 +229,7 @@ export async function listPiSessionCandidates(params: Readonly<{
     searchedPage
     ?? await mapWithConcurrency(sortedSessions.slice(offset, offset + limit), concurrency, (session) => buildPiCandidate({ session, env }));
 
-  const filteredCount = searchTerm
-    ? (searchedPage ? Math.max(sortedSessions.length, offset + page.length) : sortedSessions.length)
-    : sortedSessions.length;
+  const filteredCount = searchedTotalCount ?? sortedSessions.length;
   const nextOffset = offset + page.length;
   const nextCursor = nextOffset < filteredCount ? encodeIndexCursor(nextOffset) : null;
 

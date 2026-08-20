@@ -1,11 +1,9 @@
 /**
- * Pi session tree-walk helpers, ported from pi's own SessionManager
- * (dist/core/session-manager.js: buildSessionPath, buildContextEntries, _buildIndex).
+ * Pi session tree-walk helpers, aligned with Pi's SessionManager active-branch traversal.
  *
  * Pi session files are JSONL trees keyed by `id`/`parentId`. The "active branch" is the path
- * from the current leaf to the root, folded at the latest compaction entry. These helpers
- * reproduce pi's own active-context resolution so direct-session import matches what a resumed
- * pi session actually sees — not a second divergent tree resolver.
+ * from the current leaf to the root. Direct-session history uses that complete path; compaction
+ * affects Pi's model context but does not remove historical records from the browser.
  *
  * The session header (`type: 'session'`) is not part of the tree and is excluded everywhere.
  */
@@ -72,57 +70,14 @@ export function buildSessionPath(
   if (!leaf) return [];
 
   const path: PiSessionEntry[] = [];
+  const visitedIds = new Set<string>();
   let current: PiSessionEntry | undefined = leaf;
   while (current) {
+    if (visitedIds.has(current.id)) break;
+    visitedIds.add(current.id);
     path.push(current);
     current = current.parentId ? index.get(current.parentId) : undefined;
   }
   path.reverse();
   return path;
-}
-
-/**
- * Build the compaction-aware active entry list. Mirrors pi's `buildContextEntries`:
- * 1. take the leaf -> root path;
- * 2. find the latest compaction entry on it;
- * 3. if none, return the whole path;
- * 4. otherwise return [compaction, …entries from firstKeptEntryId up to (not incl.) compaction,
- *    …entries after compaction], dropping older summarized entries.
- *
- * Note: pi's installed SessionManager honors `firstKeptEntryId` only; it does not expand
- * `retainedTail`. This port matches that behavior.
- */
-export function buildContextEntries(
-  entries: readonly PiSessionEntry[],
-  leafId?: string | null,
-): PiSessionEntry[] {
-  const path = buildSessionPath(entries, leafId);
-  let compaction: PiSessionEntry | null = null;
-  for (const entry of path) {
-    if (entry.type === 'compaction') {
-      compaction = entry;
-    }
-  }
-  if (!compaction) {
-    return path;
-  }
-  const compactionEntry = compaction;
-  const compactionIdx = path.findIndex((entry) => entry.id === compactionEntry.id);
-  if (compactionIdx < 0) {
-    return path;
-  }
-
-  const contextEntries: PiSessionEntry[] = [compactionEntry];
-  let foundFirstKept = false;
-  for (let i = 0; i < compactionIdx; i += 1) {
-    const entry = path[i]!;
-    if (entry.id === compactionEntry.firstKeptEntryId) {
-      foundFirstKept = true;
-    }
-    if (foundFirstKept) {
-      contextEntries.push(entry);
-    }
-  }
-  contextEntries.push(...path.slice(compactionIdx + 1));
-  return contextEntries;
 }

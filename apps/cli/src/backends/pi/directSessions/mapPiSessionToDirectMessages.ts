@@ -1,19 +1,18 @@
 import type { DirectTranscriptRawMessageV1, SessionMessageRole } from '@happier-dev/protocol';
 
-import { buildContextEntries, type PiSessionEntry } from './piEntryContext';
+import { buildSessionPath, type PiSessionEntry } from './piEntryContext';
 
 /**
  * Map a parsed pi session (full entry list) into direct-transcript items, resolving the active
- * branch via `buildContextEntries` and projecting each context entry the same way pi's own
- * `sessionEntryToContextMessages` does. Unlike the Claude line-by-line mapper, pi needs the whole
- * file because the active branch is a tree walk, not a linear scan.
+ * active branch and projecting its historical entries. Compaction changes the model's runtime
+ * context, but it does not delete older records from the user-visible session history.
  */
 export function mapPiSessionToDirectMessages(params: Readonly<{
   entries: readonly PiSessionEntry[];
   fileRelPath: string;
   leafId?: string | null;
 }>): DirectTranscriptRawMessageV1[] {
-  const contextEntries = buildContextEntries(params.entries, params.leafId);
+  const contextEntries = buildSessionPath(params.entries, params.leafId);
   const items: DirectTranscriptRawMessageV1[] = [];
 
   for (const entry of contextEntries) {

@@ -34,6 +34,12 @@ export async function readAfterPiTranscript(params: Readonly<{
   const entries = await loadPiSessionEntries(resolved.filePath);
   const items = mapPiSessionToDirectMessages({ entries, fileRelPath: resolved.fileRelPath });
   const total = items.length;
+  const tailCursor = encodePiForwardCursor({
+    v: 1,
+    kind: 'piForward',
+    delivered: total,
+    anchorItemId: items.at(-1)?.id ?? null,
+  });
 
   // The polling follow-lease treats a missing cursor as "start from the newest" and sends the
   // 'tail' sentinel. Answer it the way the claude provider does: no items, and a cursor
@@ -43,12 +49,26 @@ export async function readAfterPiTranscript(params: Readonly<{
   if (params.cursor === 'tail') {
     return {
       items: [],
-      nextCursor: encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: total }),
+      nextCursor: tailCursor,
       truncated: false,
     };
   }
 
-  const delivered = Math.min(Math.max(0, decodePiForwardCursor(params.cursor)), total);
+  const decoded = decodePiForwardCursor(params.cursor);
+  if (!decoded) {
+    return { items: [], nextCursor: tailCursor, truncated: true };
+  }
+  if (decoded.delivered > total) {
+    return { items: [], nextCursor: tailCursor, truncated: true };
+  }
+  if (
+    decoded.anchorItemId
+    && items[decoded.delivered - 1]?.id !== decoded.anchorItemId
+  ) {
+    return { items: [], nextCursor: tailCursor, truncated: true };
+  }
+
+  const delivered = decoded.delivered;
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
 
@@ -68,7 +88,12 @@ export async function readAfterPiTranscript(params: Readonly<{
   // Always hand back a resumable cursor, including when fully caught up: clients store this
   // cursor verbatim for the next poll, and a null here makes them fall back to the 'tail'
   // sentinel (claude parity: end-of-file cursors are returned, not null).
-  const nextCursor = encodePiForwardCursor({ v: 1, kind: 'piForward', delivered: newDelivered });
+  const nextCursor = encodePiForwardCursor({
+    v: 1,
+    kind: 'piForward',
+    delivered: newDelivered,
+    anchorItemId: items[newDelivered - 1]?.id ?? null,
+  });
 
   return { items: pageItems, nextCursor, truncated };
 }

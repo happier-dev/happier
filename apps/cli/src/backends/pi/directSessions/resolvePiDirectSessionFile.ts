@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
 import { resolvePiAgentDir } from './resolvePiAgentDir';
+import { readPiSessionHeader } from './readPiSessionHeader';
 
 export type ResolvedPiDirectSessionFile = Readonly<{
   filePath: string;
@@ -32,7 +33,8 @@ export function extractPiSessionIdFromFilename(fileName: string): string | null 
 }
 
 /**
- * Resolve a pi session file by remote session id (UUID). Scans every `sessions/--<cwd>--/`
+ * Resolve a pi session file by the canonical id in its session header. Scans every
+ * `sessions/--<cwd>--/`
  * directory under the agent dir because a session's working directory is not known ahead of time
  * and the directory name encodes cwd ambiguously. When the same id appears in multiple directories,
  * the most recently modified file wins (mirrors Claude's project-spanning resolution).
@@ -75,11 +77,12 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
       if (!fileEntry.isFile()) continue;
       if (fileEntry.isSymbolicLink()) continue;
       const name = typeof fileEntry.name === 'string' ? fileEntry.name : String(fileEntry.name);
-      const idFromFile = extractPiSessionIdFromFilename(name);
-      if (idFromFile !== remoteSessionId) continue;
+      if (!name.endsWith('.jsonl')) continue;
 
       const filePath = join(sessionsDir, dirName, name);
       try {
+        const header = await readPiSessionHeader(filePath);
+        if (header?.id !== remoteSessionId) continue;
         const s = await stat(filePath);
         if (!s.isFile()) continue;
         if (!best || s.mtimeMs > best.mtimeMs) {
