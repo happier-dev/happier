@@ -4,6 +4,8 @@ export type CodexAppServerRpcError = Error & Readonly<{
     method?: string;
 }>;
 
+const CODEX_APP_SERVER_RPC_ERROR = Symbol('CodexAppServerRpcError');
+
 export function createCodexAppServerRpcError(params: Readonly<{
     method: string;
     code?: number;
@@ -15,6 +17,7 @@ export function createCodexAppServerRpcError(params: Readonly<{
         Object.defineProperty(error, 'code', { value: params.code, enumerable: true });
     }
     Object.defineProperty(error, 'method', { value: params.method, enumerable: true });
+    Object.defineProperty(error, CODEX_APP_SERVER_RPC_ERROR, { value: true });
     if (params.data !== undefined) {
         Object.defineProperty(error, 'data', { value: params.data, enumerable: true });
     }
@@ -57,6 +60,19 @@ function includesFieldName(value: string, fieldName: string): boolean {
 export function isCodexAppServerMethodNotFoundError(error: unknown): boolean {
     if (readCode(error) === -32601) return true;
     return /method\s+not\s+found/i.test(readMessage(error));
+}
+
+/**
+ * A mutating request may be retried under a compatibility alias only after a
+ * correlated JSON-RPC response conclusively says the method is absent. Text
+ * alone can be emitted by transport/process failures and is not enough to
+ * establish that no provider-side effect occurred.
+ */
+export function isCodexAppServerDefinitiveMethodNotFoundError(error: unknown, method: string): boolean {
+    if (!error || typeof error !== 'object') return false;
+    return readCode(error) === -32601
+        && (error as { method?: unknown }).method === method
+        && (error as { [CODEX_APP_SERVER_RPC_ERROR]?: unknown })[CODEX_APP_SERVER_RPC_ERROR] === true;
 }
 
 export function isCodexAppServerInvalidParamsError(error: unknown): boolean {

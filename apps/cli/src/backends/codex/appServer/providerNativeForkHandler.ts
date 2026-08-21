@@ -1,5 +1,8 @@
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity, resolveVendorResumeIdFromSessionMetadata, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
-import type { ProviderNativeForkHandler } from '@/backends/forking/providerNativeForkHandler';
+import {
+  ProviderNativeForkIndeterminateError,
+  type ProviderNativeForkHandler,
+} from '@/backends/forking/providerNativeForkHandler';
 import { logger } from '@/utils/logger';
 
 import { forkCodexAppServerConversationNative } from './nativeFork';
@@ -78,22 +81,49 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
     ...baseDiagnostic,
   });
 
-  let forked: { vendorSessionId: string } | null;
+  let outcome: Awaited<ReturnType<typeof forkCodexAppServerConversationNative>>;
   try {
-    forked = await forkCodexAppServerConversationNative({
+    outcome = await forkCodexAppServerConversationNative({
       directory: params.directory,
       parentCodexSessionId: vendorSessionIdRaw,
       processEnv,
     });
   } catch (error) {
-    logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork failed', {
+    logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork outcome is indeterminate', {
       ...baseDiagnostic,
       ...readErrorDiagnostic(error, [vendorSessionIdRaw]),
+      fallbackResult: 'do_not_replay_outcome_unknown',
+    });
+    throw new ProviderNativeForkIndeterminateError();
+  }
+
+  if (outcome.type === 'unsupported') {
+    logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork unsupported', {
+      ...baseDiagnostic,
       fallbackResult: 'fallback_to_replay',
     });
     return null;
   }
-  const vendorSessionId = typeof forked?.vendorSessionId === 'string' ? forked.vendorSessionId.trim() : '';
+
+  if (outcome.type === 'failed_before_dispatch') {
+    logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork failed', {
+      ...baseDiagnostic,
+      ...readErrorDiagnostic(outcome.error, [vendorSessionIdRaw]),
+      fallbackResult: 'failed_before_dispatch',
+    });
+    throw outcome.error;
+  }
+
+  if (outcome.type === 'indeterminate_after_dispatch') {
+    logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork outcome is indeterminate', {
+      ...baseDiagnostic,
+      ...readErrorDiagnostic(outcome.error, [vendorSessionIdRaw]),
+      fallbackResult: 'do_not_replay_outcome_unknown',
+    });
+    throw new ProviderNativeForkIndeterminateError();
+  }
+
+  const vendorSessionId = outcome.vendorSessionId.trim();
   if (!vendorSessionId) {
     logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork returned no vendor session id', {
       ...baseDiagnostic,

@@ -58,7 +58,7 @@ export const SessionForkRpcParamsSchema = z
 export type SessionForkRpcParams = z.infer<typeof SessionForkRpcParamsSchema>;
 
 export const SessionForkRpcResultSchema = z.union([
-  z.object({ ok: z.literal(true), childSessionId: z.string().min(1) }).passthrough(),
-  z.object({ ok: z.literal(false), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).passthrough(),
+  z.object({ ok: z.literal(true), childSessionId: z.string().min(1) }).strict(),
+  z.object({ ok: z.literal(false), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).strict(),
 ]);
 export type SessionForkRpcResult = z.infer<typeof SessionForkRpcResultSchema>;

@@ -37,7 +37,7 @@ export type OpenSessionForkStrategyFlowParams = Readonly<{
     sourceMessageId?: string | null;
     sourcePreview?: string | null;
     writeForkInitialPrompt?: boolean;
-    navigateToSession: (childSessionId: string) => void | Promise<void>;
+    navigateToSession: (childSessionId: string, options?: Readonly<{ serverId?: string }>) => void | Promise<void>;
     navigateToNewSession: (
         route: Readonly<{ pathname: '/new'; params: Readonly<Record<string, string>> }>,
     ) => void;

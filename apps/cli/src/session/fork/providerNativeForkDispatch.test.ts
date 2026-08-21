@@ -20,7 +20,7 @@ describe('dispatchProviderNativeFork', () => {
   });
 
   it('dispatches Codex app-server latest-turn conversation forks through the native provider path', async () => {
-    forkCodexAppServerConversationNativeMock.mockResolvedValueOnce({ vendorSessionId: 'codex_child_1' });
+    forkCodexAppServerConversationNativeMock.mockResolvedValueOnce({ type: 'success', vendorSessionId: 'codex_child_1' });
 
     const result = await dispatchProviderNativeFork({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },

@@ -46,10 +46,15 @@ function delay(ms: number): Promise<void> {
 export async function waitForForkChildHydration(params: Readonly<{
     childSessionId: string;
     parentSessionId: string;
+    serverId?: string | null;
     timeoutMs?: number;
     pollIntervalMs?: number;
 }>): Promise<void> {
-    await sync.ensureSessionVisibleForMessageRoute(params.childSessionId, { forceRefresh: true });
+    const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
+    await sync.ensureSessionVisibleForMessageRoute(params.childSessionId, {
+        forceRefresh: true,
+        ...(serverId ? { serverId } : {}),
+    });
 
     if (hasHydratedForkChild(params.childSessionId, params.parentSessionId)) return;
 

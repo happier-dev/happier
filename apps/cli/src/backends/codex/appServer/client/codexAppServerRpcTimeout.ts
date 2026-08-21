@@ -1,4 +1,4 @@
-const STARTUP_RPC_METHODS = new Set(['thread/start', 'thread/resume']);
+const STARTUP_RPC_METHODS = new Set(['initialize', 'thread/start', 'thread/resume']);
 const FORK_RPC_METHODS = new Set(['thread/fork', 'conversation/fork']);
 
 function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {

@@ -13,7 +13,7 @@ export type OpenSessionForkStrategyModalParams = Readonly<{
     availability: SessionForkStrategyAvailability;
     /** Short quotation of the message this fork branches from, when there is one. */
     sourcePreview?: string | null;
-    navigate: (childSessionId: string) => void | Promise<void>;
+    navigate: (childSessionId: string, options?: Readonly<{ serverId?: string }>) => void | Promise<void>;
     /**
      * Navigates to the canonical New Session screen with this fork point
      * attached, or `null` when `sessions.agentSwitching` is closed for this

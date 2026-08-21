@@ -14,13 +14,13 @@ vi.mock('@/utils/logger', () => ({
 }));
 
 vi.mock('./nativeFork', () => ({
-  forkCodexAppServerConversationNative: vi.fn(async () => ({ vendorSessionId: 'forked-thread' })),
+  forkCodexAppServerConversationNative: vi.fn(async () => ({ type: 'success', vendorSessionId: 'forked-thread' })),
 }));
 
 describe('codexAppServerProviderNativeForkHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValue({ vendorSessionId: 'forked-thread' });
+    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValue({ type: 'success', vendorSessionId: 'forked-thread' });
   });
   it('preserves connected-service group affinity in fork metadata', async () => {
     const parentMetadata = {
@@ -130,14 +130,18 @@ describe('codexAppServerProviderNativeForkHandler', () => {
     );
   });
 
-  it('logs native helper failures before falling back', async () => {
-    vi.mocked(forkCodexAppServerConversationNative).mockRejectedValueOnce(new Error('app server launch failed'));
+  it('surfaces a native failure before dispatch instead of flattening it to unsupported', async () => {
+    const failure = new Error('app server launch failed');
+    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValueOnce({
+      type: 'failed_before_dispatch',
+      error: failure,
+    });
     const parentMetadata = {
       codexBackendMode: 'appServer',
       codexSessionId: 'parent-thread',
     };
 
-    const result = await codexAppServerProviderNativeForkHandler({
+    await expect(codexAppServerProviderNativeForkHandler({
       credentials: {} as never,
       agentId: 'codex',
       parentSessionId: 'session-parent',
@@ -146,16 +150,45 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       directory: '/repo',
       forkPoint: { type: 'latest' },
       targetSeqInclusive: 10,
-    });
-
-    expect(result).toBeNull();
-        expect(logger.debug).toHaveBeenCalledWith(
+    })).rejects.toBe(failure);
+    expect(logger.debug).toHaveBeenCalledWith(
       '[CodexAppServerFork] native latest fork failed',
       expect.objectContaining({
         agentId: 'codex',
         parentSessionId: 'session-parent',
         errorMessage: 'app server launch failed',
-        fallbackResult: 'fallback_to_replay',
+        fallbackResult: 'failed_before_dispatch',
+      }),
+    );
+  });
+
+  it('surfaces an indeterminate dispatched fork without allowing replay', async () => {
+    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValueOnce({
+      type: 'indeterminate_after_dispatch',
+      error: new Error('Codex app-server request thread/fork timed out'),
+    });
+    const parentMetadata = {
+      codexBackendMode: 'appServer',
+      codexSessionId: 'parent-thread',
+    };
+
+    await expect(codexAppServerProviderNativeForkHandler({
+      credentials: {} as never,
+      agentId: 'codex',
+      parentSessionId: 'session-parent',
+      parentRawSession: { metadata: parentMetadata },
+      parentMetadata,
+      directory: '/repo',
+      forkPoint: { type: 'latest' },
+      targetSeqInclusive: 10,
+    })).rejects.toMatchObject({ name: 'ProviderNativeForkIndeterminateError' });
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[CodexAppServerFork] native latest fork outcome is indeterminate',
+      expect.objectContaining({
+        agentId: 'codex',
+        parentSessionId: 'session-parent',
+        fallbackResult: 'do_not_replay_outcome_unknown',
       }),
     );
   });
@@ -170,13 +203,16 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       new Error(`failed parent ${parentVendorSessionId}; Authorization: Bearer ${bearerToken}; accessToken=${accessToken}; authHeader=Bearer ${authHeaderToken}; CODEX_THREAD_ID=${threadId}`),
       { code: 'E_PROVIDER_FORK' },
     );
-    vi.mocked(forkCodexAppServerConversationNative).mockRejectedValueOnce(failure);
+    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValueOnce({
+      type: 'indeterminate_after_dispatch',
+      error: failure,
+    });
     const parentMetadata = {
       codexBackendMode: 'appServer',
       codexSessionId: parentVendorSessionId,
     };
 
-    const result = await codexAppServerProviderNativeForkHandler({
+    await expect(codexAppServerProviderNativeForkHandler({
       credentials: {} as never,
       agentId: 'codex',
       parentSessionId: 'session-parent',
@@ -185,9 +221,7 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       directory: '/repo',
       forkPoint: { type: 'latest' },
       targetSeqInclusive: 10,
-    });
-
-    expect(result).toBeNull();
+    })).rejects.toMatchObject({ name: 'ProviderNativeForkIndeterminateError' });
     const serializedDiagnostics = JSON.stringify(vi.mocked(logger.debug).mock.calls);
     expect(serializedDiagnostics).not.toContain(parentVendorSessionId);
     expect(serializedDiagnostics).not.toContain(bearerToken);
@@ -196,23 +230,23 @@ describe('codexAppServerProviderNativeForkHandler', () => {
     expect(serializedDiagnostics).not.toContain(threadId);
 
     expect(logger.debug).toHaveBeenCalledWith(
-      '[CodexAppServerFork] native latest fork failed',
+      '[CodexAppServerFork] native latest fork outcome is indeterminate',
       expect.objectContaining({
         agentId: 'codex',
         parentSessionId: 'session-parent',
         errorName: 'Error',
         errorCode: 'E_PROVIDER_FORK',
-        fallbackResult: 'fallback_to_replay',
+        fallbackResult: 'do_not_replay_outcome_unknown',
       }),
     );
-    const failedCall = vi.mocked(logger.debug).mock.calls.find(([message]) => message === '[CodexAppServerFork] native latest fork failed');
+    const failedCall = vi.mocked(logger.debug).mock.calls.find(([message]) => message === '[CodexAppServerFork] native latest fork outcome is indeterminate');
     const errorMessage = String((failedCall?.[1] as { errorMessage?: unknown } | undefined)?.errorMessage ?? '');
     expect(errorMessage).toContain('failed parent');
     expect(errorMessage).toContain('[REDACTED]');
   });
 
   it('does not include raw vendor resume ids in provider-level fork diagnostics', async () => {
-    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValueOnce(null);
+    vi.mocked(forkCodexAppServerConversationNative).mockResolvedValueOnce({ type: 'unsupported' });
     const parentMetadata = {
       codexBackendMode: 'appServer',
       codexSessionId: 'raw-parent-provider-thread-id',

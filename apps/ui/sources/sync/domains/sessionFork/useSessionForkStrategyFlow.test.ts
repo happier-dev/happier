@@ -85,6 +85,7 @@ describe('useSessionForkStrategyFlow', () => {
         expect(completeSessionForkNavigationMock.mock.calls[0]?.[0]).toMatchObject({
             childSessionId: 'child_1',
             parentSessionId: 'parent_1',
+            serverId: 'server_1',
             restoredDraftText: 'draft text',
             sourceMessageId: 'msg_1',
             writeForkInitialPrompt: true,
@@ -176,10 +177,10 @@ describe('useSessionForkStrategyFlow', () => {
 
         await act(async () => { await harness.getCurrent().checkForFork(); });
 
-        expect(refreshSessionsMock).toHaveBeenCalledTimes(1);
+        expect(refreshSessionsMock).toHaveBeenCalledWith({ awaitSessionListHydration: true });
         expect(forkSessionMock).toHaveBeenCalledTimes(1);
         expect(completeSessionForkNavigationMock).toHaveBeenCalledWith(
-            expect.objectContaining({ childSessionId: 'child_late' }),
+            expect.objectContaining({ childSessionId: 'child_late', serverId: 'server_1' }),
         );
         expect(onNavigated).toHaveBeenCalledTimes(1);
     });

@@ -34,7 +34,8 @@ type JsonRpcRequestHandler = (params: unknown, message: JsonRpcMessage) => Promi
 type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 
 export type CodexAppServerRequestOptions = Readonly<{
-    timeoutMs?: number;
+    /** `null` preserves an in-flight provider request until it settles or the process exits. */
+    timeoutMs?: number | null;
 }>;
 
 export type CodexAppServerClient = Readonly<{
@@ -285,7 +286,10 @@ function createDisposedError(): Error {
     return new Error('Codex app-server client has been disposed');
 }
 
-function resolveRequestTimeoutMs(defaultTimeoutMs: number, options?: CodexAppServerRequestOptions): number {
+function resolveRequestTimeoutMs(defaultTimeoutMs: number, options?: CodexAppServerRequestOptions): number | null {
+    if (options?.timeoutMs === null) {
+        return null;
+    }
     if (options?.timeoutMs === undefined) {
         return defaultTimeoutMs;
     }
@@ -353,6 +357,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     cwd?: string;
     configOverrides?: ReadonlyArray<string>;
     disableUserMcpServers?: boolean;
+    initializeRequestOptions?: CodexAppServerRequestOptions;
 }>): Promise<DisposableCodexAppServerClient> {
     const sourceProcessEnv = params.processEnv ?? process.env;
     const rpcLogger = createRpcLogger(sourceProcessEnv);
@@ -641,18 +646,20 @@ export async function createCodexAppServerClient(params: Readonly<{
             throw new Error(`Failed to create Codex app-server request id for ${method}`);
         }
         const responsePromise = new Promise<unknown>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                pendingRequests.delete(requestKey);
-                reject(new Error(`Codex app-server request ${method} timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
+            const timer = timeoutMs === null
+                ? null
+                : setTimeout(() => {
+                    pendingRequests.delete(requestKey);
+                    reject(new Error(`Codex app-server request ${method} timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
             pendingRequests.set(requestKey, {
                 method,
                 resolve: (value) => {
-                    clearTimeout(timer);
+                    if (timer !== null) clearTimeout(timer);
                     resolve(value);
                 },
                 reject: (error) => {
-                    clearTimeout(timer);
+                    if (timer !== null) clearTimeout(timer);
                     reject(error);
                 },
             });
@@ -753,7 +760,7 @@ export async function createCodexAppServerClient(params: Readonly<{
             capabilities: {
                 experimentalApi: true,
             },
-        });
+        }, params.initializeRequestOptions);
         await notify('initialized');
 
         return { request, notify, registerRequestHandler, registerNotificationHandler, onExit, dispose };

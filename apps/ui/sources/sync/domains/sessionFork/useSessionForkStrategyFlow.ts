@@ -89,7 +89,7 @@ function readMatchingChildSessionIds(params: Readonly<{
 
 export function useSessionForkStrategyFlow(params: Readonly<{
     request: SessionForkStrategyRequest;
-    navigate: (childSessionId: string) => void | Promise<void>;
+    navigate: (childSessionId: string, options?: Readonly<{ serverId?: string }>) => void | Promise<void>;
     onNavigated: () => void;
 }>): SessionForkStrategyFlow {
     const { request, navigate, onNavigated } = params;
@@ -131,9 +131,10 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             await completeSessionForkNavigation({
                 childSessionId,
                 parentSessionId: request.parentSessionId,
-                navigate: async (targetSessionId) => {
+                serverId: request.serverId,
+                navigate: async (targetSessionId, options) => {
                     navigated = true;
-                    await navigate(targetSessionId);
+                    await navigate(targetSessionId, options);
                 },
                 restoredDraftText: request.restoredDraftText ?? null,
                 sourceMessageId: request.sourceMessageId ?? null,
@@ -209,7 +210,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         applyPhase({ type: 'unknown', route, checking: true, lastCheck: phase.lastCheck });
         try {
             try {
-                await sync.refreshSessions();
+                await sync.refreshSessions({ awaitSessionListHydration: true });
             } catch {
                 // A failed refresh only means the local view is still stale; the
                 // lookup below simply will not find anything yet.

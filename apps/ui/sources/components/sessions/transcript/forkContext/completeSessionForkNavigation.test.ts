@@ -65,16 +65,17 @@ describe('completeSessionForkNavigation', () => {
         await completeSessionForkNavigation({
             childSessionId: 'child',
             parentSessionId: 'parent',
+            serverId: 'server-b',
             navigate,
             restoredDraftText: 'retry this',
             sourceMessageId: 'm1',
             writeForkInitialPrompt: true,
         });
 
-        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('child', { forceRefresh: true });
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('child', { forceRefresh: true, serverId: 'server-b' });
         expect(updateSessionDraftMock).toHaveBeenCalledWith('child', 'retry this');
-        expect(navigate).toHaveBeenCalledWith('child');
-        expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledWith('child', expect.any(Function));
+        expect(navigate).toHaveBeenCalledWith('child', { serverId: 'server-b' });
+        expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledWith('child', expect.any(Function), { serverId: 'server-b' });
         expect(events).toEqual(['draft:child', 'hydrate:child', 'navigate:child', 'patch:child']);
     });
 

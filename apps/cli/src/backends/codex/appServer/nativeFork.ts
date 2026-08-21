@@ -1,5 +1,6 @@
 import { logger as defaultLogger } from '@/utils/logger';
 
+import { isCodexAppServerDefinitiveMethodNotFoundError } from './appServerCompatibility';
 import { createCodexAppServerClient, type DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
 import { sanitizeCodexAppServerRpcDiagnosticString } from './client/codexAppServerRpcLogSanitizer';
 
@@ -87,6 +88,16 @@ export type CodexAppServerNativeForkDeps = Readonly<{
   logger?: CodexAppServerNativeForkDiagnosticsLogger;
 }>;
 
+export type CodexAppServerNativeForkOutcome =
+  | Readonly<{ type: 'success'; vendorSessionId: string }>
+  | Readonly<{ type: 'unsupported' }>
+  | Readonly<{ type: 'failed_before_dispatch'; error: Error }>
+  | Readonly<{ type: 'indeterminate_after_dispatch'; error: Error }>;
+
+function toOutcomeError(error: unknown, fallbackMessage: string): Error {
+  return error instanceof Error ? error : new Error(fallbackMessage);
+}
+
 export async function forkCodexAppServerConversationNative(
   params: Readonly<{
     directory: string;
@@ -94,11 +105,11 @@ export async function forkCodexAppServerConversationNative(
     processEnv?: NodeJS.ProcessEnv;
   }>,
   deps: CodexAppServerNativeForkDeps = {},
-): Promise<{ vendorSessionId: string } | null> {
+): Promise<CodexAppServerNativeForkOutcome> {
   const parentCodexSessionId = typeof params.parentCodexSessionId === 'string'
     ? params.parentCodexSessionId.trim()
     : '';
-  if (!parentCodexSessionId) return null;
+  if (!parentCodexSessionId) return { type: 'unsupported' };
 
   const createClient = deps.createClient ?? createCodexAppServerClient;
   const diagnosticsLogger = deps.logger ?? defaultLogger;
@@ -112,14 +123,21 @@ export async function forkCodexAppServerConversationNative(
       hasCodexHome: typeof params.processEnv?.CODEX_HOME === 'string' && params.processEnv.CODEX_HOME.trim().length > 0,
     });
     try {
-      client = await createClient({ cwd: params.directory, processEnv: params.processEnv });
+      client = await createClient({
+        cwd: params.directory,
+        processEnv: params.processEnv,
+        initializeRequestOptions: { timeoutMs: null },
+      });
     } catch (error) {
       logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] failed to create app-server client', {
         ...baseDiagnostic,
         ...readErrorDiagnostic(error, [parentCodexSessionId]),
-        fallbackResult: 'native_fork_unavailable',
+        fallbackResult: 'failed_before_dispatch',
       });
-      throw error;
+      return {
+        type: 'failed_before_dispatch',
+        error: toOutcomeError(error, 'Failed to initialize Codex app-server for native fork'),
+      };
     }
 
     for (const method of ['thread/fork', 'conversation/fork'] as const) {
@@ -132,15 +150,30 @@ export async function forkCodexAppServerConversationNative(
         response = await client.request(method, {
           threadId: parentCodexSessionId,
           persistExtendedHistory: true,
-        });
+        }, { timeoutMs: null });
       } catch (error) {
+        const methodUnavailable = isCodexAppServerDefinitiveMethodNotFoundError(error, method);
+        const canTryAlias = method === 'thread/fork' && methodUnavailable;
         logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] method failed', {
           ...baseDiagnostic,
           method,
           ...readErrorDiagnostic(error, [parentCodexSessionId]),
-          fallbackResult: 'try_next_method',
+          fallbackResult: canTryAlias
+            ? 'try_alias_after_unsupported'
+            : methodUnavailable
+              ? 'native_fork_unsupported'
+              : 'indeterminate_after_dispatch',
         });
-        continue;
+        if (canTryAlias) continue;
+        if (methodUnavailable) return { type: 'unsupported' };
+
+        // client.request has already settled, but this error cannot prove the
+        // provider did not receive the mutation. Do not attempt either alias
+        // or replay from this path.
+        return {
+          type: 'indeterminate_after_dispatch',
+          error: toOutcomeError(error, 'Codex app-server native fork request failed after dispatch'),
+        };
       }
 
       const vendorSessionId = readThreadId(response);
@@ -151,20 +184,24 @@ export async function forkCodexAppServerConversationNative(
           hasForkedVendorSessionId: true,
           fallbackResult: 'native_fork_succeeded',
         });
-        return { vendorSessionId };
+        return { type: 'success', vendorSessionId };
       }
       logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] method returned no forked thread id', {
         ...baseDiagnostic,
         method,
         ...readResponseDiagnostic(response),
-        fallbackResult: 'try_next_method',
+        fallbackResult: 'indeterminate_after_dispatch',
       });
+      return {
+        type: 'indeterminate_after_dispatch',
+        error: new Error(`Codex app-server ${method} returned no forked thread id`),
+      };
     }
     logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] exhausted native fork methods', {
       ...baseDiagnostic,
-      fallbackResult: 'native_fork_unavailable',
+      fallbackResult: 'native_fork_unsupported',
     });
-    return null;
+    return { type: 'unsupported' };
   } finally {
     await client?.dispose().catch((error) => {
       logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] failed to dispose app-server client', {

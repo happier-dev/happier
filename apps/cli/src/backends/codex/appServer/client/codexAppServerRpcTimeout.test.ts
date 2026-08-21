@@ -18,12 +18,13 @@ describe('codexAppServerRpcTimeout', () => {
         expect(readCodexAppServerRpcTimeoutMs({ HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '9999999' } as NodeJS.ProcessEnv)).toBe(60_000);
     });
 
-    it('uses the startup RPC timeout for thread/start and thread/resume requests', () => {
+    it('uses the startup RPC timeout for initialize, thread/start, and thread/resume requests', () => {
         const env = {
             HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '1200',
             HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '20000',
         } as NodeJS.ProcessEnv;
 
+        expect(readCodexAppServerRequestTimeoutMs('initialize', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('thread/start', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('thread/resume', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);

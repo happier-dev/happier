@@ -17,7 +17,7 @@ function makeError(message: string, code?: number): Error {
 }
 
 describe('appServerCompatibility', () => {
-    it('detects JSON-RPC method-not-found errors by code and message fallback', () => {
+    it('detects method-not-found errors by code or message', () => {
         expect(isCodexAppServerMethodNotFoundError(makeError('nope', -32601))).toBe(true);
         expect(isCodexAppServerMethodNotFoundError(makeError('Method not found'))).toBe(true);
         expect(isCodexAppServerMethodNotFoundError(makeError('Invalid params', -32602))).toBe(false);

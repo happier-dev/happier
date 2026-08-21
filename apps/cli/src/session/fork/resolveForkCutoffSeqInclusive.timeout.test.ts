@@ -56,7 +56,7 @@ describe('resolveForkCutoffSeqInclusive timeouts', () => {
     expect(getSpy.mock.calls[0]?.[1]?.timeout).toBe(54_321);
   });
 
-  it('uses the live runtime env endpoint instead of stale loaded configuration', async () => {
+  it('uses the canonical endpoint selected by loaded configuration', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:41001';
     process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS = '54321';
 
@@ -89,7 +89,7 @@ describe('resolveForkCutoffSeqInclusive timeouts', () => {
       targetSeqInclusive: 1,
     });
 
-    expect(getSpy.mock.calls[0]?.[0]).toBe('http://127.0.0.1:52002/v1/sessions/sess_parent_1/messages');
+    expect(getSpy.mock.calls[0]?.[0]).toBe('http://127.0.0.1:41001/v1/sessions/sess_parent_1/messages');
   });
 
   it('throws a stable auth status error for terminal auth failures', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createCodexAppServerRpcError } from './appServerCompatibility';
 import type { DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
 import { forkCodexAppServerConversationNative } from './nativeFork';
 
@@ -15,7 +16,7 @@ function createClientDouble(requestImpl: DisposableCodexAppServerClient['request
 }
 
 describe('forkCodexAppServerConversationNative', () => {
-    it('returns null without creating a client when the parent session id is blank', async () => {
+    it('reports native fork unsupported without creating a client when the parent session id is blank', async () => {
         const createClient = vi.fn(async () => createClientDouble(vi.fn()));
 
         await expect(
@@ -23,9 +24,43 @@ describe('forkCodexAppServerConversationNative', () => {
                 directory: '/repo',
                 parentCodexSessionId: '   ',
             }, { createClient }),
-        ).resolves.toBeNull();
+        ).resolves.toEqual({ type: 'unsupported' });
 
         expect(createClient).not.toHaveBeenCalled();
+    });
+
+    it('reports initialize failure before fork dispatch without sending either fork method', async () => {
+        const createClient = vi.fn(async () => {
+            throw new Error('initialize timed out');
+        });
+
+        await expect(
+            forkCodexAppServerConversationNative({
+                directory: '/repo',
+                parentCodexSessionId: 'parent-thread',
+            }, { createClient }),
+        ).resolves.toMatchObject({
+            type: 'failed_before_dispatch',
+            error: expect.objectContaining({ message: 'initialize timed out' }),
+        });
+
+        expect(createClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates a fresh fork client with an initialize request that has no local hard timeout', async () => {
+        const client = createClientDouble(vi.fn(async () => ({ threadId: 'forked-thread' })));
+        const createClient = vi.fn(async () => client);
+
+        await forkCodexAppServerConversationNative({
+            directory: '/repo',
+            parentCodexSessionId: 'parent-thread',
+        }, { createClient });
+
+        expect(createClient).toHaveBeenCalledWith({
+            cwd: '/repo',
+            processEnv: undefined,
+            initializeRequestOptions: { timeoutMs: null },
+        });
     });
 
     it('prefers thread/fork and reads nested thread ids from the response payload', async () => {
@@ -39,16 +74,24 @@ describe('forkCodexAppServerConversationNative', () => {
             }, {
                 createClient: async () => client,
             }),
-        ).resolves.toEqual({ vendorSessionId: 'forked-thread' });
+        ).resolves.toEqual({ type: 'success', vendorSessionId: 'forked-thread' });
 
         expect(request).toHaveBeenCalledTimes(1);
-        expect(request).toHaveBeenCalledWith('thread/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
+        expect(request).toHaveBeenCalledWith(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null },
+        );
         expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to conversation/fork when thread/fork fails', async () => {
+    it('falls back to conversation/fork only after a definitive thread/fork method-not-found response', async () => {
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
-            .mockRejectedValueOnce(new Error('method not found'))
+            .mockRejectedValueOnce(createCodexAppServerRpcError({
+                method: 'thread/fork',
+                code: -32601,
+                message: 'method not found',
+            }))
             .mockResolvedValueOnce({ id: 'compat-thread' });
         const client = createClientDouble(request);
 
@@ -59,17 +102,43 @@ describe('forkCodexAppServerConversationNative', () => {
             }, {
                 createClient: async () => client,
             }),
-        ).resolves.toEqual({ vendorSessionId: 'compat-thread' });
+        ).resolves.toEqual({ type: 'success', vendorSessionId: 'compat-thread' });
 
-        expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
-        expect(request).toHaveBeenNthCalledWith(2, 'conversation/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
+        expect(request).toHaveBeenNthCalledWith(
+            1,
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null },
+        );
+        expect(request).toHaveBeenNthCalledWith(
+            2,
+            'conversation/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null },
+        );
         expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to conversation/fork when thread/fork returns no usable thread id', async () => {
+    it.each([
+        [
+            'another request',
+            createCodexAppServerRpcError({
+                method: 'conversation/fork',
+                code: -32601,
+                message: 'method not found',
+            }),
+        ],
+        [
+            'a non-application failure',
+            Object.assign(new Error('transport rejected the request'), {
+                name: 'PluginExecClientError',
+                code: -32601,
+                method: 'thread/fork',
+            }),
+        ],
+    ])('does not alias a method-not-found code attributed to %s', async (_label, failure) => {
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
-            .mockResolvedValueOnce({ threadId: '   ' })
-            .mockResolvedValueOnce({ thread: { threadId: 'compat-thread' } });
+            .mockRejectedValueOnce(failure);
         const client = createClientDouble(request);
 
         await expect(
@@ -79,16 +148,15 @@ describe('forkCodexAppServerConversationNative', () => {
             }, {
                 createClient: async () => client,
             }),
-        ).resolves.toEqual({ vendorSessionId: 'compat-thread' });
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
 
-        expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
-        expect(request).toHaveBeenNthCalledWith(2, 'conversation/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('returns null when neither fork method yields a usable thread id', async () => {
+    it('does not alias a malformed thread/fork success and disposes after it settles', async () => {
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce({ threadId: '' });
+            .mockResolvedValueOnce({ threadId: '   ' });
         const client = createClientDouble(request);
 
         await expect(
@@ -98,16 +166,84 @@ describe('forkCodexAppServerConversationNative', () => {
             }, {
                 createClient: async () => client,
             }),
-        ).resolves.toBeNull();
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
 
-        expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
-        expect(request).toHaveBeenNthCalledWith(2, 'conversation/fork', { threadId: 'parent-thread', persistExtendedHistory: true });
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledWith(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null },
+        );
         expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('emits structured diagnostics for method failures and fallback exhaustion', async () => {
+    it('waits for an ambiguous fork response to settle before disposing the client', async () => {
+        let resolveRequest: ((value: unknown) => void) | null = null;
+        let markRequestStarted: (() => void) | null = null;
+        const requestStarted = new Promise<void>((resolve) => {
+            markRequestStarted = resolve;
+        });
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
-            .mockRejectedValueOnce(new Error('method not found'))
+            .mockImplementationOnce(() => new Promise<unknown>((resolve) => {
+                resolveRequest = resolve;
+                markRequestStarted?.();
+            }));
+        const client = createClientDouble(request);
+
+        const nativeFork = forkCodexAppServerConversationNative({
+            directory: '/repo',
+            parentCodexSessionId: 'parent-thread',
+        }, {
+            createClient: async () => client,
+        });
+
+        await requestStarted;
+        expect(client.dispose).not.toHaveBeenCalled();
+
+        const settle = resolveRequest;
+        if (!settle) throw new Error('Native fork request did not start');
+        settle({ threadId: '' });
+
+        await expect(nativeFork).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(client.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['timeout', new Error('Codex app-server request thread/fork timed out after 250ms')],
+        ['abort', Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })],
+        ['transport loss', new Error('Codex app-server exited before completing the request')],
+        ['untyped method error', new Error('method not found')],
+    ])('does not alias or replay after a %s fork failure and disposes after settlement', async (_label, failure) => {
+        const request = vi.fn<DisposableCodexAppServerClient['request']>()
+            .mockRejectedValueOnce(failure);
+        const client = createClientDouble(request);
+
+        await expect(
+            forkCodexAppServerConversationNative({
+                directory: '/repo',
+                parentCodexSessionId: 'parent-thread',
+            }, {
+                createClient: async () => client,
+            }),
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
+
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledWith(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null },
+        );
+        expect(client.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits structured diagnostics for the only alias-compatible failure and a malformed reply', async () => {
+        const request = vi.fn<DisposableCodexAppServerClient['request']>()
+            .mockRejectedValueOnce(createCodexAppServerRpcError({
+                method: 'thread/fork',
+                code: -32601,
+                message: 'method not found',
+            }))
             .mockResolvedValueOnce({ threadId: '' });
         const client = createClientDouble(request);
         const diagnosticsLogger = { debug: vi.fn() };
@@ -120,7 +256,7 @@ describe('forkCodexAppServerConversationNative', () => {
                 createClient: async () => client,
                 logger: diagnosticsLogger,
             }),
-        ).resolves.toBeNull();
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
 
         expect(diagnosticsLogger.debug).toHaveBeenCalledWith(
             '[CodexAppServerNativeFork] method failed',
@@ -128,7 +264,7 @@ describe('forkCodexAppServerConversationNative', () => {
                 method: 'thread/fork',
                 hasParentCodexSessionId: true,
                 errorMessage: 'method not found',
-                fallbackResult: 'try_next_method',
+                fallbackResult: 'try_alias_after_unsupported',
             }),
         );
         expect(diagnosticsLogger.debug).toHaveBeenCalledWith(
@@ -136,16 +272,10 @@ describe('forkCodexAppServerConversationNative', () => {
             expect.objectContaining({
                 method: 'conversation/fork',
                 hasParentCodexSessionId: true,
-                fallbackResult: 'try_next_method',
+                fallbackResult: 'indeterminate_after_dispatch',
             }),
         );
-        expect(diagnosticsLogger.debug).toHaveBeenCalledWith(
-            '[CodexAppServerNativeFork] exhausted native fork methods',
-            expect.objectContaining({
-                hasParentCodexSessionId: true,
-                fallbackResult: 'native_fork_unavailable',
-            }),
-        );
+        expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('does not include raw provider resume ids in diagnostics', async () => {
@@ -162,9 +292,10 @@ describe('forkCodexAppServerConversationNative', () => {
                 createClient: async () => client,
                 logger: diagnosticsLogger,
             }),
-        ).resolves.toBeNull();
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
 
         expect(JSON.stringify(diagnosticsLogger.debug.mock.calls)).not.toContain('raw-parent-provider-thread-id');
+        expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('redacts sensitive values embedded in native fork error diagnostics while keeping safe metadata', async () => {
@@ -188,7 +319,7 @@ describe('forkCodexAppServerConversationNative', () => {
                 createClient: async () => client,
                 logger: diagnosticsLogger,
             }),
-        ).resolves.toBeNull();
+        ).resolves.toMatchObject({ type: 'indeterminate_after_dispatch' });
 
         const serializedDiagnostics = JSON.stringify(diagnosticsLogger.debug.mock.calls);
         expect(serializedDiagnostics).not.toContain(parentCodexSessionId);
@@ -199,10 +330,11 @@ describe('forkCodexAppServerConversationNative', () => {
         expect(failedMethodCall?.[1]).toEqual(expect.objectContaining({
             errorName: 'Error',
             errorCode: 'E_NATIVE_FORK',
-            fallbackResult: 'try_next_method',
+            fallbackResult: 'indeterminate_after_dispatch',
         }));
         const errorMessage = String((failedMethodCall?.[1] as { errorMessage?: unknown } | undefined)?.errorMessage ?? '');
         expect(errorMessage).toContain('cannot fork parent');
         expect(errorMessage).toContain('[REDACTED]');
+        expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 });

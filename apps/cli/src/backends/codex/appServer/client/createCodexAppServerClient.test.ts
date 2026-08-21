@@ -406,6 +406,37 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
+    it('keeps a fork-owned initialize request alive without a local hard timeout', async () => {
+        await withTempDir('happier-codex-app-server-client-fork-initialize-no-timeout-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    setTimeout(() => {',
+                    '      process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    }, 700);',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
+                    HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
+                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '250',
+                }),
+                initializeRequestOptions: { timeoutMs: null },
+            });
+
+            await client.dispose();
+        });
+    });
+
     it('allows a request-specific timeout override', async () => {
         await withTempDir('happier-codex-app-server-client-request-timeout-override-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
