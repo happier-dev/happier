@@ -518,7 +518,7 @@ async function commitAgentEventStoredMessage(params: Readonly<{
     sessionId: params.sessionId,
     localId: params.eventId,
     messageRole: 'event',
-    attentionImpact: agentEventAttentionImpact(params.data),
+    attentionImpact: agentEventAttentionImpact(params.data, params.eventId),
     content: buildStoredContent({
       credentials: params.credentials,
       rawSession: params.rawSession,

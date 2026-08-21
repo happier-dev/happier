@@ -100,7 +100,7 @@ export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(para
     sessionId: params.sessionId,
     localId: eventId,
     messageRole: 'event',
-    attentionImpact: agentEventAttentionImpact(event),
+    attentionImpact: agentEventAttentionImpact(event, eventId),
     content: buildStoredContent({
       credentials: params.credentials,
       rawSession,

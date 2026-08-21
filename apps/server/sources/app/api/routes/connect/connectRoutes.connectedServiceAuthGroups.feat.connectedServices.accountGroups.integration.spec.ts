@@ -2891,7 +2891,11 @@ describe("connectRoutes connected service auth groups (integration)", () => {
 
         const clearCursor = await readAccountChangeCursor(user.id);
         expect(clearCursor).toBeGreaterThan(blockerCursor ?? -1);
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: user.id,
+            recipientFilter: { type: "user-machine-scoped-only" },
+        }));
         expectLastProjectedGroup({
             accountId: user.id,
             group: {

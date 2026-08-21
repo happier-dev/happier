@@ -481,6 +481,8 @@ import {
 } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import { computeConnectedServiceAccessTokenFingerprint } from './connectedServices/refresh/credentialFreshness/tokenFingerprint';
 import { resolveCurrentCodexRuntimeAuthFailureSource } from './connectedServices/runtimeAuth/resolveCurrentCodexRuntimeAuthFailureSource';
+import { resolveRuntimeAuthFailureSourceProfile } from './connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
+import { resolveConnectedServiceGroupMemberByProviderAccountId } from './connectedServices/shared/resolveConnectedServiceGroupMemberByProviderAccountId';
 import { readCredentialAccountIdentity } from './connectedServices/quotas/coordinator/support';
 import { startConnectedServiceStableHomeReconcileScheduler } from './connectedServices/startup/stableHomeReconcile';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -1759,6 +1761,35 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       return resolved?.revisionSemantics === 'revisioned'
         ? resolved.credentialRevision
         : null;
+    };
+    const resolveProviderQualifiedRuntimeAuthFailureSource = async (input: Readonly<{
+      classification: ConnectedServiceRuntimeFailureClassification;
+    }>) => {
+      const serviceId = ConnectedServiceIdSchema.safeParse(input.classification.serviceId);
+      const groupId = typeof input.classification.groupId === 'string'
+        ? input.classification.groupId.trim()
+        : '';
+      if (!serviceId.success || !groupId) return input.classification;
+      return await resolveRuntimeAuthFailureSourceProfile({
+        classification: input.classification,
+        getGroupMembers: async () => {
+          const group = await api.getConnectedServiceAuthGroup({
+            serviceId: serviceId.data,
+            groupId,
+          });
+          return group?.members ?? null;
+        },
+        resolveProviderAccountId: async (profileId) => {
+          const resolved = await resolveConnectedServiceCredentialsWithRevisions({
+            credentials,
+            api,
+            bindings: [{ serviceId: serviceId.data, profileId }],
+          }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null);
+          return resolved
+            ? readCredentialAccountIdentity(resolved.record)?.providerAccountId ?? null
+            : null;
+        },
+      });
     };
     const preferredHost = await getPreferredHostName();
     const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
@@ -5942,6 +5973,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }),
             resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
             resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
+            resolveProviderQualifiedRuntimeAuthFailureSource,
             runtimeAuthApply,
             temporaryThrottleRecovery,
             credentialRefreshService: connectedServiceRefreshCoordinator,
@@ -6767,6 +6799,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           }),
           resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
           resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
+          resolveProviderQualifiedRuntimeAuthFailureSource,
           runtimeAuthApply,
         });
       },
@@ -6841,6 +6874,28 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         sourceProviderAccountId: input.sourceProviderAccountId,
         credentialFingerprint: input.credentialFingerprint,
         policyDisposition: input.policyDisposition,
+        resolveProviderQualifiedGroupSource: async (candidate) => {
+          const group = await api.getConnectedServiceAuthGroup({
+            serviceId: candidate.serviceId,
+            groupId: candidate.groupId,
+          });
+          if (!group) return null;
+          const profileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
+            providerAccountId: candidate.providerAccountId,
+            members: group.members,
+            resolveProviderAccountId: async (memberProfileId) => {
+              const resolved = await resolveConnectedServiceCredentialsWithRevisions({
+                credentials,
+                api,
+                bindings: [{ serviceId: candidate.serviceId, profileId: memberProfileId }],
+              }).then((byServiceId) => byServiceId.get(candidate.serviceId) ?? null);
+              return resolved
+                ? readCredentialAccountIdentity(resolved.record)?.providerAccountId ?? null
+                : null;
+            },
+          });
+          return profileId ? { profileId, groupGeneration: group.generation } : null;
+        },
         verifyCredentialFingerprint: async (candidate) => {
           const record = await resolveConnectedServiceCredentials({
             credentials,
