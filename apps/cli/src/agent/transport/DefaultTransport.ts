@@ -218,6 +218,14 @@ export class DefaultTransport implements TransportHandler {
     return undefined;
   }
 
+  /** Default: admit every provider tool update. */
+  shouldProcessToolUpdate<T extends { toolCallId?: unknown; status?: unknown }>(
+    _update: T,
+    _context: Readonly<{ source: 'tool_call' | 'tool_call_update' }>,
+  ): boolean {
+    return true;
+  }
+
   /**
    * Default: no provider-specific content fixups. Provider transports override this to repair
    * payload quirks (e.g. Cursor's diff header noise) before the generic normalizer reads them.

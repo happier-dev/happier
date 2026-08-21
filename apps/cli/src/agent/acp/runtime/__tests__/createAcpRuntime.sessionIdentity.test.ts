@@ -102,7 +102,7 @@ describe('createAcpRuntime session identity', () => {
   it('keeps strict identity validation when a provider maps an opaque resume reference to its vendor id', async () => {
     const resumeReference = '/tmp/pi/sessions/2026-07-12T00-00-00_pi-session-1.jsonl';
     const persistBound = vi.fn(async () => {});
-    const loadSession = vi.fn(async () => ({ sessionId: 'pi-session-1' }));
+    const loadSession = vi.fn(async (_reference: string, _options?: unknown) => ({ sessionId: 'pi-session-1' }));
     const backend = {
       startSession: async () => ({ sessionId: 'unused' }),
       loadSession,
@@ -119,7 +119,8 @@ describe('createAcpRuntime session identity', () => {
     });
 
     await expect(runtime.startOrLoad({ resumeId: resumeReference })).resolves.toBe('pi-session-1');
-    expect(loadSession).toHaveBeenCalledWith(resumeReference);
+    expect(loadSession).toHaveBeenCalledTimes(1);
+    expect(loadSession.mock.calls[0]?.[0]).toBe(resumeReference);
     expect(persistBound).toHaveBeenCalledWith(expect.objectContaining({
       operation: 'resume',
       vendorSessionId: 'pi-session-1',

@@ -496,6 +496,10 @@ export const AGENTS_CORE = {
         },
         handoff: { vendorStateTransfer: 'unsupported' },
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
+        runtimeInput: {
+            inFlightSteerSupported: true,
+            terminalPromptInjectionSupported: false,
+        },
         tools: { delivery: 'native_mcp', support: 'experimental' },
         media: {
             acceptsImageInput: 'unsupported',

@@ -143,6 +143,60 @@ describe('AcpBackend prompt submission evidence', () => {
     }
   });
 
+  it('delegates in-flight steer to the provider extension adapter instead of issuing a second session prompt', async () => {
+    const prompt = vi.fn(async (): Promise<PromptResponse> => ({ stopReason: 'end_turn' }));
+    const requestExtension = vi.fn(async () => ({ status: 'queued' }));
+    const backend = new AcpBackend({
+      agentName: 'grok',
+      cwd: process.cwd(),
+      command: process.execPath,
+      args: [],
+      transportHandler: createAcpTestTransportHandler({ agentName: 'grok', idleTimeoutMs: 1 }),
+      inFlightSteer: {
+        method: 'x.ai/interject',
+        buildParams: ({ sessionId, prompt: text, deliveryIdentity }) => ({
+          sessionId,
+          text,
+          interjectionId: deliveryIdentity?.localId,
+        }),
+        isAccepted: (response) => (
+          typeof response === 'object'
+          && response !== null
+          && Reflect.get(response, 'status') === 'queued'
+        ),
+      },
+    });
+    const internals = backend as unknown as {
+      connection: unknown;
+      acpSessionId: string | null;
+    };
+    internals.acpSessionId = 'test-session';
+    internals.connection = {
+      peer: {
+        prompt,
+        requestExtension,
+      },
+      close: () => {},
+      closed: Promise.resolve(),
+    };
+
+    try {
+      await backend.sendSteerPrompt('test-session', 'steer now', {
+        localId: 'pending-1',
+        localIds: ['pending-1'],
+      });
+
+      expect(requestExtension).toHaveBeenCalledWith('x.ai/interject', {
+        sessionId: 'test-session',
+        text: 'steer now',
+        interjectionId: 'pending-1',
+      });
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      await backend.dispose();
+    }
+  });
+
   it('keeps cancellation pending until the raw prompt RPC settles and rejects an overlapping prompt', async () => {
     const backend = createBackend();
     let settleFirstPrompt!: (response: PromptResponse) => void;

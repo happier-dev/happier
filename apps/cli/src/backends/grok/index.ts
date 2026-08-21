@@ -22,4 +22,12 @@ export const agent = {
     const { createGrokBackend } = await import('./acp/backend');
     return (options) => ({ backend: createGrokBackend(options as GrokBackendOptions) });
   },
+  getAcpRuntimeBackendOptionsResolver: async () => {
+    const { createGrokSessionNotificationObserverForSession } = await import(
+      './acp/sessionNotificationRuntime'
+    );
+    return ({ session }) => ({
+      sessionNotificationObserver: createGrokSessionNotificationObserverForSession(session),
+    });
+  },
 } satisfies AgentCatalogEntry;

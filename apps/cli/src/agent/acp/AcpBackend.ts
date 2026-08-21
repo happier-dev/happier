@@ -364,6 +364,7 @@ export type SessionModel = {
   id: string;
   name: string;
   description?: string;
+  contextWindowTokens?: number;
   modelOptions?: SessionConfigOption[];
 };
 
@@ -373,6 +374,10 @@ export type SessionModelState = {
 };
 
 export type AcpSessionModelAdapter = Readonly<{
+  projectModel?: (params: Readonly<{
+    rawModel: Readonly<Record<string, unknown>>;
+    normalizedModel: Readonly<SessionModel>;
+  }>) => Readonly<SessionModel>;
   projectModelOptions?: (params: Readonly<{
     rawModel: Readonly<Record<string, unknown>>;
     normalizedModelOptions: ReadonlyArray<SessionConfigOption>;
@@ -702,7 +707,43 @@ export interface AcpBackendOptions {
 
   /** Provider-owned projection/application for model metadata not standardized by ACP. */
   sessionModelAdapter?: AcpSessionModelAdapter;
+
+  /** Provider-owned in-flight steer extension. Omit to retain the ACP session/prompt contract. */
+  inFlightSteer?: AcpInFlightSteerAdapter;
+
+  /** Provider-owned projection for non-standard prompt usage fields and accounting semantics. */
+  promptUsageAdapter?: AcpPromptUsageAdapter;
 }
+
+export type AcpSteerDeliveryIdentity = Readonly<{
+  localId?: string | null;
+  localIds?: readonly string[];
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[];
+}>;
+
+export type AcpInFlightSteerAdapter = Readonly<{
+  method: string;
+  buildParams(input: Readonly<{
+    sessionId: string;
+    prompt: string;
+    deliveryIdentity?: AcpSteerDeliveryIdentity;
+  }>): unknown;
+  isAccepted(response: unknown): boolean;
+}>;
+
+export type AcpPromptUsageProjection = Readonly<{
+  tokens: Readonly<Record<string, number>>;
+  cost?: Readonly<Record<string, number>>;
+  modelId?: string;
+}>;
+
+export type AcpPromptUsageAdapter = Readonly<{
+  project(input: Readonly<{
+    usage: unknown;
+    promptResponse: Readonly<Record<string, unknown>>;
+  }>): AcpPromptUsageProjection | null;
+}>;
 
 /**
  * ACP backend using the official @agentclientprotocol/sdk
@@ -2348,12 +2389,16 @@ export class AcpBackend implements AgentBackend {
           rawModel: model,
           normalizedModelOptions,
         }) ?? normalizedModelOptions;
-        return {
+        const normalizedModel: SessionModel = {
           id,
           name,
           ...(description ? { description } : {}),
           ...(modelOptions.length > 0 ? { modelOptions: [...modelOptions] } : {}),
         };
+        return this.options.sessionModelAdapter?.projectModel?.({
+          rawModel: model,
+          normalizedModel,
+        }) ?? normalizedModel;
       })
       .filter((model): model is SessionModel => Boolean(model));
 
@@ -2901,8 +2946,29 @@ export class AcpBackend implements AgentBackend {
             ? promptResponse as Record<string, unknown>
             : null;
         if (!promptResponseRecord) return;
-        const usage = promptResponseRecord.usage;
+        const metadata = promptResponseRecord._meta;
+        const metadataRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+          ? metadata as Record<string, unknown>
+          : null;
+        const usage = promptResponseRecord.usage ?? metadataRecord?.usage;
         if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
+
+        const projected = this.options.promptUsageAdapter?.project({
+          usage,
+          promptResponse: promptResponseRecord,
+        });
+        if (this.options.promptUsageAdapter) {
+          if (!projected) return;
+          this.emit({
+            type: 'token-count',
+            key: 'acp-prompt-usage',
+            tokens: projected.tokens,
+            ...(projected.cost ? { cost: projected.cost } : {}),
+            ...(projected.modelId ? { modelId: projected.modelId } : {}),
+            source: 'acp-prompt-usage',
+          });
+          return;
+        }
 
         const record = usage as Record<string, unknown>;
         const asNum = (value: unknown): number | null =>
@@ -3146,7 +3212,11 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
-  async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
+  async sendSteerPrompt(
+    sessionId: SessionId,
+    prompt: string,
+    deliveryIdentity?: AcpSteerDeliveryIdentity,
+  ): Promise<void> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
     }
@@ -3160,6 +3230,21 @@ export class AcpBackend implements AgentBackend {
     }
     if (normalizedSessionId !== this.acpSessionId) {
       throw new Error('Session ID does not match the active ACP session');
+    }
+
+    if (this.options.inFlightSteer) {
+      const response = await this.connection.peer.requestExtension(
+        this.options.inFlightSteer.method,
+        this.options.inFlightSteer.buildParams({
+          sessionId: normalizedSessionId,
+          prompt,
+          ...(deliveryIdentity === undefined ? {} : { deliveryIdentity }),
+        }),
+      );
+      if (!this.options.inFlightSteer.isAccepted(response)) {
+        throw new Error(`${this.options.agentName} in-flight steer extension did not accept input`);
+      }
+      return;
     }
 
     const contentBlock: ContentBlock = { type: 'text', text: prompt };

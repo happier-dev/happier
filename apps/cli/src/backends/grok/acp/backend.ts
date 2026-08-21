@@ -10,12 +10,44 @@ import { createGrokAcpAuthentication } from './auth';
 import { buildGrokExtensionHandlers } from './extensionHandlers';
 import { GROK_ACP_ARGS } from './launch';
 import { grokSessionModelAdapter } from './modelControls';
-import { grokTransport } from './transport';
+import { createGrokTransport } from './transport';
 import { buildGrokPromptCompletionRequestMeta } from './promptCompletion';
+import { grokPromptUsageAdapter } from './usage';
+import type { GrokSessionNotificationObserver } from './sessionNotifications';
+
+const GROK_IN_FLIGHT_STEER = Object.freeze({
+  method: 'x.ai/interject',
+  buildParams(input: Readonly<{
+    sessionId: string;
+    prompt: string;
+    deliveryIdentity?: Readonly<{
+      localId?: string | null;
+      localIds?: readonly string[];
+    }>;
+  }>) {
+    const interjectionId = input.deliveryIdentity?.localId
+      ?? input.deliveryIdentity?.localIds?.[0]
+      ?? null;
+    return {
+      sessionId: input.sessionId,
+      text: input.prompt,
+      ...(typeof interjectionId === 'string' && interjectionId.length > 0
+        ? { interjectionId }
+        : {}),
+    };
+  },
+  isAccepted(response: unknown): boolean {
+    return response !== null
+      && typeof response === 'object'
+      && !Array.isArray(response)
+      && Reflect.get(response, 'status') === 'queued';
+  },
+});
 
 export interface GrokBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
+  sessionNotificationObserver?: GrokSessionNotificationObserver;
 }
 
 function inspectEnvironmentValuePresence(
@@ -81,11 +113,17 @@ export function buildGrokAcpBackendOptions(options: GrokBackendOptions): AcpBack
     unsetEnv: xaiApiKeyPresence.unsetInheritedXaiApiKey ? ['XAI_API_KEY'] : undefined,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
-    transportHandler: grokTransport,
+    // Tool update throttling is stateful and must not leak across concurrently open sessions.
+    transportHandler: createGrokTransport(),
     authentication: createGrokAcpAuthentication({ hasXaiApiKey: xaiApiKeyPresence.hasXaiApiKey }),
-    extensionHandlers: buildGrokExtensionHandlers({ permissionHandler: options.permissionHandler }),
+    extensionHandlers: buildGrokExtensionHandlers({
+      permissionHandler: options.permissionHandler,
+      sessionNotificationObserver: options.sessionNotificationObserver,
+    }),
     promptCompletion: { buildRequestMeta: buildGrokPromptCompletionRequestMeta },
     sessionModelAdapter: grokSessionModelAdapter,
+    inFlightSteer: GROK_IN_FLIGHT_STEER,
+    promptUsageAdapter: grokPromptUsageAdapter,
   };
 }
 

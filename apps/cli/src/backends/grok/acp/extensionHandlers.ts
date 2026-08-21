@@ -23,6 +23,10 @@ import {
   handleGrokMcpServersUpdatedNotification,
 } from './mcpServersUpdatedNotification';
 import { buildGrokPromptCompletionHandlers } from './promptCompletion';
+import {
+  GROK_SESSION_NOTIFICATION_METHODS,
+  type GrokSessionNotificationObserver,
+} from './sessionNotifications';
 
 export const GROK_ASK_USER_QUESTION_METHODS = [
   'x.ai/ask_user_question',
@@ -377,6 +381,7 @@ type PermissionDecision = Awaited<ReturnType<AcpPermissionHandler['handleToolCal
 
 export function buildGrokExtensionHandlers(params: Readonly<{
   permissionHandler?: AcpPermissionHandler;
+  sessionNotificationObserver?: GrokSessionNotificationObserver;
 }>): AcpExtensionHandlers {
   const permissionHandler = params.permissionHandler;
   const recordParams = z.record(z.string(), z.unknown());
@@ -387,6 +392,13 @@ export function buildGrokExtensionHandlers(params: Readonly<{
       params: recordParams,
       handler: handleGrokMcpServersUpdatedNotification,
     }),
+    ...(params.sessionNotificationObserver
+      ? GROK_SESSION_NOTIFICATION_METHODS.map((method) => defineAcpExtensionNotification({
+        method,
+        params: recordParams,
+        handler: params.sessionNotificationObserver!,
+      }))
+      : []),
   ];
 
   if (!permissionHandler) {

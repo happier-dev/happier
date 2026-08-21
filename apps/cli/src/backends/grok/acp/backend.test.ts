@@ -155,6 +155,85 @@ describe('Grok ACP backend options', () => {
     ]);
   });
 
+  it('registers native session notifications only when the live-session adapter is supplied', () => {
+    const sessionNotificationObserver = async () => undefined;
+    const methods = buildGrokAcpBackendOptions({
+      cwd: root,
+      sessionNotificationObserver,
+    }).extensionHandlers?.map(({ kind, method }) => `${kind}:${method}`);
+
+    expect(methods).toContain('notification:x.ai/session_notification');
+    expect(methods).toContain('notification:_x.ai/session_notification');
+    expect(methods).toContain('notification:x.ai/session/update');
+    expect(methods).toContain('notification:_x.ai/session/update');
+    expect(buildGrokAcpBackendOptions({ cwd: root }).extensionHandlers
+      ?.map(({ method }) => method)).not.toContain('x.ai/session_notification');
+  });
+
+  it('owns in-flight steer through x.ai/interject without falling back to concurrent session/prompt', () => {
+    const steer = buildGrokAcpBackendOptions({ cwd: root }).inFlightSteer;
+
+    expect(steer).toBeDefined();
+    expect(steer?.method).toBe('x.ai/interject');
+    expect(steer?.buildParams({
+      sessionId: 'grok-session-1',
+      prompt: 'change direction',
+      deliveryIdentity: {
+        localId: 'pending-message-1',
+        localIds: ['pending-message-1'],
+        userMessageSeq: 17,
+        userMessageSeqs: [17],
+      },
+    })).toEqual({
+      sessionId: 'grok-session-1',
+      text: 'change direction',
+      interjectionId: 'pending-message-1',
+    });
+    expect(steer?.isAccepted({ status: 'queued' })).toBe(true);
+    expect(steer?.isAccepted({ status: 'unknown' })).toBe(false);
+  });
+
+  it('projects Grok prompt usage without double-counting overlapping token classes', () => {
+    const usage = buildGrokAcpBackendOptions({ cwd: root }).promptUsageAdapter;
+
+    expect(usage?.project({
+      usage: {
+        inputTokens: 70,
+        outputTokens: 30,
+        cachedReadTokens: 20,
+        cacheCreationTokens: 5,
+        reasoningTokens: 10,
+        costUsdTicks: 2_500_000_000,
+        costIsPartial: false,
+        usageIsIncomplete: false,
+      },
+      promptResponse: {},
+    })).toEqual({
+      tokens: {
+        total: 100,
+        input: 70,
+        output: 30,
+        cache_read: 20,
+        cache_creation: 5,
+        thought: 10,
+      },
+      cost: { total: 0.25 },
+    });
+
+    expect(usage?.project({
+      usage: {
+        totalTokens: 100,
+        inputTokens: 70,
+        outputTokens: 30,
+        costUsdTicks: 2_500_000_000,
+        costIsPartial: true,
+      },
+      promptResponse: {},
+    })).toEqual({
+      tokens: { total: 100, input: 70, output: 30 },
+    });
+  });
+
   it('projects only well-formed per-model reasoning effort metadata', () => {
     const adapter = buildGrokAcpBackendOptions({ cwd: root }).sessionModelAdapter;
     expect(adapter).toBeDefined();
@@ -188,20 +267,72 @@ describe('Grok ACP backend options', () => {
       ],
     }]);
 
+    expect(adapter?.projectModel?.({
+      rawModel: {
+        id: 'grok-4.5',
+        name: 'Grok 4.5',
+        _meta: { totalContextTokens: 256_000 },
+      },
+      normalizedModel: { id: 'grok-4.5', name: 'Grok 4.5' },
+    })).toEqual({
+      id: 'grok-4.5',
+      name: 'Grok 4.5',
+      contextWindowTokens: 256_000,
+    });
+
+    expect(adapter?.projectModelOptions?.({
+      rawModel: {
+        id: 'grok-4.5',
+        name: 'Grok 4.5',
+        _meta: {
+          supportsReasoningEffort: true,
+          reasoningEffort: 'high',
+        },
+      },
+      normalizedModelOptions: [],
+    })).toEqual([{
+      id: 'reasoning_effort',
+      name: 'Reasoning effort',
+      type: 'select',
+      currentValue: 'high',
+      options: [
+        { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+        { value: 'high', name: 'High', description: 'Heavy reasoning' },
+        { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+        { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+      ],
+    }]);
+
     for (const meta of [
       undefined,
-      { supportsReasoningEffort: true, reasoningEffort: 'high' },
       { supportsReasoningEffort: false, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }] },
       { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'low' }] },
-      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }, 1] },
-      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }, { value: 'high' }] },
       { supportsReasoningEffort: true, reasoningEffort: ' high ', reasoningEfforts: [{ value: ' high ' }] },
-      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high', label: ' ' }] },
     ]) {
       expect(adapter?.projectModelOptions?.({
         rawModel: { id: 'grok-4.5', name: 'Grok 4.5', ...(meta ? { meta } : {}) },
         normalizedModelOptions: [],
       })).toEqual([]);
+    }
+
+    for (const reasoningEfforts of [
+      [{ value: 'high' }, 1],
+      [{ value: 'high' }, { value: 'high' }],
+      [{ value: 'high', label: ' ' }],
+    ]) {
+      expect(adapter?.projectModelOptions?.({
+        rawModel: {
+          id: 'grok-4.5',
+          name: 'Grok 4.5',
+          meta: { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts },
+        },
+        normalizedModelOptions: [],
+      })?.[0]?.options).toEqual([
+        { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+        { value: 'high', name: 'High', description: 'Heavy reasoning' },
+        { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+        { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+      ]);
     }
   });
 });

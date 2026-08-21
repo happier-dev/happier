@@ -36,6 +36,28 @@ function createCtx(opts?: { transport?: HandlerContext['transport'] }): HandlerC
 }
 
 describe('sessionUpdateHandlers tool call tracking', () => {
+  it('lets the provider transport suppress an update before the canonical lifecycle observes it', () => {
+    class SuppressingTransport extends DefaultTransport {
+      override shouldProcessToolUpdate(): boolean {
+        return false;
+      }
+    }
+    const ctx = createCtx({ transport: new SuppressingTransport('suppressing') });
+
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_suppressed',
+        status: 'in_progress',
+        kind: 'execute',
+      },
+      ctx,
+    );
+
+    expect(ctx.toolCalls.get('call_suppressed')).toBeNull();
+    expect(ctx.emitted).toEqual([]);
+  });
+
   it('does not treat update.title as the tool name', () => {
     const ctx = createCtx();
 

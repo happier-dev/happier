@@ -11,6 +11,7 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { requireCatalogEntry } from '@/backends/catalog';
 
 import { CatalogDefinedAcpTerminalDisplay } from './ui/CatalogDefinedAcpTerminalDisplay';
 
@@ -27,6 +28,8 @@ export async function runCatalogDefinedAcpAgent(
   },
 ): Promise<void> {
   const displayTitle = normalizeDisplayTitle(agentId);
+  const backendOptionsResolver = await requireCatalogEntry(agentId)
+    .getAcpRuntimeBackendOptionsResolver?.();
   const TerminalDisplay = (props: Readonly<{
     messageBuffer: MessageBuffer;
     logPath?: string;
@@ -54,8 +57,9 @@ export async function runCatalogDefinedAcpAgent(
       memoryRecallGuidanceEnabled,
       pendingQueueDrainMaxPopPerWake,
       providerInputConsumer,
-    }) =>
-      createCatalogProviderAcpRuntime({
+    }) => {
+      const backendOptions = backendOptionsResolver?.({ session });
+      return createCatalogProviderAcpRuntime<Record<string, unknown>>({
         provider: agentId,
         loggerLabel: `${displayTitle}ACP`,
         directory,
@@ -74,7 +78,9 @@ export async function runCatalogDefinedAcpAgent(
         },
         pendingQueueDrainMaxPopPerWake,
         providerInputConsumer,
-      }),
+        ...(backendOptions ? { backendOptions } : {}),
+      });
+    },
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(
         `[${agentId}] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)`,

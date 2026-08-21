@@ -165,6 +165,9 @@ export function projectToolCallUpdate(
   ctx: HandlerContext,
   source: AcpToolCallUpdateSource,
 ): HandlerResult {
+  if (ctx.transport.shouldProcessToolUpdate?.(incoming, { source }) === false) {
+    return { handled: true };
+  }
   const update = ctx.transport.sanitizeToolUpdateContent?.(incoming) ?? incoming;
   const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : '';
   if (!toolCallId.trim()) return { handled: false };

@@ -232,6 +232,7 @@ If the built-in agent is generic ACP-backed, do not add a bespoke backend folder
 Instead:
 - add its built-in metadata in `@happier-dev/agents`
 - let `apps/cli/src/agent/acp/catalog/**` instantiate it generically
+- when provider-owned ACP behavior needs the live Happier session, expose it through the catalog entry's `getAcpRuntimeBackendOptionsResolver`; the generic catalog runner is the single place that resolves and passes those backend options. Do not branch on the agent id in the generic runner or create a second session-notification path.
 
 Configured user-defined ACP backends/presets do not become `AgentId`s.
 They live in:

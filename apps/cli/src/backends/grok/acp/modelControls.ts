@@ -6,6 +6,13 @@ import type {
 
 const REASONING_EFFORT_OPTION_ID = 'reasoning_effort';
 
+const FALLBACK_REASONING_EFFORT_OPTIONS = Object.freeze([
+  { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
+  { value: 'high', name: 'High', description: 'Heavy reasoning' },
+  { value: 'medium', name: 'Medium', description: 'Balanced reasoning' },
+  { value: 'low', name: 'Low', description: 'Faster, lighter reasoning' },
+]);
+
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -35,15 +42,23 @@ function projectGrokReasoningEffortOption(rawModel: Readonly<Record<string, unkn
   if (meta?.supportsReasoningEffort !== true) return null;
 
   const currentValue = readNonBlankString(meta.reasoningEffort);
-  if (!currentValue || !Array.isArray(meta.reasoningEfforts) || meta.reasoningEfforts.length === 0) return null;
+  if (!currentValue) return null;
 
   const options: Array<{ value: string; name: string; description?: string }> = [];
   const seen = new Set<string>();
-  for (const rawOption of meta.reasoningEfforts) {
+  const providerOptions = Array.isArray(meta.reasoningEfforts) ? meta.reasoningEfforts : [];
+  let providerOptionsValid = providerOptions.length > 0;
+  for (const rawOption of providerOptions) {
     const option = asRecord(rawOption);
-    if (!option) return null;
+    if (!option) {
+      providerOptionsValid = false;
+      break;
+    }
     const value = readNonBlankString(option.value);
-    if (!value || seen.has(value)) return null;
+    if (!value || seen.has(value)) {
+      providerOptionsValid = false;
+      break;
+    }
     const rawLabel = option.label;
     const providerLabel = rawLabel === undefined ? null : readNonBlankString(rawLabel);
     const label = rawLabel === undefined
@@ -51,21 +66,28 @@ function projectGrokReasoningEffortOption(rawModel: Readonly<Record<string, unkn
       : providerLabel
         ? normalizeEffortLabel(providerLabel, value)
         : null;
-    if (!label) return null;
+    if (!label) {
+      providerOptionsValid = false;
+      break;
+    }
     const rawDescription = option.description;
     const description = rawDescription === undefined ? null : readNonBlankString(rawDescription);
-    if (rawDescription !== undefined && !description) return null;
+    if (rawDescription !== undefined && !description) {
+      providerOptionsValid = false;
+      break;
+    }
     seen.add(value);
     options.push({ value, name: label, ...(description ? { description } : {}) });
   }
-  if (!seen.has(currentValue)) return null;
+  const resolvedOptions = providerOptionsValid ? options : FALLBACK_REASONING_EFFORT_OPTIONS;
+  if (!resolvedOptions.some((option) => option.value === currentValue)) return null;
 
   return {
     id: REASONING_EFFORT_OPTION_ID,
     name: 'Reasoning effort',
     type: 'select',
     currentValue,
-    options,
+    options: [...resolvedOptions],
   };
 }
 
@@ -75,6 +97,15 @@ function findCurrentModel(modelState: Parameters<NonNullable<AcpSessionModelAdap
 }
 
 export const grokSessionModelAdapter: AcpSessionModelAdapter = {
+  projectModel: ({ rawModel, normalizedModel }) => {
+    const meta = asRecord(Object.prototype.hasOwnProperty.call(rawModel, '_meta') ? rawModel._meta : rawModel.meta);
+    const contextWindowTokens = meta?.totalContextTokens;
+    return typeof contextWindowTokens === 'number'
+      && Number.isInteger(contextWindowTokens)
+      && contextWindowTokens > 0
+      ? { ...normalizedModel, contextWindowTokens }
+      : normalizedModel;
+  },
   projectModelOptions: ({ rawModel, normalizedModelOptions }) => {
     const retainedOptions = normalizedModelOptions.filter((option) => option.id !== REASONING_EFFORT_OPTION_ID);
     const reasoningEffort = projectGrokReasoningEffortOption(rawModel);

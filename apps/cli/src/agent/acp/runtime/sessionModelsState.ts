@@ -121,11 +121,17 @@ function normalizeAcpSessionModel(raw: unknown): AcpSessionModel | null {
   if (typeof idRaw !== 'string' || typeof nameRaw !== 'string') return null;
 
   const descriptionRaw = model.description;
+  const contextWindowTokensRaw = model.contextWindowTokens;
   const modelOptions = normalizeConfigOptionsArray(model.modelOptions ?? model.model_options);
   return {
     id: idRaw,
     name: nameRaw,
     ...(typeof descriptionRaw === 'string' ? { description: descriptionRaw } : {}),
+    ...(typeof contextWindowTokensRaw === 'number'
+      && Number.isInteger(contextWindowTokensRaw)
+      && contextWindowTokensRaw > 0
+      ? { contextWindowTokens: contextWindowTokensRaw }
+      : {}),
     ...(modelOptions.length > 0 ? { modelOptions } : {}),
   };
 }

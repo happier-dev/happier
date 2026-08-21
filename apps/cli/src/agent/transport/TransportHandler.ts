@@ -261,6 +261,16 @@ export interface TransportHandler {
   ): string | null | undefined;
 
   /**
+   * Optional provider-owned admission policy for ACP tool updates. The generic lifecycle remains
+   * responsible for merging, deduplicating, finalizing, and publishing every admitted update.
+   * Returning false drops only this provider notification.
+   */
+  shouldProcessToolUpdate?<T extends { toolCallId?: unknown; status?: unknown }>(
+    update: T,
+    context: Readonly<{ source: 'tool_call' | 'tool_call_update' }>,
+  ): boolean;
+
+  /**
    * Optional provider hook to sanitize a `tool_call` / `tool_call_update` before the generic
    * normalizer reads its content. Used to fix provider-specific payload quirks (e.g. Cursor jams
    * unified-diff header lines into `content[].oldText`/`newText` diff blocks) WITHOUT leaking

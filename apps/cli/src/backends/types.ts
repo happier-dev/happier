@@ -1,4 +1,5 @@
 import type { AgentBackend } from '@/agent/core';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import type { ChecklistId } from '@/capabilities/checklistIds';
 import type { Capability } from '@/capabilities/service';
@@ -59,6 +60,9 @@ export type {
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: AgentBackend }>;
 export type CatalogAcpBackendFactory = (opts: unknown) => CatalogAcpBackendCreateResult;
+export type CatalogAcpRuntimeBackendOptionsResolver = (params: Readonly<{
+  session: ApiSessionClient;
+}>) => Readonly<Record<string, unknown>>;
 
 export type VendorResumeSupportParams = Readonly<{
   experimentalCodexAcp?: boolean;
@@ -435,6 +439,12 @@ export type AgentCatalogEntry = Readonly<{
    * registration and import-order dependence.
    */
   getAcpBackendFactory?: () => Promise<CatalogAcpBackendFactory>;
+  /**
+   * Optional provider-owned live-session options for a catalog ACP backend.
+   * Generic runtime composition supplies the active Happier session; providers
+   * attach only their own adapters instead of introducing provider-id branches.
+   */
+  getAcpRuntimeBackendOptionsResolver?: () => Promise<CatalogAcpRuntimeBackendOptionsResolver>;
   /**
    * Optional ACP fork-continuation shaper.
    *

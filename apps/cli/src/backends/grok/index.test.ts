@@ -13,6 +13,7 @@ describe('Grok backend catalog entry', () => {
     expect(entry.getCliAuthSpec).toBeTypeOf('function');
     expect(entry.getCliCapabilityOverride).toBeTypeOf('function');
     expect(entry.getAcpBackendFactory).toBeTypeOf('function');
+    expect(entry.getAcpRuntimeBackendOptionsResolver).toBeTypeOf('function');
     await expect(entry.getCliCapabilityOverride?.()).resolves.toMatchObject({
       descriptor: {
         id: 'cli.grok',
@@ -22,5 +23,6 @@ describe('Grok backend catalog entry', () => {
       detect: expect.any(Function),
     });
     expect(await entry.getAcpBackendFactory?.()).toBeTypeOf('function');
+    expect(await entry.getAcpRuntimeBackendOptionsResolver?.()).toBeTypeOf('function');
   });
 });
