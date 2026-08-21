@@ -17,8 +17,18 @@ import {
  * `happier session send` service, and the same-Session Agent transition, which
  * must admit the user's exact message after cutover without a running runtime
  * to accept it. Duplicating the record shape would duplicate two subtle
- * contracts — the `source: 'ui'` rule below, and the coupling between
- * `pendingAdmissionMode` and the deterministic ciphertext idempotency key.
+ * contracts — the `source: 'ui'` rule below, and the unconditional sealing
+ * determinism that lets a retry reconcile instead of conflict.
+ *
+ * Sealing determinism is independent of `pendingAdmissionMode`. The message
+ * owner reconciles a re-enqueue by comparing stored content, so a re-seal that
+ * differs by one random nonce byte is refused as a conflict and the admission
+ * never resolves. Both callers retry the same `localId` with the same text after
+ * a lost acknowledgement, and neither wants non-reproducible ciphertext for a
+ * fixed `localId`, so every admission seals deterministically by `localId`.
+ * `pendingAdmissionMode` carries only its delivery meaning — "do not deliver if
+ * any queued user input already exists" — which the continuation nudge needs and
+ * the user's own prompt must never inherit.
  *
  * It deliberately does NOT resume, wake, or wait: custody first, lifecycle
  * second is the predecessor's ordering invariant, and each caller owns the
@@ -96,7 +106,7 @@ export async function admitSessionUserMessageToPendingQueue(params: Readonly<{
           c: encryptSessionPayload({
             ctx: params.ctx,
             payload: record,
-            ...(params.pendingAdmissionMode ? { idempotencyKey: params.localId } : {}),
+            idempotencyKey: params.localId,
           }),
         } as const);
 
