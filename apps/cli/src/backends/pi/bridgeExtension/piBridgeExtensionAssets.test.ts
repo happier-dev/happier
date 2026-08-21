@@ -27,8 +27,6 @@ afterEach(() => {
 
 function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridgeExtensionSourceParams {
   return {
-    renameEnabled: true,
-    memoryEnabled: true,
     launchFilePath: '/usr/bin/node',
     launchArgPrefix: ['--no-warnings', 'dist/index.mjs'],
     launchEnv: {},
@@ -66,9 +64,9 @@ describe('pi bridge extension assets', () => {
   it('refreshes the asset when the source changes', async () => {
     const agentDir = tempAgentDir();
     await ensurePiBridgeExtensionAsset(agentDir, baseParams());
-    await ensurePiBridgeExtensionAsset(agentDir, baseParams({ renameEnabled: false }));
+    await ensurePiBridgeExtensionAsset(agentDir, baseParams({ launchFilePath: '/opt/other/node' }));
     const content = readFileSync(resolvePiBridgeExtensionPath(agentDir), 'utf8');
-    expect(content).toContain('const RENAME_ENABLED = false;');
+    expect(content).toContain('"/opt/other/node"');
   });
 
   it('retires the legacy flat asset (which Pi would auto-discover) when ensuring', async () => {

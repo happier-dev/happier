@@ -1,23 +1,28 @@
 import {
-  PI_BRIDGE_DISABLE_MEMORY_FLAG,
-  PI_BRIDGE_DISABLE_RENAME_FLAG,
+  buildMemoryRecallGuidanceBlockV1,
+  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1,
+} from '@happier-dev/protocol';
+
+import {
+  PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
+  PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
-  PI_BRIDGE_MEMORY_MACHINE_ID_ENV,
+  PI_BRIDGE_SESSION_RENAME_FLAG,
   PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
 
 /**
- * First publishable version of the Happier Pi tools-bridge extension. The generated
- * file name stays stable; bumping this version changes the emitted source so the
- * write-if-changed asset refresh replaces stale local copies.
+ * Version of the Happier Pi tools-bridge extension. The generated file name stays
+ * stable; bumping this version changes the emitted source so the write-if-changed
+ * asset refresh replaces stale local copies.
  */
-export const PI_BRIDGE_EXTENSION_VERSION = '2';
+export const PI_BRIDGE_EXTENSION_VERSION = '3';
 
 export type PiBridgeExtensionSourceParams = Readonly<{
-  /** Register the `change_title` bridge tool. */
-  renameEnabled: boolean;
-  /** Register the `memory_search` / `memory_get_window` bridge tools. */
-  memoryEnabled: boolean;
   /** Executable file path for launching the Happier CLI (from the subprocess launch spec). */
   launchFilePath: string;
   /** Launch argv prefix, ending just before the `tools` subcommand. */
@@ -35,14 +40,19 @@ function jsString(value: string): string {
  *
  * The returned string is written into `<PI_CODING_AGENT_DIR>/extensions/` and passed to
  * Pi via `--extension` by the Happier Pi launcher. It imports NOTHING from Happier and
- * uses only the Pi extension API (`pi.*`), `typebox`, and Node globals. It:
- *   - registers the `happy-session-id` / `happy-disable-rename` / `happy-disable-memory`
- *     flags so Pi accepts them on its command line;
+ * uses only the Pi extension API (`pi.*`), `typebox`, and Node globals. The asset is
+ * config-independent (only the CLI launch spec is baked in); every session behavior
+ * rides launch flags. It:
+ *   - registers the `happy-session-id` / `happy-session-rename` / `happy-prompt-options`
+ *     / `happy-memory-machine-id` flags so Pi accepts them on its command line;
  *   - stays fully inert when `happy-session-id` is absent (loaded any other way, e.g. a
  *     stale global install, it registers nothing);
- *   - on `session_start` registers exactly the tools advertised by the Happier coding
- *     system prompt for this session: `change_title` (unless rename is disabled) and
- *     `memory_search` / `memory_get_window` (unless memory is disabled);
+ *   - on `session_start` registers exactly the tools the launch config enables:
+ *     `change_title` (when the rename mode is `initial`/`ongoing`) and
+ *     `memory_search` / `memory_get_window` (when a memory machine id is bound);
+ *   - on `before_agent_start` appends the Happier system-prompt addition — built from
+ *     the SAME protocol-owned prompt blocks the daemon uses for other providers — to
+ *     Pi's base system prompt, so the spawn argv carries no rendered prompt;
  *   - bridges each tool call to `happier tools call --session-id <flag> --directory <cwd>
  *     --source happier --tool <name> --args-json <json> --json` using the baked-in
  *     Happier CLI launch spec (child_process.spawn with the launch env merged), and
@@ -55,18 +65,24 @@ import { spawn } from "node:child_process";
 import { Type } from "typebox";
 
 const SESSION_ID_FLAG = ${jsString(PI_BRIDGE_SESSION_ID_FLAG)};
-const DISABLE_RENAME_FLAG = ${jsString(PI_BRIDGE_DISABLE_RENAME_FLAG)};
-const DISABLE_MEMORY_FLAG = ${jsString(PI_BRIDGE_DISABLE_MEMORY_FLAG)};
-const MEMORY_MACHINE_ID_ENV = ${jsString(PI_BRIDGE_MEMORY_MACHINE_ID_ENV)};
+const SESSION_RENAME_FLAG = ${jsString(PI_BRIDGE_SESSION_RENAME_FLAG)};
+const PROMPT_OPTIONS_FLAG = ${jsString(PI_BRIDGE_PROMPT_OPTIONS_FLAG)};
+const MEMORY_MACHINE_ID_FLAG = ${jsString(PI_BRIDGE_MEMORY_MACHINE_ID_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
 const TOOL_CALL_TIMEOUT_MS = 120000;
-
-const RENAME_ENABLED = ${params.renameEnabled ? 'true' : 'false'};
-const MEMORY_ENABLED = ${params.memoryEnabled ? 'true' : 'false'};
 
 const HAPPIER_CLI_FILE_PATH = ${jsString(params.launchFilePath)};
 const HAPPIER_CLI_ARG_PREFIX = ${JSON.stringify(params.launchArgPrefix)};
 const HAPPIER_CLI_ENV = ${JSON.stringify(params.launchEnv)};
+
+// Happier prompt blocks, inlined at generation time from @happier-dev/protocol
+// (single text owner — the daemon refreshes this asset on upgrade via write-if-changed).
+const SESSION_TITLE_INITIAL_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1)};
+const SESSION_TITLE_ONGOING_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1)};
+const RESPONSE_OPTIONS_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1)};
+const ATTACHMENTS_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1)};
+const LINKED_WORKSPACE_FILES_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1)};
+const MEMORY_RECALL_BLOCK = ${JSON.stringify(buildMemoryRecallGuidanceBlockV1('generic'))};
 
 function readFlagString(pi, name) {
   try {
@@ -83,6 +99,30 @@ function readFlagBool(pi, name) {
   } catch {
     return false;
   }
+}
+
+// Session title updates mode: absent or "disabled" is the disabled state; only the
+// protocol enum values initial/ongoing enable title updates.
+function readSessionRenameMode(pi) {
+  const raw = readFlagString(pi, SESSION_RENAME_FLAG);
+  return raw === "initial" || raw === "ongoing" ? raw : "disabled";
+}
+
+function readMemoryMachineId(pi) {
+  return readFlagString(pi, MEMORY_MACHINE_ID_FLAG);
+}
+
+// The Happier system-prompt addition for this session, assembled from the launch
+// config: session title guidance (rename mode), response options, the always-on
+// attachments/linked-workspace blocks, and memory-recall guidance (memory machine id).
+function buildHappierPromptAddition(renameMode, promptOptions, memoryMachineId) {
+  const blocks = [];
+  if (renameMode === "initial") blocks.push(SESSION_TITLE_INITIAL_BLOCK);
+  else if (renameMode === "ongoing") blocks.push(SESSION_TITLE_ONGOING_BLOCK);
+  if (promptOptions) blocks.push(RESPONSE_OPTIONS_BLOCK);
+  blocks.push(ATTACHMENTS_BLOCK, LINKED_WORKSPACE_FILES_BLOCK);
+  if (memoryMachineId) blocks.push(MEMORY_RECALL_BLOCK);
+  return blocks.join("\\n\\n").trim();
 }
 
 // Parse the JSON envelope printed by the Happier CLI (--json). The CLI may print
@@ -218,13 +258,11 @@ function toolResult(envelope) {
   return mapped.isError ? { ...result, isError: true } : result;
 }
 
-function boundMemoryMachineId(explicit) {
-  const fromParams = typeof explicit === "string" ? explicit.trim() : "";
-  if (fromParams) return fromParams;
-  const fromEnv = typeof process.env[MEMORY_MACHINE_ID_ENV] === "string"
-    ? String(process.env[MEMORY_MACHINE_ID_ENV]).trim()
-    : "";
-  return fromEnv;
+// The memory machine id bound at launch is the default for memory tool calls; an
+// explicit per-call machineId parameter overrides it.
+function boundMemoryMachineId(pi, explicit) {
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  return readMemoryMachineId(pi);
 }
 
 // Live context telemetry: after each assistant message, publish pi's context usage as a
@@ -255,22 +293,26 @@ function emitContextTelemetryMarker(ctx) {
 }
 
 // Pi extension factory: registers the bridge flags up front, then registers the bridge
-// tools on session_start only when the session binding flag is present. Happier passes
-// this generated file through Pi's --extension argument together with --happy-session-id.
+// tools and the prompt-addition hook on session_start only when the session binding flag
+// is present. Happier passes this generated file through Pi's --extension argument
+// together with the --happy-* config flags.
 export default function HappierPiToolsBridgeExtension(pi) {
   pi.registerFlag(SESSION_ID_FLAG, {
     description: "Happier session id this Pi process is bound to",
     type: "string",
   });
-  pi.registerFlag(DISABLE_RENAME_FLAG, {
-    description: "Do not register the change_title Happier bridge tool",
+  pi.registerFlag(SESSION_RENAME_FLAG, {
+    description: "Happier session title updates mode (initial or ongoing; absent disables title updates)",
+    type: "string",
+  });
+  pi.registerFlag(PROMPT_OPTIONS_FLAG, {
+    description: "Enable the Happier response options (<options>) guidance",
     type: "boolean",
     default: false,
   });
-  pi.registerFlag(DISABLE_MEMORY_FLAG, {
-    description: "Do not register the Happier memory bridge tools",
-    type: "boolean",
-    default: false,
+  pi.registerFlag(MEMORY_MACHINE_ID_FLAG, {
+    description: "Happier daemon machine id binding the memory bridge tools",
+    type: "string",
   });
 
   let registered = false;
@@ -279,7 +321,10 @@ export default function HappierPiToolsBridgeExtension(pi) {
     if (!readFlagString(pi, SESSION_ID_FLAG)) return; // Not launched by Happier: stay inert.
     registered = true;
 
-    // Context telemetry rides the session binding (never the per-tool disable flags): the
+    const renameMode = readSessionRenameMode(pi);
+    const memoryMachineId = readMemoryMachineId(pi);
+
+    // Context telemetry rides the session binding (never the per-tool config flags): the
     // live context badge is core session UX, not an advertised tool.
     pi.on("message_end", (event, ctx) => {
       const message = event && typeof event === "object" ? event.message : null;
@@ -287,10 +332,21 @@ export default function HappierPiToolsBridgeExtension(pi) {
       emitContextTelemetryMarker(ctx);
     });
 
-    const disableRename = readFlagBool(pi, DISABLE_RENAME_FLAG) || !RENAME_ENABLED;
-    const disableMemory = readFlagBool(pi, DISABLE_MEMORY_FLAG) || !MEMORY_ENABLED;
+    // The Happier system-prompt addition is appended to pi's own base system prompt on
+    // every agent run, before the first LLM call. It is built from the same launch
+    // config that gates the tools below, so prompt and tool inventory never drift.
+    pi.on("before_agent_start", async (event) => {
+      const addition = buildHappierPromptAddition(
+        readSessionRenameMode(pi),
+        readFlagBool(pi, PROMPT_OPTIONS_FLAG),
+        readMemoryMachineId(pi),
+      );
+      if (!addition) return undefined;
+      const base = event && typeof event.systemPrompt === "string" ? event.systemPrompt.trim() : "";
+      return { systemPrompt: base ? base + "\\n\\n" + addition : addition };
+    });
 
-    if (!disableRename) {
+    if (renameMode !== "disabled") {
       pi.registerTool({
         name: "change_title",
         label: "Change Chat Title",
@@ -308,7 +364,7 @@ export default function HappierPiToolsBridgeExtension(pi) {
       });
     }
 
-    if (!disableMemory) {
+    if (memoryMachineId) {
       pi.registerTool({
         name: "memory_search",
         label: "Search Memory",
@@ -320,7 +376,7 @@ export default function HappierPiToolsBridgeExtension(pi) {
           machineId: Type.Optional(Type.String({ description: "Machine running the daemon memory index (defaults to the bound machine)" })),
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-          const machineId = boundMemoryMachineId(params.machineId);
+          const machineId = boundMemoryMachineId(pi, params.machineId);
           if (!machineId) {
             return toolResult({ ok: false, error: { code: "invalid_arguments", message: "machineId is required (no bound machine id provided at launch)" } });
           }
@@ -345,7 +401,7 @@ export default function HappierPiToolsBridgeExtension(pi) {
           machineId: Type.Optional(Type.String({ description: "Machine running the daemon memory index (defaults to the bound machine)" })),
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-          const machineId = boundMemoryMachineId(params.machineId);
+          const machineId = boundMemoryMachineId(pi, params.machineId);
           if (!machineId) {
             return toolResult({ ok: false, error: { code: "invalid_arguments", message: "machineId is required (no bound machine id provided at launch)" } });
           }

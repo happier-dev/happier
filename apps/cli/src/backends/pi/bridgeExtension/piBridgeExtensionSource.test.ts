@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -11,16 +12,15 @@ import {
   type PiBridgeExtensionSourceParams,
 } from './piBridgeExtensionSource';
 import {
-  PI_BRIDGE_DISABLE_MEMORY_FLAG,
-  PI_BRIDGE_DISABLE_RENAME_FLAG,
+  PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
+  PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
+  PI_BRIDGE_SESSION_RENAME_FLAG,
   PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
 
 function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridgeExtensionSourceParams {
   return {
-    renameEnabled: true,
-    memoryEnabled: true,
     launchFilePath: '/usr/bin/node',
     launchArgPrefix: ['--no-warnings', 'dist/index.mjs'],
     launchEnv: {},
@@ -33,8 +33,13 @@ describe('buildPiBridgeExtensionSource', () => {
     const source = buildPiBridgeExtensionSource(baseParams());
     expect(source).toContain(`Version: ${PI_BRIDGE_EXTENSION_VERSION}`);
     expect(source).toContain(`"${PI_BRIDGE_SESSION_ID_FLAG}"`);
-    expect(source).toContain(`"${PI_BRIDGE_DISABLE_RENAME_FLAG}"`);
-    expect(source).toContain(`"${PI_BRIDGE_DISABLE_MEMORY_FLAG}"`);
+    expect(source).toContain(`"${PI_BRIDGE_SESSION_RENAME_FLAG}"`);
+    expect(source).toContain(`"${PI_BRIDGE_PROMPT_OPTIONS_FLAG}"`);
+    expect(source).toContain(`"${PI_BRIDGE_MEMORY_MACHINE_ID_FLAG}"`);
+    // The retired disable-flag contract must not survive in the asset.
+    expect(source).not.toContain('happy-disable-rename');
+    expect(source).not.toContain('happy-disable-memory');
+    expect(source).not.toContain('HAPPIER_PI_BRIDGE_MEMORY_MACHINE_ID');
   });
 
   it('bakes the Happier CLI launch spec', () => {
@@ -48,17 +53,7 @@ describe('buildPiBridgeExtensionSource', () => {
     expect(source).toContain('TSX_TSCONFIG_PATH');
   });
 
-  it('bakes the enablement so disabled tool groups are never registered', () => {
-    const enabled = buildPiBridgeExtensionSource(baseParams());
-    expect(enabled).toContain('const RENAME_ENABLED = true;');
-    expect(enabled).toContain('const MEMORY_ENABLED = true;');
-
-    const disabled = buildPiBridgeExtensionSource(baseParams({ renameEnabled: false, memoryEnabled: false }));
-    expect(disabled).toContain('const RENAME_ENABLED = false;');
-    expect(disabled).toContain('const MEMORY_ENABLED = false;');
-  });
-
-  it('registers exactly the advertised tools (change_title, memory_search, memory_get_window)', () => {
+  it('declares the advertised tool names (change_title, memory_search, memory_get_window)', () => {
     const source = buildPiBridgeExtensionSource(baseParams());
     expect(source).toContain('name: "change_title"');
     expect(source).toContain('name: "memory_search"');
@@ -122,10 +117,188 @@ describe('pi bridge extension context telemetry emission', () => {
     const toolsStart = source.indexOf('pi.registerTool({');
     expect(boundBranchStart).toBeGreaterThan(-1);
     expect(listenerStart).toBeGreaterThan(boundBranchStart);
-    // Listener must also be independent of the tool-disable flags: it precedes them.
-    const disableRenameRead = source.indexOf('const disableRename');
-    expect(listenerStart).toBeGreaterThan(-1);
-    expect(listenerStart).toBeLessThan(disableRenameRead);
     expect(toolsStart).toBeGreaterThan(listenerStart);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavior tests: load the real generated artifact as an ESM module and drive
+// its factory through a stub `pi` exposing the same registration + flag surface
+// as Pi's extension runtime. typebox (a real runtime dep provided by Pi's jiti
+// runtime) is stubbed at this genuine external boundary; the schemas it builds
+// are not under test.
+// ---------------------------------------------------------------------------
+
+type ToolDef = {
+  name: string;
+  execute: (toolCallId: string, params: Record<string, unknown>, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<unknown>;
+};
+type EventHandler = (event: Record<string, unknown>, ctx: unknown) => unknown;
+
+const TYPEBOX_STUB = [
+  'export const Type = {',
+  '  Object: (schema) => schema,',
+  '  String: (opts = {}) => ({ type: "string", ...opts }),',
+  '  Integer: (opts = {}) => ({ type: "integer", ...opts }),',
+  '  Optional: (schema) => ({ optional: true, ...schema }),',
+  '};',
+].join('\n');
+
+type FakePi = {
+  pi: {
+    registerFlag: (name: string, def: Record<string, unknown>) => void;
+    registerTool: (def: ToolDef) => void;
+    getFlag: (name: string) => unknown;
+    on: (event: string, handler: EventHandler) => void;
+  };
+  registeredFlags: string[];
+  tools: ToolDef[];
+  emit: (event: string, event_: Record<string, unknown>, ctx?: unknown) => Promise<unknown>;
+};
+
+function createFakePi(flags: Readonly<Record<string, string | boolean>>): FakePi {
+  const handlers = new Map<string, EventHandler[]>();
+  const tools: ToolDef[] = [];
+  const registeredFlags: string[] = [];
+  return {
+    pi: {
+      registerFlag: (name) => registeredFlags.push(name),
+      registerTool: (def) => tools.push(def),
+      getFlag: (name) => flags[name],
+      on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+    },
+    registeredFlags,
+    tools,
+    emit: async (event, event_, ctx) => {
+      let last: unknown;
+      for (const handler of handlers.get(event) ?? []) {
+        last = await handler(event_, ctx);
+      }
+      return last;
+    },
+  };
+}
+
+async function loadExtensionFactory(): Promise<(pi: FakePi['pi']) => void> {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-ext-'));
+  const typeboxDir = join(dir, 'node_modules', 'typebox');
+  mkdirSync(typeboxDir, { recursive: true });
+  writeFileSync(join(typeboxDir, 'package.json'), JSON.stringify({ name: 'typebox', version: '0.0.0', type: 'module', main: 'index.mjs' }));
+  writeFileSync(join(typeboxDir, 'index.mjs'), TYPEBOX_STUB);
+  const file = join(dir, `ext-${Math.random().toString(36).slice(2)}.mjs`);
+  writeFileSync(file, buildPiBridgeExtensionSource(baseParams()), 'utf8');
+  try {
+    const mod = await import(pathToFileURL(file).href);
+    expect(typeof mod.default).toBe('function');
+    return mod.default as (pi: FakePi['pi']) => void;
+  } finally {
+    // Node keeps the module in cache; remove the source so failures re-materialize it.
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function driveExtension(flags: Readonly<Record<string, string | boolean>>): Promise<{
+  harness: FakePi;
+  beforeAgentStartResult: unknown;
+}> {
+  const factory = await loadExtensionFactory();
+  const harness = createFakePi(flags);
+  factory(harness.pi);
+  await harness.emit('session_start', {});
+  const beforeAgentStartResult = await harness.emit('before_agent_start', { systemPrompt: 'PI_BASE_PROMPT' });
+  return { harness, beforeAgentStartResult };
+}
+
+describe('pi bridge extension behavior (generated artifact, exercised live)', () => {
+  it('registers a flag for every launch-config surface', async () => {
+    const factory = await loadExtensionFactory();
+    const harness = createFakePi({});
+    factory(harness.pi);
+    expect(harness.registeredFlags).toEqual([
+      PI_BRIDGE_SESSION_ID_FLAG,
+      PI_BRIDGE_SESSION_RENAME_FLAG,
+      PI_BRIDGE_PROMPT_OPTIONS_FLAG,
+      PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
+    ]);
+  });
+
+  it('configures tools and appends the Happier prompt addition to the base system prompt', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_RENAME_FLAG]: 'ongoing',
+      [PI_BRIDGE_PROMPT_OPTIONS_FLAG]: true,
+      [PI_BRIDGE_MEMORY_MACHINE_ID_FLAG]: 'machine-1',
+    });
+
+    expect(harness.tools.map((tool) => tool.name).sort()).toEqual(['change_title', 'memory_get_window', 'memory_search']);
+
+    const systemPrompt = (beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt;
+    expect(typeof systemPrompt).toBe('string');
+    expect(systemPrompt?.startsWith('PI_BASE_PROMPT\n\n')).toBe(true);
+    expect(systemPrompt).toContain('# Session title');
+    expect(systemPrompt).toContain('Call the title tool again if the task changes significantly.');
+    expect(systemPrompt).toContain('<options>');
+    expect(systemPrompt).toContain('# Attachments');
+    expect(systemPrompt).toContain('# Linked workspace files');
+    expect(systemPrompt).toContain('# Memory recall');
+  });
+
+  it('delivers the first-message-only title block for the initial rename mode', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_RENAME_FLAG]: 'initial',
+    });
+
+    expect(harness.tools.map((tool) => tool.name)).toEqual(['change_title']);
+    const systemPrompt = (beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt ?? '';
+    expect(systemPrompt).toContain('At the start of the session');
+    expect(systemPrompt).not.toContain('Call the title tool again');
+    expect(systemPrompt).not.toContain('<options>');
+    expect(systemPrompt).not.toContain('# Memory recall');
+  });
+
+  it('registers no tools and appends only the always-on blocks when no config flags are passed', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+    });
+
+    expect(harness.tools).toEqual([]);
+    const systemPrompt = (beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt ?? '';
+    expect(systemPrompt).toContain('# Attachments');
+    expect(systemPrompt).toContain('# Linked workspace files');
+    expect(systemPrompt).not.toContain('# Session title');
+    expect(systemPrompt).not.toContain('<options>');
+    expect(systemPrompt).not.toContain('# Memory recall');
+  });
+
+  it('requires the memory machine-id flag for the memory tools and guidance', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_MEMORY_MACHINE_ID_FLAG]: 'machine-1',
+    });
+
+    expect(harness.tools.map((tool) => tool.name).sort()).toEqual(['memory_get_window', 'memory_search']);
+    expect((beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt).toContain('# Memory recall');
+  });
+
+  it('ignores an explicit disabled rename mode (absent flag is the disabled state)', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_RENAME_FLAG]: 'disabled',
+    });
+
+    expect(harness.tools).toEqual([]);
+    expect((beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt).not.toContain('# Session title');
+  });
+
+  it('stays inert without the session binding: no tools, no prompt modification', async () => {
+    const { harness, beforeAgentStartResult } = await driveExtension({
+      [PI_BRIDGE_SESSION_RENAME_FLAG]: 'ongoing',
+      [PI_BRIDGE_PROMPT_OPTIONS_FLAG]: true,
+      [PI_BRIDGE_MEMORY_MACHINE_ID_FLAG]: 'machine-1',
+    });
+
+    expect(harness.tools).toEqual([]);
+    expect(beforeAgentStartResult).toBeUndefined();
   });
 });

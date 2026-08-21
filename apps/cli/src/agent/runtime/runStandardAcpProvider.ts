@@ -51,10 +51,6 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import type { AgentToolsDeliveryAvailabilityResolver } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 import { configuration } from '@/configuration';
-import {
-  createLocalAgentNativeResumeRecordStore,
-  prepareAgentNativeReturnStrictResume,
-} from '@/session/agentTransition/agentNativeReturn';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -159,6 +155,17 @@ export type StandardAcpProviderConfig = {
   onDispose?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
   startRuntimeBeforeFirstPrompt?: boolean;
   failClosedOnResumeFailure?: boolean;
+  /**
+   * True when the backend applies the effective coding system prompt at process
+   * spawn without waiting for the first message — e.g. pi, where the spawn flag
+   * (`--append-system-prompt`) carries residual user content and the tools-bridge
+   * extension appends the Happier base blocks (session title, response options,
+   * attachments, linked workspace, memory recall) from its launch flags before the
+   * first LLM call. The fresh-session first-message prepend then carries only an
+   * explicit per-message base override, which cannot ride either path, instead of
+   * duplicating the spawn-delivered system prompt.
+   */
+  deliversSystemPromptAtSpawn?: boolean;
   onTerminalDisplayControllerReady?: (controller: TerminalDisplayController) => void;
   shouldRenderTerminalDisplay?: (params: { opts: StandardAcpProviderRunOptions; session: ApiSessionClient; metadata: Metadata }) => boolean;
   resolveKeepAliveMode?: () => KeepAliveMode;
@@ -178,8 +185,6 @@ type StandardAcpProviderDeps = {
   registerKillSessionHandlerFn?: typeof registerKillSessionHandler;
   cleanupBackendRunResourcesFn?: typeof cleanupBackendRunResources;
   renderFn?: typeof render;
-  /** Protected local handoff storage is the only mocked runtime boundary here. */
-  createLocalAgentNativeResumeRecordStoreFn?: typeof createLocalAgentNativeResumeRecordStore;
 };
 
 export async function runStandardAcpProvider(
@@ -199,8 +204,6 @@ export async function runStandardAcpProvider(
   const registerKillSessionHandlerFn = deps.registerKillSessionHandlerFn ?? registerKillSessionHandler;
   const cleanupBackendRunResourcesFn = deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
   const renderFn = deps.renderFn ?? render;
-  const createLocalAgentNativeResumeRecordStoreFn =
-    deps.createLocalAgentNativeResumeRecordStoreFn ?? createLocalAgentNativeResumeRecordStore;
 
   const sessionTag = randomUUID();
   const explicitPermissionMode = opts.permissionMode;
@@ -627,28 +630,11 @@ export async function runStandardAcpProvider(
     });
 
   const initialResumeId = typeof opts.resume === 'string' ? opts.resume.trim() : '';
-  const nativeReturnRecordStore = initialResumeId
-    ? createLocalAgentNativeResumeRecordStoreFn()
-    : null;
-  const trackedNativeReturn = nativeReturnRecordStore !== null
-    ? await prepareAgentNativeReturnStrictResume({
-      store: nativeReturnRecordStore,
-      sessionId: session.sessionId,
-      targetAgentId: policyAgentId,
-      vendorResumeId: initialResumeId,
-       updateMetadata: async (updater) => await session.updateMetadata((metadata) =>
-         updater(metadata as Record<string, unknown>) as typeof metadata,
-       ),
-      })
-    : null;
   const toolDeliverySessionId = toolDelivery === 'shell_bridge'
     ? session.sessionId
     : runtime.getSessionId();
 
   try {
-    // A local native return removes only its own prior projection before the
-    // strict provider-open path. Ordinary resumes retain their existing id.
-    await trackedNativeReturn?.clearBeforeProviderOpen();
     await runPermissionModePromptLoopFn({
       providerName: config.providerName,
       providerId: policyAgentId,
@@ -680,31 +666,38 @@ export async function runStandardAcpProvider(
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
-      onStrictInitialResumeFailure: trackedNativeReturn?.isTracked
-        ? async () => {
-          await trackedNativeReturn.invalidateOnMismatch();
-        }
-        : undefined,
       failClosedOnResumeFailure: config.failClosedOnResumeFailure === true,
       startRuntimeBeforeFirstPrompt: config.startRuntimeBeforeFirstPrompt === true,
-      resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
-        await resolveEffectiveCodingPromptText({
-          credentials: opts.credentials,
-          settings: opts.accountSettingsContext?.settings ?? null,
-          profileId: session.getMetadataSnapshot()?.profileId ?? null,
-          baseOverride,
-          executionRunsFeatureEnabled: resolveCliFeatureDecision({
-            featureId: 'execution.runs',
-            env: process.env,
-          }).state === 'enabled',
-          providerId: policyAgentId,
-          toolDelivery,
-          toolDeliverySessionId,
-          toolDeliveryDirectory: runtimeDirectory,
-          memoryMachineId: machineId,
-          memoryRecallGuidanceEnabled,
-          cache: promptArtifactBodyCache,
-        }),
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => {
+        if (config.deliversSystemPromptAtSpawn !== true) {
+          return await resolveEffectiveCodingPromptText({
+            credentials: opts.credentials,
+            settings: opts.accountSettingsContext?.settings ?? null,
+            profileId: session.getMetadataSnapshot()?.profileId ?? null,
+            baseOverride,
+            executionRunsFeatureEnabled: resolveCliFeatureDecision({
+              featureId: 'execution.runs',
+              env: process.env,
+            }).state === 'enabled',
+            providerId: policyAgentId,
+            toolDelivery,
+            toolDeliverySessionId,
+            toolDeliveryDirectory: runtimeDirectory,
+            memoryMachineId: machineId,
+            memoryRecallGuidanceEnabled,
+            cache: promptArtifactBodyCache,
+          });
+        }
+        // The backend delivers the effective coding system prompt at process
+        // spawn — for pi, residual user content via --append-system-prompt plus
+        // the Happier base blocks the tools-bridge extension appends from its
+        // launch flags. The first-message prepend must not duplicate any of it;
+        // only an explicit per-message base override, which cannot ride either
+        // path, still reaches the provider this way.
+        return typeof baseOverride === 'string' && baseOverride.trim()
+          ? baseOverride.trim()
+          : '';
+      },
       onAfterStart: config.onAfterStart ? () => config.onAfterStart?.({ session, runtime }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,
