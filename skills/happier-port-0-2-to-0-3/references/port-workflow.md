@@ -4,7 +4,7 @@ Keep the port map in the conversation; do not create a repository ledger.
 
 ## Intake
 
-Capture the source and destination checkout locations, repository identities, HEADs, branches, dirty states, inherited indexes, source change basis, and source validation. Verify the semantic release line independently of folder names.
+Capture the source and destination checkout locations, repository identities, HEADs, branches, dirty states, inherited indexes, source change basis, and source validation. Verify the semantic release line independently of folder names. Record whether the destination was supplied explicitly or resolved through the optional verified `../v0.3.x` alias.
 
 ## Intent inventory
 

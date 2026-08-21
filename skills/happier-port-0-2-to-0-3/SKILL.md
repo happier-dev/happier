@@ -25,6 +25,8 @@ Obtain or discover two independent Git checkouts:
 - the 0.2 source line containing the complete validated change;
 - the 0.3 destination line that must preserve its intent.
 
+Prefer an explicit destination supplied by the user or calling workflow. Otherwise, try the optional sibling alias `../v0.3.x`, then verify that it is a Git checkout for the intended Happier repository before using it. If the alias is absent or resolves incorrectly, ask for the destination location; do not create or repair filesystem aliases implicitly.
+
 Verify repository identity, branch/commit basis, dirty state, and current bytes. Do not infer a release line from a directory name, assume a sibling path exists, create or clone a checkout without authorization, or switch a primary checkout. If the destination is unavailable, continue source-side analysis and report only the port as blocked with the exact missing location or authority.
 
 ## 3. Freeze the source intent after source validation
