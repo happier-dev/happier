@@ -126,4 +126,17 @@ describe('nodeToWebStreams', () => {
             [4, 5, 6],
         ]);
     });
+
+    it('handles synchronous write callback without TDZ reference error', async () => {
+        const stdin = new FakeStdin((_chunk, cb) => {
+            cb(null);
+            return true;
+        });
+        const stdout = new Readable({ read() { } });
+
+        const { writable } = nodeToWebStreams(stdin as any, stdout);
+        const writer = writable.getWriter();
+        await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+        writer.releaseLock();
+    });
 });
