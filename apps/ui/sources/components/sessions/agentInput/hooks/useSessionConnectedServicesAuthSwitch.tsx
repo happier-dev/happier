@@ -20,6 +20,7 @@ import { resolveConnectedServiceDisplayName, resolveConnectedServiceShortName } 
 import { resolveConnectedServicesAuthLabel } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
 import {
     resolveConnectedServiceUxDiagnosticPresentation,
+    translateConnectedServiceUxDiagnosticBody,
     type ConnectedServiceUxDiagnosticPresentation,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { buildConnectedServiceUxDiagnosticAlertButtons } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnosticAlertActions';
@@ -100,7 +101,10 @@ function presentAuthSwitchDiagnosticAlert(params: Readonly<{
 }>): void {
     Modal.alert(
         t(params.presentation.titleKey),
-        translateAuthSwitchDiagnosticBody(params.presentation),
+        translateConnectedServiceUxDiagnosticBody({
+            presentation: params.presentation,
+            translate: t,
+        }),
         buildConnectedServiceUxDiagnosticAlertButtons({
             actions: params.presentation.actions,
             handlers: {
@@ -117,19 +121,6 @@ function presentAuthSwitchDiagnosticAlert(params: Readonly<{
             translate: t,
         }),
     );
-}
-
-function translateAuthSwitchDiagnosticBody(
-    presentation: ConnectedServiceUxDiagnosticPresentation,
-): string {
-    if (!presentation.bodyParams) return t(presentation.bodyKey);
-    switch (presentation.bodyKey) {
-        case 'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume':
-        case 'connectedServices.diagnostics.body.resume_reachability_inputs_missing':
-            return t(presentation.bodyKey, presentation.bodyParams);
-        default:
-            return t(presentation.bodyKey);
-    }
 }
 
 function resolveDiagnosticConnectedServiceId(params: Readonly<{

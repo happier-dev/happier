@@ -2,13 +2,14 @@ import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
 import {
     resolveConnectedServiceUxDiagnosticPresentation,
+    translateConnectedServiceUxDiagnosticBody,
+    type ConnectedServiceUxDiagnosticTranslate,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     buildConnectedServiceUxDiagnosticAlertButtons,
     type ConnectedServiceUxDiagnosticAlertActionHandlers,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnosticAlertActions';
 import type { AlertButton } from '@/modal';
-import type { TranslationKey } from '@/text';
 
 export type SessionUsageLimitRecoveryOperationFailureResult = Readonly<{
     ok: false;
@@ -28,22 +29,10 @@ export type SessionUsageLimitRecoveryOperationFailureAlert = Readonly<{
 
 export type SessionUsageLimitRecoveryOperationFailureAlertActions = ConnectedServiceUxDiagnosticAlertActionHandlers;
 
-type Translate = (key: TranslationKey, params?: Readonly<Record<string, unknown>>) => string;
-
-function translateDiagnosticBody(params: Readonly<{
-    bodyKey: TranslationKey;
-    bodyParams?: Readonly<Record<string, unknown>>;
-    translate: Translate;
-}>): string {
-    return params.bodyParams
-        ? params.translate(params.bodyKey, params.bodyParams)
-        : params.translate(params.bodyKey);
-}
-
 export function buildSessionUsageLimitRecoveryOperationFailureAlert(params: Readonly<{
     result: SessionUsageLimitRecoveryOperationFailureResult;
     fallbackMessage: string;
-    translate: Translate;
+    translate: ConnectedServiceUxDiagnosticTranslate;
     actions: SessionUsageLimitRecoveryOperationFailureAlertActions;
 }>): SessionUsageLimitRecoveryOperationFailureAlert {
     const presentation = resolveConnectedServiceUxDiagnosticPresentation(params.result.uxDiagnostic);
@@ -57,9 +46,8 @@ export function buildSessionUsageLimitRecoveryOperationFailureAlert(params: Read
 
     return {
         title: params.translate(presentation.titleKey),
-        body: translateDiagnosticBody({
-            bodyKey: presentation.bodyKey,
-            bodyParams: presentation.bodyParams,
+        body: translateConnectedServiceUxDiagnosticBody({
+            presentation,
             translate: params.translate,
         }),
         buttons: buildConnectedServiceUxDiagnosticAlertButtons({

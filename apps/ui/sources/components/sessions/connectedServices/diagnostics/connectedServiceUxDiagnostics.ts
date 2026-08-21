@@ -190,6 +190,20 @@ export type ConnectedServiceUxDiagnosticPresentation = Readonly<{
     actions: ReadonlyArray<ConnectedServiceUxDiagnosticPresentationAction>;
 }>;
 
+export type ConnectedServiceUxDiagnosticTranslate = (
+    key: TranslationKey,
+    params?: Readonly<Record<string, unknown>>,
+) => string;
+
+export function translateConnectedServiceUxDiagnosticBody(params: Readonly<{
+    presentation: Pick<ConnectedServiceUxDiagnosticPresentation, 'bodyKey' | 'bodyParams'>;
+    translate: ConnectedServiceUxDiagnosticTranslate;
+}>): string {
+    return params.presentation.bodyParams
+        ? params.translate(params.presentation.bodyKey, params.presentation.bodyParams)
+        : params.translate(params.presentation.bodyKey);
+}
+
 function readStringDiagnostic(diagnostic: ConnectedServiceUxDiagnosticV1, key: string): string {
     const value = diagnostic.diagnostics?.[key];
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';

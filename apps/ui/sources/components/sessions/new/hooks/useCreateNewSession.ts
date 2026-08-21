@@ -86,6 +86,7 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import { materializeNewSessionCheckout } from '@/components/sessions/new/modules/materializeNewSessionCheckout';
 import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
 import { resolveConnectedServiceSwitchUnavailablePresentation } from '@/components/sessions/new/modules/connectedServiceSwitchUnavailable';
+import { translateConnectedServiceUxDiagnosticBody } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import { supportsSpawnPendingFirstInput } from '@/sync/domains/session/spawn/spawnSessionPayload';
@@ -1123,9 +1124,10 @@ export function useCreateNewSession(params: Readonly<{
                 if (switchUnavailable) {
                     current.setIsCreating(false);
                     const startFreshAction = switchUnavailable.actions.find((action) => action.kind === 'start_fresh');
-                    const diagnosticBody = switchUnavailable.bodyParams
-                        ? t(switchUnavailable.bodyKey, switchUnavailable.bodyParams)
-                        : t(switchUnavailable.bodyKey);
+                    const diagnosticBody = translateConnectedServiceUxDiagnosticBody({
+                        presentation: switchUnavailable,
+                        translate: t,
+                    });
                     Modal.alert(
                         t(switchUnavailable.titleKey),
                         diagnosticBody,
