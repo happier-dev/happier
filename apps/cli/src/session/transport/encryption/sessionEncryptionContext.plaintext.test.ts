@@ -48,6 +48,35 @@ describe.each(['legacy', 'dataKey'] as const)('idempotent session payload encryp
   });
 });
 
+/**
+ * A sealed Pending row outlives the process that wrote it: a retry after a daemon
+ * restart must re-derive the same nonce or the message owner refuses the re-enqueue
+ * as a content conflict. These vectors were derived once and are asserted forever,
+ * so any per-process salt, clock, or random input entering the derivation fails here.
+ */
+describe('idempotent nonce derivation is stable across processes', () => {
+  const payload = { role: 'user', content: { type: 'text', text: 'switch agent and continue' } };
+  const frozenNonceHexByVariant = {
+    legacy: 'ed48ddf2400b753f3590b9258dd02eb10a9a3d6d9ee8c3b9',
+    dataKey: '79fb9321e0bdc71fdc410f60',
+  } as const;
+
+  it.each(['legacy', 'dataKey'] as const)('re-derives the frozen %s nonce', (encryptionVariant) => {
+    const ctx = { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant } as const;
+
+    const sealed = Buffer.from(
+      encryptSessionPayload({ ctx, payload, idempotencyKey: 'transition-local-1' }),
+      'base64',
+    );
+    // Legacy prefixes the 24-byte secretbox nonce; dataKey prefixes a version byte
+    // before its 12-byte GCM nonce.
+    const nonce = encryptionVariant === 'legacy' ? sealed.subarray(0, 24) : sealed.subarray(1, 13);
+
+    expect(nonce.toString('hex')).toBe(frozenNonceHexByVariant[encryptionVariant]);
+    expect(decryptSessionPayload({ ctx, ciphertextBase64: sealed.toString('base64') })).toEqual(payload);
+  });
+});
+
 describe('decryptStoredSessionPayload (plaintext)', () => {
   const ctx = {
     encryptionKey: new Uint8Array(32).fill(1),
