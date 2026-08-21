@@ -107,7 +107,7 @@ describe('BashView', () => {
 
         const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
-        expect(screen.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(commandViewSpy).toHaveBeenCalledTimes(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 stdout: 'Test Files  1 passed (1)',
