@@ -60,7 +60,7 @@ describe('buildSessionAgentPickerOptions', () => {
     });
 
     it('carries the caller-owned explanation, availability, and behavior onto each row', () => {
-        const onApply = vi.fn();
+        const onSelectImmediate = vi.fn();
         const options = buildSessionAgentPickerOptions({
             entries: [entry('codex'), entry('kimi')],
             resolvePresentation: (candidate) => (candidate.providerAgentId === 'kimi'
@@ -68,7 +68,7 @@ describe('buildSessionAgentPickerOptions', () => {
                 : availablePresentation),
             resolveBehavior: ({ presentation, entry: candidate }) => (presentation.disabled
                 ? { detailTitle: candidate.title, detailDescription: presentation.subtitle }
-                : { applyLabel: `Continue with ${candidate.title}`, onApply }),
+                : { closeOnSelectImmediate: false, onSelectImmediate }),
         });
 
         const [codexOption, kimiOption] = options;
@@ -77,7 +77,7 @@ describe('buildSessionAgentPickerOptions', () => {
             label: 'codex',
             disabled: false,
             muted: false,
-            applyLabel: 'Continue with codex',
+            closeOnSelectImmediate: false,
         });
         expect(kimiOption).toMatchObject({
             id: 'builtInAgent:kimi',
@@ -86,10 +86,10 @@ describe('buildSessionAgentPickerOptions', () => {
             subtitle: 'Update the CLI',
             detailDescription: 'Update the CLI',
         });
-        expect(kimiOption?.onApply).toBeUndefined();
+        expect(kimiOption?.onSelectImmediate).toBeUndefined();
 
-        codexOption?.onApply?.();
-        expect(onApply).toHaveBeenCalledTimes(1);
+        codexOption?.onSelectImmediate?.();
+        expect(onSelectImmediate).toHaveBeenCalledTimes(1);
     });
 
     it('reports whether a row is a favorite so callers can render its rail action', () => {

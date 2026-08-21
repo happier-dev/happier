@@ -12,6 +12,8 @@ export type OpenAgentTransitionHandedOverContextModalParams = Readonly<{
     serverId: string | null;
     /** The transcript cutoff the divider recorded. `0` means nothing was carried over. */
     sourceCutoffSeqInclusive: number;
+    /** The divider's native-return bound, or `null` for a fresh target. */
+    returningAgentLastSeenSeqInclusive: number | null;
     /** The boundary's two Agents, exactly as the divider records them. */
     sourceAgentId: string;
     targetAgentId: string;
@@ -37,6 +39,7 @@ export function openAgentTransitionHandedOverContextModal(
             machineId: params.machineId,
             serverId: params.serverId,
             sourceCutoffSeqInclusive: params.sourceCutoffSeqInclusive,
+            returningAgentLastSeenSeqInclusive: params.returningAgentLastSeenSeqInclusive,
             sourceAgentId: params.sourceAgentId,
             targetAgentId: params.targetAgentId,
             onJumpToCutoff: params.onJumpToCutoff,

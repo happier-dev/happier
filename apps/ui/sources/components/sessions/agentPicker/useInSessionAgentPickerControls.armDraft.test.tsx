@@ -185,6 +185,56 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().agentPickerSelectedOptionId).toBe('builtInAgent:codex');
     });
 
+    // The identity is the daemon's dedupe key and the divider correlation key.
+    // Re-minting it on a remount is how a retry of ONE armed switch committed a
+    // second message and a second divider for a cutover that may already have
+    // happened.
+    it('retains the submitted identity when the same armed switch comes back', async () => {
+        const first = await renderControls();
+        await armTarget(first, 'builtInAgent:codex');
+        const submittedLocalId = first.getCurrent().armedContinuationLocalId;
+        expect(submittedLocalId).toEqual(expect.any(String));
+        // The send happened and its effect is unestablished; the Session screen
+        // mirrors that fact into the draft beside the arm.
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuationSubmission', {
+            localId: submittedLocalId as string,
+            intent: armedIntentFor('codex'),
+            result: { type: 'outcome_unknown', localId: submittedLocalId as string },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        });
+        await first.unmount();
+
+        const second = await renderControls();
+
+        expect(second.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(second.getCurrent().armedContinuationLocalId).toBe(submittedLocalId);
+    });
+
+    // A submission identity belongs to the switch it was made for. Adopting it
+    // for a different target would dedupe a genuinely new message against
+    // another switch's divider.
+    it('mints a fresh identity for an arm the submitted switch does not describe', async () => {
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+            backendTargetKey: 'builtInAgent:gemini',
+            intent: armedIntentFor('gemini'),
+            modelLabel: null,
+        });
+        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuationSubmission', {
+            localId: 'submitted-for-codex',
+            intent: armedIntentFor('codex'),
+            result: { type: 'outcome_unknown', localId: 'submitted-for-codex' },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        });
+
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
+        expect(hook.getCurrent().armedContinuationLocalId).toEqual(expect.any(String));
+        expect(hook.getCurrent().armedContinuationLocalId).not.toBe('submitted-for-codex');
+    });
+
     it('asks the machine for a Session that is already armed, without waiting for the chip', async () => {
         // The reader armed this Session in an earlier mount. Waiting for them to
         // reach for the Agent chip again would leave the composer promising a

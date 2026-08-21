@@ -94,6 +94,11 @@ export function AgentTransitionDividerRow(props: Readonly<{
             machineId,
             serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
             sourceCutoffSeqInclusive: cutoff,
+            // Present only on a native return, and the reason the card can show
+            // that boundary's away-delta at all: the bound it came from is
+            // device-local and the next departure overwrites it, so the divider
+            // is the only surviving copy.
+            returningAgentLastSeenSeqInclusive: props.divider.returningAgentLastSeenSeqInclusive ?? null,
             sourceAgentId: props.divider.fromAgentId,
             targetAgentId: props.divider.toAgentId,
             boundaryTitle: title,
@@ -106,7 +111,16 @@ export function AgentTransitionDividerRow(props: Readonly<{
                 ? () => router.setParams({ jumpSeq: String(cutoff) })
                 : null,
         });
-    }, [cutoff, machineId, props.divider.fromAgentId, props.divider.toAgentId, router, sessionId, title]);
+    }, [
+        cutoff,
+        machineId,
+        props.divider.fromAgentId,
+        props.divider.returningAgentLastSeenSeqInclusive,
+        props.divider.toAgentId,
+        router,
+        sessionId,
+        title,
+    ]);
 
     return (
         <TranscriptSeparatorRow

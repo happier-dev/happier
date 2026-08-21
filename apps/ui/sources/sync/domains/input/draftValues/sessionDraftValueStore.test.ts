@@ -35,6 +35,7 @@ vi.mock('react-native-mmkv', () => {
 type SessionDraftValueFieldId =
     | 'routing.recipient'
     | 'routing.agentContinuation'
+    | 'routing.agentContinuationSubmission'
     | 'routing.executionRunDelivery'
     | 'structuredInput.mentions';
 
@@ -47,6 +48,15 @@ type SessionArmedAgentContinuation = Readonly<{
         selection: Readonly<{ v: 1; agentId: string }>;
     }>;
     modelLabel: string | null;
+}>;
+
+type SessionArmedAgentContinuationSubmission = Readonly<{
+    localId: string;
+    intent: SessionArmedAgentContinuation['intent'];
+    // Only the arm these cases use; the store's own schema owns the full union.
+    result: Readonly<{ type: 'outcome_unknown'; localId: string }>;
+    submittedText: string;
+    reconciled: boolean;
 }>;
 
 const armedContinuation: SessionArmedAgentContinuation = {
@@ -88,6 +98,7 @@ type ComposerStructuredInputMention =
 type SessionDraftValueByFieldId = Readonly<{
     'routing.recipient': ParticipantRecipientV1 | null;
     'routing.agentContinuation': SessionArmedAgentContinuation;
+    'routing.agentContinuationSubmission': SessionArmedAgentContinuationSubmission;
     'routing.executionRunDelivery': 'prompt' | 'steer_if_supported' | 'interrupt';
     'structuredInput.mentions': readonly ComposerStructuredInputMention[];
 }>;
@@ -185,9 +196,109 @@ describe('session draft-value store', () => {
         expect(draftValues.SESSION_DRAFT_VALUE_FIELD_IDS).toEqual([
             'routing.recipient',
             'routing.agentContinuation',
+            'routing.agentContinuationSubmission',
             'routing.executionRunDelivery',
             'structuredInput.mentions',
         ]);
+    });
+
+    // The submitted switch is a mirror of one live outcome, and the Session
+    // screen owns both halves. A catalog clear of its own would take the record
+    // away on an event the live half does not observe, which is exactly the
+    // two-lifetimes defect the armed-Agent field was introduced to remove.
+    it('gives the submitted switch no lifecycle the live outcome does not share', async () => {
+        const draftValues = await importStore();
+        const submission: SessionArmedAgentContinuationSubmission = {
+            localId: 'armed-local-1',
+            intent: armedContinuation.intent,
+            result: { type: 'outcome_unknown', localId: 'armed-local-1' },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        };
+
+        draftValues.writeSessionDraftValue(
+            scopeA,
+            'sessionA',
+            'routing.agentContinuationSubmission',
+            submission,
+            { now: 100 },
+        );
+
+        draftValues.clearSessionDraftValues(scopeA, 'sessionA', { lifecycle: 'outboundHandoff' });
+        draftValues.clearSessionDraftValues(scopeA, 'sessionA', { lifecycle: 'composerCleared' });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toEqual(submission);
+
+        draftValues.clearSessionDraftValues(scopeA, 'sessionA', { lifecycle: 'sessionDeleted' });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toBeUndefined();
+    });
+
+    // An unsettled transition stops being a live statement about this composer
+    // long before a draft stops being a live message.
+    it('expires a submitted switch a day after it was written', async () => {
+        const draftValues = await importStore();
+        const submission: SessionArmedAgentContinuationSubmission = {
+            localId: 'armed-local-1',
+            intent: armedContinuation.intent,
+            result: { type: 'outcome_unknown', localId: 'armed-local-1' },
+            submittedText: 'switch and send this',
+            reconciled: true,
+        };
+
+        draftValues.writeSessionDraftValue(
+            scopeA,
+            'sessionA',
+            'routing.agentContinuationSubmission',
+            submission,
+            { now: 100 },
+        );
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation', armedContinuation, { now: 100 });
+
+        draftValues.garbageCollectSessionDraftValues(scopeA, {
+            now: 100 + 23 * 60 * 60 * 1000,
+            reason: 'foreground',
+        });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toEqual(submission);
+
+        draftValues.garbageCollectSessionDraftValues(scopeA, {
+            now: 100 + 25 * 60 * 60 * 1000,
+            reason: 'foreground',
+        });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toBeUndefined();
+        // The arm keeps the shared default: the two are on different clocks by
+        // design, not by omission.
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuation'))
+            .toEqual(armedContinuation);
+    });
+
+    // A record whose identity or answer cannot be read is not a partially
+    // usable one: restoring it would put a banner and a send block behind a
+    // localId that no longer dedupes anything.
+    it('refuses a malformed submitted switch whole', async () => {
+        const draftValues = await importStore();
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission', {
+            localId: '',
+            intent: armedContinuation.intent,
+            result: { type: 'outcome_unknown', localId: 'armed-local-1' },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        } as SessionArmedAgentContinuationSubmission, { now: 100 });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toBeUndefined();
+
+        draftValues.writeSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission', {
+            localId: 'armed-local-1',
+            intent: armedContinuation.intent,
+            result: { type: 'made_up_arm', localId: 'armed-local-1' },
+            submittedText: 'switch and send this',
+            reconciled: false,
+        } as unknown as SessionArmedAgentContinuationSubmission, { now: 100 });
+        expect(draftValues.readSessionDraftValue(scopeA, 'sessionA', 'routing.agentContinuationSubmission'))
+            .toBeUndefined();
     });
 
     it('keeps an armed Agent across a reload, sheds it at outbound handoff, and holds it through a composer clear', async () => {

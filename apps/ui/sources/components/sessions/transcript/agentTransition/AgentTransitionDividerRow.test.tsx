@@ -54,6 +54,7 @@ type ShownHandedOverContextModal = Readonly<{
     props: Readonly<{
         sessionId: string;
         sourceCutoffSeqInclusive: number;
+        returningAgentLastSeenSeqInclusive: number | null;
         onJumpToCutoff: unknown;
     }>;
 }>;
@@ -199,7 +200,37 @@ describe('Agent transition divider', () => {
         const shown = shownModals()[0];
         expect(shown?.props.sessionId).toBe('sess-1');
         expect(shown?.props.sourceCutoffSeqInclusive).toBe(29_979);
+        // A fresh-target boundary had no lower bound, and none is invented.
+        expect(shown?.props.returningAgentLastSeenSeqInclusive).toBeNull();
         expect(typeof shown?.props.onJumpToCutoff).toBe('function');
+    });
+
+    /**
+     * A NATIVE RETURN handed over only the away-delta, and the divider is the
+     * only surviving record of the bound that produced it — the device-local
+     * departure record it came from is overwritten by the next departure. If the
+     * row drops it here, the card rebuilds the FULL prefix and shows the reader
+     * more than was actually handed over.
+     */
+    it('carries a native return’s recorded delta bound through to the card', async () => {
+        modalMock.show.mockClear();
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                sessionId="sess-1"
+                event={dividerEvent({
+                    v: 1,
+                    fromAgentId: 'codex',
+                    toAgentId: 'claude',
+                    sourceCutoffSeqInclusive: 29_979,
+                    returningAgentLastSeenSeqInclusive: 29_130,
+                })}
+            />,
+        );
+        screen.pressByTestId('transcript-agent-transition-divider-chip');
+
+        const shown = shownModals()[0];
+        expect(shown?.props.returningAgentLastSeenSeqInclusive).toBe(29_130);
+        expect(shown?.props.sourceCutoffSeqInclusive).toBe(29_979);
     });
 
     /**

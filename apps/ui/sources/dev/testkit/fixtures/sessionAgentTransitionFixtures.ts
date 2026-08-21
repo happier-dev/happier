@@ -24,6 +24,12 @@ export function createAgentTransitionDividerEventFixture(overrides: Readonly<{
     toAgentId?: string;
     /** The recorded cutoff. Required on the wire, so the default supplies one. */
     sourceCutoffSeqInclusive?: number;
+    /**
+     * The recorded native-return bound. Optional on the wire and ABSENT by
+     * default, because the default fixture is a fresh target's boundary — which
+     * genuinely had no lower bound.
+     */
+    returningAgentLastSeenSeqInclusive?: number;
     message?: string;
     sidecar?: unknown;
 }> = {}): Record<string, unknown> {
@@ -35,6 +41,9 @@ export function createAgentTransitionDividerEventFixture(overrides: Readonly<{
             fromAgentId: overrides.fromAgentId ?? 'claude',
             toAgentId: overrides.toAgentId ?? 'codex',
             sourceCutoffSeqInclusive: overrides.sourceCutoffSeqInclusive ?? 29_979,
+            ...(overrides.returningAgentLastSeenSeqInclusive === undefined
+                ? {}
+                : { returningAgentLastSeenSeqInclusive: overrides.returningAgentLastSeenSeqInclusive }),
         },
     };
 }

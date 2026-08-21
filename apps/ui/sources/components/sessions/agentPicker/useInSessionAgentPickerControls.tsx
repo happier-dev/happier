@@ -51,6 +51,17 @@ import {
 type ArmedAgentContinuation = SessionArmedAgentContinuation;
 
 const ARMED_AGENT_CONTINUATION_FIELD_ID = 'routing.agentContinuation' as const;
+const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationSubmission' as const;
+
+/**
+ * The lifetime of one armed choice, as a key. Formed in one place so the value
+ * a restore adopts an identity under is the same value the render mints under —
+ * two spellings of this would silently re-mint on the very mount the identity
+ * has to survive.
+ */
+function buildArmedContinuationIdentityKey(armScopeKey: string, arm: ArmedAgentContinuation): string {
+    return `${armScopeKey} ${arm.backendTargetKey} ${JSON.stringify(arm.intent)}`;
+}
 
 type UseInSessionAgentPickerControlsParams = Readonly<{
     sessionId: string;
@@ -433,6 +444,30 @@ export function useInSessionAgentPickerControls(
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
 
+    // The submission identity for the armed choice, derived from the choice
+    // itself rather than minted at whichever affordance established it.
+    //
+    // It is the transition's dedupe key, divider correlation key and draft
+    // compare-clear key, so its lifetime has to be exactly the lifetime of one
+    // armed choice: stable across re-renders, so retrying the same armed switch
+    // after an unknown outcome re-admits ONE message instead of sending a second
+    // copy, and replaced the moment the reader picks a different Agent, model,
+    // mode or configuration, because that is a different switch.
+    //
+    // It identifies the TRANSITION, not the draft, so an edited draft retried
+    // under the same arm deliberately keeps it: the daemon correlates a repeated
+    // invocation against the divider derived from this value, and the canonical
+    // admission owner — not this identity — is what refuses a reused identity
+    // whose content differs.
+    const armedIdentityKey = armed === null ? null : buildArmedContinuationIdentityKey(armScopeKey, armed);
+    const armedLocalIdRef = React.useRef<Readonly<{ key: string; localId: string }> | null>(null);
+    if (armedIdentityKey === null) {
+        armedLocalIdRef.current = null;
+    } else if (armedLocalIdRef.current?.key !== armedIdentityKey) {
+        armedLocalIdRef.current = { key: armedIdentityKey, localId: randomUUID() };
+    }
+    const armedContinuationLocalId = armedLocalIdRef.current?.localId ?? null;
+
     // Restoring an arm is not rehydrating it. An armed choice is only meaningful
     // in the context it was made in, and persistence must not defeat the scope
     // that protects it: the gate has to still be open, the Session has to still
@@ -474,6 +509,28 @@ export function useInSessionAgentPickerControls(
             && row.entry.providerAgentId === persisted.intent.selection.agentId
             && persisted.intent.sourceAgentId === currentAgentId;
         if (stillHonourable) {
+            // A restored arm is not automatically a fresh attempt. If this
+            // Session already submitted THIS switch and its effect is still
+            // unestablished, the submission identity is retained with it: the
+            // daemon dedupes a repeat against the divider derived from that
+            // value, so re-minting here is what turned a retry into a second
+            // message and a second divider for a switch that may already have
+            // happened. A reader who re-armed elsewhere gets a fresh identity,
+            // because that is a different switch.
+            const submission = readSessionDraftValue(
+                accountScope,
+                draftSessionId,
+                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
+            );
+            if (
+                typeof submission !== 'undefined'
+                && JSON.stringify(submission.intent) === JSON.stringify(persisted.intent)
+            ) {
+                armedLocalIdRef.current = {
+                    key: buildArmedContinuationIdentityKey(armScopeKey, persisted),
+                    localId: submission.localId,
+                };
+            }
             setArmed(persisted);
             return;
         }
@@ -488,32 +545,6 @@ export function useInSessionAgentPickerControls(
         railDecisionSettled,
         targetRows,
     ]);
-
-    // The submission identity for the armed choice, derived from the choice
-    // itself rather than minted at whichever affordance established it.
-    //
-    // It is the transition's dedupe key, divider correlation key and draft
-    // compare-clear key, so its lifetime has to be exactly the lifetime of one
-    // armed choice: stable across re-renders, so retrying the same armed switch
-    // after an unknown outcome re-admits ONE message instead of sending a second
-    // copy, and replaced the moment the reader picks a different Agent, model,
-    // mode or configuration, because that is a different switch.
-    //
-    // It identifies the TRANSITION, not the draft, so an edited draft retried
-    // under the same arm deliberately keeps it: the daemon correlates a repeated
-    // invocation against the divider derived from this value, and the canonical
-    // admission owner — not this identity — is what refuses a reused identity
-    // whose content differs.
-    const armedIdentityKey = armed === null
-        ? null
-        : `${armScopeKey} ${armed.backendTargetKey} ${JSON.stringify(armed.intent)}`;
-    const armedLocalIdRef = React.useRef<Readonly<{ key: string; localId: string }> | null>(null);
-    if (armedIdentityKey === null) {
-        armedLocalIdRef.current = null;
-    } else if (armedLocalIdRef.current?.key !== armedIdentityKey) {
-        armedLocalIdRef.current = { key: armedIdentityKey, localId: randomUUID() };
-    }
-    const armedContinuationLocalId = armedLocalIdRef.current?.localId ?? null;
 
     const armedTargetKey = armed?.backendTargetKey ?? null;
 

@@ -59,6 +59,8 @@ describe('Agent transition handed-over context card', () => {
         onJumpToCutoff: null,
         sourceAgentId: 'claude',
         targetAgentId: 'codex',
+        // A fresh-target boundary by default: it had no lower bound at all.
+        returningAgentLastSeenSeqInclusive: null,
     } as const;
 
     async function renderRebuilt(briefText: string) {

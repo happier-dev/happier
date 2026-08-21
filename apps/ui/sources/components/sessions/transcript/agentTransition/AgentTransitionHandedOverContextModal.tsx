@@ -32,6 +32,12 @@ export type AgentTransitionHandedOverContextModalProps = CustomModalInjectedProp
     serverId: string | null;
     /** The transcript cutoff the divider recorded. `0` means nothing was carried over. */
     sourceCutoffSeqInclusive: number;
+    /**
+     * The divider's native-return bound, or `null` for a fresh target. It is
+     * what makes a return boundary rebuild as the away-delta it actually sent
+     * rather than the whole prefix above the cutoff.
+     */
+    returningAgentLastSeenSeqInclusive: number | null;
     /** The boundary's two Agents, exactly as the divider records them. */
     sourceAgentId: string;
     targetAgentId: string;
@@ -59,7 +65,15 @@ export function AgentTransitionHandedOverContextModal(
     props: AgentTransitionHandedOverContextModalProps,
 ): React.ReactElement {
     const { theme } = useUnistyles();
-    const { machineId, serverId, sessionId, sourceAgentId, sourceCutoffSeqInclusive, targetAgentId } = props;
+    const {
+        machineId,
+        returningAgentLastSeenSeqInclusive,
+        serverId,
+        sessionId,
+        sourceAgentId,
+        sourceCutoffSeqInclusive,
+        targetAgentId,
+    } = props;
     const [attempt, setAttempt] = React.useState(0);
     const [state, setState] = React.useState<HandedOverContextState>({ kind: 'loading' });
 
@@ -77,6 +91,7 @@ export function AgentTransitionHandedOverContextModal(
             serverId,
             sessionId,
             sourceCutoffSeqInclusive,
+            returningAgentLastSeenSeqInclusive,
             sourceAgentId,
             targetAgentId,
         })
@@ -88,7 +103,16 @@ export function AgentTransitionHandedOverContextModal(
         return () => {
             applies = false;
         };
-    }, [attempt, machineId, serverId, sessionId, sourceAgentId, sourceCutoffSeqInclusive, targetAgentId]);
+    }, [
+        attempt,
+        machineId,
+        returningAgentLastSeenSeqInclusive,
+        serverId,
+        sessionId,
+        sourceAgentId,
+        sourceCutoffSeqInclusive,
+        targetAgentId,
+    ]);
 
     const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
 

@@ -35,8 +35,15 @@ export type PreviewSessionAgentTransitionBriefOnMachineInput = Readonly<{
     machineId: string;
     serverId: string | null;
     sessionId: string;
-    /** The cutoff the divider recorded, which bounds the rebuild exactly as the transition was bounded. */
+    /** The cutoff the divider recorded — the rebuild's UPPER bound, exactly as the transition set it. */
     sourceCutoffSeqInclusive: number;
+    /**
+     * The divider's native-return bound — the rebuild's exclusive LOWER bound —
+     * or `null` for a fresh target, whose boundary had none. Without it the
+     * machine reruns an unbounded-below pass and the card shows the whole
+     * prefix for a boundary that only sent the away-delta.
+     */
+    returningAgentLastSeenSeqInclusive: number | null;
     /** The boundary's two Agents, exactly as the divider records them. */
     sourceAgentId: string;
     targetAgentId: string;
@@ -55,6 +62,12 @@ export async function previewSessionAgentTransitionBriefOnMachine(
         v: 1,
         sessionId: input.sessionId,
         sourceCutoffSeqInclusive: input.sourceCutoffSeqInclusive,
+        // Absent, not null: the wire shape spells "this boundary had no lower
+        // bound" exactly one way, and the daemon reads absence as the full
+        // replay a fresh target really got.
+        ...(input.returningAgentLastSeenSeqInclusive === null
+            ? {}
+            : { returningAgentLastSeenSeqInclusive: input.returningAgentLastSeenSeqInclusive }),
         sourceAgentId: input.sourceAgentId,
         targetAgentId: input.targetAgentId,
     });

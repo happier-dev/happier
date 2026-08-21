@@ -159,6 +159,21 @@ export type ArmedAgentContinuationDisposition = Readonly<{
 }>;
 
 /**
+ * Whether this outcome still has anything to say to the reader.
+ *
+ * One predicate, because the two questions that ask it are the same one: is a
+ * submitted switch worth carrying across a remount, and is a carried one still
+ * truthful when it comes back. An outcome with nothing to state and nothing to
+ * hold the composer for is deleted rather than restored, so a restored banner
+ * can never point at a transition that has since resolved.
+ */
+export function isArmedAgentContinuationOutcomeUnsettled(
+    disposition: ArmedAgentContinuationDisposition,
+): boolean {
+    return disposition.notice !== null || disposition.send === 'block';
+}
+
+/**
  * Where the exact submitted localId has got to, canonically.
  *
  * One value rather than two booleans, because "admitted" and "still waiting to
