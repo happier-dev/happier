@@ -52,7 +52,18 @@ export function findTranslationProblems(
         // Fragment boundaries are part of the sentence, not formatting.
         if (/^\s/.test(en) !== /^\s/.test(translated)) push('leading-whitespace');
         if (/\s$/.test(en) !== /\s$/.test(translated)) push('trailing-whitespace');
-        if (translated.includes('${')) push('interpolation-introduced');
+        // `${` in a translation is a defect when the translator invented it — but a few English
+        // strings document the template syntax and carry a literal `${VAR}` of their own, which the
+        // translation must keep (the shipped es/fr do). Anything reaching here is inert text: a real
+        // template hole was already split into fragments around it.
+        const holes = (text: string): string[] => (text.match(/\$\{[^}]*\}/g) ?? []).slice().sort();
+        const enHoles = holes(en);
+        const translatedHoles = holes(translated);
+        if (enHoles.length === 0) {
+            if (translated.includes('${')) push('interpolation-introduced');
+        } else if (enHoles.join('\u0000') !== translatedHoles.join('\u0000')) {
+            push('interpolation-renamed');
+        }
         if ((en.match(/\n/g)?.length ?? 0) !== (translated.match(/\n/g)?.length ?? 0)) push('newline-count');
         // A literal that is entirely code must come back untouched.
         if (isDoNotTranslate(en) && translated !== en) push('code-modified');
@@ -65,29 +76,33 @@ export function findTranslationProblems(
     return { problems, missing };
 }
 
-const translationsPath = readArg('translations');
-if (!translationsPath) {
-    console.error('usage: validateTranslationMap.ts --translations <file> [--source <locale.ts>]');
-    process.exit(1);
+// Importable for tests; the CLI only runs when this file is the entry point.
+function main(): void {
+    const translationsPath = readArg('translations');
+    if (!translationsPath) {
+        console.error('usage: validateTranslationMap.ts --translations <file> [--source <locale.ts>]');
+        process.exit(1);
+    }
+
+    const sourceFile = readArg('source') ?? path.join(TRANSLATIONS_DIR, `${SOURCE_LOCALE}.ts`);
+    const literals = extractLiterals(readFileSync(sourceFile, 'utf8'), path.basename(sourceFile));
+    const translations = JSON.parse(readFileSync(translationsPath, 'utf8')) as Record<string, string>;
+    const { problems, missing } = findTranslationProblems(literals, translations);
+
+    const byKind = new Map<string, number>();
+    for (const problem of problems) byKind.set(problem.kind, (byKind.get(problem.kind) ?? 0) + 1);
+
+    console.log(`translated : ${Object.keys(translations).length}`);
+    console.log(`untranslated: ${missing.length} (these will render as English)`);
+    for (const [kind, count] of [...byKind].sort((left, right) => right[1] - left[1])) {
+        console.log(`${kind.padEnd(24)}: ${count}`);
+    }
+    for (const problem of problems.slice(0, 20)) {
+        console.log(
+            `  [${problem.kind}] ${problem.key}\n     en: ${JSON.stringify(problem.en)}\n     translated: ${JSON.stringify(problem.translated)}`,
+        );
+    }
+    if (problems.length > 0) process.exit(1);
 }
 
-const sourceFile = readArg('source') ?? path.join(TRANSLATIONS_DIR, `${SOURCE_LOCALE}.ts`);
-const literals = extractLiterals(readFileSync(sourceFile, 'utf8'), path.basename(sourceFile));
-const translations = JSON.parse(readFileSync(translationsPath, 'utf8')) as Record<string, string>;
-const { problems, missing } = findTranslationProblems(literals, translations);
-
-const byKind = new Map<string, number>();
-for (const problem of problems) byKind.set(problem.kind, (byKind.get(problem.kind) ?? 0) + 1);
-
-console.log(`translated : ${Object.keys(translations).length}`);
-console.log(`untranslated: ${missing.length} (these will render as English)`);
-for (const [kind, count] of [...byKind].sort((left, right) => right[1] - left[1])) {
-    console.log(`${kind.padEnd(24)}: ${count}`);
-}
-for (const problem of problems.slice(0, 20)) {
-    console.log(`  [${problem.kind}] ${problem.key}\n     en: ${JSON.stringify(problem.en)}\n     fr: ${JSON.stringify(problem.translated)}`);
-}
-
-// Missing strings are a coverage report, not an error — a partial locale renders English and is a
-// legitimate intermediate state. A malformed one is not.
-process.exit(problems.length > 0 ? 1 : 0);
+if (require.main === module) main();

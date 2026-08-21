@@ -12,7 +12,7 @@
 /**
  * Supported language codes
  */
-export type SupportedLanguage = 'en' | 'ru' | 'pl' | 'es' | 'fr' | 'it' | 'pt' | 'ca' | 'zh-Hans' | 'zh-Hant' | 'ja';
+export type SupportedLanguage = 'en' | 'ru' | 'pl' | 'es' | 'fr' | 'it' | 'pt' | 'ca' | 'de' | 'zh-Hans' | 'zh-Hant' | 'ja';
 
 /**
  * Language metadata interface
@@ -66,6 +66,11 @@ export const SUPPORTED_LANGUAGES: Record<SupportedLanguage, LanguageInfo> = {
         code: 'ca',
         nativeName: 'Català',
         englishName: 'Catalan'
+    },
+    de: {
+        code: 'de',
+        nativeName: 'Deutsch',
+        englishName: 'German'
     },
     'zh-Hans': {
         code: 'zh-Hans',
