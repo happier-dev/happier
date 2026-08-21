@@ -101,7 +101,7 @@ export async function ensureActiveAccessKeyValid({ cliHomeDir, serverUrl, env = 
     return { kind: 'ok', activePath };
   }
 
-  const candidates = [...resolved.aliasServerScopedPaths, resolved.legacyPath]
+  const candidates = [...resolved.credentialSourcePaths, resolved.legacyPath]
     .map((p) => String(p ?? '').trim())
     .filter(Boolean)
     .filter((p) => p !== activePath);

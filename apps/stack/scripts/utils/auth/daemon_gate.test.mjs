@@ -68,12 +68,13 @@ test('daemonStartGate allows daemon start when credentials exist', async (t) => 
 test('daemonStartGate resolves server-scoped credentials from env server url', async (t) => {
   const dir = await withTempRoot(t);
   const serverUrl = 'http://127.0.0.1:4010';
-  const paths = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl });
+  const env = { HAPPIER_SERVER_URL: serverUrl };
+  const paths = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl, env });
   await mkdir(join(dir, 'servers', paths.activeServerId), { recursive: true });
   await writeFile(paths.serverScopedPath, 'dummy', 'utf-8');
 
   const gate = daemonStartGate({
-    env: { HAPPIER_SERVER_URL: serverUrl },
+    env,
     cliHomeDir: dir,
   });
   assert.equal(gate.ok, true);
