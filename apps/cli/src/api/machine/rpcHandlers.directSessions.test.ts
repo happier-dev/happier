@@ -178,7 +178,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       metadataVersion: 1,
       encryptionMode: 'plain',
       metadata: JSON.stringify({
-        path: '',
+        path: '/tmp/stale-linked-pi-worktree',
         machineId: 'm1',
         flavor: 'pi',
         piSessionId,

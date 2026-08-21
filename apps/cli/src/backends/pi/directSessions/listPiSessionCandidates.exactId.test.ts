@@ -42,12 +42,18 @@ function makeAgentDir(prefix: string): string {
   return agentDir;
 }
 
-function writeSession(agentDir: string, dirName: string, sessionId: string, fileName = `${sessionId}.jsonl`): string {
+function writeSession(
+  agentDir: string,
+  dirName: string,
+  sessionId: string,
+  fileName = `${sessionId}.jsonl`,
+  headerSessionId = sessionId,
+): string {
   const sessionsDir = join(agentDir, 'sessions', dirName);
   mkdirSync(sessionsDir, { recursive: true });
   const filePath = join(sessionsDir, fileName);
   writeFileSync(filePath, [
-    JSON.stringify({ type: 'session', id: sessionId, timestamp: '2024-12-03T14:00:00.000Z', cwd: `/${dirName}`, version: 3 }),
+    JSON.stringify({ type: 'session', id: headerSessionId, timestamp: '2024-12-03T14:00:00.000Z', cwd: `/${dirName}`, version: 3 }),
     JSON.stringify({ type: 'message', id: 'm1', parentId: null, timestamp: '2024-12-03T14:00:01.000Z', message: { role: 'user', content: sessionId } }),
   ].join('\n') + '\n');
   return filePath;
@@ -76,7 +82,26 @@ describe('listPiSessionCandidates exact-id lookup', () => {
     const result = await listPiSessionCandidates({ source, env, limit: 10, searchTerm: SESSION_A });
 
     expect(result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
-    expect(trackedFs.openedPaths).toHaveLength(3);
+    // Exact lookup may inspect the target more than once to build its title, but it must not
+    // repeat the resolver's scan of unrelated headers through full candidate discovery.
+    expect(trackedFs.openedPaths.filter((path) => path.endsWith(`${SESSION_B}.jsonl`))).toHaveLength(1);
+  });
+
+  it('resolves a canonical session id when the stored header contains surrounding whitespace', async () => {
+    const agentDir = makeAgentDir('pi-resolve-trimmed-id-');
+    const filePath = writeSession(
+      agentDir,
+      '--proj-a--',
+      SESSION_A,
+      `${SESSION_A}.jsonl`,
+      `  ${SESSION_A}  `,
+    );
+    const source: DirectSessionsSource = { kind: 'piAgentDir' };
+    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+
+    const resolved = await resolvePiDirectSessionFile({ source, env, remoteSessionId: SESSION_A });
+
+    expect(resolved?.filePath).toBe(filePath);
   });
 
   it('uses full mtime precision when choosing between copied session ids', async () => {

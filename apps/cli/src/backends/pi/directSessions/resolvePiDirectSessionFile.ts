@@ -100,7 +100,7 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
       const filePath = join(sessionsDir, dirName, name);
       try {
         const header = await readPiSessionHeader(filePath);
-        if (!header || header.id !== remoteSessionId) continue;
+        if (!header || header.id.trim() !== remoteSessionId) continue;
         const s = await stat(filePath);
         if (!s.isFile()) continue;
         if (!best || comparePiSessionFilePreference(

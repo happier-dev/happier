@@ -61,12 +61,11 @@ export const piDirectSessionProviderOps: DirectSessionProviderOps = {
     // PI_CODING_AGENT_DIR points pi at the same ~/.pi/agent the discovery scanner read from.
     const agentDir = resolvePiAgentDir({ source: linked.source, env: process.env });
     const directory =
-      linked.sessionPath ??
       (await getPiDirectSessionWorkingDirectory({
         source: linked.source,
         remoteSessionId: linked.remoteSessionId,
         env: process.env,
-      }));
+      })) ?? linked.sessionPath;
     if (!directory) return null;
 
     return {
