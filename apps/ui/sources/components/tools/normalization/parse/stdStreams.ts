@@ -5,6 +5,27 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+/**
+ * ACP-style tool results (Pi) carry output as text blocks in a `content` array with
+ * metadata beside it (`details.exit_code`, …) instead of stream keys. Joining by direct
+ * concatenation matches how those blocks were streamed.
+ */
+function readAcpContentText(value: unknown): string | undefined {
+    const record = asRecord(value);
+    const content = record?.content;
+    if (!Array.isArray(content)) return undefined;
+
+    let text = '';
+    for (const item of content) {
+        const entry = asRecord(item);
+        if (!entry || entry.type !== 'text') continue;
+        const chunk = typeof entry.text === 'string' ? entry.text : undefined;
+        if (chunk === undefined) continue;
+        text += chunk;
+    }
+    return text.length > 0 ? text : undefined;
+}
+
 export type StdStreams = { stdout?: string; stderr?: string };
 
 export function extractStdStreams(result: unknown): StdStreams | null {
@@ -22,7 +43,7 @@ export function extractStdStreams(result: unknown): StdStreams | null {
                 ? obj.aggregated_output
                 : typeof obj.formatted_output === 'string'
                     ? obj.formatted_output
-                    : undefined;
+                    : readAcpContentText(obj);
     const stderr = typeof obj.stderr === 'string' ? obj.stderr : undefined;
     if (!stdout && !stderr) return null;
 
