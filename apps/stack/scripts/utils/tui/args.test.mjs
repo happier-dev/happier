@@ -26,19 +26,28 @@ test('normalizeTuiForwardedArgs preserves explicit args', () => {
 test('extractTuiLaunchOptions strips Tauri flags from child args and preserves forwarded commands', () => {
   assert.deepEqual(extractTuiLaunchOptions([]), {
     forwardedArgs: ['dev'],
+    rescue: false,
     withTauri: false,
   });
   assert.deepEqual(extractTuiLaunchOptions(['--tauri']), {
     forwardedArgs: ['dev'],
+    rescue: false,
     withTauri: true,
   });
   assert.deepEqual(extractTuiLaunchOptions(['--tauri', '--mobile']), {
     forwardedArgs: ['dev', '--mobile'],
+    rescue: false,
     withTauri: true,
   });
   assert.deepEqual(extractTuiLaunchOptions(['stack', 'dev', 'exp1', '--with-tauri']), {
     forwardedArgs: ['stack', 'dev', 'exp1'],
+    rescue: false,
     withTauri: true,
+  });
+  assert.deepEqual(extractTuiLaunchOptions(['--rescue', '--mobile']), {
+    forwardedArgs: ['dev', '--mobile'],
+    rescue: true,
+    withTauri: false,
   });
 });
 

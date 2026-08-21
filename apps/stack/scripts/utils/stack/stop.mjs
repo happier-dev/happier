@@ -17,8 +17,7 @@ import {
   getPsEnvLine,
   killPidOwnedByStack,
   killProcessGroupOwnedByStack,
-  listPidsWithEnvNeedles,
-  listPidsWithEnvNeedlesAndEnvBindingNames,
+  listPsPidsForEnvQueries,
   observePsEnvLine,
   readStackProcessKindFromEnvLine,
   textContainsEnvBindingName,
@@ -256,18 +255,34 @@ export function resolveStackCleanupExecutorLockPath(baseDir) {
   return join(root, 'stack.cleanup-executor.lock');
 }
 
+export function resolveStackCleanupExecutorLockTimeoutMs(input = {}, lockOptions = {}) {
+  if (lockOptions.timeoutMs !== undefined) return lockOptions.timeoutMs;
+  return input?.env?.HAPPIER_STACK_TUI === '1' ? Number.POSITIVE_INFINITY : 300_000;
+}
+
 async function withStackCleanupExecutorLock(input, dependencies, fn) {
   const lockOptions = dependencies.cleanupExecutorLockOptions ?? {};
   const lockPath = lockOptions.lockPath ?? resolveStackCleanupExecutorLockPath(input.baseDir);
-  const timeoutMs = lockOptions.timeoutMs ?? 300_000;
+  const timeoutMs = resolveStackCleanupExecutorLockTimeoutMs(input, lockOptions);
+  const attendedTui = input?.env?.HAPPIER_STACK_TUI === '1';
+  let lastProgressLogAt = 0;
+  const onWait = lockOptions.onWait ?? (attendedTui
+    ? ({ waitedMs, owner }) => {
+        if (waitedMs - lastProgressLogAt < 10_000 && lastProgressLogAt !== 0) return;
+        lastProgressLogAt = waitedMs;
+        console.warn(
+          `[stack] cleanup is still active${owner?.pid ? ` (owner pid=${owner.pid})` : ''}; waiting instead of aborting TUI startup...`,
+        );
+      }
+    : undefined);
   return await withJsonOwnerFileLock(fn, {
     lockPath,
     timeoutMs,
     pollIntervalMs: lockOptions.pollIntervalMs ?? 125,
-    staleAfterMs: lockOptions.staleAfterMs ?? Math.max(60_000, timeoutMs),
+    staleAfterMs: lockOptions.staleAfterMs ?? 300_000,
     errorLabel: 'stack cleanup executor lock',
     allowLiveOwnerStaleReclaim: true,
-    onWait: lockOptions.onWait,
+    onWait,
   });
 }
 
@@ -694,15 +709,27 @@ async function stopStackWithEnvInternal({
   const shouldAutoSweep = autoSweepResolved && envPath && !runtimeStateUsable;
   if ((sweepOwned || shouldAutoSweep) && envPath) {
     const envNeedle = `HAPPIER_STACK_ENV_FILE=${envPath}`;
-    const infraTagged = await listPidsWithEnvNeedles([envNeedle, 'HAPPIER_STACK_PROCESS_KIND=infra']);
-
-    // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
-    // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
-    // fallback to npm/yarn managed server processes to avoid touching daemon-spawned sessions.
-    const legacyServer = await listPidsWithEnvNeedlesAndEnvBindingNames([
-      envNeedle,
-      'npm_package_name=@happier-dev/server',
-    ], ['npm_lifecycle_event']);
+    const configuredInventoryTimeoutMs = Number.parseInt(
+      String(env.HAPPIER_STACK_PROCESS_INVENTORY_TIMEOUT_MS ?? ''),
+      10,
+    );
+    const inventoryTimeoutMs = env.HAPPIER_STACK_TUI === '1'
+      ? undefined
+      : (Number.isFinite(configuredInventoryTimeoutMs) && configuredInventoryTimeoutMs > 0
+          ? configuredInventoryTimeoutMs
+          : 60_000);
+    const [infraTagged, legacyServer] = await listPsPidsForEnvQueries([
+      { needles: [envNeedle, 'HAPPIER_STACK_PROCESS_KIND=infra'] },
+      // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
+      // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
+      // fallback to npm/yarn managed server processes to avoid touching daemon-spawned sessions.
+      {
+        needles: [envNeedle, 'npm_package_name=@happier-dev/server'],
+        bindingNames: ['npm_lifecycle_event'],
+      },
+    ], Number.isFinite(inventoryTimeoutMs) && inventoryTimeoutMs > 0
+      ? { timeoutMs: inventoryTimeoutMs }
+      : {});
 
     const pids = [...new Set([...infraTagged, ...legacyServer])]
       .filter((pid) => pid !== process.pid)

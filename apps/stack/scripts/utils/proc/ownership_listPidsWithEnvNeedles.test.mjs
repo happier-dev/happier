@@ -8,12 +8,35 @@ import { spawnDetachedInlineNodeTestProcess } from '../../testkit/core/spawn_tes
 import {
   listPidsWithEnvNeedles,
   listPidsWithEnvNeedlesAndEnvBindingNames,
+  listPsPidsForEnvQueries,
   observePsEnvLine,
   parsePsPidCommandOutputForNeedles,
   parsePsPidCommandOutputForNeedlesAndEnvBindingNames,
   textContainsNeedle,
   resolvePidStackOwnership,
 } from './ownership.mjs';
+
+test('listPsPidsForEnvQueries resolves multiple ownership queries from one macOS snapshot', async () => {
+  let captures = 0;
+  const output = [
+    '101 cmd HAPPIER_STACK_ENV_FILE=/tmp/a/env HAPPIER_STACK_PROCESS_KIND=infra',
+    '102 cmd HAPPIER_STACK_ENV_FILE=/tmp/a/env npm_package_name=@happier-dev/server npm_lifecycle_event=dev',
+  ].join('\n');
+
+  const result = await listPsPidsForEnvQueries([
+    { needles: ['HAPPIER_STACK_ENV_FILE=/tmp/a/env', 'HAPPIER_STACK_PROCESS_KIND=infra'] },
+    {
+      needles: ['HAPPIER_STACK_ENV_FILE=/tmp/a/env', 'npm_package_name=@happier-dev/server'],
+      bindingNames: ['npm_lifecycle_event'],
+    },
+  ], {
+    platform: 'darwin',
+    runCaptureImpl: async () => { captures += 1; return output; },
+  });
+
+  assert.equal(captures, 1);
+  assert.deepEqual(result, [[101], [102]]);
+});
 
 test('process identity observation preserves unavailable ps as typed inconclusive', async () => {
   const unavailable = new Error('ps unavailable');

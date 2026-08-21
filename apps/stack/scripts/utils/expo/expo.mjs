@@ -154,6 +154,9 @@ export async function waitForExpoMetroRunning(
     timeoutMs = null,
     intervalMs = null,
     env = process.env,
+    onTimeoutCheckpoint = ({ timeoutMs: checkpointMs }) => {
+      console.warn(`[stack] Metro is still starting on port ${port} after ${checkpointMs}ms; continuing to wait (TUI is attended)`);
+    },
   } = {},
   {
     looksLikeExpoMetroImpl = looksLikeExpoMetro,
@@ -178,13 +181,22 @@ export async function waitForExpoMetroRunning(
       ? Number(intervalMs)
       : resolveMetroWaitIntervalMsFromEnv(env);
 
-  const startMs = nowMsImpl();
+  let checkpointStartMs = nowMsImpl();
   let probes = 0;
   let lastOwnership = null;
   const ownershipRequired = typeof ownerPid === 'function' || (Number.isFinite(Number(ownerPid)) && Number(ownerPid) > 1);
-  while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+  while (true) {
     if (ownerProc && (ownerProc.exitCode !== null || ownerProc.signalCode !== null)) {
       return { ok: false, reason: 'owner_process_exited', probes };
+    }
+    if (nowMsImpl() - checkpointStartMs > resolvedTimeoutMs) {
+      const attendedOwnerAlive = env?.HAPPIER_STACK_TUI === '1'
+        && ownerProc
+        && ownerProc.exitCode == null
+        && ownerProc.signalCode == null;
+      if (!attendedOwnerAlive) break;
+      onTimeoutCheckpoint?.({ timeoutMs: resolvedTimeoutMs, port: p, probes });
+      checkpointStartMs = nowMsImpl();
     }
     // eslint-disable-next-line no-await-in-loop
     const statusProbe = looksLikeExpoMetroImpl({ port: p, env });

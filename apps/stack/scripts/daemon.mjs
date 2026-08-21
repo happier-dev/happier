@@ -325,6 +325,14 @@ export function daemonStateHasLiveProcess(state) {
   return state?.status === 'running' || state?.status === 'starting' || state?.status === 'unreachable';
 }
 
+export function shouldContinueAttendedDaemonStartVerification({ isTui, state } = {}) {
+  return isTui === true && daemonStateHasLiveProcess(state);
+}
+
+export function resolveAttendedStartupTimeoutMs({ isTui, timeoutMs } = {}) {
+  return isTui === true ? Number.POSITIVE_INFINITY : timeoutMs;
+}
+
 function resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive) {
   if (!allowAnyRunningFallback) {
     return null;
@@ -1685,7 +1693,10 @@ export async function startLocalDaemonWithAuth({
       { checkDaemonStateImpl: async () => observedState },
     ).catch(() => {});
   };
-  const daemonLifecycleLockTimeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_TIMEOUT_MS, 180_000);
+  const daemonLifecycleLockTimeoutMs = resolveAttendedStartupTimeoutMs({
+    isTui,
+    timeoutMs: parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_TIMEOUT_MS, 180_000),
+  });
   const daemonLifecycleLockPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_POLL_MS, 125);
 
   return await withStackDaemonLifecycleLock(
@@ -2164,8 +2175,8 @@ export async function startLocalDaemonWithAuth({
 
   const startOnce = async () => {
     const waitForRunningStable = async () => {
-      const deadline = Date.now() + startVerifyTimeoutMs;
-      while (Date.now() < deadline) {
+      let checkpointDeadline = Date.now() + startVerifyTimeoutMs;
+      while (true) {
         const stateNow = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
         if (stateNow.status === 'running') {
           if (startVerifyStableMs <= 0) return true;
@@ -2173,9 +2184,17 @@ export async function startLocalDaemonWithAuth({
           const stableState = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
           if (stableState.status === 'running') return true;
         }
+        if (Date.now() >= checkpointDeadline) {
+          if (!shouldContinueAttendedDaemonStartVerification({ isTui, state: stateNow })) {
+            return false;
+          }
+          console.warn(
+            `[local] daemon is still starting (pid=${stateNow.pid ?? 'unknown'}); continuing to wait because the TUI is attended...`,
+          );
+          checkpointDeadline = Date.now() + startVerifyTimeoutMs;
+        }
         await delay(startVerifyPollMs);
       }
-      return false;
     };
 
     let startOutput = '';
@@ -2267,7 +2286,7 @@ export async function startLocalDaemonWithAuth({
 
       const ok = await waitForCredentialsFiles({
         paths: credentialPaths.paths,
-        timeoutMs: 10 * 60_000,
+        timeoutMs: resolveAttendedStartupTimeoutMs({ isTui, timeoutMs: 10 * 60_000 }),
         isShuttingDown,
       });
       if (!ok) {

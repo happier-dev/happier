@@ -342,6 +342,7 @@ Most-used commands:
 
 - `yarn dev`: local dev stack (server + UI + daemon)
 - `yarn tui`, `yarn tui:with-mobile`: dev stack in the integrated TUI (logs + controls)
+- `yarn tui --rescue`: macOS/Linux recovery mode that prioritizes stack controls during severe system load
 - `yarn build`, `yarn start`, `yarn stop`: prod-like build/start/stop flows
 - `yarn auth login`, `yarn daemon`, `yarn happier`: auth + daemon + CLI flows
 - `yarn env list|set|unset`: manage persisted env vars for your repo-local stack

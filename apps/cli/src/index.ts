@@ -21,8 +21,10 @@ import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
 import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '@/utils/writeConsoleBestEffort';
 import { logger } from '@/ui/logger';
+import { applyStackSessionPriority } from '@/utils/process/applyStackSessionPriority';
 
 async function main() {
+  applyStackSessionPriority();
   // Best-effort Windows console hardening for Unicode output (workaround for upstream reports of mojibake when
   // launching via npm-generated wrappers). Opt-out via HAPPIER_WINDOWS_UTF8_CODEPAGE=0.
   ensureWindowsUtf8CodePage();

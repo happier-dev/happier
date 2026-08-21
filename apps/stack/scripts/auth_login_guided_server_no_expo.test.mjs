@@ -306,6 +306,7 @@ test('hstack auth login (auto) prefers the runtime-backed stack UI over Expo whe
         fixture = await buildGuidedNoExpoFixture({
           stackName: 'dev-built',
           runtimeSnapshot: true,
+          runtimeOwnerAlive: true,
           rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
           rootContentType: 'text/html',
         });
@@ -343,6 +344,7 @@ test('hstack auth login uses the active runtime snapshot cli for the actual logi
         fixture = await buildGuidedNoExpoFixture({
           stackName: 'dev-built',
           runtimeSnapshot: true,
+          runtimeOwnerAlive: true,
           includeSourceCli: false,
           rootBody: '<!doctype html><html><body>runtime ui</body></html>\n<!-- Welcome to Happier Server! -->\n',
           rootContentType: 'text/html',
@@ -924,7 +926,7 @@ test('hstack auth login (auto) falls back to the stack-served web UI in interact
   let fixture;
   try {
     try {
-      fixture = await buildGuidedNoExpoFixture();
+      fixture = await buildGuidedNoExpoFixture({ runtimeOwnerAlive: true });
     } catch (e) {
       if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
         t.skip('sandbox disallows binding localhost test server (EPERM)');
@@ -952,7 +954,7 @@ test('hstack auth login (auto) does not attempt Expo in service mode', async (t)
   let fixture;
   try {
     try {
-      fixture = await buildGuidedNoExpoFixture();
+      fixture = await buildGuidedNoExpoFixture({ runtimeOwnerAlive: true });
     } catch (e) {
       if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
         t.skip('sandbox disallows binding localhost test server (EPERM)');
