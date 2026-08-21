@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 function assertDoesNotImportModule(source: string, moduleToken: string, filePath: string): void {
-    const importFrom = new RegExp(String.raw`\\bfrom\\s+['"][^'"]*${moduleToken}[^'"]*['"]`, 'g');
-    const dynamicImport = new RegExp(String.raw`\\bimport\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
-    const requireCall = new RegExp(String.raw`\\brequire\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
+    // Note: do not use String.raw here; `\\b` in a raw template matches a *literal* `\b`, not a word boundary.
+    const importFrom = new RegExp(`\\bfrom\\s+['"][^'"]*${moduleToken}[^'"]*['"]`, 'g');
+    const dynamicImport = new RegExp(`\\bimport\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
+    const requireCall = new RegExp(`\\brequire\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
 
     const hit = source.match(importFrom) ?? source.match(dynamicImport) ?? source.match(requireCall);
     if (hit && hit.length > 0) {
