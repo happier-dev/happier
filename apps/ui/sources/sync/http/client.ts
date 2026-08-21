@@ -16,6 +16,7 @@ import {
     readServerReachabilityWaitTimeoutMs,
 } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { observeUiClientUpgradeRequiredResponse } from '@/sync/runtime/clientCompatibility/uiClientUpgradeRequired';
+import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -115,17 +116,6 @@ function tryParseUrl(raw: string): URL | null {
 function isDebugEnabled(): boolean {
     const raw = String(process.env.EXPO_PUBLIC_DEBUG ?? '').trim();
     return raw === '1' || raw.toLowerCase() === 'true';
-}
-
-function isLoopbackHostname(rawHost: string): boolean {
-    const host = String(rawHost ?? '').trim().toLowerCase();
-    return (
-        host === 'localhost'
-        || host === '127.0.0.1'
-        || host === '::1'
-        || host === '[::1]'
-        || host.endsWith('.localhost')
-    );
 }
 
 function describeUrlForHint(rawUrl: string): { hostname: string; port: string } | null {

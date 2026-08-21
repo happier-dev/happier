@@ -9,6 +9,40 @@ afterEach(async () => {
 });
 
 describe('serverFetch debug logging', () => {
+    it('recognizes every loopback address when explaining a device-unreachable relay', async () => {
+        const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
+        process.env.EXPO_PUBLIC_DEBUG = '1';
+
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-a',
+                serverUrl: 'http://127.0.0.2:53288',
+                generation: 1,
+            }),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentials: vi.fn(async () => null),
+                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
+            },
+        }));
+
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const client = await import('./client');
+        client.setRuntimeFetch(async () => {
+            throw new TypeError('Network request failed');
+        });
+
+        await expect(client.serverFetch('/v1/health', undefined, { includeAuth: false, retry: 'none' }))
+            .rejects.toThrow('Network request failed');
+
+        const combined = logSpy.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+        expect(combined).toContain('a physical device cannot reach');
+
+        if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
+        else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
+    });
+
     it('logs request URL context when EXPO_PUBLIC_DEBUG=1 and runtime fetch fails', async () => {
         const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
         process.env.EXPO_PUBLIC_DEBUG = '1';

@@ -1,27 +1,16 @@
 import net from 'node:net';
 
+import {
+  isLoopbackHostname as isProtocolLoopbackHostname,
+  normalizeHostnameForLoopbackCheck,
+} from '@happier-dev/protocol';
+
 function stripBrackets(hostname: string): string {
   const host = String(hostname ?? '').trim();
   if (host.startsWith('[') && host.endsWith(']')) {
     return host.slice(1, -1);
   }
   return host;
-}
-
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = stripBrackets(String(hostname ?? '').trim().toLowerCase()).replace(/\.$/, '');
-  if (!host) return false;
-  if (host === 'localhost') return true;
-
-  const ipVersion = net.isIP(host);
-  if (ipVersion === 4) {
-    return host.startsWith('127.');
-  }
-  if (ipVersion === 6) {
-    return host === '::1';
-  }
-
-  return false;
 }
 
 function isPrivateIpv4(hostname: string): boolean {
@@ -66,21 +55,43 @@ export function isLocalishHostname(hostname: string): boolean {
   return false;
 }
 
-export function isLoopbackHttpServerUrl(serverUrl: string): boolean {
+/**
+ * Hosts that only resolve back to the machine the URL is read on.
+ *
+ * Reachability, not identity: this answers "can another device reach this
+ * URL?", and its correctness criterion is being accurate about networking. For
+ * "are these two URLs the same server?" use `createServerUrlComparableKey` from
+ * `@happier-dev/protocol`, which is deliberately stricter.
+ *
+ * Broader than protocol's `isLoopbackHostname`: a bind address of `0.0.0.0` is
+ * not a loopback address, but a *URL* carrying it is just as useless to another
+ * device, and so is a `*.localhost` name.
+ */
+export function isLoopbackServerHost(serverUrl: string): boolean {
   try {
-    const url = new URL(serverUrl);
-    if (url.protocol !== 'http:') return false;
-    const host = url.hostname.toLowerCase().replace(/\.$/, '');
-    return (
-      host === '127.0.0.1'
-      || host === 'localhost'
-      || host === '0.0.0.0'
-      || host === '::1'
-      || host.endsWith('.localhost')
-    );
+    const rawHost = String(new URL(serverUrl).hostname ?? '');
+
+    // Loopback itself belongs to `@happier-dev/protocol`: it owns the bracket
+    // and trailing-dot parsing that private copies of this check kept getting
+    // wrong. `new URL('http://[::1]:3005').hostname` is `"[::1]"`, so comparing
+    // raw strings classified an IPv6 loopback relay as remote.
+    if (isProtocolLoopbackHostname(rawHost)) return true;
+
+    // Not loopback in the networking sense, but a relay that reports 0.0.0.0 as
+    // its own address is not something another device can be pointed at either.
+    return normalizeHostnameForLoopbackCheck(rawHost) === '0.0.0.0';
   } catch {
     return false;
   }
+}
+
+export function isLoopbackHttpServerUrl(serverUrl: string): boolean {
+  try {
+    if (new URL(serverUrl).protocol !== 'http:') return false;
+  } catch {
+    return false;
+  }
+  return isLoopbackServerHost(serverUrl);
 }
 
 export function isLocalishServerUrl(serverUrl: string): boolean {

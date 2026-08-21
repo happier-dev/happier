@@ -7,6 +7,7 @@ import {
   processInstanceFingerprintMatches,
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
+import { isLoopbackHostname } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { resolveOpenCodeCliLaunchSpec, type ProviderCliLaunchSpec } from '@/backends/opencode/utils/resolveOpenCodeCliCommand';
@@ -810,10 +811,7 @@ export function isLoopbackManagedOpenCodeBaseUrl(rawBaseUrl: string): boolean {
     const port = Number.parseInt(url.port, 10);
     if (!Number.isFinite(port) || port <= 0) return false;
 
-    const host = url.hostname.toLowerCase();
-    if (host === 'localhost' || host === '::1') return true;
-    if (host.startsWith('127.')) return true;
-    return false;
+    return isLoopbackHostname(url.hostname);
   } catch {
     return false;
   }

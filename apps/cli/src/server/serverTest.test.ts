@@ -69,6 +69,27 @@ describe('probeServerVersion', () => {
     }
   });
 
+  it('bypasses patched http.request for trailing-dot localhost hosts', async () => {
+    responseMode = 'ok';
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+
+    const previousRequest = http.request;
+    (http as any).request = () => {
+      throw new Error('http_request_used');
+    };
+
+    try {
+      const { probeServerVersion } = await import('./serverTest');
+      const out = await probeServerVersion(`http://localhost.:${address.port}`);
+      expect(out.ok).toBe(true);
+      if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
+      expect(out.version).toBe('test');
+    } finally {
+      (http as any).request = previousRequest;
+    }
+  });
+
   it('bypasses a custom global agent when probing loopback endpoints', async () => {
     responseMode = 'ok';
 

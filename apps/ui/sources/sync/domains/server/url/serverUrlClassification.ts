@@ -1,3 +1,8 @@
+import {
+    isLoopbackHostname as isProtocolLoopbackHostname,
+    normalizeHostnameForLoopbackCheck,
+} from '@happier-dev/protocol';
+
 function stripBrackets(hostname: string): string {
     const host = String(hostname ?? '').trim();
     if (host.startsWith('[') && host.endsWith(']')) return host.slice(1, -1);
@@ -45,12 +50,28 @@ export function isLocalishHostname(hostname: string): boolean {
     return false;
 }
 
+/**
+ * Can another device reach a URL on this host?
+ *
+ * Reachability, not identity. This is the app-side reader of the same question
+ * the CLI asks in `apps/cli/src/server/serverUrlClassification.ts`
+ * (`isLoopbackServerHost`), and it delegates the networking part to the one
+ * owner of it, `isLoopbackHostname` in `@happier-dev/protocol` — a private copy
+ * here was narrower than the owner and published `http://127.0.0.2:3005` and
+ * `http://localhost.:3005` into shareable links as if a phone could reach them.
+ *
+ * `0.0.0.0` is deliberately not part of the protocol owner: it is every
+ * interface, not loopback. It is added back here because every consumer of this
+ * predicate is asking whether a *remote device* can use the address, and an
+ * all-interfaces bind reported as a URL is just as useless to that device.
+ *
+ * NOT the predicate for "are these two URLs the same server?" — that is
+ * `createServerUrlComparableKey` in `./serverUrlCanonical`, which is
+ * deliberately stricter and must stay so: it keys persisted credential scope.
+ */
 export function isLoopbackHostname(hostname: string): boolean {
-    const host = stripBrackets(String(hostname ?? '').trim().toLowerCase());
-    if (!host) return false;
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return true;
-    if (host.endsWith('.localhost')) return true;
-    return false;
+    if (isProtocolLoopbackHostname(hostname)) return true;
+    return normalizeHostnameForLoopbackCheck(hostname) === '0.0.0.0';
 }
 
 export function isLocalishServerUrl(serverUrl: string): boolean {
