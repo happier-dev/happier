@@ -26,16 +26,42 @@ export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string
 
 export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: Readonly<{
   qualifiedTaskName: string;
+  definitionPath: string;
 }>): string {
   const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
+  const definitionPath = String(params.definitionPath ?? '').trim();
+  if (!definitionPath) throw new Error('definitionPath is required for Windows scheduled task stop');
+  const wrapperActionToken = `-File "${definitionPath}"`;
   return [
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
+    `$wrapperActionToken = ${psQuoted(wrapperActionToken)}`,
     '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
     'if ($null -ne $task -and [int]$task.State -eq 4) {',
-    '  Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
+    // Stop-ScheduledTask terminates the PowerShell action but can leave the
+    // executable launched by that wrapper running. Find only this task's
+    // wrapper by its exact -File argument, then terminate each direct child
+    // process tree while the wrapper is still alive. This also works for
+    // wrappers installed before this lifecycle fix.
+    '  $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '  $wrapperProcessIds = @($allProcesses | Where-Object { ([string]$_.CommandLine).IndexOf($wrapperActionToken, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { [int]$_.ProcessId })',
+    '  $serviceProcessIds = @($allProcesses | Where-Object { $wrapperProcessIds -contains [int]$_.ParentProcessId } | ForEach-Object { [int]$_.ProcessId })',
+    '  foreach ($serviceProcessId in $serviceProcessIds) {',
+    '    & taskkill.exe /PID $serviceProcessId /T /F | Out-Null',
+    '    if ($LASTEXITCODE -ne 0 -and $null -ne (Get-Process -Id $serviceProcessId -ErrorAction SilentlyContinue)) {',
+    '      throw "Failed to stop scheduled task child process $serviceProcessId (taskkill exit $LASTEXITCODE)"',
+    '    }',
+    '  }',
+    '  $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    '  if ($null -ne $task -and [int]$task.State -eq 4) {',
+    '    Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
+    '  }',
     '}',
+    // A missing task is the intended no-op. Get-ScheduledTask with
+    // SilentlyContinue still leaves PowerShell's process status at 1 unless
+    // successful completion is made explicit.
+    'exit 0',
   ].join('; ');
 }
 
@@ -51,6 +77,7 @@ export function buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand(params
     'if ($null -ne $task) {',
     '  Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction Stop',
     '}',
+    'exit 0',
   ].join('; ');
 }
 
@@ -164,4 +191,60 @@ export function renderWindowsScheduledTaskWrapperPs1(params: Readonly<{
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/**
+ * Apply the Task Scheduler settings a long-running background process needs.
+ *
+ * systemd gets `Restart=` and launchd gets `KeepAlive`; a scheduled task created
+ * with `schtasks /Create` gets none of that, so a Happier daemon or relay that
+ * exits on Windows stays dead until the next logon or boot. These settings close
+ * that gap and three neighbouring Task Scheduler defaults that are wrong for a
+ * service:
+ *
+ * - tasks are stopped after three days (`ExecutionTimeLimit`);
+ * - tasks refuse to start on battery and are stopped when the machine unplugs;
+ * - a trigger missed while the machine was off never fires.
+ */
+export function buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand(params: Readonly<{
+  qualifiedTaskName: string;
+  /** `no` keeps the hardening but does not restart a failed run. */
+  restartPolicy: 'always' | 'on-failure' | 'no';
+  restartIntervalMinutes?: number;
+  restartCount?: number;
+}>): string {
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
+  const restartIntervalMinutes = Number.isFinite(params.restartIntervalMinutes)
+    ? Math.max(1, Math.trunc(Number(params.restartIntervalMinutes)))
+    : 1;
+  const restartCount = Number.isFinite(params.restartCount)
+    ? Math.max(1, Math.trunc(Number(params.restartCount)))
+    : 3;
+
+  // Task Scheduler only models restart-on-failure, so `always` and `on-failure`
+  // resolve to the same settings. `no` opts out of restarting only.
+  const restartArgs = params.restartPolicy === 'no'
+    ? []
+    : [
+      `-RestartCount ${restartCount}`,
+      `-RestartInterval (New-TimeSpan -Minutes ${restartIntervalMinutes})`,
+    ];
+
+  const settingsArgs = [
+    ...restartArgs,
+    // Zero means "no limit" — without it the task is killed after three days.
+    '-ExecutionTimeLimit (New-TimeSpan -Seconds 0)',
+    '-AllowStartIfOnBatteries',
+    '-DontStopIfGoingOnBatteries',
+    '-StartWhenAvailable',
+    '-MultipleInstances IgnoreNew',
+  ].join(' ');
+
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `$taskPath = ${psQuoted(taskPath)}`,
+    `$taskName = ${psQuoted(taskName)}`,
+    `$settings = New-ScheduledTaskSettingsSet ${settingsArgs}`,
+    'Set-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Settings $settings | Out-Null',
+  ].join('; ');
 }

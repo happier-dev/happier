@@ -50,12 +50,18 @@ describe('Windows scheduled task lifecycle PowerShell helpers', () => {
   it('stops only an existing running task through typed scheduler state', () => {
     const command = buildStopWindowsScheduledTaskIfRunningPowerShellCommand({
       qualifiedTaskName: 'Happier\\happier-daemon.default',
+      definitionPath: 'C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1',
     });
 
     expect(command).toContain('Get-ScheduledTask');
     expect(command).toContain('[int]$task.State -eq 4');
+    expect(command).toContain('Get-CimInstance Win32_Process');
+    expect(command).toContain('-File `"C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1`"');
+    expect(command).toContain('taskkill.exe /PID $serviceProcessId /T /F');
+    expect(command.indexOf('taskkill.exe')).toBeLessThan(command.indexOf('Stop-ScheduledTask'));
     expect(command).toContain('Stop-ScheduledTask');
     expect(command).toContain('-ErrorAction Stop');
+    expect(command.trim()).toMatch(/exit 0$/);
     expect(command).not.toContain('schtasks');
   });
 
@@ -68,6 +74,7 @@ describe('Windows scheduled task lifecycle PowerShell helpers', () => {
     expect(command).toContain('Unregister-ScheduledTask');
     expect(command).toContain('-Confirm:$false');
     expect(command).toContain('-ErrorAction Stop');
+    expect(command.trim()).toMatch(/exit 0$/);
     expect(command).not.toContain('schtasks');
   });
 });

@@ -513,6 +513,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
       backend: 'schtasks-user',
       action: 'uninstall',
       label: unitLabel,
+      definitionPath: wrapperPath,
       taskName,
       persistent: true,
     });
@@ -694,10 +695,17 @@ export function planDaemonServiceLifecycle(params: Readonly<{
       return { platform: 'win32', commands: [{ cmd: 'schtasks', args: ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'] }] };
     }
     const action = params.action === 'start' ? 'start' : params.action === 'stop' ? 'stop' : 'restart';
+    const happierHomeDir = String(params.happierHomeDir ?? '').trim();
+    if (action !== 'start' && !happierHomeDir) {
+      throw new Error('happierHomeDir is required for Windows service stop/restart');
+    }
     const plan = planServiceAction({
       backend: 'schtasks-user',
       action,
       label: unitLabel,
+      definitionPath: action === 'start'
+        ? undefined
+        : resolveWindowsDaemonWrapperPath({ happierHomeDir, instanceId, channel, targetMode }),
       taskName,
       persistent: true,
     });

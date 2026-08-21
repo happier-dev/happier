@@ -10,6 +10,7 @@ import { renderSystemdServiceUnit } from './systemd.js';
 import {
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
   buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand,
+  buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand,
   buildStopWindowsScheduledTaskIfRunningPowerShellCommand,
   buildWindowsScheduledTaskPowerShellAction,
   parseWindowsScheduledTaskStatusPowerShellJson,
@@ -246,6 +247,7 @@ export function planServiceAction(params: Readonly<{
   taskName?: string;
   persistent?: boolean;
   uid?: number | null;
+  restartPolicy?: 'always' | 'on-failure' | 'no';
 }>): ServicePlan {
   const backend = String(params.backend ?? '').trim() as ServiceBackend;
   const action = String(params.action ?? '').trim();
@@ -355,12 +357,16 @@ export function planServiceAction(params: Readonly<{
 
   if (backend === 'schtasks-user' || backend === 'schtasks-system') {
     const name = taskName || `Happier\\${label}`;
-    const stopIfRunning = {
+    if (action !== 'start' && !definitionPath) {
+      throw new Error(`definitionPath is required for schtasks ${action}`);
+    }
+    const stopIfRunning = (): PlannedCommand => ({
       cmd: 'powershell.exe',
       args: windowsPowerShellCommandArgs(buildStopWindowsScheduledTaskIfRunningPowerShellCommand({
         qualifiedTaskName: name,
+        definitionPath,
       })),
-    } satisfies PlannedCommand;
+    });
     const mode: ServiceMode = backend === 'schtasks-system' ? 'system' : 'user';
     if (action === 'install') {
       if (!definitionPath) throw new Error('definitionPath is required for schtasks install');
@@ -380,13 +386,22 @@ export function planServiceAction(params: Readonly<{
         ps,
         ...(mode === 'system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
       ];
-      commands.push(stopIfRunning);
+      commands.push(stopIfRunning());
       commands.push({ cmd: 'schtasks', args });
+      // schtasks has no restart/keep-alive switch, so the policy is applied to the
+      // created task before it is first started.
+      commands.push({
+        cmd: 'powershell.exe',
+        args: windowsPowerShellCommandArgs(buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand({
+          qualifiedTaskName: name,
+          restartPolicy: params.restartPolicy ?? 'always',
+        })),
+      });
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });
       return { writes, commands };
     }
     if (action === 'uninstall') {
-      commands.push(stopIfRunning);
+      commands.push(stopIfRunning());
       commands.push({
         cmd: 'powershell.exe',
         args: windowsPowerShellCommandArgs(buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand({
@@ -400,11 +415,11 @@ export function planServiceAction(params: Readonly<{
       return { writes, commands };
     }
     if (action === 'stop') {
-      commands.push(stopIfRunning);
+      commands.push(stopIfRunning());
       return { writes, commands };
     }
     if (action === 'restart') {
-      commands.push(stopIfRunning);
+      commands.push(stopIfRunning());
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });
       return { writes, commands };
     }
