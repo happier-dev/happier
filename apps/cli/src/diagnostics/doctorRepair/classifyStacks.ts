@@ -27,18 +27,6 @@ function isHostedCloudUrl(url: string | null | undefined): boolean {
   }
 }
 
-function isLoopbackUrl(url: string | null | undefined): boolean {
-  const raw = String(url ?? '').trim().toLowerCase();
-  if (!raw) return false;
-  try {
-    const parsed = new URL(raw);
-    const host = parsed.hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('127.');
-  } catch {
-    return false;
-  }
-}
-
 function labelFromChannelLike(value: unknown): PublicReleaseRingLabel | null {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'stable' || raw === 'preview' || raw === 'dev') return raw;
@@ -231,4 +219,4 @@ export function classifyStacks(params: Readonly<{
   return { stacks, findings };
 }
 
-export { isHostedCloudUrl, isLoopbackUrl, labelFromChannelLike };
+export { isHostedCloudUrl, labelFromChannelLike };

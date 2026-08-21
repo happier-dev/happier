@@ -1,4 +1,4 @@
-import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { isLoopbackHostname, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
@@ -13,7 +13,7 @@ export function isUnsafeNotificationServerUrl(serverUrl: string): boolean {
     try {
         const url = new URL(normalized);
         const host = url.hostname.trim().toLowerCase();
-        return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
+        return isLoopbackHostname(host) || host === '0.0.0.0';
     } catch {
         return true;
     }
