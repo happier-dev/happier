@@ -6,6 +6,8 @@ import type {
 } from '@happier-dev/protocol';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { createConnectedServiceMaterializationIdentity } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
+import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { createPendingFirstInput } from '@/daemon/spawn/pendingFirstInput';
 
 import { resolveDaemonSpawnSessionByNonce, spawnDaemonSession } from '@/daemon/controlClient';
@@ -247,6 +249,22 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     throw createCodedError('Missing tag', SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST);
   }
 
+  // The launch below attaches the runner to this brand-new row through
+  // `existingSessionId`, and the daemon refuses an existing-Session spawn that carries
+  // connected bindings with no materialization identity (`missing_identity_and_resume_state`).
+  // That refusal is meant for a Session whose earlier conversation cannot be carried over to
+  // the selected account; a row committed here has no earlier conversation at all. So the row
+  // is created carrying the fresh identity its materialized credential home needs — the same
+  // thing fork mints for its child — and the daemon reads it back off this metadata when it
+  // resolves the attach. The need is decided by the daemon's own predicate, so the two cannot
+  // disagree about which spawns require an identity.
+  const connectedServiceMaterializationIdentity = shouldResolveConnectedServiceAuthForSpawn({
+    directory: params.directory,
+    connectedServices: params.connectedServices,
+  })
+    ? { connectedServiceMaterializationIdentityV1: createConnectedServiceMaterializationIdentity() }
+    : {};
+
   const { session } = await getOrCreateSessionByTag({
     credentials: params.credentials,
     tag,
@@ -256,6 +274,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       host: os.hostname(),
       flavor: replaySeededCreation.agentId,
       ...replaySeededCreation.metadata,
+      ...connectedServiceMaterializationIdentity,
     },
     agentState: null,
   });

@@ -2607,6 +2607,33 @@ describe('happierReplayPrompt — retrieval planning surface', () => {
     });
     expect(complete).not.toContain('[Older context was omitted to fit the replay budget.]');
   });
+
+  /**
+   * A window an I/O failure cut short is BOTH a stop and a hole, and the
+   * retrieval owner reports it as both. Reading only the stop half printed
+   * "Older context was omitted to fit the replay budget." — a false explanation
+   * for a loss no budget caused — directly beside the frame's own truthful
+   * "some messages could not be read". The builder already holds both facts, so
+   * it states the loss without the cause it cannot stand behind rather than
+   * growing a third notice.
+   */
+  it('does not blame the replay budget for a window an unreadable page cut short', () => {
+    const dialog = [{ role: 'User' as const, createdAt: 1, text: 'the only line retrieval could read' }];
+    const unreadable = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_window',
+      strategy: 'recent_messages',
+      recentMessagesCount: null,
+      dialog,
+      historyIncomplete: true,
+      windowTruncated: true,
+      maxPromptChars: 4_000,
+    });
+    // The loss is still marked where it happened, and the frame still says why.
+    expect(unreadable).toContain('[Older context is not included here.]');
+    expect(unreadable).toContain('could not be read');
+    // The whole point: no budget claim survives for a loss the budget did not cause.
+    expect(unreadable).not.toContain('[Older context was omitted to fit the replay budget.]');
+  });
 });
 
 describe('happierReplayPrompt — session title and pinned last user instruction', () => {

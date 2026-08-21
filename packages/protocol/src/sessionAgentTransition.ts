@@ -91,12 +91,13 @@ export type SessionAgentTransitionSelectionV1 = z.infer<typeof SessionAgentTrans
  * localId is the transition's dedupe identity, divider correlation key, and
  * draft compare-clear key, so it can never be absent.
  *
- * `safeExtend` (not `extend`) is required because the dev base schema carries a
- * refinement; it preserves the base sanitization, refinement, and passthrough.
+ * `safeExtend` (not `extend`) retains the canonical sanitizer and refinement.
+ * The transition then closes its own mutation boundary; forward-compatible
+ * message metadata remains inside the canonical opaque `meta` record.
  */
 export const SessionAgentTransitionInputV1Schema = SessionUserMessageSendRequestSchema.safeExtend({
   localId: PendingLocalIdSchema,
-});
+}).strict();
 export type SessionAgentTransitionInputV1 = z.infer<typeof SessionAgentTransitionInputV1Schema>;
 
 export const SessionAgentTransitionRequestV1Schema = z
@@ -122,7 +123,6 @@ export type SessionAgentTransitionRequestV1 = z.infer<typeof SessionAgentTransit
 
 /**
  * Definite rejections with the source PROVABLY untouched and still running.
- * Only these may offer Keep editing / Retry in place.
  *
  * `source_stop_failed` belongs here and only here: it is the stop result that
  * PROVES the source is still running, which is the one stop outcome whose
@@ -146,9 +146,8 @@ export const SESSION_AGENT_TRANSITION_REJECTED_CODES_V1 = [
  * state, not an indeterminate one: the bounded context pass and the current-view
  * CAS both run after `requestSessionStop` succeeds and before any write.
  *
- * Safe actions: resume the SOURCE, or retry the transition. The UI must not
- * claim the source runtime is still running, and must not offer resume-target —
- * the Session is still owned by the source Agent.
+ * The Session remains owned by the source Agent. Presentation reconciles this
+ * established effect with canonical Session and input-custody facts.
  */
 export const SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1 = [
   'context_unavailable',
@@ -157,16 +156,14 @@ export const SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1 = [
 
 /**
  * The target current view IS committed: the source is stopped and the Session is
- * now the target Agent. The UI must NOT offer Keep editing; the safe actions are
- * resume-target and send.
+ * now the target Agent. Presentation reconciles this established effect with
+ * canonical Session and input-custody facts.
  *
  * `divider_missing` and `divider_conflict` are DIFFERENT states and must not be
- * collapsed. `divider_missing` means no row exists at the reserved localId, so
- * resume-and-send normally is safe. `divider_conflict` means a row EXISTS there
- * carrying a different transition payload: the boundary is present but
- * untrustworthy, retrying re-derives the same conflict forever, and — the
- * dangerous part — the bounded context pass must never treat it as a departure
- * boundary.
+ * collapsed. `divider_missing` means no row exists at the reserved localId.
+ * `divider_conflict` means a row EXISTS there carrying a different transition
+ * payload: the boundary is present but untrustworthy, and the bounded context
+ * pass must never treat it as a departure boundary.
  *
  * `divider_unknown` is the third and last boundary state: the row could not be
  * read or decoded at all. It is NOT indeterminate — the Session is observably
@@ -219,7 +216,7 @@ export type SessionAgentTransitionPartialCodeV1 =
 
 /**
  * Every transition code. Each one is reachable from exactly one result arm, and
- * each arm maps to a distinct safe-action set.
+ * each arm names a distinct established effect.
  *
  * `reconciliation_required` is deliberately absent. Once `partially_applied`
  * carries both known partial depths, the only remaining case is a genuinely
@@ -259,14 +256,11 @@ const SessionAgentTransitionRejectedResultV1Schema = z
   .strict();
 
 /**
- * `applied` names exactly how far the transition got, and each depth has its own
- * safe-action set:
+ * `applied` names exactly how far the transition got:
  *
  * - `source_stopped` — source confirmed stopped, nothing committed. The Session
- *   is still the SOURCE Agent. Safe actions: resume the source, or retry the
- *   transition. Not resume-target.
- * - `current_view_committed` — the Session IS the target Agent. Safe actions:
- *   resume-target and send. Never Keep editing.
+ *   is still the SOURCE Agent.
+ * - `current_view_committed` — the Session IS the target Agent.
  *
  * `applied` and `code` are correlated at the type level, so a consumer that
  * narrows on `applied` sees only the codes truthfully reachable at that depth,
@@ -298,7 +292,8 @@ const SessionAgentTransitionPartiallyAppliedResultV1Schema = z.discriminatedUnio
  * not have. Every state the daemon CAN name rides `rejected` or
  * `partially_applied`.
  *
- * Safe action: check status. Spawn neither Agent speculatively.
+ * The canonical reconciliation owner determines subsequent presentation from
+ * refreshed Session and input-custody facts; this result prescribes no action.
  */
 const SessionAgentTransitionOutcomeUnknownResultV1Schema = z
   .object({
@@ -417,10 +412,10 @@ export function resolveSessionContinuationUnavailablePresentationV1(
  *
  * Nothing is stored to show: `replaySeedV1.seedText` is blanked the instant the
  * target Agent accepts it, and the metadata record keeps one seed per Session,
- * so a twice-switched Session has already lost the first. The divider's
- * `sourceCutoffSeqInclusive` is the surviving input, and running the SAME
- * bounded context pass over it reproduces what the target was handed without
- * persisting a second copy of the conversation.
+ * so a twice-switched Session has already lost the first. The divider's own
+ * BOUNDS are the surviving inputs, and running the SAME bounded context pass
+ * between them reproduces what the target was handed without persisting a
+ * second copy of the conversation.
  *
  * It runs on the machine because that is where the pass runs: the retrieval
  * walks the fork chain, opens the Session's stored content and decodes every
@@ -436,8 +431,21 @@ export const SessionAgentTransitionBriefPreviewRequestV1Schema = z
   .object({
     v: z.literal(1),
     sessionId: z.string().trim().min(1),
-    /** The divider's recorded cutoff. Bounds the pass exactly as the transition did. */
+    /** The divider's recorded cutoff — the pass's UPPER bound, exactly as the transition set it. */
     sourceCutoffSeqInclusive: z.number().int().nonnegative(),
+    /**
+     * The divider's recorded native-return bound — the pass's exclusive LOWER
+     * bound — carried through unchanged, and ABSENT for a fresh target because
+     * that boundary had none.
+     *
+     * Without it the rebuild reruns an unbounded-below pass and shows the full
+     * transcript prefix for a boundary that only ever sent the away-delta. A
+     * card that shows MORE than was handed over fails at exactly the claim it
+     * exists to make, so the bound travels with the cutoff rather than being
+     * re-derived: the record it came from is device-local and the next
+     * departure overwrites it.
+     */
+    returningAgentLastSeenSeqInclusive: z.number().int().nonnegative().optional(),
     /**
      * The boundary's two Agents, exactly as the divider records them.
      *

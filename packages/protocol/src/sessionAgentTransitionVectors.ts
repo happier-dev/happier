@@ -64,6 +64,18 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         selection: { v: 1, agentId: 'claude' },
         input: { text: 'keep going', localId: 'local_01', meta: {} },
       },
+      /** The mutation envelope is closed, but its opaque metadata remains extensible. */
+      withOpaqueMeta: {
+        v: 1,
+        sessionId: 'sess_01',
+        expectedCurrentAgentId: 'codex',
+        selection: { v: 1, agentId: 'claude' },
+        input: {
+          text: 'keep going',
+          localId: 'local_01',
+          meta: { futureComposerMetadata: { v: 2 } },
+        },
+      },
     },
     invalid: {
       /** `localId` is the dedupe, divider-correlation, and compare-clear key. */
@@ -89,6 +101,19 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         selection: { v: 1, agentId: 'claude' },
         input: { text: 'keep going', localId: 'local_01', meta: {} },
         vendorResumeId: 'abc',
+      },
+      /** The nested mutation input is closed independently of its outer request. */
+      unknownInputKey: {
+        v: 1,
+        sessionId: 'sess_01',
+        expectedCurrentAgentId: 'codex',
+        selection: { v: 1, agentId: 'claude' },
+        input: {
+          text: 'keep going',
+          localId: 'local_01',
+          meta: {},
+          unsupportedRoutingHint: true,
+        },
       },
       missingExpectedCurrentAgentId: {
         v: 1,
@@ -122,11 +147,7 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         type: 'rejected', code: 'source_stop_failed', sourceEffect: 'none',
       },
 
-      /**
-       * Source confirmed stopped, nothing committed. Session is still the
-       * SOURCE Agent: safe actions are resume-source or retry, not
-       * resume-target.
-       */
+      /** Source confirmed stopped, nothing committed. Session is still the SOURCE Agent. */
       partialContextUnavailable: {
         type: 'partially_applied',
         localId: 'local_01',
@@ -140,7 +161,7 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         code: 'cutover_conflict',
       },
 
-      /** Session IS the target Agent. The UI must not offer "Keep editing". */
+      /** Session IS the target Agent. */
       partialDividerMissing: {
         type: 'partially_applied',
         localId: 'local_01',
@@ -328,10 +349,11 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
       valid: {
         /**
          * The transcript cutoff the activation brief was built from is part of
-         * the minimum, not an addition to it. It is the ONE fact that survives
-         * the cutover and lets a reader rebuild the handed-over context:
-         * `seedText` is blanked the moment the target accepts it, so a divider
-         * without the cutoff could never explain its own boundary.
+         * the minimum, not an addition to it. It is the pass's upper bound, and
+         * nothing else survives the cutover to record it: `seedText` is blanked
+         * the moment the target accepts it, so a divider without the cutoff
+         * could never explain its own boundary. A fresh target's boundary had
+         * no LOWER bound, so the minimal shape carries none.
          */
         minimal: {
           v: 1,
@@ -345,6 +367,18 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
           fromAgentId: 'codex',
           toAgentId: 'claude',
           sourceCutoffSeqInclusive: 0,
+        },
+        /**
+         * A NATIVE RETURN, bounded at both ends: the handoff was the away-delta
+         * between them, and the lower bound lives nowhere else once the next
+         * departure overwrites the device-local record it came from.
+         */
+        nativeReturnBounds: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 29_979,
+          returningAgentLastSeenSeqInclusive: 29_130,
         },
       },
       invalid: {
@@ -369,6 +403,25 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
           fromAgentId: 'codex',
           toAgentId: 'claude',
           sourceCutoffSeqInclusive: 1.5,
+        },
+        /**
+         * The lower bound is optional but not lax: a negative or fractional
+         * value is not a smaller bound, it is a broken one, and a reader that
+         * accepted it would rebuild a delta the boundary never sent.
+         */
+        negativeReturningBound: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 29_979,
+          returningAgentLastSeenSeqInclusive: -1,
+        },
+        fractionalReturningBound: {
+          v: 1,
+          fromAgentId: 'codex',
+          toAgentId: 'claude',
+          sourceCutoffSeqInclusive: 29_979,
+          returningAgentLastSeenSeqInclusive: 1.5,
         },
       },
     },
@@ -481,6 +534,25 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
         requestId: '   ',
       },
     },
+    result: {
+      valid: {
+        success: { ok: true, childSessionId: 'child_01' },
+        failure: { ok: false, errorCode: 'invalid_request', errorMessage: 'Invalid params' },
+      },
+      invalid: {
+        successUnknownKey: {
+          ok: true,
+          childSessionId: 'child_01',
+          providerForkReceipt: 'unsupported',
+        },
+        failureUnknownKey: {
+          ok: false,
+          errorCode: 'invalid_request',
+          errorMessage: 'Invalid params',
+          retryAfterMs: 1_000,
+        },
+      },
+    },
   },
 
   composerIntent: {
@@ -518,44 +590,4 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
     },
   },
 
-  /**
-   * Matched provider-native resume identity (successor only — the predecessor
-   * discards inactive native state). The proof is nested inside the value
-   * carrying the id so the two can never be written independently.
-   */
-  nativeResumeIdentity: {
-    valid: {
-      bareId: { v: 1, vendorResumeId: 'sess-abc', continuityProof: null },
-      withTranscriptProof: {
-        v: 1,
-        vendorResumeId: 'sess-abc',
-        continuityProof: { kind: 'transcriptPath', value: '/home/u/.claude/projects/x/sess-abc.jsonl' },
-      },
-    },
-    invalid: {
-      /** A proof may never be written without the id it belongs to. */
-      proofWithoutId: {
-        v: 1,
-        continuityProof: { kind: 'transcriptPath', value: '/tmp/x.jsonl' },
-      },
-      /** Absent proof must be an explicit null, not an omission. */
-      omittedProof: { v: 1, vendorResumeId: 'sess-abc' },
-      /** Proof kinds are catalog-declared, never free-form. */
-      unknownProofKind: {
-        v: 1,
-        vendorResumeId: 'sess-abc',
-        continuityProof: { kind: 'sessionFile', value: '/tmp/x.jsonl' },
-      },
-      /** No second, independently-writable proof field. */
-      siblingProofField: {
-        v: 1,
-        vendorResumeId: 'sess-abc',
-        continuityProof: null,
-        continuityProofValue: '/tmp/x.jsonl',
-      },
-      blankId: { v: 1, vendorResumeId: '   ', continuityProof: null },
-    },
-    /** The released bare-string identity still reads as a proofless pair. */
-    legacyBareString: 'sess-abc',
-  },
 } as const;

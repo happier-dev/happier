@@ -12,6 +12,22 @@ export type ReplaySeedV1 = {
 
 const REPLAY_SEED_CONSUMED_SENTINEL_LOCAL_ID = '__replay_seed_consumed__';
 
+/**
+ * Was this seed placed for a runtime that has NOT taken custody of it yet?
+ *
+ * Retirement is what records provider acceptance: the seed's text is blanked
+ * and `appliedToLocalId` is stamped the instant the provider accepts the prompt
+ * the seed was prefixed to. So an unretired seed is the durable statement that
+ * the context it carries was handed over and never accepted, and that one fact
+ * has two readers — the prompt owner deciding whether to prefix it again, and
+ * the Agent-transition record deciding whether the departing Agent reached a
+ * new transcript boundary (`REQ-STATE-03`). They share this predicate rather
+ * than each re-deriving "pending" from the same three fields.
+ */
+export function isReplaySeedV1PendingProviderAcceptance(seed: ReplaySeedV1 | null): boolean {
+  return Boolean(seed && seed.seedText && !seed.appliedToLocalId);
+}
+
 export function readReplaySeedV1FromMetadata(metadata: unknown): ReplaySeedV1 | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const seed = (metadata as any).replaySeedV1;
@@ -31,7 +47,7 @@ export function buildProviderPromptWithReplaySeed(params: Readonly<{
   }
 
   const seed = readReplaySeedV1FromMetadata(params.metadata);
-  const shouldApplySeed = Boolean(seed && seed.seedText && !seed.appliedToLocalId);
+  const shouldApplySeed = isReplaySeedV1PendingProviderAcceptance(seed);
   if (!shouldApplySeed) {
     return { providerPrompt: params.userText, shouldConsumeSeed: false, seedText: '' };
   }

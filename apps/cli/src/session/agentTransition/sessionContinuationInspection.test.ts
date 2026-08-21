@@ -131,11 +131,12 @@ describe('inspectSessionContinuation', () => {
     expect(result).toMatchObject({ type: 'available', sameSessionTransition: false });
   });
 
-  // The inspection answers for THIS exact machine. A Session hosted elsewhere
-  // has no runtime, no workspace and no machine-local native-return record
-  // here, so reporting it as `available` would arm a switch this daemon cannot
-  // honour and would then have to fail after stopping a Session it does not own.
-  it('reports a Session hosted on another machine as unavailable', async () => {
+  // The recorded machine is NOT a gate. Every failure a host gate claimed to
+  // prevent is detected by the component that actually knows — the stop owner
+  // finds no local process, an absent device-local resume record already
+  // degrades to a full replay, the cutover is server-side — so refusing here
+  // only removed the capability of a user who legitimately moved the Session.
+  it('answers for a Session recorded against a different machine, without reading the account chain', async () => {
     mocks.fetchSessionByIdCompat.mockResolvedValue(
       rawSession({ path: '/work/repo', flavor: 'claude', machineId: 'machine-2' }, { machineId: 'machine-2' }),
     );
@@ -143,94 +144,9 @@ describe('inspectSessionContinuation', () => {
     const result = await inspectSessionContinuation({
       credentials,
       request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
-    });
-
-    expect(result).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
-  });
-
-  it('still answers for its own Session when the host machine matches', async () => {
-    mocks.fetchSessionByIdCompat.mockResolvedValue(rawSession({ path: '/work/repo', flavor: 'claude' }));
-
-    const result = await inspectSessionContinuation({
-      credentials,
-      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
     });
 
     expect(result).toMatchObject({ type: 'available', sameSessionTransition: true });
-  });
-
-  // A user who replaces a machine keeps the Sessions the previous one hosted
-  // (product ruling). Nothing re-homes a Session row, so its recorded host stays
-  // the PREDECESSOR forever; the client already reaches this daemon by walking
-  // the replacement chain, so the daemon answers with the same walk rather than
-  // a raw id comparison that reads its own inheritance as foreign.
-  it('answers for a Session whose recorded host machine this one replaced', async () => {
-    mocks.fetchSessionByIdCompat.mockResolvedValue(
-      rawSession({ path: '/work/repo', flavor: 'claude', machineId: 'machine-old' }, { machineId: 'machine-old' }),
-    );
-    mocks.fetchAccountMachineReplacements.mockResolvedValue([
-      { id: 'machine-old', replacedByMachineId: 'machine-1' },
-      { id: 'machine-1' },
-    ]);
-
-    const result = await inspectSessionContinuation({
-      credentials,
-      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
-    });
-
-    expect(result).toMatchObject({ type: 'available', sameSessionTransition: true });
-  });
-
-  // The guard must widen to successors WITHOUT becoming a no-op: an unrelated
-  // machine is still not this Session's host.
-  it('still reports a Session hosted by an unrelated machine as unavailable', async () => {
-    mocks.fetchSessionByIdCompat.mockResolvedValue(
-      rawSession({ path: '/work/repo', flavor: 'claude', machineId: 'machine-2' }, { machineId: 'machine-2' }),
-    );
-    mocks.fetchAccountMachineReplacements.mockResolvedValue([
-      { id: 'machine-1' },
-      { id: 'machine-2' },
-    ]);
-
-    const result = await inspectSessionContinuation({
-      credentials,
-      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
-    });
-
-    expect(result).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
-  });
-
-  // An unreadable chain proves no inheritance, so it keeps the refusal rather
-  // than guessing the daemon is the successor.
-  it('reports unavailable when the replacement chain cannot be read', async () => {
-    mocks.fetchSessionByIdCompat.mockResolvedValue(
-      rawSession({ path: '/work/repo', flavor: 'claude', machineId: 'machine-old' }, { machineId: 'machine-old' }),
-    );
-    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
-
-    const result = await inspectSessionContinuation({
-      credentials,
-      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
-    });
-
-    expect(result).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
-  });
-
-  // The overwhelmingly common case must not pay for the rare one.
-  it('does not read the machine chain when the recorded host is this machine', async () => {
-    mocks.fetchSessionByIdCompat.mockResolvedValue(rawSession({ path: '/work/repo', flavor: 'claude' }));
-
-    await inspectSessionContinuation({
-      credentials,
-      request: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'codex' } },
-      currentMachineId: 'machine-1',
-    });
-
     expect(mocks.fetchAccountMachineReplacements).not.toHaveBeenCalled();
   });
 

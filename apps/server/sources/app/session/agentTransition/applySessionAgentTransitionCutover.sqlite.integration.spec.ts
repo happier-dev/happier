@@ -198,7 +198,82 @@ describe("applySessionAgentTransitionCutover on SQLite", () => {
         expect(JSON.parse(row.metadata)).toEqual({ flavor: "claude" });
     });
 
-    it("re-appending the identical divider returns the existing sequence and writes no second row", async () => {
+    /**
+     * The replay a lost response actually produces: the SAME request bytes, with
+     * the SAME expected versions the caller first sent. Re-submitting refreshed
+     * versions is a different operation — a second cutover — and asserting on it
+     * proves nothing about retry safety. `apps/server/AGENTS.md` requires a
+     * retryable operation to produce the same durable result as one call, and a
+     * replay answered with `version-mismatch` / `effect: 'none'` would tell the
+     * daemon the Session was never touched when it observably was.
+     */
+    it("returns an exact replay of the original request as an idempotent success", async () => {
+        const session = await seed();
+        const request = {
+            actorUserId: session.ownerId,
+            sessionId: session.id,
+            currentView: currentView(session),
+            divider: { localId: dividerLocalId, content: dividerContent("codex") },
+        };
+
+        const first = await applySessionAgentTransitionCutover(request);
+        expect(first.ok).toBe(true);
+        if (!first.ok) return;
+
+        const committed = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { metadata: true, metadataVersion: true, agentState: true, agentStateVersion: true },
+        });
+
+        // A lost route response is normally retried after the coordinator has
+        // activated the target. The exact replay must pass before the inactive
+        // precondition, and it must not re-clear or restart that live target.
+        await db.session.update({
+            where: { id: session.id },
+            data: { active: true },
+        });
+        const activeBeforeReplay = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: {
+                active: true,
+                metadata: true,
+                metadataVersion: true,
+                agentState: true,
+                agentStateVersion: true,
+            },
+        });
+
+        // Byte-for-byte the same call, not a refreshed one.
+        const replay = await applySessionAgentTransitionCutover(request);
+
+        expect(replay.ok).toBe(true);
+        if (!replay.ok) return;
+        expect(replay.currentView).toEqual({
+            kind: "legacy_v0",
+            metadataVersion: committed.metadataVersion,
+            agentStateVersion: committed.agentStateVersion,
+        });
+        expect(replay.dividerSeq).toBe(first.dividerSeq);
+        expect(replay.dividerDidWrite).toBe(false);
+        // Nothing was committed a second time: no version moved, no cursor moved,
+        // no second boundary row.
+        expect(replay.participantCursors).toEqual([]);
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id } })).resolves.toBe(1);
+        const after = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: {
+                active: true,
+                metadata: true,
+                metadataVersion: true,
+                agentState: true,
+                agentStateVersion: true,
+            },
+        });
+        expect(activeBeforeReplay).toEqual({ ...committed, active: true });
+        expect(after).toEqual(activeBeforeReplay);
+    });
+
+    it("reconciles an identical divider when the current view legitimately advanced", async () => {
         const session = await seed();
         const first = await applySessionAgentTransitionCutover({
             actorUserId: session.ownerId,
@@ -218,6 +293,9 @@ describe("applySessionAgentTransitionCutover on SQLite", () => {
             sessionId: session.id,
             currentView: {
                 kind: "legacy_v0",
+                // A DIFFERENT target view at refreshed versions, so this is a
+                // second cutover rather than a replay: it must still not append a
+                // second boundary at the reserved localId.
                 expectedMetadataVersion: after.metadataVersion,
                 metadataCiphertext: JSON.stringify({ flavor: "codex" }),
                 expectedAgentStateVersion: after.agentStateVersion,

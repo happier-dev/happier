@@ -8,7 +8,7 @@ import { z } from 'zod';
  * unknown `type` and drop the row. Instead the divider rides the already-shipped
  * `type:'message'` passthrough arm as a strict nested sidecar:
  *
- *   { type: 'message', message: '<prose>', sessionAgentTransitionV1: { v, fromAgentId, toAgentId } }
+ *   { type: 'message', message: '<prose>', sessionAgentTransitionV1: { v, fromAgentId, toAgentId, ...bounds } }
  *
  * An old reader parses it as an ordinary informational message and renders the
  * prose; the sidecar survives its `.passthrough()` untouched. A new reader
@@ -42,11 +42,10 @@ export const SessionAgentTransitionDividerV1Schema = z
     fromAgentId: z.string().trim().min(1).max(128),
     toAgentId: z.string().trim().min(1).max(128),
     /**
-     * The source transcript cutoff the activation brief was built from — the
-     * `upToSeqInclusive` the bounded context pass actually used.
+     * UPPER bound: the source transcript cutoff the activation brief was built
+     * from — the `upToSeqInclusive` the bounded context pass actually used.
      *
-     * It is here because it is the ONLY input to that pass which survives the
-     * cutover. `replaySeedV1.seedText` is blanked the instant the target Agent
+     * It is here because nothing else records it once the cutover lands. `replaySeedV1.seedText` is blanked the instant the target Agent
      * accepts it, and the metadata record holds one seed per Session, so a
      * Session switched twice keeps only the newest. Without a per-boundary
      * cutoff, "what was this Agent actually handed?" is unanswerable after the
@@ -63,6 +62,25 @@ export const SessionAgentTransitionDividerV1Schema = z
      * stored prose is rendered, exactly as in an older reader.
      */
     sourceCutoffSeqInclusive: z.number().int().nonnegative(),
+    /**
+     * LOWER bound, exclusive, on a NATIVE RETURN only: the transcript head the
+     * arriving Agent had already seen when it last ran this Session.
+     *
+     * A fresh target's handoff is bounded only above — the pass starts at the
+     * beginning of the source — so the cutoff alone rebuilds it exactly. A
+     * native return is bounded at BOTH ends and what actually crossed the
+     * boundary is the away-delta between them. That lower bound lives in the
+     * returning Agent's device-local departure record, which the very next
+     * departure overwrites, so this is the only place it can outlive the
+     * boundary that used it. Without it a rebuild reruns the same pass with no
+     * lower bound and shows the FULL prefix — more than was sent — from a card
+     * whose entire claim is that it shows what was handed over.
+     *
+     * ABSENT is the fresh target: no lower bound existed. Absence therefore
+     * means exactly one thing, which is why this is optional rather than a
+     * required nullable third state every reader would have to model.
+     */
+    returningAgentLastSeenSeqInclusive: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type SessionAgentTransitionDividerV1 = z.infer<typeof SessionAgentTransitionDividerV1Schema>;

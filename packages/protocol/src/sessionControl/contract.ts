@@ -501,6 +501,21 @@ const SessionStopPhysicalUnconfirmedReasonSchema = z.union([
 ]);
 
 export const SessionStopOutcomeSchema = z.discriminatedUnion('status', [
+  /**
+   * No runtime existed to stop, and the canonical Session row was observed
+   * INACTIVE. This is a confirmed stop, not an unknown one: "nothing is
+   * running" is the postcondition a stop exists to establish, and the daemon
+   * reporting `not_found` for a Session the server also reports inactive has
+   * proved it rather than failed to determine it.
+   *
+   * It is deliberately its own status rather than a `physical_stop_unconfirmed`
+   * reason, because every reason on that arm means "could not determine" and
+   * consumers read the STATUS to decide whether liveness is settled.
+   */
+  z.object({
+    status: z.literal('already_stopped'),
+    reason: z.literal('no_runtime_session_inactive'),
+  }).strict(),
   z.object({
     status: z.literal('stopped_projection_unconfirmed'),
     reason: z.literal('relay_inactive_not_observed'),
@@ -532,6 +547,24 @@ export const SessionStopResultSchema = z.discriminatedUnion('stopped', [
   }).passthrough(),
 ]);
 export type SessionStopResult = z.infer<typeof SessionStopResultSchema>;
+
+/**
+ * Does this stop result PROVE the Session has no running runtime?
+ *
+ * One question, one answer, one owner. Two results prove it and they prove it
+ * the same way — the canonical Session row was observed inactive: `stopped:
+ * true` observed it after signalling a runtime, `already_stopped` observed it
+ * after finding none to signal. Every other outcome leaves liveness
+ * undetermined, including `stopped_cleanup_incomplete`, which proves the host
+ * was destroyed but never reads the row back.
+ *
+ * Consumers must not re-derive this from statuses or reason strings: the
+ * reasons are a lossy diagnostic channel and the same string is emitted at
+ * opposite depths.
+ */
+export function isSessionStopConfirmed(result: SessionStopResult): boolean {
+  return result.stopped ? true : result.stopOutcome?.status === 'already_stopped';
+}
 
 export const SessionArchiveResultSchema = z.object({
   sessionId: z.string().min(1),

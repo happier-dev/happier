@@ -37,9 +37,9 @@ function readNonEmptyString(value: unknown): string | null {
  * There is nothing stored to show. `replaySeedV1.seedText` is blanked the
  * instant the target Agent accepts it, and the metadata record holds one seed
  * per Session, so a twice-switched Session has already lost the first. What
- * survives is the divider's `sourceCutoffSeqInclusive`, and running the SAME
- * bounded pass over the same bound reproduces the brief without persisting a
- * second copy of the conversation.
+ * survives is the divider's own BOUNDS, and running the SAME bounded pass
+ * between them reproduces the brief without persisting a second copy of the
+ * conversation.
  *
  * The brief owner is the shipped default deliberately — the same one the
  * transition itself runs, not a preview-shaped copy. A second composition here
@@ -64,7 +64,15 @@ function readNonEmptyString(value: unknown): string | null {
  *   carries only the cutoff and the Agent pair. Handing them down would put
  *   content that never crossed the boundary inside a card whose whole claim is
  *   that it did, so `departingAgentCurrentView: null` drops both halves and the
- *   card states the omission.
+ *   card states the omission;
+ * - the DELTA BOUNDARY of a native return IS recoverable, because the divider
+ *   records it beside the cutoff. It could not be re-derived: it lives in the
+ *   returning Agent's device-local departure record, which the very next
+ *   departure overwrites, and the cutoff is a different number by construction.
+ *   Rebuilding without it replayed the FULL prefix to the cutoff for a boundary
+ *   that only ever sent the away-delta — a card showing MORE than was handed
+ *   over, which fails the one claim this surface makes. Absent on a fresh
+ *   target, whose boundary genuinely had no lower bound.
  *
  * Read-only: it resolves transport, decrypts Session metadata and reads the
  * transcript. It writes nothing, reserves nothing and grants no authority.
@@ -115,6 +123,13 @@ export async function previewSessionAgentTransitionBrief(params: Readonly<{
         // back into one — see the omission clause above.
         departingAgentCurrentView: null,
         transcriptHeadSeqInclusive: params.request.sourceCutoffSeqInclusive,
+        // The boundary's LOWER bound, exactly as the divider recorded it, so a
+        // native return rebuilds the away-delta it actually sent rather than the
+        // whole prefix. Absent for a fresh target, which is the full replay that
+        // boundary really was.
+        ...(typeof params.request.returningAgentLastSeenSeqInclusive === 'number'
+          ? { returningAgentLastSeenSeq: params.request.returningAgentLastSeenSeqInclusive }
+          : {}),
       });
     } catch {
       return { status: 'unavailable' } as const;

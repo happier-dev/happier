@@ -6,6 +6,10 @@ import {
 } from '@happier-dev/agents';
 
 import { configuration } from '@/configuration';
+import {
+  isReplaySeedV1PendingProviderAcceptance,
+  readReplaySeedV1FromMetadata,
+} from '@/agent/runtime/replaySeed/replaySeedV1';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
   createLocalAgentNativeResumeRecordStoreAt,
@@ -25,16 +29,27 @@ import {
  * The record is machine-local because a vendor session belongs to the machine
  * that ran it — an id recorded here cannot be resumed anywhere else.
  *
- * Two rules make this safe, and both are delegated rather than re-decided here:
+ * Three rules make this safe, and each is delegated rather than re-decided here:
  *
- * 1. **One eligibility owner.** Whether a recorded id may be resumed at all is
- *    decided by `evaluateVendorResumeEligibility` — the same owner the ordinary
- *    inactive-resume path consults — against the exact projected target view the
- *    cutover is about to commit, and against this Account's settings. Those
- *    settings carry the Agent's account-level enablement and its Codex backend
- *    mode, so an Agent whose native resume is switched off is refused there
- *    rather than reinterpreted here.
- * 2. **No pre-check of the conversation itself.** There is deliberately no
+ * 1. **One eligibility owner, consulted at the RETURN.** Whether a recorded id
+ *    may be resumed at all is decided by `evaluateVendorResumeEligibility` —
+ *    the same owner the ordinary inactive-resume path consults — against the
+ *    exact projected target view the cutover is about to commit, and against
+ *    this Account's settings. Those settings carry the Agent's account-level
+ *    enablement and its Codex backend mode, and both are transient and
+ *    reversible: they say what this machine will do NOW, never what the
+ *    departing conversation was. So the DEPARTURE records a structurally valid
+ *    identity regardless of them, and this decision is taken on the way back.
+ *    Evaluating it at capture wrote `identity: null` for an Agent the user had
+ *    temporarily switched off, deleting the only copy of that continuity, and
+ *    re-enabling the Agent afterwards could not recover it.
+ * 2. **The accepted-context boundary owns the advance.** The recorded seq moves
+ *    forward only once the provider accepted the context this activation handed
+ *    the Agent (`REQ-STATE-03`), and an identity that was offered and reached
+ *    no acceptance is invalidated rather than re-offered. Acceptance is not
+ *    re-derived here: it is the replay seed's own retirement, the same fact the
+ *    prompt owner settles on provider acceptance.
+ * 3. **No pre-check of the conversation itself.** There is deliberately no
  *    proof, no `stat()`, and no liveness probe on the recorded id (`AM-24`). A
  *    dead id fails LOUDLY at the first turn — Claude raises
  *    `ClaudeAgentSdkResumeIdentityMismatchError`, Codex's `thread/resume` throws
@@ -104,14 +119,15 @@ function resolveAgentNativeResumeIdentity(
 }
 
 /**
- * The one usability decision, shared by the departure capture and the return
- * resolution so the two can never disagree about what this machine will do.
+ * The one usability decision, taken on the RETURN. It is deliberately not
+ * shared with the departure capture any more: what this machine will launch
+ * today cannot be allowed to erase what the departing Agent left behind.
  *
  * The candidate view is produced by the SAME projector the cutover commits, with
  * the same `clear` disposition, so eligibility is evaluated against the bytes
  * that will exist rather than against a hand-built approximation.
  */
-export function isAgentNativeReturnUsable(params: Readonly<{
+function isAgentNativeReturnUsable(params: Readonly<{
   sourceMetadata: Record<string, unknown>;
   targetAgentId: AgentId;
   identity: LocalAgentNativeResumeIdentityV1 | null;
@@ -146,10 +162,31 @@ export function isAgentNativeReturnUsable(params: Readonly<{
  * Section 7.2 step 4 — before the source stop, while its identity is still the
  * committed current view.
  *
- * An INELIGIBLE source must remove any record it left behind on an earlier
- * departure. Leaving a stale one would let a later return resume a native
- * session this Session no longer corresponds to, so the removal is a correctness
- * step, not cleanup.
+ * Three outcomes, and which one applies is decided by what the departing Agent
+ * actually reached, never by what this machine would allow today:
+ *
+ * 1. **No structurally valid identity** — the current view names no conversation
+ *    for this Agent, so any record an earlier departure left is removed. Leaving
+ *    a stale one would let a later return resume a native session this Session
+ *    no longer corresponds to, which is a correctness step, not cleanup.
+ * 2. **The handed context was accepted, or none was handed** — the boundary
+ *    advances to this departure's head. An Agent that took custody of the
+ *    activation brief holds it, and everything after it in this Session is that
+ *    Agent's own turns.
+ * 3. **Context was handed and never accepted** — the boundary does NOT advance
+ *    (`REQ-STATE-03`). The Agent reached no new boundary, so recording this head
+ *    would hand a LATER return a delta measured against history the Agent never
+ *    received, and nothing downstream could tell. If the identity still in the
+ *    view is the one this machine RESTORED from the record, that strict native
+ *    return also demonstrably failed before acceptance, so the identity is
+ *    invalidated rather than left to be re-offered unchanged on the next switch.
+ *
+ * Acceptance is read, not re-derived: an activation brief is retired the instant
+ * the provider takes custody of the prompt it was prefixed to, so the seed slot
+ * the cutover itself wrote IS the durable acceptance fact, shared with the
+ * prompt owner's own settlement rather than duplicated by a second signal. This
+ * is why no proof file, probe, read-back, TTL or generation appears here
+ * (`AM-24`): the one thing that had to be known is already written down.
  *
  * `departureSeqInclusive` is the transcript head as it stands HERE, before the
  * stop. Deliberately not the post-stop head: a row that landed between this
@@ -168,22 +205,47 @@ export async function captureDepartingAgentNativeResumeRecord(params: Readonly<{
   sessionId: string;
   sourceAgentId: AgentId;
   sourceMetadata: Record<string, unknown>;
-  accountSettings: Record<string, unknown> | null;
   departureSeqInclusive: number;
 }>): Promise<void> {
-  const identity = resolveAgentNativeResumeIdentity(params.sourceAgentId, params.sourceMetadata);
-  const usable = isAgentNativeReturnUsable({
-    sourceMetadata: params.sourceMetadata,
-    targetAgentId: params.sourceAgentId,
-    identity,
-    accountSettings: params.accountSettings,
-  });
-  await params.store.writeAgentNativeResumeRecord({
+  const key: LocalAgentNativeResumeRecordKey = {
     happierSessionId: params.sessionId,
     agentId: params.sourceAgentId,
-    identity: usable ? identity : null,
-    departureSeqInclusive: params.departureSeqInclusive,
-  }).catch(() => {});
+  };
+  const write = async (
+    identity: LocalAgentNativeResumeIdentityV1 | null,
+    departureSeqInclusive = params.departureSeqInclusive,
+  ): Promise<void> => {
+    await params.store.writeAgentNativeResumeRecord({
+      ...key,
+      identity,
+      departureSeqInclusive,
+    }).catch(() => {});
+  };
+
+  const identity = resolveAgentNativeResumeIdentity(params.sourceAgentId, params.sourceMetadata);
+  if (!identity) {
+    await write(null);
+    return;
+  }
+
+  if (!isReplaySeedV1PendingProviderAcceptance(
+    readReplaySeedV1FromMetadata(params.sourceMetadata),
+  )) {
+    await write(identity);
+    return;
+  }
+
+  // Handed context, never accepted. The read is what separates "this machine
+  // offered that id and the resume failed" from "the Agent published an id of
+  // its own": only the first may invalidate, and the second must leave an
+  // earlier, genuinely reached boundary exactly where it is.
+  const recorded = await params.store.readAgentNativeResumeRecord(key).catch(() => null);
+  if (recorded?.identity?.vendorResumeId === identity.vendorResumeId) {
+    // A failed strict return makes this identity unusable, but the accepted
+    // replay boundary belongs to its earlier successful departure. Do not
+    // advance that boundary with history the resumed Agent never accepted.
+    await write(null, recorded.departureSeqInclusive);
+  }
 }
 
 /**

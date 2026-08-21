@@ -3,6 +3,7 @@ import { z } from "zod";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
 
 import { buildNewMessageUpdate, buildUpdateSessionUpdate, eventRouter } from "@/app/events/eventRouter";
+import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
 import { applySessionAgentTransitionCutover } from "@/app/session/agentTransition/applySessionAgentTransitionCutover";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { type Fastify } from "../../types";
@@ -31,9 +32,24 @@ import { type Fastify } from "../../types";
  * (`apps/cli/src/session/transport/http/sessionAgentTransitionHttp.ts`) is the
  * other half of it.
  */
-export function registerSessionAgentTransitionRoute(app: Fastify) {
+/**
+ * `sessions.agentSwitching` is enforced HERE, through the shared server feature
+ * gate, because this route is the only place the switch becomes durable. The
+ * gate is enabled by default; a server owner who sets
+ * `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED=0` must actually refuse the
+ * lifecycle mutation rather than merely stop advertising it, otherwise one
+ * direct call still switches the Session. Clients keep learning the same answer
+ * from the `/v1/features` bit this gate reads.
+ */
+export function registerSessionAgentTransitionRoute(
+    app: Fastify,
+    env: NodeJS.ProcessEnv = process.env,
+) {
     app.post('/v2/sessions/:sessionId/agent-transition/cutover', {
-        preHandler: app.authenticate,
+        preHandler: [
+            createServerFeatureGatePreHandler("sessions.agentSwitching", env),
+            app.authenticate,
+        ],
         schema: {
             params: z.object({ sessionId: z.string() }),
             body: z.object({
@@ -57,7 +73,12 @@ export function registerSessionAgentTransitionRoute(app: Fastify) {
                 }).strict(),
                 400: z.object({ error: z.literal('Invalid parameters') }).strict(),
                 403: z.object({ error: z.literal('Forbidden') }).strict(),
-                404: z.object({ error: z.literal('Session not found') }).strict(),
+                404: z.union([
+                    z.object({ error: z.literal('Session not found') }).strict(),
+                    // The server owner disabled `sessions.agentSwitching`. The
+                    // shared gate answers before this handler runs.
+                    z.object({ error: z.literal('not_found') }).strict(),
+                ]),
                 409: z.object({
                     effect: z.enum(['none', 'current_view_committed']),
                     error: z.enum([

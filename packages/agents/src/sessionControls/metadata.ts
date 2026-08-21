@@ -49,6 +49,7 @@ export type SessionModelsMetadataStateV1 = Readonly<{
     id: string;
     name: string;
     description?: string;
+    contextWindowTokens?: number;
     extendedContextModelId?: string;
     modelOptions?: readonly SessionModelOptionMetadataV1[];
     [key: string]: unknown;

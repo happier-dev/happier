@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 import {
   AGENT_IDS,
+  getProviderCliRuntimeSpec,
   resolveAgentNativeTranscriptPathFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
   type AgentId,
@@ -177,6 +178,7 @@ export async function buildSessionAgentTransitionActivationBrief(params: Readonl
    */
   const departingAgentCurrentView = params.departingAgentCurrentView;
   const sourceAgentId = asKnownAgentId(params.sourceAgentId);
+  const sourceAgentLabel = sourceAgentId === null ? null : getProviderCliRuntimeSpec(sourceAgentId).title;
   const nativeTranscriptPathCandidate = departingAgentCurrentView === null || sourceAgentId === null
     ? null
     : await resolveNativeTranscriptPathCandidate(sourceAgentId, departingAgentCurrentView);
@@ -225,6 +227,7 @@ export async function buildSessionAgentTransitionActivationBrief(params: Readonl
     // because this path has no wire field to carry one.
     maxSeedChars: readAccountReplayMaxSeedChars() ?? configuration.replaySeedMaxChars,
     candidateLimit: configuration.replaySeedCandidateLimit,
+    sourceAgentLabel,
     // Section 8's other half. The cutover projection clears `sessionWorkStateV1` — the target
     // republishes its own — and the items are a structured projection rather than transcript
     // prose, so the departing Agent's live view is the last reader that can carry the in-flight

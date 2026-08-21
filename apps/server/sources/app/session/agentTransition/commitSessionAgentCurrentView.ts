@@ -84,6 +84,46 @@ function isNonNegativeInteger(value: unknown): value is number {
     return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+/**
+ * True when the stored row already IS the exact target this call would write —
+ * i.e. this call replays a write that already landed.
+ *
+ * `apps/server/AGENTS.md` requires a retryable operation to produce the same
+ * durable result as one call. Without this, a replayed cutover — the same
+ * request bytes a caller re-sends after a lost response — loses the
+ * `agentStateVersion` precondition and the metadata CAS, and is answered
+ * `version-mismatch` with `effect: 'none'`: a promise that the Session was never
+ * touched, which is false. The daemon's one-shot retry then refetches, sees the
+ * Session already naming the target, and reports `cutover_conflict` for a
+ * transition that fully succeeded.
+ *
+ * Content equality is the signal, not version arithmetic. The shared metadata
+ * version must have MOVED PAST the expected one, which is what proves a write
+ * already landed; an unchanged first attempt still takes the normal path and its
+ * preconditions.
+ */
+function isExactCommittedTargetCurrentView(
+    current: Readonly<{
+        metadata: string | null;
+        metadataVersion: number;
+        agentState: string | null;
+        agentStateVersion: number;
+    }>,
+    currentView: SessionAgentTransitionCurrentViewWriteV1,
+): SessionAgentTransitionCommittedCurrentViewV1 | null {
+    const matches = current.metadata === currentView.metadataCiphertext
+        && current.agentState === currentView.agentStateCiphertext
+        && current.metadataVersion > currentView.expectedMetadataVersion
+        && current.agentStateVersion >= currentView.expectedAgentStateVersion;
+    return matches
+        ? {
+            kind: "legacy_v0",
+            metadataVersion: current.metadataVersion,
+            agentStateVersion: current.agentStateVersion,
+          }
+        : null;
+}
+
 export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
     tx: Tx;
     actorUserId: string;
@@ -102,13 +142,37 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
         select: {
             active: true,
             archivedAt: true,
+            metadata: true,
             metadataVersion: true,
+            agentState: true,
             agentStateVersion: true,
         },
     });
     if (!session) {
         return { ok: false, error: "session-not-found" };
     }
+
+    // The exact-replay check runs BEFORE the inactive and archive preconditions,
+    // so a lost response can reconcile after the target has already been
+    // activated. Replaying exactly the same sealed view is an idempotent
+    // success, not a conflict.
+    const alreadyCommitted = isExactCommittedTargetCurrentView(session, currentView);
+    if (alreadyCommitted) {
+        // The runtime-activity clear is NOT repeated: it committed in one
+        // transaction with the current view this call is replaying, and the state
+        // this check exists to serve is a lost response reconciling AFTER the
+        // target started. Re-clearing would blank a working target.
+        //
+        // Nothing was written, so there are no cursors and nothing to announce.
+        return {
+            ok: true,
+            currentView: alreadyCommitted,
+            participantCursors: [],
+            metadataCiphertext: currentView.metadataCiphertext,
+            agentStateCiphertext: null,
+        };
+    }
+
     if (session.archivedAt !== null) {
         return { ok: false, error: "archived" };
     }

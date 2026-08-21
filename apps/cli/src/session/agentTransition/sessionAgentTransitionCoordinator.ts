@@ -4,6 +4,7 @@ import {
   SessionAgentTransitionDividerV1Schema,
   beginSessionAgentTransitionEffects,
   buildSessionAgentTransitionDividerLocalId,
+  isSessionStopConfirmed,
   readPendingLocalId,
   readSessionAgentTransitionDividerFromStoredRecordV1,
   rejectUndispatchedSessionAgentTransition,
@@ -28,6 +29,7 @@ import { configuration } from '@/configuration';
 import {
   createConnectedServiceMaterializationIdentity,
 } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
+import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
 import type { Credentials } from '@/persistence';
 import { resolveTrustedSessionAttachmentLocalImagePaths } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { admitSessionUserMessageToPendingQueue } from '@/session/services/admitSessionUserMessage';
@@ -61,8 +63,9 @@ import { buildSessionAgentTransitionActivationBrief } from './buildSessionAgentT
 import {
   hasCanonicalHostedTranscript,
   resolveSessionContinuationTargetAgent,
-  sessionIsHostedHere,
 } from './sessionContinuationInspection';
+
+const SESSION_AGENT_SWITCHING_FEATURE_TIMEOUT_MS = 800;
 
 /**
  * Same-Session cross-Agent continuation — the predecessor (minimum) vertical.
@@ -152,13 +155,28 @@ function buildDividerContent(params: Readonly<{
    * The transcript cutoff the activation brief was built from, `0` when the
    * pass carried nothing over.
    *
-   * Required at the schema too, not just here: this is the only input to the
-   * context pass that outlives the cutover — `replaySeedV1.seedText` is blanked
-   * the instant the target accepts it — so a writer that may omit it is a
-   * writer that can silently make the boundary unexplainable. A sidecar without
-   * it does not read as a divider at all.
+   * Required at the schema too, not just here: nothing else records the pass's
+   * upper bound once the cutover lands — `replaySeedV1.seedText` is blanked the
+   * instant the target accepts it — so a writer that may omit it is a writer
+   * that can silently make the boundary unexplainable. A sidecar without it
+   * does not read as a divider at all.
    */
   sourceCutoffSeqInclusive: number;
+  /**
+   * The native-return departure bound this transition replayed FROM, or `null`
+   * for a fresh target that had none.
+   *
+   * The cutoff above is the pass's upper bound; on a native return the pass also
+   * had a lower one, and the delta between them is the whole handoff. That bound
+   * lives only in this machine's departure record, which the next departure
+   * overwrites, so recording it on the boundary it bounded is what keeps the
+   * handoff reconstructable at all.
+   *
+   * `null` is written as an ABSENT key, not as a stored null: absence is already
+   * the fresh target's meaning at the schema, and a second spelling for the same
+   * fact is a state every reader would have to collapse.
+   */
+  returningAgentLastSeenSeqInclusive: number | null;
 }>): SessionStoredMessageContent {
   // The sidecar goes through the contract owner's schema and key on the way OUT,
   // not only on the way in. The schema trims and bounds both ids, and the single
@@ -171,6 +189,9 @@ function buildDividerContent(params: Readonly<{
     fromAgentId: params.fromAgentId,
     toAgentId: params.toAgentId,
     sourceCutoffSeqInclusive: params.sourceCutoffSeqInclusive,
+    ...(params.returningAgentLastSeenSeqInclusive === null
+      ? {}
+      : { returningAgentLastSeenSeqInclusive: params.returningAgentLastSeenSeqInclusive }),
   });
   const payload = {
     role: 'agent',
@@ -283,6 +304,12 @@ async function admitInputAndActivateTarget(params: Readonly<{
   }
   if (admission.status === 'suppressed') {
     return committed.committed('input_rejected');
+  }
+  if (admission.status === 'already_terminal') {
+    // The exact localId is already in the terminal transcript, so this retry
+    // has no pending work for a runtime to consume. Reactivating an inactive
+    // target here would create unrelated work after custody has already ended.
+    return committed.accepted();
   }
 
   // Refetch the committed row before activation. Its `seq` now includes the
@@ -450,12 +477,6 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
 export async function runSessionAgentTransition(params: Readonly<{
   credentials: Credentials;
   request: SessionAgentTransitionRequestV1;
-  /**
-   * This daemon's machine. A Session hosted elsewhere is not transitionable —
-   * but a Session whose recorded host THIS machine replaced is, because nothing
-   * re-homes the row (see `sessionIsHostedHere`).
-   */
-  currentMachineId?: string | null;
   deps?: SessionAgentTransitionCoordinatorDeps;
 }>): Promise<SessionAgentTransitionResultV1> {
   const now = params.deps?.now ?? Date.now;
@@ -474,6 +495,16 @@ export async function runSessionAgentTransition(params: Readonly<{
   const effects = beginSessionAgentTransitionEffects({ localId });
 
   /* ---------------------------------------------------------------- 7.1 */
+
+  const featureDecision = await resolveCliFeatureDecisionForServer({
+    featureId: 'sessions.agentSwitching',
+    env: process.env,
+    serverUrl: resolveServerHttpBaseUrl(),
+    timeoutMs: SESSION_AGENT_SWITCHING_FEATURE_TIMEOUT_MS,
+  }).catch(() => null);
+  if (featureDecision?.decision.state !== 'enabled') {
+    return effects.rejected('unsupported_operation');
+  }
 
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
@@ -497,16 +528,15 @@ export async function runSessionAgentTransition(params: Readonly<{
   // shared with inspection so a Session can never pass one gate and fail the
   // other, and so neither disagrees with the canonical storage-kind owner.
   if (!hasCanonicalHostedTranscript(metadata)) return effects.rejected('unsupported_operation');
-  // Same owner the inspection asks, so a Session can never be reported
-  // switchable here and then stopped by a daemon that does not host it.
-  if (!await sessionIsHostedHere({
-    currentMachineId: params.currentMachineId,
-    rawSession,
-    metadata,
-    credentials: params.credentials,
-  })) {
-    return effects.rejected('unsupported_operation');
-  }
+  // Deliberately NOT gated on the Session's recorded machine. Every failure such
+  // a gate claimed to prevent is already detected by the component that actually
+  // knows: `requestSessionStop` finds no local process for a Session that is not
+  // here and reports it, the DEVICE-LOCAL native-return record is simply absent
+  // and already degrades to a full replay, the cutover is server-side and
+  // machine-agnostic, and activating the target on this host succeeds or fails
+  // loudly. A machine-id comparison is only a PROXY for continuability, and it
+  // was wrong in both directions — refusing a Session a user had legitimately
+  // moved here while still admitting one whose vendor conversation was gone.
 
   const currentAgentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!currentAgentId) return effects.rejected('unsupported_operation');
@@ -592,7 +622,10 @@ export async function runSessionAgentTransition(params: Readonly<{
     sessionId: request.sessionId,
     sourceAgentId,
     sourceMetadata: metadata,
-    accountSettings: readAccountSettings(),
+    // No Account settings: the capture records a STRUCTURALLY valid identity,
+    // and whether this machine may resume it is decided on the way back
+    // (`resolveAgentNativeReturnIdentity`). Deciding it here deleted the record
+    // of an Agent the user had temporarily disabled.
     // The head as it stands HERE, before the stop — the boundary the departing
     // Agent's own conversation covers (`AM-26`). Deliberately not the post-stop
     // head the brief runs to: a row that lands between this instant and the
@@ -628,7 +661,13 @@ export async function runSessionAgentTransition(params: Readonly<{
   // both before addressing the owning machine and from the catch around the
   // STOP_SESSION RPC. Depth is what `stop.stopped` reports; the reason is
   // diagnostic only.
-  if (!stop.stopped) return effects.outcomeUnknown();
+  //
+  // `stop.stopped` is not the only confirmed depth. `already_stopped` is the
+  // stop owner's other CONFIRMED answer: it found no runtime to signal and read
+  // the canonical Session row back inactive. Asking the owner's own predicate
+  // keeps liveness a single fact this coordinator consumes rather than one it
+  // re-derives from statuses.
+  if (!isSessionStopConfirmed(stop)) return effects.outcomeUnknown();
 
   /* ---------------------------------------------------------------- 7.3 */
 
@@ -735,6 +774,13 @@ export async function runSessionAgentTransition(params: Readonly<{
       // carried — a fact, not a missing one, and the reader must be able to say
       // so rather than fall back to "this boundary recorded nothing".
       sourceCutoffSeqInclusive: seed.status === 'seeded' ? seed.sourceCutoffSeqInclusive : 0,
+      // The brief's OTHER bound, from the same resolved record that produced it.
+      // A native return handed over only the away-delta, and the departure
+      // record that bounded it is overwritten by the next departure — so unless
+      // the boundary records it here, nothing can ever say what this Agent was
+      // actually sent, and the read-only rebuild silently shows the full prefix
+      // instead. `null` is the fresh target, which had no lower bound at all.
+      returningAgentLastSeenSeqInclusive: nativeReturn?.departureSeqInclusive ?? null,
     }),
   };
 

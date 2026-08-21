@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol';
+
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 
 const spawnDaemonSession = vi.hoisted(() => vi.fn());
@@ -278,6 +280,41 @@ describe('createSpawnedSession — Replay-seeded creation', () => {
 
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess_child' });
+  });
+
+  it('commits a fresh materialization identity when the spawn carries connected bindings', async () => {
+    getOrCreateSessionByTag.mockResolvedValue({ session: rawSession(CANONICAL_METADATA) });
+    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess_child' });
+
+    await createSpawnedSession(replaySeededParams({
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'codex1' },
+        },
+      },
+    }));
+
+    // The row this owner commits is brand new, and the launch attaches to it through
+    // `existingSessionId`. The daemon refuses such a spawn when it carries connected bindings
+    // with no materialization identity, so the identity has to be on the committed row.
+    const creation = getOrCreateSessionByTag.mock.calls[0]![0] as { metadata: Record<string, unknown> };
+    const parsed = ConnectedServiceMaterializationIdentityV1Schema.safeParse(
+      creation.metadata.connectedServiceMaterializationIdentityV1,
+    );
+    expect(parsed.success).toBe(true);
+  });
+
+  it('writes no materialization identity when the spawn carries no connected binding', async () => {
+    getOrCreateSessionByTag.mockResolvedValue({ session: rawSession(CANONICAL_METADATA) });
+    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess_child' });
+
+    await createSpawnedSession(replaySeededParams({
+      connectedServices: { v: 1, bindingsByServiceId: { 'claude-subscription': { source: 'native' } } },
+    }));
+
+    const creation = getOrCreateSessionByTag.mock.calls[0]![0] as { metadata: Record<string, unknown> };
+    expect(creation.metadata.connectedServiceMaterializationIdentityV1).toBeUndefined();
   });
 
   it('launches through an injected in-daemon transport instead of the control client', async () => {

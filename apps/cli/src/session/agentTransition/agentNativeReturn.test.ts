@@ -1,0 +1,215 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  captureDepartingAgentNativeResumeRecord,
+  resolveAgentNativeReturnIdentity,
+  type LocalAgentNativeResumeRecordStore,
+} from './agentNativeReturn';
+import type {
+  LocalAgentNativeResumeIdentityV1,
+  LocalAgentNativeResumeRecordKey,
+  LocalAgentNativeResumeRecordV1,
+} from '@/session/handoff/metadata/localAgentNativeResumeRecordStore';
+
+/**
+ * `REQ-STATE-03` — the machine-local (Session, Agent) record's lifecycle.
+ *
+ * Two ratified obligations, and they are the whole of this file:
+ *
+ * 1. the recorded boundary advances ONLY once the provider accepted the context
+ *    this activation handed the Agent, so a resume that failed before
+ *    acceptance leaves the previously recorded boundary where it was;
+ * 2. an identity that was offered for a native return and produced no accepted
+ *    context is not recapturable as valid by a later departure.
+ *
+ * Plus the launch-policy split the same record depends on: a departure captures
+ * a STRUCTURALLY valid identity, and whether that identity may be resumed is
+ * decided at the RETURN, against the Account settings that hold then.
+ *
+ * The record store is the mocked boundary (protected files on disk). The
+ * acceptance reading, the identity resolution and the eligibility decision are
+ * code under test and run for real.
+ */
+
+const SESSION_ID = 'session-1';
+const DEPARTURE_HEAD = 130;
+
+const CLAUDE_IDENTITY: LocalAgentNativeResumeIdentityV1 = { v: 1, vendorResumeId: 'claude-1' };
+
+/** A departing Claude whose own conversation id is committed in the current view. */
+function claudeMetadata(overrides?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    flavor: 'claude',
+    machineId: 'machine-1',
+    path: '/home/u/project',
+    claudeSessionId: 'claude-1',
+    ...overrides,
+  };
+}
+
+/** The activation brief as the cutover seals it: handed, not yet accepted. */
+const PENDING_ACTIVATION_SEED = Object.freeze({
+  v: 1 as const,
+  seedText: '<session_context>\nAgent: codex\n</session_context>',
+  sourceSessionId: SESSION_ID,
+  sourceCutoffSeqInclusive: 30,
+  createdAtMs: 1_000,
+});
+
+/** The same brief after the provider took custody of the prompt it prefixed. */
+const ACCEPTED_ACTIVATION_SEED = Object.freeze({
+  ...PENDING_ACTIVATION_SEED,
+  seedText: '',
+  appliedToLocalId: 'local-1',
+  appliedAtMs: 2_000,
+});
+
+type RecordWrite = LocalAgentNativeResumeRecordKey & Readonly<{
+  identity: LocalAgentNativeResumeIdentityV1 | null;
+  departureSeqInclusive: number;
+}>;
+
+function createRecordStoreDouble(seeded?: LocalAgentNativeResumeRecordV1 | null): Readonly<{
+  store: LocalAgentNativeResumeRecordStore;
+  writes: readonly RecordWrite[];
+}> {
+  const writes: RecordWrite[] = [];
+  return {
+    writes,
+    store: {
+      readAgentNativeResumeRecord: async () => seeded ?? null,
+      writeAgentNativeResumeRecord: async (input) => {
+        writes.push(input as RecordWrite);
+      },
+    },
+  };
+}
+
+async function captureClaudeDeparture(params: Readonly<{
+  metadata: Record<string, unknown>;
+  seeded?: LocalAgentNativeResumeRecordV1 | null;
+}>): Promise<readonly RecordWrite[]> {
+  const { store, writes } = createRecordStoreDouble(params.seeded);
+  await captureDepartingAgentNativeResumeRecord({
+    store,
+    sessionId: SESSION_ID,
+    sourceAgentId: 'claude',
+    sourceMetadata: params.metadata,
+    departureSeqInclusive: DEPARTURE_HEAD,
+  });
+  return writes;
+}
+
+describe('captureDepartingAgentNativeResumeRecord — accepted-context boundary (REQ-STATE-03)', () => {
+  it('advances the recorded boundary once the handed context was accepted', async () => {
+    // The Agent took custody of the brief, so its own conversation covers this
+    // Session up to the departure head. This is the only shape that may move
+    // the boundary forward.
+    const writes = await captureClaudeDeparture({
+      metadata: claudeMetadata({ replaySeedV1: ACCEPTED_ACTIVATION_SEED }),
+      seeded: { identity: CLAUDE_IDENTITY, departureSeqInclusive: 30 },
+    });
+
+    expect(writes).toEqual([{
+      happierSessionId: SESSION_ID,
+      agentId: 'claude',
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: DEPARTURE_HEAD,
+    }]);
+  });
+
+  it('advances when this activation handed the Agent no context at all', async () => {
+    // Nothing was handed, so nothing is unaccepted: an Agent that has simply
+    // been running is bounded by the head it reached. Without this the very
+    // first departure of a Session could never record a boundary.
+    const writes = await captureClaudeDeparture({ metadata: claudeMetadata() });
+
+    expect(writes).toEqual([{
+      happierSessionId: SESSION_ID,
+      agentId: 'claude',
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: DEPARTURE_HEAD,
+    }]);
+  });
+
+  it('leaves an earlier boundary untouched when the handed context was never accepted', async () => {
+    // The Agent was handed the brief and never took custody of it, so it
+    // reached no new boundary. Advancing here would hand a LATER return a delta
+    // measured against history this Agent never received — the skipped-history
+    // failure the whole bound exists to avoid.
+    const earlier: LocalAgentNativeResumeRecordV1 = {
+      identity: { v: 1, vendorResumeId: 'claude-earlier' },
+      departureSeqInclusive: 30,
+    };
+    const writes = await captureClaudeDeparture({
+      metadata: claudeMetadata({ replaySeedV1: PENDING_ACTIVATION_SEED }),
+      seeded: earlier,
+    });
+
+    expect(writes).toEqual([]);
+  });
+
+  it('records nothing when an Agent that was handed context never accepted any', async () => {
+    // A target activated by this feature and never reached holds nothing, so a
+    // later return to it must be fresh plus the FULL replay.
+    const writes = await captureClaudeDeparture({
+      metadata: claudeMetadata({ replaySeedV1: PENDING_ACTIVATION_SEED }),
+    });
+
+    expect(writes).toEqual([]);
+  });
+
+  it('invalidates the offered identity when a native return never reached acceptance', async () => {
+    // The identity currently in the view is the one THIS machine restored from
+    // the record, and it produced no accepted context: the strict native resume
+    // failed. Leaving it recorded would let the next departure re-offer it as
+    // valid and fail the same way forever.
+    const writes = await captureClaudeDeparture({
+      metadata: claudeMetadata({ replaySeedV1: PENDING_ACTIVATION_SEED }),
+      seeded: { identity: CLAUDE_IDENTITY, departureSeqInclusive: 30 },
+    });
+
+    expect(writes).toEqual([{
+      happierSessionId: SESSION_ID,
+      agentId: 'claude',
+      identity: null,
+      departureSeqInclusive: 30,
+    }]);
+  });
+
+  it('removes a stale record when the departing Agent has no native id at all', async () => {
+    // Structural absence, not policy: this Session no longer corresponds to any
+    // conversation for that Agent, so an older record must not survive it.
+    const writes = await captureClaudeDeparture({
+      metadata: claudeMetadata({ claudeSessionId: undefined }),
+      seeded: { identity: CLAUDE_IDENTITY, departureSeqInclusive: 30 },
+    });
+
+    expect(writes[0]?.identity).toBeNull();
+  });
+});
+
+describe('native-return record — launch policy is a RETURN decision', () => {
+  const disabledClaude = { backendEnabledByTargetKey: { 'agent:claude': false } };
+
+  it('refuses the recorded identity while disabled and restores it once re-enabled', async () => {
+    const { store } = createRecordStoreDouble({
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: 30,
+    });
+    const resolveWith = async (accountSettings: Record<string, unknown> | null) =>
+      await resolveAgentNativeReturnIdentity({
+        store,
+        sessionId: SESSION_ID,
+        targetAgentId: 'claude',
+        sourceMetadata: { flavor: 'codex', codexSessionId: 'codex-1' },
+        accountSettings,
+      });
+
+    expect(await resolveWith(disabledClaude)).toBeNull();
+    expect(await resolveWith({})).toEqual({
+      identity: CLAUDE_IDENTITY,
+      departureSeqInclusive: 30,
+    });
+  });
+});

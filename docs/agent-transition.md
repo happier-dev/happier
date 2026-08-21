@@ -50,14 +50,43 @@ Machine RPCs (`packages/protocol/src/rpc.ts`, registered in
 - `session.agentTransition` — the mutation.
 - `session.agentTransition.briefPreview` — read-only rebuild of a divider's brief.
 
-All three run on the machine hosting the Session, and the daemon enforces that
-rather than assuming it: `sessionIsHostedHere` refuses a Session whose recorded
-machine is not this authenticated one, in the mutation and in inspection alike.
-The client can legitimately address another machine — its RPC target is resolved
-through the machine replacement chain — and the server routes by the named
-machine without checking that it hosts the Session, so the daemon is the only
-place the question can be settled. Inspection and the preview grant no authority
-and persist nothing; the mutation revalidates every fact inspection reported.
+All three run on the machine the client addresses, and the daemon does **not**
+gate them on the Session's recorded machine id.
+
+That gate was removed deliberately. A machine id is only a PROXY for "can this
+Session be continued here", and every failure the gate claimed to prevent is
+already detected by the component that actually knows: `requestSessionStop`
+finds no local process for a Session that is not here and reports it, the
+per-Agent native-return record is DEVICE-LOCAL so its absence already degrades
+to a full replay, the cutover is server-side and machine-agnostic, and
+activating the target on this host succeeds or fails loudly. The proxy was also
+wrong in both directions — it refused a user who had legitimately moved a
+Session to this host, while still admitting a same-id Session whose vendor
+conversation had been deleted — so it removed real capability to prevent
+nothing, and it cost one Account-scoped machine-replacement read per inspected
+target.
+
+The user's machine-replacement ruling — replacing a machine must not strand the
+Sessions the previous one hosted — therefore holds **by construction** here:
+nothing in the transition path can refuse a replaced machine. `Session` rows are
+never re-homed, so a recorded host stays the predecessor forever, and that no
+longer matters.
+
+The inactive goal, catalog and usage-limit controls keep their own locality gate
+(`resolveMachineControlLocalityProof`,
+`apps/cli/src/session/machineControlLocality.ts`). That is a different question:
+those controls read and write the Session's WORKSPACE FILESYSTEM and vendor
+config, so a daemon that is not the host would answer from its own filesystem —
+silently and plausibly wrong — rather than fail loudly.
+
+A not-here Session reaches the stop and comes back `not_found`. Since `AM-27`
+that is no longer `outcome_unknown`: the stop owner classifies it, and when the
+canonical Session row is observed inactive it reports the confirmed
+`already_stopped` arm, so the transition proceeds normally. The fix is at the
+stop owner, not a machine guess in the coordinator.
+
+Inspection and the preview grant no authority and persist nothing; the mutation
+revalidates every fact inspection reported.
 
 ## Preconditions
 
@@ -113,8 +142,13 @@ over-estimating skips rows permanently). Then `requestSessionStop`.
 - Stop request failed before any attempt → `rejected('source_stop_failed')`
   (the source is provably still running).
 - Stop attempted but not confirmed → `outcome_unknown`. There is no allowlist of
-  "pre-signal" stop reasons; the reasons are diagnostic only and `stop.stopped`
-  is the depth.
+  "pre-signal" stop reasons; the reasons are diagnostic only.
+- Confirmed → proceed. Confirmed is `isSessionStopConfirmed(stop)`, the predicate
+  exported beside `SessionStopResult`, and it covers two results: `stopped: true`
+  and the `already_stopped` outcome. Both mean the canonical Session row was
+  observed inactive — the first after signalling a runtime, the second after
+  finding none to signal. The coordinator never reads `stop.stopped` or a status
+  string itself; liveness is one fact with one owner (`AM-27`).
 
 **7.3 Project the target view.** Re-read the Session *after* the confirmed stop
 and project from **those** bytes, because the CAS versions committed below come
@@ -195,8 +229,11 @@ predecessor. It can contain:
 - a replay-completeness notice when some rows could not be read;
 - retrieval pointers — the Happier transcript-retrieval invocation for the
   target Agent, and the source Agent's own session-log path when one exists and
-  the file is still present (resolved from the catalog-declared continuity-proof
-  slot first, then the provider-owned `resolveAgentNativeSessionLogPath` hook).
+  the file is still present (resolved from the catalog-declared log-path slot
+  first, then the provider-owned `resolveAgentNativeSessionLogPath` hook). That
+  slot is still spelled `vendorResumeContinuityProofField` in the catalog,
+  pending a generated-projection rename; it is a **log-path pointer**, not a
+  continuity proof — the proof mechanism is removed and nothing gates on it.
 
 The pass is bounded by **characters**, not message count.
 
@@ -223,6 +260,13 @@ When a target with such a record is chosen again on that machine:
 - The brief then carries only the **away-delta** since that Agent's recorded
   departure, and the frame states the boundary instead of restating history the
   resumed conversation already holds.
+
+**Open contract gap.** The plan's `REQ-STATE-03` requires the recorded boundary
+to advance **only** after the provider accepts the resumed identity, and an
+identity whose resume failed not to be recapturable as valid. Neither holds
+today in either tree: the record is written before the source stop,
+unconditionally, its result discarded, with no rollback on a failed resume. The
+description above is of current behavior, not of a satisfied requirement.
 
 There is deliberately **no** continuity proof, `stat()`, or liveness probe on
 the recorded id. A stale or dead vendor session fails loudly at the first turn —

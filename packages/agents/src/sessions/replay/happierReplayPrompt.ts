@@ -502,6 +502,22 @@ function escapeUntrustedFrameText(value: string): string {
  */
 const REPLAY_TRUNCATION_MARKER = '…[truncated]';
 const REPLAY_OMISSION_NOTICE = '[Older context was omitted to fit the replay budget.]';
+/**
+ * The SAME loss, stated without a cause this builder cannot stand behind.
+ *
+ * A window the retrieval could not fully READ is both a stop and a hole, and it
+ * arrives here as `windowTruncated` plus `historyIncomplete`. Blaming the replay
+ * budget for that is a false explanation standing directly beside the frame's
+ * own truthful "some messages could not be read" line. The loss is still marked
+ * in the same place by the same notice; only the attribution is dropped, which
+ * is why there is no third notice and no cause taxonomy here.
+ */
+const REPLAY_OMISSION_NOTICE_UNATTRIBUTED = '[Older context is not included here.]';
+
+/** The notice this build may honestly print for the loss it is marking. */
+function renderReplayOmissionNotice(historyIncomplete: boolean): string {
+  return historyIncomplete ? REPLAY_OMISSION_NOTICE_UNATTRIBUTED : REPLAY_OMISSION_NOTICE;
+}
 
 /**
  * The label this builder puts in front of every replayed turn, and the only
@@ -538,7 +554,7 @@ function isTranscriptLine(line: string): boolean {
 
 /** The framer's own budget-loss notice, the only non-turn line the tail carries. */
 function isOmissionNoticeLine(line: string): boolean {
-  return line === REPLAY_OMISSION_NOTICE;
+  return line === REPLAY_OMISSION_NOTICE || line === REPLAY_OMISSION_NOTICE_UNATTRIBUTED;
 }
 
 /**
@@ -1835,7 +1851,7 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
 
   if (!maxPromptChars) {
     const openTailLines: readonly RenderedTranscriptLine[] = droppedByCount > 0 || windowTruncated
-      ? [framerLine(REPLAY_OMISSION_NOTICE), ...tailLines]
+      ? [framerLine(renderReplayOmissionNotice(historyIncomplete)), ...tailLines]
       : tailLines;
     // No budget means nothing was dropped or clipped, so this verification always
     // passes today. It runs anyway: the guarantee is that no path emits a claim it
@@ -1968,11 +1984,14 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
     return prefix + renderSettledRange(withoutNotice) + withoutNotice.body + suffix;
   }
 
-  // Budget-driven loss must be visible to the reader, and the notice is itself budgeted.
-  const noticeCost = REPLAY_OMISSION_NOTICE.length + 1;
+  // The loss must be visible to the reader, and the notice is itself budgeted.
+  // Which notice is chosen is a truthfulness question, not a budgeting one, so
+  // it is settled once and both the cost and the emitted line read the same one.
+  const notice = renderReplayOmissionNotice(historyIncomplete);
+  const noticeCost = notice.length + 1;
   const withNotice = selectReplayTailWithinBudget(tailItems, tailBudget - noticeCost);
   return withNotice.body
-    ? prefix + renderSettledRange(withNotice) + REPLAY_OMISSION_NOTICE + '\n' + withNotice.body + suffix
+    ? prefix + renderSettledRange(withNotice) + notice + '\n' + withNotice.body + suffix
     : prefix + renderSettledRange(withoutNotice) + withoutNotice.body + suffix;
 }
 

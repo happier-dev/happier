@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  FeaturesResponseSchema,
   SessionStopOutcomeSchema,
+  isSessionStopConfirmed,
   readSessionAgentTransitionDividerV1,
   type SessionStopOutcome,
 } from '@happier-dev/protocol';
@@ -34,12 +36,20 @@ const mocks = vi.hoisted(() => ({
   fetchAccountMachineReplacements: vi.fn(),
   readAgentNativeResumeRecord: vi.fn(),
   writeAgentNativeResumeRecord: vi.fn(),
+  resolveCliFeatureDecisionForServer: vi.fn(),
   callOrder: [] as string[],
 }));
 
 vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
   fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
 }));
+vi.mock('@/features/featureDecisionService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/featureDecisionService')>();
+  return {
+    ...actual,
+    resolveCliFeatureDecisionForServer: mocks.resolveCliFeatureDecisionForServer,
+  };
+});
 vi.mock('@/session/services/resolveSessionTransportContext', () => ({
   resolveSessionTransportContext: mocks.resolveSessionTransportContext,
 }));
@@ -98,6 +108,7 @@ vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
 }));
 
 const { runSessionAgentTransition } = await import('./sessionAgentTransitionCoordinator');
+const { resolveCliFeatureDecision } = await import('@/features/featureDecisionService');
 
 const SESSION_ID = 'session-1';
 const LOCAL_ID = 'local-42';
@@ -113,8 +124,11 @@ function readReasonLiterals(schema: unknown): readonly string[] {
 
 /**
  * Every `{ status, reason }` an unconfirmed stop can carry, read out of
- * `SessionStopOutcomeSchema` instead of listed here. The union is the producing
- * contract, so nothing in this file has to be kept in step with it by hand.
+ * `SessionStopOutcomeSchema` instead of listed here, minus the outcomes the stop
+ * owner's own predicate calls CONFIRMED. The union is the producing contract, so
+ * nothing in this file has to be kept in step with it by hand; asking
+ * `isSessionStopConfirmed` rather than hand-excluding `already_stopped` keeps
+ * that true in both directions.
  */
 function everyUnconfirmedStopOutcome(): ReadonlyArray<readonly [string, SessionStopOutcome]> {
   const cases = SessionStopOutcomeSchema.options.flatMap((option) => {
@@ -126,13 +140,22 @@ function everyUnconfirmedStopOutcome(): ReadonlyArray<readonly [string, SessionS
       `${status}/${reason}`,
       SessionStopOutcomeSchema.parse({ status, reason }),
     ] as const);
-  });
+  }).filter(([, stopOutcome]) => !isSessionStopConfirmed({
+    sessionId: SESSION_ID,
+    stopped: false,
+    stopOutcome,
+  }));
   // A zod change that broke the introspection above would silently turn the
   // suite into a no-op. Anchor on one reason that WAS allowlisted as proof of
   // "no applied effect" and one that never was.
   const reasons = new Set(cases.map(([, outcome]) => outcome.reason));
   if (!reasons.has('missing_topology_proof') || !reasons.has('runner_exit_timeout')) {
     throw new Error('SessionStopOutcomeSchema introspection produced no usable stop reasons');
+  }
+  // The confirmed arm must really have left, or the filter above is a no-op and
+  // the positive case below would be contradicted by this suite.
+  if (reasons.has('no_runtime_session_inactive')) {
+    throw new Error('a confirmed stop outcome leaked into the unconfirmed cases');
   }
   return cases;
 }
@@ -180,8 +203,29 @@ function request(overrides: Partial<SessionAgentTransitionRequestV1> = {}): Sess
 
 const credentials = { token: 'token-1' } as never;
 
-function primeHappyPath(metadata: Record<string, unknown> = sourceMetadata()): void {
-  const raw = rawSession(metadata);
+function resolveAgentSwitchingDecision(serverSnapshot?: Parameters<typeof resolveCliFeatureDecision>[0]['serverSnapshot']) {
+  return resolveCliFeatureDecision({
+    featureId: 'sessions.agentSwitching',
+    env: {} as NodeJS.ProcessEnv,
+    serverSnapshot,
+  });
+}
+
+const enabledAgentSwitchingFeatures = FeaturesResponseSchema.parse({
+  features: {
+    sessions: {
+      enabled: true,
+      agentSwitching: { enabled: true },
+    },
+  },
+  capabilities: {},
+});
+
+function primeHappyPath(
+  metadata: Record<string, unknown> = sourceMetadata(),
+  rawOverrides: Record<string, unknown> = {},
+): void {
+  const raw = rawSession(metadata, rawOverrides);
   mocks.resolveSessionTransportContext.mockResolvedValue({
     ok: true,
     sessionId: SESSION_ID,
@@ -230,9 +274,58 @@ describe('runSessionAgentTransition', () => {
     mocks.readAgentNativeResumeRecord.mockResolvedValue(null);
     mocks.writeAgentNativeResumeRecord.mockResolvedValue(undefined);
     mocks.fetchAccountMachineReplacements.mockResolvedValue([{ id: 'machine-1' }, { id: 'machine-2' }]);
+    mocks.resolveCliFeatureDecisionForServer.mockResolvedValue({
+      decision: resolveAgentSwitchingDecision({ status: 'ready', features: enabledAgentSwitchingFeatures }),
+    });
   });
 
   describe('pre-effect rejections leave the source running', () => {
+    it.each([
+      [
+        'the server explicitly disables it',
+        {
+          status: 'ready' as const,
+          features: FeaturesResponseSchema.parse({
+            features: { sessions: { enabled: true, agentSwitching: { enabled: false } } },
+            capabilities: {},
+          }),
+        },
+      ],
+      [
+        'the server omits its bit',
+        {
+          status: 'ready' as const,
+          features: FeaturesResponseSchema.parse({
+            features: { sessions: { enabled: true } },
+            capabilities: {},
+          }),
+        },
+      ],
+      ['the server feature payload is malformed', { status: 'unsupported' as const, reason: 'invalid_payload' as const }],
+      ['no server feature snapshot is available', undefined],
+    ] as const)(
+      'rejects before every source effect when %s',
+      async (_label, serverSnapshot) => {
+        primeHappyPath();
+        mocks.resolveCliFeatureDecisionForServer.mockResolvedValue({
+          decision: resolveAgentSwitchingDecision(serverSnapshot),
+        });
+
+        const result = await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+        expect(mocks.resolveCliFeatureDecisionForServer).toHaveBeenCalledWith(expect.objectContaining({
+          featureId: 'sessions.agentSwitching',
+        }));
+        expect(mocks.callOrder).toEqual([]);
+        expect(mocks.resolveSessionTransportContext).not.toHaveBeenCalled();
+        expect(mocks.waitForSessionIdle).not.toHaveBeenCalled();
+        expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+        expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+        expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+      },
+    );
+
     it('rejects a selection naming the current Agent without stopping anything', async () => {
       primeHappyPath();
 
@@ -318,98 +411,18 @@ describe('runSessionAgentTransition', () => {
       },
     );
 
-    // The per-Agent native-return record is DEVICE-LOCAL and the workspace is
-    // this host's, so a transition delivered to a machine that does not host the
-    // Session would read absent local resume state while stopping and cutting
-    // over a Session that lives elsewhere. The client can address a machine other
-    // than the Session's recorded host (machine replacement redirects the RPC
-    // target), and the server routes by the named machine without checking that
-    // it hosts the Session, so this is the daemon's own gate.
-    it('rejects a Session hosted on another machine without touching it', async () => {
-      primeHappyPath();
+    // The recorded machine is NOT a gate. A machine-id comparison is only a
+    // proxy for continuability, and the components that actually know already
+    // answer it: the stop owner reports a Session it holds no process for, an
+    // absent DEVICE-LOCAL resume record already degrades to a full replay, and
+    // the cutover is server-side. Refusing here removed the capability of a user
+    // who had legitimately moved the Session to this host.
+    it('runs for a Session recorded against a different machine, without reading the account chain', async () => {
+      primeHappyPath(sourceMetadata({ machineId: 'machine-2' }), { machineId: 'machine-2' });
 
-      const result = await runSessionAgentTransition({
-        credentials,
-        request: request(),
-        currentMachineId: 'machine-2',
-      });
-
-      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
-      expect(mocks.requestSessionStop).not.toHaveBeenCalled();
-      expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
-    });
-
-    it('still runs when the authenticated machine hosts the Session', async () => {
-      primeHappyPath();
-
-      const result = await runSessionAgentTransition({
-        credentials,
-        request: request(),
-        currentMachineId: 'machine-1',
-      });
+      const result = await runSessionAgentTransition({ credentials, request: request() });
 
       expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
-    });
-
-    // The product ruling: replacing a machine must not strand the Sessions the
-    // previous one hosted. The Session row still names the predecessor — nothing
-    // re-homes it — and the client already reached this daemon by walking the
-    // replacement chain, so the daemon resolves BOTH sides through the same walk.
-    // The DEVICE-LOCAL native-return record is simply absent here, which the
-    // target already degrades to a full replay, so the successor is a legitimate
-    // host rather than a wrong one.
-    it('runs for a Session whose recorded host machine this one replaced', async () => {
-      primeHappyPath();
-      mocks.fetchAccountMachineReplacements.mockResolvedValue([
-        { id: 'machine-1', replacedByMachineId: 'machine-2' },
-        { id: 'machine-2' },
-      ]);
-
-      const result = await runSessionAgentTransition({
-        credentials,
-        request: request(),
-        currentMachineId: 'machine-2',
-      });
-
-      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
-    });
-
-    // Widening to successors must not turn the guard into a no-op.
-    it('still rejects an unrelated machine that never replaced the host', async () => {
-      primeHappyPath();
-      mocks.fetchAccountMachineReplacements.mockResolvedValue([
-        { id: 'machine-1' },
-        { id: 'machine-2' },
-      ]);
-
-      const result = await runSessionAgentTransition({
-        credentials,
-        request: request(),
-        currentMachineId: 'machine-2',
-      });
-
-      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
-      expect(mocks.requestSessionStop).not.toHaveBeenCalled();
-    });
-
-    it('rejects when the replacement chain cannot be read', async () => {
-      primeHappyPath();
-      mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
-
-      const result = await runSessionAgentTransition({
-        credentials,
-        request: request(),
-        currentMachineId: 'machine-2',
-      });
-
-      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
-    });
-
-    it('does not read the machine chain when this machine is the recorded host', async () => {
-      primeHappyPath();
-
-      await runSessionAgentTransition({ credentials, request: request(), currentMachineId: 'machine-1' });
-
       expect(mocks.fetchAccountMachineReplacements).not.toHaveBeenCalled();
     });
 
@@ -473,6 +486,37 @@ describe('runSessionAgentTransition', () => {
       await runSessionAgentTransition({ credentials, request: request() });
 
       expect(mocks.callOrder).toEqual(['attachments', 'idle', 'stop', 'cutover', 'admit', 'resume']);
+    });
+
+    /**
+     * The reproduced user failure: a Session whose runtime is long gone could
+     * never be switched. The stop owner answered `not_found`, the coordinator
+     * read that as unconfirmed, and the transition ended at `outcome_unknown`
+     * before cutover — three times in a row, with no divider and no spawn.
+     *
+     * A cold Session IS stopped. The owner now says so with a confirmed arm, and
+     * the transition must run to completion on it exactly as it does after
+     * signalling a live runtime — same order, same effects.
+     */
+    it('completes the transition for a cold Session the stop owner confirms is already stopped', async () => {
+      primeHappyPath();
+      mocks.requestSessionStop.mockImplementation(async () => {
+        mocks.callOrder.push('stop');
+        return {
+          ok: true,
+          sessionId: SESSION_ID,
+          stopped: false,
+          stopOutcome: SessionStopOutcomeSchema.parse({
+            status: 'already_stopped',
+            reason: 'no_runtime_session_inactive',
+          }),
+        };
+      });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(mocks.callOrder).toEqual(['stop', 'cutover', 'admit', 'resume']);
     });
 
     it('treats an omitted stopOutcome from an older producer as unknown, not untouched', async () => {
@@ -1066,9 +1110,10 @@ describe('runSessionAgentTransition', () => {
         fromAgentId: 'claude',
         toAgentId: 'codex',
         // The exact bound the brief was built from, recorded on the boundary it
-        // created. It is the only input to the context pass that outlives the
-        // cutover — the seed text is blanked the instant the target accepts it —
-        // so without it the boundary can never be explained after the fact.
+        // created. Nothing else records it once the cutover lands — the seed
+        // text is blanked the instant the target accepts it — so without it the
+        // boundary can never be explained after the fact. This is a FRESH
+        // target, so there is no lower bound to record beside it.
         sourceCutoffSeqInclusive: 100,
       });
     });
@@ -1091,6 +1136,20 @@ describe('runSessionAgentTransition', () => {
       };
       expect(record.content.text).toBe('keep going');
       expect(record.meta.source).toBe('ui');
+    });
+
+    it('does not reactivate an inactive target when the exact localId is already terminal', async () => {
+      primeHappyPath();
+      mocks.enqueuePendingQueueV2MessageViaHttp.mockResolvedValue({
+        didWrite: false,
+        terminal: true,
+        suppressed: false,
+      });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(mocks.requestInactiveSessionResume).not.toHaveBeenCalled();
     });
   });
 
@@ -1390,6 +1449,16 @@ describe('runSessionAgentTransition', () => {
       return JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
     }
 
+    /**
+     * The divider as it was actually COMMITTED, read through the single
+     * canonical sidecar reader rather than by poking at the payload shape.
+     */
+    function readCommittedDivider() {
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      const payload = cutover?.divider.content.v as { content: { data: Record<string, unknown> } } | undefined;
+      return payload ? readSessionAgentTransitionDividerV1(payload.content.data) : null;
+    }
+
     function codexSourceMetadata(): Record<string, unknown> {
       return {
         path: '/work/repo',
@@ -1449,6 +1518,33 @@ describe('runSessionAgentTransition', () => {
       );
     });
 
+    it('keeps a valid record when the departing Agent is DISABLED in Account settings', async () => {
+      // Disabling an Agent is transient and reversible; the conversation it
+      // left behind is neither. A capture that evaluated launch policy wrote
+      // `identity: null` here, DELETING the only copy of that continuity, and
+      // re-enabling the Agent afterwards could never recover it. Whether a
+      // recorded identity may be resumed is a RETURN decision, taken against
+      // the settings that hold then.
+      primeHappyPath();
+
+      await runSessionAgentTransition({
+        credentials,
+        request: request(),
+        deps: {
+          readAccountSettings: () => ({
+            backendEnabledByTargetKey: { 'agent:claude': false },
+          }),
+        },
+      });
+
+      expect(mocks.writeAgentNativeResumeRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'claude',
+          identity: { v: 1, vendorResumeId: 'claude-native-1' },
+        }),
+      );
+    });
+
     it('never fails the transition over the record', async () => {
       primeHappyPath();
       mocks.writeAgentNativeResumeRecord.mockRejectedValue(new Error('disk is full'));
@@ -1474,6 +1570,9 @@ describe('runSessionAgentTransition', () => {
         agentId: 'codex',
       });
       expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
+      // And the boundary records no bound either: this one genuinely had none,
+      // so a later rebuild of it IS the full replay.
+      expect(readCommittedDivider()).not.toHaveProperty('returningAgentLastSeenSeqInclusive');
       const written = readCommittedTargetView();
       expect(written.flavor).toBe('codex');
       expect(written.codexSessionId).toBeUndefined();
@@ -1494,6 +1593,12 @@ describe('runSessionAgentTransition', () => {
 
       expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
       expect(readSeedSource()?.returningAgentLastSeenSeq).toBe(55);
+      // The SAME bound, recorded on the boundary it bounded. The brief's text is
+      // blanked on acceptance and the departure record is overwritten by the
+      // next departure, so a boundary that does not carry this can never be
+      // explained again: every later rebuild replays the full prefix and shows
+      // more than this Agent was handed.
+      expect(readCommittedDivider()?.returningAgentLastSeenSeqInclusive).toBe(55);
       const written = readCommittedTargetView();
       expect(written.flavor).toBe('claude');
       // Written through the current-view projector, which is the only writer of

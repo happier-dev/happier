@@ -118,4 +118,16 @@ describe('buildSessionAgentTransitionActivationBrief — native log pointer', ()
     });
     expect(retrieval?.nativeTranscriptPath ?? null).toBeNull();
   });
+
+  it('passes the canonical source Agent display title to the replay owner', async () => {
+    await buildWith({
+      sourceAgentId: 'claude',
+      targetAgentId: 'codex',
+      metadata: { claudeSessionId: 'claude-1', claudeTranscriptPath: CLAUDE_LOG_PATH },
+    });
+
+    expect(mocks.resolveReplaySeedDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAgentLabel: 'Claude Code CLI' }),
+    );
+  });
 });

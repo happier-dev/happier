@@ -1,5 +1,4 @@
 import {
-  resolveCanonicalMachineId,
   type SessionAgentTransitionSelectionV1,
   type SessionContinuationInspectionRequestV1,
   type SessionContinuationInspectionV1,
@@ -7,7 +6,6 @@ import {
 import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -53,64 +51,6 @@ export function hasCanonicalHostedTranscript(metadata: Readonly<Record<string, u
     && typeof directSessionV1 === 'object'
     && (directSessionV1 as { v?: unknown }).v === 1;
   return !establishedDirect && metadata.transcriptStorage !== 'direct';
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-/**
- * The single daemon-side answer to "is this daemon the Session's host?".
- *
- * Both transition entry points ask it here for the same reason they share
- * {@link hasCanonicalHostedTranscript}: a Session hosted elsewhere must never
- * pass inspection and then be stopped by the mutation, or vice versa.
- *
- * The rest of this feature already assumes the answer is yes. The per-Agent
- * native-return record is DEVICE-LOCAL (`agentNativeReturn.ts`), the workspace
- * path names this host's filesystem, and the client can legitimately address a
- * machine other than the Session's recorded one — the UI resolves its RPC target
- * through the machine REPLACEMENT chain, and the server routes a machine RPC by
- * the named machine without checking that it hosts the Session. So the daemon is
- * the only place this can be decided.
- *
- * An unknown machine on either side is not a mismatch: an older row that records
- * no machine, or a daemon whose identity was not threaded in, must not lose the
- * ability to switch Agents.
- *
- * A machine REPLACEMENT is not a mismatch either. Replacing a machine must not
- * strand the Sessions the previous one hosted, and nothing re-homes a Session
- * row, so its recorded host stays the predecessor forever. Both sides are
- * therefore resolved through {@link resolveCanonicalMachineId} — the same walk
- * the client used to choose this daemon as the RPC target — so the successor
- * recognises its own inheritance instead of reading it as foreign. That yields a
- * fresh target with a full replay, because the DEVICE-LOCAL resume record is
- * simply absent on a new host and an absent record already degrades to replay;
- * no vendor state is migrated, because the vendor conversation genuinely does
- * not exist here.
- *
- * The chain lives only on the server, so it costs one Account-scoped read — taken
- * ONLY when the identity comparison already failed, which is the rare case. An
- * unreadable chain proves no inheritance and keeps the refusal.
- */
-export async function sessionIsHostedHere(params: Readonly<{
-  currentMachineId?: string | null;
-  rawSession: Readonly<Record<string, unknown>>;
-  metadata: Readonly<Record<string, unknown>>;
-  credentials: Credentials;
-}>): Promise<boolean> {
-  const hostMachineId = readNonEmptyString(params.currentMachineId);
-  const sessionMachineId = readNonEmptyString(params.rawSession.machineId)
-    ?? readNonEmptyString(params.metadata.machineId);
-  if (!hostMachineId || !sessionMachineId || hostMachineId === sessionMachineId) return true;
-
-  const machines = await fetchAccountMachineReplacements({ credentials: params.credentials });
-  if (!machines) return false;
-  const canonicalSessionMachineId = resolveCanonicalMachineId(sessionMachineId, machines)?.machineId
-    ?? sessionMachineId;
-  const canonicalHostMachineId = resolveCanonicalMachineId(hostMachineId, machines)?.machineId
-    ?? hostMachineId;
-  return canonicalSessionMachineId === canonicalHostMachineId;
 }
 
 export type SessionContinuationTargetSupport =
@@ -174,8 +114,6 @@ export function evaluateSessionContinuationTargetSupport(params: Readonly<{
 export async function inspectSessionContinuation(params: Readonly<{
   credentials: Credentials;
   request: SessionContinuationInspectionRequestV1;
-  /** Exact daemon machine; a Session hosted elsewhere is not transitionable. */
-  currentMachineId?: string | null;
 }>): Promise<SessionContinuationInspectionV1> {
   const rawSession = await fetchSessionByIdCompat({
     token: params.credentials.token,
@@ -196,15 +134,18 @@ export async function inspectSessionContinuation(params: Readonly<{
   const record = metadata as Record<string, unknown>;
   const workspacePath = typeof record.path === 'string' ? record.path.trim() : '';
   const sourceAgentId = resolveAgentIdFromSessionMetadata(record);
+  // Deliberately NOT gated on the Session's recorded machine. A machine id is a
+  // PROXY for "can this Session be continued here", and the components that
+  // actually know already answer it: the stop owner finds no local process and
+  // says so, an absent DEVICE-LOCAL native-return record already degrades to a
+  // full replay, the cutover is server-side and machine-agnostic, and activating
+  // the target succeeds or fails here loudly. The proxy was wrong in both
+  // directions — it refused a Session a user had legitimately moved to this
+  // host, while still admitting a same-id Session whose vendor conversation was
+  // long gone — so it removed real capability to prevent nothing.
   const transitionableSession = Boolean(workspacePath)
     && sourceAgentId !== null
-    && hasCanonicalHostedTranscript(record)
-    && await sessionIsHostedHere({
-      currentMachineId: params.currentMachineId,
-      rawSession,
-      metadata: record,
-      credentials: params.credentials,
-    });
+    && hasCanonicalHostedTranscript(record);
   if (!transitionableSession) {
     return { type: 'unavailable', reason: 'unsupported_session' };
   }

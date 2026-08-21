@@ -199,6 +199,73 @@ describe('previewSessionAgentTransitionBrief', () => {
     expect(seedCall.retrieval?.nativeTranscriptPath ?? null).toBeNull();
   });
 
+  /**
+   * The card's claim is "this is what was handed over", and on a native return
+   * what was handed over is the AWAY-DELTA: the transition bounded its pass
+   * below by the returning Agent's own departure head and above by the cutoff.
+   * The divider is the only surviving copy of that lower bound — the record it
+   * came from is device-local and the next departure overwrites it — so a
+   * rebuild that ignores it replays the whole prefix and shows MORE than was
+   * sent, which is the one direction this surface may not fail in.
+   *
+   * Asserted through the REAL brief owner down to the canonical Replay seed
+   * pass, because "the preview forwards a field" is not the contract; "the pass
+   * runs against the same lower bound the transition used" is.
+   */
+  it('rebuilds a native return against the away-delta the boundary actually sent', async () => {
+    mocks.resolveReplaySeedDraft.mockReset();
+    mocks.resolveReplaySeedDraft.mockResolvedValue({
+      status: 'seeded',
+      seedDraft: 'DELTA SEED',
+      dialog: [],
+      summaryText: null,
+      sourceCutoffSeqInclusive: 29_979,
+      referencedSessionMediaWorkspacePaths: [],
+    });
+
+    const preview = await previewSessionAgentTransitionBrief({
+      credentials: CREDENTIALS,
+      request: { ...REQUEST, returningAgentLastSeenSeqInclusive: 130 },
+      deps: buildDeps({ buildActivationBrief: buildSessionAgentTransitionActivationBrief }),
+    });
+
+    expect(preview).toEqual({ type: 'rebuilt', protocolVersion: 1, briefText: 'DELTA SEED' });
+    const seedCall = mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as {
+      source: { returningAgentLastSeenSeq?: unknown; upToSeqInclusive?: unknown };
+    };
+    // BOTH ends of the boundary, not just the one the divider used to carry.
+    expect(seedCall.source.returningAgentLastSeenSeq).toBe(130);
+    expect(seedCall.source.upToSeqInclusive).toBe(29_979);
+  });
+
+  /**
+   * Discriminating control: a fresh target's boundary had no lower bound at all,
+   * so none may be invented. The key stays ABSENT rather than becoming a
+   * `null`/`0` the pass would have to reinterpret — a fabricated bound costs
+   * history, and starving a fresh target is exactly what the transition's own
+   * `null` path exists to make impossible.
+   */
+  it('rebuilds a fresh-target boundary as the full replay, inventing no lower bound', async () => {
+    mocks.resolveReplaySeedDraft.mockReset();
+    mocks.resolveReplaySeedDraft.mockResolvedValue({
+      status: 'seeded',
+      seedDraft: 'FULL SEED',
+      dialog: [],
+      summaryText: null,
+      sourceCutoffSeqInclusive: 29_979,
+      referencedSessionMediaWorkspacePaths: [],
+    });
+
+    await previewSessionAgentTransitionBrief({
+      credentials: CREDENTIALS,
+      request: REQUEST,
+      deps: buildDeps({ buildActivationBrief: buildSessionAgentTransitionActivationBrief }),
+    });
+
+    const seedCall = mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as { source: object };
+    expect(seedCall.source).not.toHaveProperty('returningAgentLastSeenSeq');
+  });
+
   it('survives a throwing brief owner without claiming an empty source', async () => {
     const preview = await previewSessionAgentTransitionBrief({
       credentials: CREDENTIALS,
