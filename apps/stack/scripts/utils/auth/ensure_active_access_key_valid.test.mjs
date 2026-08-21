@@ -159,6 +159,44 @@ test('ensureActiveAccessKeyValid repairs a selected profile from the stable daem
   }
 });
 
+test('ensureActiveAccessKeyValid repairs the stable stack scope from a historical matching profile', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-repair-matching-profile-'));
+  try {
+    await withAuthServer({ goodToken: 'good-token' }, async ({ serverUrl }) => {
+      const stableServerId = 'stack_repo-remote-dev__id_default';
+      const historicalServerId = new URL(serverUrl).host.replace(':', '-');
+      const env = {
+        HAPPIER_ACTIVE_SERVER_ID: stableServerId,
+        HAPPIER_STACK_STACK: 'repo-remote-dev',
+      };
+      writeFileSync(
+        join(home, 'settings.json'),
+        JSON.stringify({
+          schemaVersion: 6,
+          activeServerId: stableServerId,
+          servers: {
+            [stableServerId]: { id: stableServerId, serverUrl },
+            [historicalServerId]: { id: historicalServerId, serverUrl },
+          },
+        }),
+      );
+      const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
+      const historicalCredentialPath = join(home, 'servers', historicalServerId, 'access.key');
+
+      assert.equal(resolved.aliasServerScopedPaths.includes(historicalCredentialPath), false);
+      assert.equal(resolved.credentialSourcePaths.includes(historicalCredentialPath), true);
+      writeAccessKeyFile(historicalCredentialPath, 'good-token');
+
+      const result = await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env, timeoutMs: 2_500 });
+      assert.equal(result.kind, 'repaired');
+      assert.equal(result.sourcePath, historicalCredentialPath);
+      assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), 'good-token');
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('ensureActiveAccessKeyValid does not overwrite an already-valid server-scoped access key', async () => {
   const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-keep-'));
   try {
