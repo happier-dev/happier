@@ -1,30 +1,16 @@
 import {
   readSessionAgentActivityHeadlineFromMetadata,
-  SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
   SessionWorkflowActivityHeadlineV1Schema,
-  type SessionWorkflowRunSnapshotV1,
-  type SessionSystemRecord,
-  type SessionSystemRecordNamespace,
-  type SessionSystemRecordUpsertRequest,
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import {
-  ACTIVITY_SYSTEM_RECORD_NAMESPACE,
-  buildWorkflowRunSystemRecordLocalId,
-  openWorkflowRunSystemRecordPayload,
-} from '@/session/systemRecords/activity/activitySystemRecords';
-import {
-  commitBackgroundTaskActivitySystemRecord,
-  commitWorkflowActivitySystemRecord,
-} from '@/session/systemRecords/activity/commitWorkflowActivitySystemRecords';
-import type {
-  SessionEncryptionContext,
-  SessionStoredContentEncryptionMode,
-} from '@/session/transport/encryption/sessionEncryptionContext';
+import { commitBackgroundTaskActivitySystemRecord } from '@/session/systemRecords/activity/commitWorkflowActivitySystemRecords';
 import { logger } from '@/ui/logger';
-import type { SessionActivityHeadlineBundle } from '@/session/systemRecords/activity/publishWorkflowActivitySnapshot';
+import {
+  createSessionWorkflowActivityTransport,
+  type SessionWorkflowActivityBinding,
+} from '@/session/systemRecords/activity/sessionWorkflowActivityTransport';
 import { createBackgroundTaskRecordPublisher } from '../providerActivity/backgroundTaskRecordPublisher';
 import type { ClaudeProviderTaskActivity } from '../providerActivity/createClaudeProviderActivityLedger';
 import type { ClaudeWorkflowAgentTranscriptRegistration } from './claudeWorkflowJournalFollower';
@@ -59,7 +45,7 @@ import {
  * The encryption mode/ctx are resolved lazily per write via `resolveEncryption` so the wiring does
  * not need them at construction time (they may require a session fetch for the data-encryption key).
  */
-export type ClaudeWorkflowActivitySessionBinding = Readonly<{
+export type ClaudeWorkflowActivitySessionBinding = SessionWorkflowActivityBinding & Readonly<{
   /** Happier session id (record route path + metadata target). */
   sessionId: string;
   /** Best-effort metadata writer target (the session client). */
@@ -67,15 +53,6 @@ export type ClaudeWorkflowActivitySessionBinding = Readonly<{
     updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
     getMetadataSnapshot?: () => Metadata | null;
   }>;
-  /** Durable system-record writer target (the session client). */
-  upsertSystemRecord: (request: SessionSystemRecordUpsertRequest) => Promise<void>;
-  /** Durable system-record reader target (the session client), used to seed publisher revisions. */
-  fetchSystemRecord?: (params: Readonly<{
-    namespace: SessionSystemRecordNamespace;
-    localId: string;
-  }>) => Promise<SessionSystemRecord | null>;
-  /** Lazily resolve the session's stored-content encryption mode + context for record sealing. */
-  resolveEncryption: () => Promise<Readonly<{ mode: SessionStoredContentEncryptionMode; ctx?: SessionEncryptionContext }>>;
   /** The Claude transcript session id guard (NOT the Happier session id). Null until learned. */
   getCurrentClaudeSessionId: () => string | null;
 }>;
@@ -168,40 +145,13 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
   ) => void | Promise<void>;
 }>): WiredClaudeWorkflowActivitySource {
   const { binding } = params;
-
-  // Memoize the encryption resolution. `binding.resolveEncryption` may perform a session fetch to
-  // open the data-encryption key; CWF3 requires bounded writes, so it must run AT MOST ONCE for the
-  // session's lifetime — never per `commitRecord` (which fires on every changed run). The session's
-  // stored-content encryption mode/ctx are stable for the session, so caching the first resolution
-  // (including its in-flight promise) keeps record writes from amplifying into N session fetches.
-  let encryptionResolution: ReturnType<ClaudeWorkflowActivitySessionBinding['resolveEncryption']> | null = null;
-  const resolveEncryptionOnce = (): ReturnType<ClaudeWorkflowActivitySessionBinding['resolveEncryption']> => {
-    if (!encryptionResolution) {
-      encryptionResolution = Promise.resolve(binding.resolveEncryption()).catch((error) => {
-        // Allow a later commit to retry if the first resolution failed (e.g. transient session fetch).
-        encryptionResolution = null;
-        throw error;
-      });
-    }
-    return encryptionResolution;
-  };
-
-  const commitRecord = async (snapshot: SessionWorkflowRunSnapshotV1): Promise<void> => {
-    const { mode, ctx } = await resolveEncryptionOnce();
-    await commitWorkflowActivitySystemRecord({
-      sessionId: binding.sessionId,
-      mode,
-      ...(ctx ? { ctx } : {}),
-      snapshot,
-      upsertSystemRecord: binding.upsertSystemRecord,
-    });
-  };
+  const activityTransport = createSessionWorkflowActivityTransport(binding);
 
   // Durable background-task records ride the SAME session binding and the same encryption
   // resolution as workflow records: one credential path, one seal policy, one commit owner.
   const backgroundTaskRecordPublisher = createBackgroundTaskRecordPublisher({
     commitRecord: async (record) => {
-      const { mode, ctx } = await resolveEncryptionOnce();
+      const { mode, ctx } = await activityTransport.resolveEncryption();
       await commitBackgroundTaskActivitySystemRecord({
         mode,
         ...(ctx ? { ctx } : {}),
@@ -221,32 +171,6 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     },
   });
 
-  const readCommittedRunSnapshot = binding.fetchSystemRecord
-    ? async (runId: string): Promise<SessionWorkflowRunSnapshotV1 | null> => {
-      const record = await binding.fetchSystemRecord?.({
-        namespace: ACTIVITY_SYSTEM_RECORD_NAMESPACE,
-        localId: buildWorkflowRunSystemRecordLocalId({ runId }),
-      });
-      if (!record || record.namespace !== ACTIVITY_SYSTEM_RECORD_NAMESPACE) return null;
-      const { ctx } = await resolveEncryptionOnce();
-      return openWorkflowRunSystemRecordPayload({
-        namespace: record.namespace,
-        content: record.content,
-        ...(ctx ? { ctx } : {}),
-      });
-    }
-    : undefined;
-
-  const writeHeadlines = async (bundle: SessionActivityHeadlineBundle): Promise<void> => {
-    await binding.metadataWriter.updateMetadata(
-      (metadata) => ({
-        ...metadata,
-        sessionWorkflowActivityHeadlineV1: bundle.workflow,
-        [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: bundle.agentActivity,
-      }),
-    );
-  };
-
   const currentMetadata = binding.metadataWriter.getMetadataSnapshot?.();
   const startupMetadata = currentMetadata && hasLegacyClaudeAsyncAgentWorkflowGhosts(currentMetadata)
     ? pruneLegacyClaudeAsyncAgentWorkflowGhostsFromMetadata(currentMetadata)
@@ -264,9 +188,11 @@ export function wireClaudeWorkflowActivitySource(params: Readonly<{
     backendId: params.backendId,
     ...(params.agentId ? { agentId: params.agentId } : {}),
     getCurrentClaudeSessionId: binding.getCurrentClaudeSessionId,
-    commitRecord,
-    ...(readCommittedRunSnapshot ? { readCommittedRunSnapshot } : {}),
-    writeHeadlines,
+    commitRecord: activityTransport.commitRecord,
+    ...(activityTransport.readCommittedRunSnapshot
+      ? { readCommittedRunSnapshot: activityTransport.readCommittedRunSnapshot }
+      : {}),
+    writeHeadlines: activityTransport.writeHeadlines,
     backgroundTaskRecordPublisher,
     ...(params.onProviderTaskActivity
       ? { onProviderTaskActivity: params.onProviderTaskActivity }
