@@ -1,6 +1,6 @@
 ---
 name: happier-port-0-2-to-0-3
-description: Port a complete Happier change from the 0.2 source line into the evolved 0.3 destination line by intent, including every later refinement and accepted review fix, without copying predecessor architecture or consuming unrelated work. Use when a 0.2 PR, branch, commit, or dirty change must be represented correctly in 0.3 with destination-owner discovery, compatibility analysis, related-only commits, validation, and verified contributor co-authorship.
+description: Port a complete Happier change from the 0.2 source line into the evolved 0.3 destination line by intent, including later source refinements, without copying predecessor architecture or overwriting unrelated work. Use whenever committed, staged, or unstaged 0.2 behavior must be analyzed for 0.3 applicability, adapted through 0.3's canonical owners, and validated without propagating 0.3 changes backward. This skill does not stage or commit changes.
 ---
 
 # Happier Port 0.2 to 0.3
@@ -13,8 +13,7 @@ Use:
 
 - `skills/happier-compatibility` for released and prospective wire, persistence, semantic, and operational contracts;
 - `skills/happier-implement` and `skills/happier-testing` for destination changes and RED -> GREEN proof;
-- `skills/happier-commit-worktree` for a large or actively dirty destination;
-- `skills/verify-claims` before relying on source reports, reviews, or delegated conclusions;
+- `skills/verify-claims` before relying on source reports or delegated conclusions;
 - `skills/attack-conclusion` and `skills/handoff-report` for closeout.
 
 Read [port-workflow.md](references/port-workflow.md) before acting.
@@ -38,7 +37,7 @@ Port only after the source change is coherent and has passed its required valida
 - tests and compatibility behavior that prove it;
 - exclusions and intentionally unchanged behavior.
 
-Include the whole source change, not only the latest follow-up commit. Refresh this intent set after every accepted review or CI-driven correction.
+Include the whole current source change: committed, staged, and unstaged bytes in scope. Refresh this intent set after every later source refinement or correction.
 
 ## 4. Re-discover the 0.3 owner
 
@@ -59,14 +58,14 @@ Apply every applicable intent at the 0.3 canonical owner. Reuse and extend exist
 
 Preserve released compatibility where the changed seam can cross versions, but do not retain unreleased 0.2 internal architecture or create speculative adapters. Never port 0.3 changes backward into 0.2 under this skill.
 
-## 6. Commit only the port
+## 6. Preserve unrelated destination work
 
-Treat the 0.3 checkout as shared and dirty. Inspect inherited staging, select exact related paths or hunks, and preserve all unrelated bytes uncommitted. Use a Conventional Commit message.
+Treat the 0.3 checkout as shared and dirty. Inspect current bytes and inherited staging before editing, layer compatible changes onto the live worktree, and preserve all unrelated bytes unchanged and uncommitted.
 
-For a PR-derived port, every destination commit carrying the PR's intent or an accepted follow-up must include the PR author's verified `Co-authored-by: Name <email>` trailer. Preserve other material contributors under the repository attribution rules. Stop before committing if a required identity cannot be verified; never guess or expose an email.
+Do not stage or commit. Report the exact changed paths or hunks and validation to the calling workflow; that caller owns any later commit authority, grouping, message, and attribution.
 
 ## 7. Verify completeness after every follow-up
 
-After each later source refinement or accepted review finding, repeat the intent classification and destination audit. A test-only source follow-up may require no destination code when 0.3 already proves the contract; record that evidence instead of creating a ceremonial commit.
+After each later source refinement, repeat the intent classification and destination audit. A test-only source follow-up may require no destination code when 0.3 already proves the contract; record that evidence instead of making a ceremonial edit.
 
-Finish only when every source intent has an evidence-backed destination disposition, all applicable changes are committed without unrelated bytes, deciding checks have run, and remaining gaps or unavailable validation are explicit.
+Finish only when every source intent has an evidence-backed destination disposition, all applicable changes are present in the destination worktree without overwriting unrelated bytes, deciding checks have run, and remaining gaps or unavailable validation are explicit.

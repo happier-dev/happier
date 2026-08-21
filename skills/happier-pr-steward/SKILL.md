@@ -60,7 +60,9 @@ Do not make a destination implementation the design authority for the PR branch.
 
 ## 6. Invoke the required version-line port
 
-When the PR belongs to the 0.2 line, invoke `skills/happier-port-0-2-to-0-3` for the complete PR intent plus every steward-authored and review-driven follow-up. Supply explicit checkout locations; do not encode local folder names in the PR lifecycle. The port skill owns destination discovery, adaptation, validation, related-only commits, and attribution.
+When the PR belongs to the 0.2 line, invoke `skills/happier-port-0-2-to-0-3` for the complete PR intent plus every steward-authored and review-driven follow-up. Supply explicit checkout locations; do not encode local folder names in the PR lifecycle. The port skill owns destination discovery, adaptation, and validation, but it never stages or commits.
+
+After the port is validated, this PR workflow owns the separately authorized destination commit. Use `skills/happier-commit-worktree` when needed, select only related paths or hunks, and include the verified PR author as `Co-authored-by:` on every destination commit carrying the PR intent or an accepted follow-up.
 
 ## 7. Request review through an exact public preview
 
