@@ -21,7 +21,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -80,7 +80,13 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
 
   it('emits review_findings.v2 meta and allows review.triage action overlay', async () => {
     const testDir = run.testDir(`execution-runs-review-triage-${randomUUID()}`);
-    server = await startServerLight({ testDir });
+    server = await startServerLight({
+      testDir,
+      dbProvider: 'sqlite',
+      extraEnv: {
+        HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+      },
+    });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
@@ -98,6 +104,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: 90_000,
       env: {
         ...process.env,
         CI: '1',
@@ -109,6 +116,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
         HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
@@ -240,7 +248,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         },
       ],
     };
-    await postEncryptedUiTextMessage({
+    await enqueueEncryptedUiTextMessage({
       baseUrl: serverBaseUrl,
       token: auth.token,
       sessionId,
@@ -273,5 +281,5 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         event.userTextPreview.includes('@happier/review.apply_accepted_findings'),
     );
     expect(observedApplyPrompt.userTextPreview).toContain('@happier/review.apply_accepted_findings');
-  }, 180_000);
+  }, 300_000);
 });

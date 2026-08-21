@@ -79,7 +79,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { sleep, waitFor } from '../../src/testkit/timing';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 
 const run = createRunDirs({
   runLabel: 'core',
@@ -543,7 +543,7 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       profileId,
     });
 
-    await postEncryptedUiTextMessage({
+    await enqueueEncryptedUiTextMessage({
       baseUrl: claudeFixture.serverBaseUrl,
       token: claudeFixture.auth.token,
       sessionId,
@@ -673,7 +673,7 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       profileId,
     });
 
-    await postEncryptedUiTextMessage({
+    await enqueueEncryptedUiTextMessage({
       baseUrl: claudeFixture.serverBaseUrl,
       token: claudeFixture.auth.token,
       sessionId,
@@ -797,7 +797,7 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       profileId,
     });
 
-    await postEncryptedUiTextMessage({
+    await enqueueEncryptedUiTextMessage({
       baseUrl: claudeFixture.serverBaseUrl,
       token: claudeFixture.auth.token,
       sessionId,
@@ -1582,7 +1582,7 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       profileId,
     });
 
-    await postEncryptedUiTextMessage({
+    await enqueueEncryptedUiTextMessage({
       baseUrl: claudeFixture.serverBaseUrl,
       token: claudeFixture.auth.token,
       sessionId,

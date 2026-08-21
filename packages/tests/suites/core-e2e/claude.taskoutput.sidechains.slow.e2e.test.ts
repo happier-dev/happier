@@ -15,7 +15,7 @@ import { writeTestManifestForServer } from '../../src/testkit/manifestForServer'
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -211,7 +211,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
         );
       }, { timeoutMs: 90_000 });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,

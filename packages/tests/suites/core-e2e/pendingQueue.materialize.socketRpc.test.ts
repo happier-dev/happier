@@ -82,7 +82,12 @@ describe('core e2e: pending queue v2 materialize via socket RPC', () => {
       for (;;) {
         const ack = await socket.emitWithAck<any>(
           'pending-materialize-next',
-          { sid: sessionId, deliveryState: 'provider' },
+          {
+            sid: sessionId,
+            deliveryState: 'provider',
+            deliveryTiming: 'after_foreground_ready',
+            foregroundState: 'ready',
+          },
           20_000,
         );
         expect(ack && typeof ack === 'object').toBe(true);
@@ -132,6 +137,8 @@ describe('core e2e: pending queue v2 materialize via socket RPC', () => {
       const firstSocketMaterialize = await socket.emitWithAck<any>('pending-materialize-next', {
         sid: sessionId,
         deliveryState: 'provider',
+        deliveryTiming: 'after_foreground_ready',
+        foregroundState: 'ready',
         expectedPendingVersion: lostSocketAckExpectedVersion,
       }, 20_000);
       expect(firstSocketMaterialize).toMatchObject({
@@ -142,6 +149,8 @@ describe('core e2e: pending queue v2 materialize via socket RPC', () => {
       const socketReplay = await socket.emitWithAck<any>('pending-materialize-next', {
         sid: sessionId,
         deliveryState: 'provider',
+        deliveryTiming: 'after_foreground_ready',
+        foregroundState: 'ready',
         expectedPendingVersion: lostSocketAckExpectedVersion,
       }, 20_000);
       expect(socketReplay).toMatchObject({

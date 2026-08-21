@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSession } from '../../src/testkit/sessions';
-import { createSessionScopedSocketCollector, createUserScopedSocketCollector } from '../../src/testkit/socketClient';
+import { createSession, fetchSessionV2 } from '../../src/testkit/sessions';
+import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
+import { createMachineBoundSessionScopedSocketCollector } from '../../src/testkit/sessionSocketBinding';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -125,7 +126,11 @@ describe('core e2e: pending queue v2 emits pending-changed socket updates', () =
     const { sessionId } = await createSession(server.baseUrl, auth.token);
 
     const userSocket = createUserScopedSocketCollector(server.baseUrl, auth.token);
-    const sessionSocket = createSessionScopedSocketCollector(server.baseUrl, auth.token, sessionId);
+    const { socket: sessionSocket } = await createMachineBoundSessionScopedSocketCollector({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId,
+    });
 
     writeTestManifestForServer({
       testDir,
@@ -149,6 +154,11 @@ describe('core e2e: pending queue v2 emits pending-changed socket updates', () =
       userSocket.connect();
       sessionSocket.connect();
       await waitFor(() => userSocket.isConnected() && sessionSocket.isConnected(), { timeoutMs: 20_000 });
+      sessionSocket.emit('session-alive', { sid: sessionId, time: Date.now(), thinking: false });
+      await waitFor(
+        async () => (await fetchSessionV2(server.baseUrl, auth.token, sessionId)).active === true,
+        { timeoutMs: 20_000, context: 'machine-bound pending publisher registration' },
+      );
 
       const localId = randomUUID();
       const ciphertext = Buffer.from('pending-materialize', 'utf8').toString('base64');
@@ -161,11 +171,28 @@ describe('core e2e: pending queue v2 emits pending-changed socket updates', () =
       }, { timeoutMs: 20_000 });
 
       const start1 = userSocket.getEvents().length;
-      const ack = await sessionSocket.emitWithAck<any>('pending-materialize-next', { sid: sessionId }, 20_000);
+      const ack = await sessionSocket.emitWithAck<any>('pending-materialize-next', {
+        sid: sessionId,
+        deliveryState: 'provider',
+        deliveryTiming: 'after_foreground_ready',
+        foregroundState: 'ready',
+      }, 20_000);
       expect(ack?.ok).toBe(true);
       expect(ack?.didMaterialize).toBe(true);
       await waitFor(() => {
         const body = findPendingChangedUpdateAfter({ events: userSocket.getEvents(), sessionId, afterIndex: start1 });
+        return body?.pendingCount === 1;
+      }, { timeoutMs: 20_000 });
+
+      const start2 = userSocket.getEvents().length;
+      const accepted = await sessionSocket.emitWithAck<any>('pending-delivery-accepted-v1', {
+        v: 1,
+        sessionId,
+        localId,
+      }, 20_000);
+      expect(accepted).toMatchObject({ ok: true, didResolve: true });
+      await waitFor(() => {
+        const body = findPendingChangedUpdateAfter({ events: userSocket.getEvents(), sessionId, afterIndex: start2 });
         return body?.pendingCount === 0;
       }, { timeoutMs: 20_000 });
 

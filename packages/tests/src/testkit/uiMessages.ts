@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { encryptLegacyBase64 } from './messageCrypto';
 import { fetchJson } from './http';
 
-export async function postEncryptedUiTextMessage(params: {
+type EncryptedUiTextMessageParams = {
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -11,9 +11,14 @@ export async function postEncryptedUiTextMessage(params: {
   text: string;
   metaExtras?: Record<string, unknown>;
   timeoutMs?: number;
-}): Promise<void> {
+};
+
+async function sendEncryptedUiTextMessage(
+  params: EncryptedUiTextMessageParams,
+  endpoint: string,
+  requestedAction?: { v: 1; kind: 'enqueue' },
+): Promise<void> {
   const localId = randomUUID();
-  const endpoint = `${params.baseUrl}/v2/sessions/${params.sessionId}/messages`;
   const msg = {
     role: 'user',
     content: { type: 'text', text: params.text },
@@ -25,7 +30,12 @@ export async function postEncryptedUiTextMessage(params: {
     const res = await fetchJson<unknown>(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${params.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ciphertext, localId }),
+      body: JSON.stringify({
+        ciphertext,
+        localId,
+        messageRole: 'user',
+        ...(requestedAction ? { requestedAction } : {}),
+      }),
       timeoutMs: params.timeoutMs ?? 20_000,
     });
     if (res.status < 200 || res.status >= 300) {
@@ -38,4 +48,19 @@ export async function postEncryptedUiTextMessage(params: {
     }
     throw error;
   }
+}
+
+export async function postEncryptedUiTextMessage(params: EncryptedUiTextMessageParams): Promise<void> {
+  await sendEncryptedUiTextMessage(
+    params,
+    `${params.baseUrl}/v2/sessions/${params.sessionId}/messages`,
+  );
+}
+
+export async function enqueueEncryptedUiTextMessage(params: EncryptedUiTextMessageParams): Promise<void> {
+  await sendEncryptedUiTextMessage(
+    params,
+    `${params.baseUrl}/v2/sessions/${params.sessionId}/pending`,
+    { v: 1, kind: 'enqueue' },
+  );
 }

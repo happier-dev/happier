@@ -16,7 +16,7 @@ import { writeTestManifestForServer } from '../../src/testkit/manifestForServer'
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
@@ -171,7 +171,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       // Switch to remote with the legacy runner (Agent SDK disabled) and verify flags survive.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,
@@ -197,7 +197,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,
@@ -327,7 +327,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
       await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,
@@ -353,7 +353,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
       await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,
@@ -482,7 +482,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,

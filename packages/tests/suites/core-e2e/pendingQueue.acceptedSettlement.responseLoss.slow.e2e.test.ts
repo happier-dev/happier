@@ -52,6 +52,8 @@ describe('core e2e: accepted settlement survives a committed socket ACK loss', (
       const materialized = await socket.emitWithAck<any>('pending-materialize-next', {
         sid: sessionId,
         deliveryState: 'provider',
+        deliveryTiming: 'after_foreground_ready',
+        foregroundState: 'ready',
       }, 20_000);
       expect(materialized).toMatchObject({
         ok: true,

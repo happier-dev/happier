@@ -17,7 +17,7 @@ import { enqueueSessionPromptForScenario, waitForAssistantMessageContaining } fr
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fetchAllMessages, fetchSessionV2, type SessionMessageRow } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 
 import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
 
@@ -531,7 +531,7 @@ async function enqueueWakePrompt(params: {
     return undefined;
   }
 
-  await postEncryptedUiTextMessage({
+  await enqueueEncryptedUiTextMessage({
     baseUrl: params.harness.server.baseUrl,
     token: params.harness.authToken,
     sessionId: params.sessionId,

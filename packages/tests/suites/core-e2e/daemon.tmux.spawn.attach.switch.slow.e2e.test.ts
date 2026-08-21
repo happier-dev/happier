@@ -17,7 +17,7 @@ import { writeTestManifestForServer } from '../../src/testkit/manifestForServer'
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
-import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
+import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
@@ -267,7 +267,7 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
       expect(Object.prototype.hasOwnProperty.call(localInvocation.mergedMcpServers, 'happier')).toBe(true);
 
       // Trigger a UI message to force local → remote switch, then ensure the SDK runner invokes fake Claude.
-      await postEncryptedUiTextMessage({
+      await enqueueEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
         token: auth.token,
         sessionId,
