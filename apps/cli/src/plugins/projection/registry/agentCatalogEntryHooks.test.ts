@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -2579,7 +2579,10 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
                 (materialized as { applyConnectedServiceAuthGeneration?: unknown })
                     .applyConnectedServiceAuthGeneration,
             ).toEqual(expect.any(Function));
-            expect(materializationInputs[0]).toMatchObject({ materializationId: 'mat-runtime' });
+            expect(materializationInputs[0]).toMatchObject({
+                materializationId: 'mat-runtime',
+                connectedServicesSessionStateSharingEffectiveMode: 'isolated',
+            });
         } finally {
             await rm(root, { recursive: true, force: true });
         }
@@ -3235,7 +3238,7 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
         }
     });
 
-    it('preserves Codex dynamic sqlite state entries when materializing connected-service homes', async () => {
+    it('shares Codex SQLite state through one source home instead of linking database files', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-codex-runtime-contribution-state-'));
         try {
             const nativeCodexHome = join(root, 'native-codex-home');
@@ -3292,7 +3295,8 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             const configToml = await readFile(join(String(targetRoot), 'config.toml'), 'utf8');
             expect(configToml).toContain('model = "gpt-5"');
             expect(configToml).toContain('cli_auth_credentials_store = "file"');
-            await expect(readFile(join(String(targetRoot), 'state_123.sqlite'), 'utf8')).resolves.toBe('sqlite-state');
+            expect(materialized?.env.CODEX_SQLITE_HOME).toBe(nativeSqliteHome);
+            await expect(lstat(join(String(targetRoot), 'state_123.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
             await rm(root, { recursive: true, force: true });
         }

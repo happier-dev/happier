@@ -310,6 +310,35 @@ describe('Codex runtime contribution leaves', () => {
     }
   });
 
+  it('uses one source SQLite home for shared state and the materialized home for isolated state', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-sqlite-materialize-'));
+    try {
+      const sourceSqliteHome = join(codexHome, 'source-sqlite');
+      const processEnv = {
+        CODEX_HOME: join(codexHome, 'source-codex'),
+        CODEX_SQLITE_HOME: sourceSqliteHome,
+      };
+
+      const shared = await runtimeContribution.materializeCodexAuthEnvironment({
+        rootDir: codexHome,
+        connectedAccountMaterializationAuthority: 'qualified',
+        connectedServicesSessionStateSharingEffectiveMode: 'shared',
+        processEnv,
+      });
+      const isolated = await runtimeContribution.materializeCodexAuthEnvironment({
+        rootDir: codexHome,
+        connectedAccountMaterializationAuthority: 'qualified',
+        connectedServicesSessionStateSharingEffectiveMode: 'isolated',
+        processEnv,
+      });
+
+      expect(shared.env.CODEX_SQLITE_HOME).toBe(sourceSqliteHome);
+      expect(isolated.env.CODEX_SQLITE_HOME).toBe(codexHome);
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when the host omits or malforms connected-account materialization authority', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-missing-authority-'));
     try {

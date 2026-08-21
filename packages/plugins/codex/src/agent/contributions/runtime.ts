@@ -39,10 +39,6 @@ import {
 } from '../auth/services/home/sync/sessionFiles.js';
 import { codexPreflightSessionControlsProbeConfig } from '../lifecycle/preflight/sessionControls.js';
 import { resolveCodexSessionRuntimePreferences } from '../lifecycle/runtimePreferences.js';
-import {
-  resolveCodexSqliteStateEntryPattern,
-  resolveCodexStateEntryNames,
-} from '../auth/services/home/sync/stateEntries.js';
 import { codexHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 import {
   buildCodexAgentRuntimeDescriptorV1,
@@ -227,38 +223,29 @@ export async function materializeCodexAuthEnvironment(input: Readonly<Record<str
     env.OPENAI_API_KEY = requireOpenAiTokenRecord(openai).token.token;
   }
 
-  return { env };
-}
-
-async function resolveCodexStateSharingStateEntryNames(params: Readonly<{
-  sourceRoot: string;
-  materializedRootDir: string;
-  env: NodeJS.ProcessEnv;
-  requestedStateMode: 'isolated' | 'shared';
-}>): Promise<readonly string[]> {
-  return await resolveCodexStateEntryNames({
-    sourceSqliteHome: resolveCodexSqliteHomeForStateSharing({
-      env: params.env,
-      sourceRoot: params.sourceRoot,
-    }),
-    destinationCodexHome: params.materializedRootDir,
-    stateMode: params.requestedStateMode,
-  });
-}
-
-function resolveCodexStateSharingStateSourceRoot(params: Readonly<{
-  entryName: string;
-  sourceRoot: string;
-  env: NodeJS.ProcessEnv;
-}>): string {
-  const sqlitePattern = resolveCodexSqliteStateEntryPattern();
-  if (sqlitePattern?.test(params.entryName)) {
-    return resolveCodexSqliteHomeForStateSharing({
-      env: params.env,
-      sourceRoot: params.sourceRoot,
-    });
+  const effectiveStateMode = input.connectedServicesSessionStateSharingEffectiveMode;
+  if (effectiveStateMode !== undefined) {
+    if (effectiveStateMode !== 'shared' && effectiveStateMode !== 'isolated') {
+      throw new Error('Codex connected-service materialization requires an effective state-sharing mode');
+    }
+    const processEnv = input.processEnv;
+    if (!processEnv || typeof processEnv !== 'object' || Array.isArray(processEnv)) {
+      throw new Error('Codex connected-service materialization requires the source process environment');
+    }
+    const codexHome = readRootDir(input);
+    const sourceEnv: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(processEnv)) {
+      if (typeof value === 'string') sourceEnv[key] = value;
+    }
+    env.CODEX_SQLITE_HOME = effectiveStateMode === 'shared'
+      ? resolveCodexSqliteHomeForStateSharing({
+          env: sourceEnv,
+          sourceRoot: resolveCodexHomeForAuthMaterialization(sourceEnv),
+        })
+      : codexHome;
   }
-  return params.sourceRoot;
+
+  return { env };
 }
 
 export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
@@ -348,8 +335,6 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     materializedHomeCredentialEntries: CODEX_MATERIALIZED_HOME_CREDENTIAL_ENTRIES,
     resolveStateSharingSourceRoot: ({ env }: Readonly<{ env: NodeJS.ProcessEnv }>) =>
       resolveCodexHomeForAuthMaterialization(env),
-    resolveStateSharingStateEntryNames: resolveCodexStateSharingStateEntryNames,
-    resolveStateSharingStateSourceRoot: resolveCodexStateSharingStateSourceRoot,
     createStateSharingSessionImportRoots: ({
       materializedRootDir,
       sourceRoot,

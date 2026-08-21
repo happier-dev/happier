@@ -17,10 +17,6 @@ describe('codexStateSharingDescriptor', () => {
       mode: 'materialized_home',
       secretEntries: ['auth.json', 'accounts'],
     });
-    expect(codexStateSharingDescriptor.dynamicEntryPatterns?.sqlite).toMatchObject({
-      scope: 'state',
-      mode: 'linked',
-      allowHardLinkFallback: false,
-    });
+    expect(codexStateSharingDescriptor.dynamicEntryPatterns).toBeUndefined();
   });
 });

@@ -45,12 +45,4 @@ export const codexStateSharingDescriptor = {
       },
     },
   ],
-  dynamicEntryPatterns: {
-    sqlite: {
-      scope: 'state',
-      pattern: '^(?:state|goals|logs)_\\d+\\.sqlite(?:-(?:wal|shm))?$',
-      mode: 'linked',
-      allowHardLinkFallback: false,
-    },
-  },
 } as const;

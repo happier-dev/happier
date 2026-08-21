@@ -1178,21 +1178,26 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
     stateSourceRoot?: string | null;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     sessionDirectory?: string | null;
-}>): Promise<readonly ConnectedServicesMaterializationDiagnostic[]> {
+}>): Promise<Readonly<{
+    diagnostics: readonly ConnectedServicesMaterializationDiagnostic[];
+    effectiveStateMode: 'isolated' | 'shared';
+}>> {
     const resolveStateSharingSourceRoot = params.connectedServices.resolveStateSharingSourceRoot;
     const providerLabel = String(params.agentId);
-    if (!resolveStateSharingSourceRoot) return [];
+    const settings = resolveConnectedServicesProviderStateSharingPolicyV1(
+        params.accountSettings?.connectedServicesProviderStateSharingSettingsV1,
+        params.agentId,
+    );
+    if (!resolveStateSharingSourceRoot) {
+        return { diagnostics: [], effectiveStateMode: settings.stateMode };
+    }
     if (
         params.connectedServices.stateSharingServiceIds
         && !params.connectedServices.stateSharingServiceIds.includes(params.serviceId)
     ) {
-        return [];
+        return { diagnostics: [], effectiveStateMode: settings.stateMode };
     }
     return await withConnectedServiceStateSharingDestinationLock(params.materializedRootDir, async () => {
-        const settings = resolveConnectedServicesProviderStateSharingPolicyV1(
-            params.accountSettings?.connectedServicesProviderStateSharingSettingsV1,
-            params.agentId,
-        );
         const sourceRoot = resolveStateSharingSourceRoot({ env: params.env });
         const stateSourceRoot = readString(params.stateSourceRoot) ?? sourceRoot;
         const stateEntryNames = await params.connectedServices.resolveStateSharingStateEntryNames?.({
@@ -1251,7 +1256,10 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
             params.connectedServices.materializedHomeCredentialEntries,
         );
         await writeConnectedServiceStateSharingManifest(params.materializedRootDir, applyResult.manifest);
-        return normalizeStateSharingDiagnostics(applyResult.diagnostics);
+        return {
+            diagnostics: normalizeStateSharingDiagnostics(applyResult.diagnostics),
+            effectiveStateMode: applyResult.manifest.effectiveStateMode,
+        };
     }, { providerId: providerLabel });
 }
 
@@ -1363,7 +1371,7 @@ function createConnectedServicesMaterializer(
                 ...((await connectedServices.materializeAuthEnvironment(materializationContext)).env),
             })
             : null;
-        const stateSharingDiagnostics = await applyConnectedServiceStateSharingForContribution({
+        const stateSharing = await applyConnectedServiceStateSharingForContribution({
             agentId,
             connectedServices,
             serviceId: primaryServiceId,
@@ -1374,6 +1382,7 @@ function createConnectedServicesMaterializer(
         });
         const materialized = await connectedServices.materializeAuthEnvironment({
             ...materializationContext,
+            connectedServicesSessionStateSharingEffectiveMode: stateSharing.effectiveStateMode,
             materializationId: materializationKey,
             ...(managedServerStatePath ? { managedServerStatePath } : {}),
         });
@@ -1384,7 +1393,7 @@ function createConnectedServicesMaterializer(
                 env: materialized.env,
             }),
             diagnostics: [
-                ...stateSharingDiagnostics,
+                ...stateSharing.diagnostics,
                 ...normalizeMaterializationDiagnostics(materialized.diagnostics),
             ],
         };
@@ -1562,7 +1571,7 @@ function createRetainedRuntimeAuthSelectionMaterializer(
         const materializationId = readString(
             params.input.tracked.spawnOptions?.connectedServiceMaterializationIdentityV1?.id,
         );
-        const stateSharingDiagnostics = await applyConnectedServiceStateSharingForContribution({
+        const stateSharing = await applyConnectedServiceStateSharingForContribution({
             agentId,
             connectedServices,
             serviceId,
@@ -1580,6 +1589,7 @@ function createRetainedRuntimeAuthSelectionMaterializer(
             rootDir: materializedRootDir,
             ...(materializationId ? { materializationId } : {}),
             processEnv: env,
+            connectedServicesSessionStateSharingEffectiveMode: stateSharing.effectiveStateMode,
             accountSettings: params.accountSettings ?? null,
             sessionDirectory: params.input.tracked.spawnOptions?.directory ?? null,
             exec,
@@ -1590,7 +1600,7 @@ function createRetainedRuntimeAuthSelectionMaterializer(
             targetMaterializedRoot: materializedRootDir,
             exec,
             materializationDiagnostics: [
-                ...stateSharingDiagnostics,
+                ...stateSharing.diagnostics,
                 ...normalizeMaterializationDiagnostics(materialized.diagnostics),
             ],
         };
