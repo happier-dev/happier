@@ -1,6 +1,6 @@
 ---
 name: happier-pr-steward
-description: Analyze and shepherd a Happier pull request from intent review through approved refinements, current-head CI and review follow-up, evidence-based comment adjudication, and any required intent-preserving ports. Use when asked to assess whether a PR is correct or mergeable, detect duplicate or split-brain logic, add follow-up commits, request or monitor reviews, address PR feedback, or carry accepted changes across Happier development lines without regressing evolved architecture.
+description: Analyze and shepherd a Happier 0.3 pull request from intent review through approved refinements, current-head CI and review follow-up, and evidence-based comment adjudication. Use when asked to assess whether a PR is correct or mergeable, detect duplicate or split-brain logic, add follow-up commits, request or monitor reviews, or address PR feedback on the 0.3 development line.
 ---
 
 # Happier PR Steward
@@ -13,7 +13,7 @@ Use these skills as applicable:
 
 - `skills/happier-review` for the review basis, affected corridor, findings, and merge assessment;
 - `skills/happier-implement` and `skills/happier-testing` for approved behavior changes and RED -> GREEN evidence;
-- `skills/happier-compatibility` for released seams or predecessor/successor ports;
+- `skills/happier-compatibility` when the PR changes released seams or version-skew behavior;
 - `skills/happier-commit-worktree` when a checkout is large or actively dirty;
 - `skills/happier-github-ops` for authenticated GitHub reads and every public mutation;
 - `skills/verify-claims` before relying on bot, human, CI, or delegated claims;
@@ -47,31 +47,21 @@ Do not invent speculative requirements or preserve machinery merely because it i
 
 ## 4. Pause at the recommendation gate
 
-Review and reporting are read-only. Present the evidence-backed recommendation before editing, pushing, commenting, requesting reviews, or merging. Obtain explicit approval for the proposed refinement and port scope.
+Review and reporting are read-only. Present the evidence-backed recommendation before editing, pushing, commenting, requesting reviews, or merging. Obtain explicit approval for the proposed refinement scope.
 
 A prior approval covers only the described implementation batch. Return for a decision when new evidence requires a material product choice, architecture change, expanded scope, destructive action, or different cross-repository outcome.
 
 ## 5. Implement the approved source change first
 
-Apply refinements on the PR branch before any required destination port. Use TDD for production behavior changes, inspect the final branch diff against the base, and validate in proportion to risk. Commit only related paths or hunks with a Conventional Commit message and the verified PR-author trailer.
+Apply refinements on the PR branch. Use TDD for production behavior changes, inspect the final branch diff against the base, and validate in proportion to risk. Commit only related paths or hunks with a Conventional Commit message and the verified PR-author trailer.
 
-Do not make a destination implementation the design authority for the PR branch. The PR remains the first implementation surface; any destination port follows only after the source change is coherent and validated.
-
-## 6. Port by intent when required
-
-When the repository workflow designates another development line as a required destination, port the complete PR intent plus every steward-authored and review-driven follow-up. Re-discover the destination's canonical owner, evolved paths, sibling cases, and tests; never blind-cherry-pick, copy whole files, or reintroduce predecessor architecture.
-
-Verify that each named destination exists and is the intended Git checkout. If one is unavailable, continue independent analysis and source work, mark only that port as blocked with the exact missing prerequisite, and ask for its location or authorization to obtain it. Never create, clone, or guess a destination implicitly.
-
-Classify each source intent as already satisfied, applicable with adaptation, applicable to a broader destination corridor, or not applicable with evidence. Commit destination changes separately as related-only commits with the verified PR author as co-author, preserving all unrelated worktree and index bytes.
-
-## 7. Request review through an exact public preview
+## 6. Request review through an exact public preview
 
 Use `happier-github-ops` for comments and reviewer requests. Before each mutation, show the exact target and full outgoing text, including the required maintainer `cc`, and obtain approval for that exact payload. General authorization to shepherd the PR does not waive this gate.
 
-Summarize what changed and why, name deciding checks, and ask the configured reviewers (including CodeRabbit and Greptile when requested) to review the current head. Do not claim a destination port is complete unless its commit and validation exist.
+Summarize what changed and why, name deciding checks, and ask the configured reviewers (including CodeRabbit and Greptile when requested) to review the current head.
 
-## 8. Monitor and adjudicate, do not obey
+## 7. Monitor and adjudicate, do not obey
 
 Monitor the current head without busy-looping. Read all unresolved existing comments and reviews as well as new ones. For each finding:
 
@@ -79,21 +69,20 @@ Monitor the current head without busy-looping. Read all unresolved existing comm
 2. separate the reported defect from the reviewer's proposed mechanism;
 3. classify it as confirmed, already fixed, invalid, stale, or not applicable;
 4. apply only confirmed, in-scope corrections using the canonical owner;
-5. port an accepted correction wherever the same intent or gap is reachable in a required destination;
-6. validate every repository, commit related-only changes with attribution, then request review of the new head through a newly approved exact payload.
+5. validate the affected repository, commit related-only changes with attribution, then request review of the new head through a newly approved exact payload.
 
 Passing CI, an approval, or a bot confidence score is evidence, not authority. Conversely, a stale changes-requested state is not blocking when every underlying finding is proven fixed or irrelevant on the current head.
 
-## 9. Finish on current-head facts
+## 8. Finish on current-head facts
 
 Continue until the current head is stable and:
 
 - every existing and new finding has an evidence-backed disposition;
-- all accepted changes are present in the PR branch and required destinations;
+- all accepted changes are present in the PR branch;
 - relevant current-head checks pass, or each failure is proven unrelated or unavailable;
 - requested reviewers have reviewed the current head, declined, or have no remaining actionable feedback;
 - no unresolved human thread identifies an unaddressed material issue.
 
 Do not merge unless the user separately authorizes that exact merge action. If external review or CI remains pending beyond the available monitoring window, report the head SHA, pending items, last observed state, and exact resumption point rather than declaring success.
 
-Close with the merge recommendation, source and destination commit SHAs, validations actually run, dispositions of rejected findings, skipped checks, and residual risk.
+Close with the merge recommendation, PR commit SHAs, validations actually run, dispositions of rejected findings, skipped checks, and residual risk.

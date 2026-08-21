@@ -25,7 +25,7 @@ Lead with the merge verdict. Support it with:
 - PR approach versus the independently derived simplest correct approach;
 - duplicate, bypass, split-brain, compatibility, and test audit;
 - concrete required and optional refinements;
-- proposed source and destination validation;
+- proposed validation;
 - the exact human decision needed next.
 
 Do not edit during this phase.
@@ -37,11 +37,10 @@ For each batch:
 1. refresh head and discussions;
 2. implement and validate on the PR branch;
 3. inspect the full base-to-head diff and related-only commit contents;
-4. port by intent to every required destination;
-5. validate and commit each destination without consuming unrelated bytes;
-6. preview any GitHub mutation exactly and obtain approval;
-7. push or post only the authorized payload;
-8. record the new head and destination commit SHAs.
+4. run the required validation and commit without consuming unrelated bytes;
+5. preview any GitHub mutation exactly and obtain approval;
+6. push or post only the authorized payload;
+7. record the new head and commit SHAs.
 
 If the source head changes concurrently, rebase the reasoning on the current bytes without discarding work or force-updating history. Ask when the concurrent change conflicts with the approved intent.
 
@@ -53,17 +52,17 @@ Use a small in-memory cursor:
 - latest seen review/comment ids or timestamps;
 - check-run identities and conclusions;
 - each finding's disposition and evidence;
-- source and destination commits containing accepted fixes.
+- commits containing accepted fixes.
 
 Poll at a bounded cadence or use the available wait mechanism. A new head invalidates earlier current-head completion claims but not evidence that still applies. Do not repost merely to satisfy a ritual; request another review only after a meaningful new change or when a reviewer requires an explicit trigger.
 
-For each finding, record the claim, observed evidence, impact, chosen response, source change, destination applicability, and deciding validation. Cluster findings with the same root cause into one coherent fix.
+For each finding, record the claim, observed evidence, impact, chosen response, source change, and deciding validation. Cluster findings with the same root cause into one coherent fix.
 
 ## 5. Human gates
 
 Require a human decision for:
 
-- the initial refinement and destination-port proposal;
+- the initial refinement proposal;
 - any material amendment or expanded product/design scope;
 - destructive operations, force pushes, branch replacement, or conflict resolution that could discard work;
 - every exact public GitHub mutation under `happier-github-ops`;
@@ -78,7 +77,6 @@ Re-fetch the live PR. Verify:
 - reported head equals the reviewed and tested head;
 - no unresolved material thread was omitted;
 - check results belong to that head;
-- destination ports include every accepted intent, not merely matching filenames;
 - commits contain only related changes and required co-authorship;
 - rejected suggestions have concise factual reasons;
 - merge has not occurred without exact authorization.
