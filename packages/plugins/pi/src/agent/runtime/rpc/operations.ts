@@ -6,6 +6,7 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
+  AgentSessionModelsService,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
@@ -50,11 +51,13 @@ import {
   resolvePiRequestAuthCompatibility,
 } from './requestAuthCompatibility.js';
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
+import { createPiSessionModelsSource } from '../modelsSource.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 
 type PiRuntimeOperationsParams = Readonly<{
   services: Pick<PluginServices, 'exec'>;
+  models?: AgentSessionModelsService;
   logger: PluginLoggerService;
   cwd: string;
   env: Readonly<Record<string, string>>;
@@ -285,6 +288,7 @@ function createRuntimeOperations(params: Readonly<{
   initialSessionId: string | null;
   subscribeRuntimeEvents: (handler: RuntimeEventHandler) => () => void;
   publishRuntimeEvent: RuntimeEventPublisher;
+  refreshModels?: () => void;
 }>): RuntimeOperationsWithRecordHandler {
   const runtimeEventProjector = createPiRuntimeEventProjector();
   let sessionId = params.initialSessionId;
@@ -570,6 +574,7 @@ function createRuntimeOperations(params: Readonly<{
             providerSessionId: sessionId,
           });
         }
+        params.refreshModels?.();
         return sessionId;
       }
       const stateBefore = await params.rpc.send({ type: 'get_state' }, 30_000);
@@ -594,6 +599,7 @@ function createRuntimeOperations(params: Readonly<{
           providerSessionId: sessionId,
         });
       }
+      params.refreshModels?.();
       return sessionId;
     },
     async sendTurnPrompt(
@@ -730,6 +736,7 @@ function createRuntimeOperations(params: Readonly<{
         await params.rpc.send({ type: 'set_thinking_level', level }, 30_000);
         changed.push('options');
       }
+      params.refreshModels?.();
       return changed;
     },
     async compactContext(request): Promise<void> {
@@ -1056,6 +1063,17 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
       operations?.handleRuntimeRecord(record);
     },
   });
+  const modelsSource = params.models
+    ? createPiSessionModelsSource({
+        readState: async () => (await rpc.send({ type: 'get_state' }, 30_000)).data,
+        readAvailableModels: async () => (await rpc.send({ type: 'get_available_models' }, 30_000)).data,
+        onError: (error) => {
+          params.logger.warn('[PiRuntime] Model catalog refresh failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      })
+    : null;
   operations = createRuntimeOperations({
     rpc,
     logger: params.logger,
@@ -1068,7 +1086,16 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
       };
     },
     publishRuntimeEvent,
+    ...(modelsSource ? { refreshModels: () => { void modelsSource.refresh(); } } : {}),
   });
+  let modelsBinding: ReturnType<AgentSessionModelsService['bind']> | null = null;
+  try {
+    modelsBinding = modelsSource && params.models ? params.models.bind(modelsSource) : null;
+  } catch (error) {
+    modelsSource?.dispose();
+    await rpc.dispose();
+    throw error;
+  }
   const unsubscribeProcessExit = rpc.onExit((result) => {
     operations?.handleProcessExit(result);
   });
@@ -1083,6 +1110,9 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     sessionId: params.sessionId,
     resumeSessionId: readString(params.resumeSessionId),
     clearSubscribers: () => {
+      modelsBinding?.dispose();
+      modelsBinding = null;
+      modelsSource?.dispose();
       unsubscribeProcessExit();
       subscribers.clear();
     },

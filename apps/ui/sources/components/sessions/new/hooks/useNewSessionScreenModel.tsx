@@ -1644,6 +1644,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelMode,
         acpSessionModeId,
         sessionConfigOptionOverrides,
+        preflightModels,
+        preflightModelsTargetKey,
         promptStore,
         setSessionPrompt,
         automationEditId,

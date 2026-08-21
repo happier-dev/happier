@@ -32,6 +32,7 @@ import { transformProfileToEnvironmentVars } from '@/components/sessions/new/mod
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import { getModelOptionsForAgentType, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import {
     ConnectedServiceBindingsV1Schema,
     type BackendTargetRefV2,
@@ -62,6 +63,7 @@ import {
     promptDaemonUnavailableRetry,
 } from '@/utils/errors/daemonUnavailableAlert';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
@@ -114,6 +116,10 @@ import {
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import {
+    buildSessionModelsSeedRequest,
+    publishSessionModelsSeedToMetadata,
+} from '@/sync/domains/models/sessionModelsSeed';
 import {
     executeSessionSpawnNewAction,
     resolveSessionSpawnNewActionFailureMessageKey,
@@ -284,6 +290,8 @@ export function useCreateNewSession(params: Readonly<{
     recentMachinePaths: Array<{ machineId: string; path: string }>;
 
     agentType: AgentId;
+    /** Canonical policy/catalog owner used by the spawned runtime. */
+    staticAgentId?: AgentId | null;
     backendTarget?: BackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
@@ -296,6 +304,8 @@ export function useCreateNewSession(params: Readonly<{
      */
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+    preflightModels?: PreflightModelList | null;
+    preflightModelsTargetKey?: string | null;
 
     promptStore: NewSessionPromptStore;
     setSessionPrompt?: (prompt: string) => void;
@@ -1130,6 +1140,31 @@ export function useCreateNewSession(params: Readonly<{
                     publishLaunchAttempt(null);
                     current.setIsCreating(false);
                     return;
+                }
+                const spawnedBackendTargetKey = resolveBackendTargetKeyV2(current.spawnBackendTarget ?? backendTarget);
+                const modelPolicyAgentId = current.staticAgentId ?? current.agentType;
+                const modelsSeed = buildSessionModelsSeedRequest({
+                    agentId: modelPolicyAgentId,
+                    currentTargetKey: spawnedBackendTargetKey,
+                    preflightTargetKey: current.preflightModelsTargetKey ?? null,
+                    preflightModels: current.preflightModels,
+                    currentModelId: spawnModelSelection?.ref.modelId ?? 'default',
+                    hasCuratedStaticModels: getModelOptionsForAgentType(modelPolicyAgentId)
+                        .some((option) => option.value !== 'default'),
+                    updatedAt: spawnPermissionModeUpdatedAt,
+                });
+                if (modelsSeed) {
+                    fireAndForget(publishSessionModelsSeedToMetadata({
+                        sessionId: createdSessionId,
+                        serverId: resolvedTargetServerId,
+                        seed: modelsSeed,
+                        updateSessionMetadataWithRetry: (sessionId, updater, options) => (
+                            sync.patchSessionMetadataWithRetry(sessionId, updater, options)
+                        ),
+                    }), {
+                        tag: 'new-session-model-list-seed',
+                        onError: captureExceptionIfEnabled,
+                    });
                 }
                 let postSpawnFollowUpError: unknown = null;
                 const postSpawnFollowUpRetryRef: { current: (() => Promise<void>) | null } = { current: null };

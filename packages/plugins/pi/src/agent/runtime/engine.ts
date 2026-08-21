@@ -5,6 +5,7 @@ import type {
   AgentRuntimeFactory,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
+  AgentSessionRuntimeContext,
   AgentSessionUsageLimitRecoveryControl,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -52,7 +53,7 @@ function readEnvironment(request: AgentSessionOpenRequest): Readonly<{
 
 async function openPiSession(
   request: AgentSessionOpenRequest,
-  context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
+  context: Pick<AgentRuntimeContext, 'services' | 'signal' | 'session'>,
 ): Promise<AgentSessionRuntime> {
   if (request.kind === 'fork') {
     throw new Error('Pi does not support native session fork');
@@ -63,8 +64,11 @@ async function openPiSession(
   });
   let runtime: AgentSessionRuntime;
   try {
+    const session = context.session as AgentSessionRuntimeContext['session'] | undefined;
+    const models = session && 'services' in session ? session.services.models : null;
     runtime = prepared.bind(await createPiRuntimeOperations({
       services: context.services,
+      ...(models ? { models } : {}),
       logger: context.services.logger,
       cwd: request.cwd,
       env: prepared.launchEnvironment.values,

@@ -10,6 +10,7 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
+  AgentSessionModelsSource,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
@@ -601,6 +602,49 @@ describe('createPiRuntimeOperations', () => {
 
     await ackLastCommand(capture);
     await expect(update).resolves.toEqual({ status: 'applied', changed: ['options'] });
+  });
+
+  it('binds Pi runtime models and republishes them after configuration changes', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    let source: AgentSessionModelsSource | null = null;
+    const disposeBinding = vi.fn();
+    const runtime = await createPiRuntimeOperations({
+      ...createRuntimeContext(capture),
+      models: {
+        bind(nextSource) {
+          source = nextSource;
+          return { dispose: disposeBinding };
+        },
+      },
+      cwd: '/tmp/pi-workspace',
+      env: {},
+      sessionId: 'happier-session-1',
+      initialSessionId: 'pi-provider-session-1',
+    });
+
+    expect(source?.read()).toEqual({ models: null });
+    const update = runtime.updateConfiguration!(configuration({ reasoning_effort: 'high' }));
+    await waitForWrittenCount(capture, 1);
+    await ackCommandAt(capture, 0);
+    await expect(update).resolves.toEqual({ status: 'applied', changed: ['options'] });
+    await waitForWrittenCount(capture, 3);
+    await ackCommandAt(capture, 1, {
+      model: { provider: 'openai', id: 'gpt-4o-mini' },
+      thinkingLevel: 'high',
+    });
+    await ackCommandAt(capture, 2, {
+      models: [{ provider: 'openai', id: 'gpt-4o-mini', name: 'GPT-4o mini', reasoning: true }],
+    });
+    await vi.waitFor(() => {
+      expect(source?.read()).toMatchObject({ currentModelId: 'openai/gpt-4o-mini' });
+    });
+    expect(source?.read()).toMatchObject({
+      currentModelId: 'openai/gpt-4o-mini',
+      models: [{ id: 'openai/gpt-4o-mini' }],
+    });
+
+    await runtime.dispose();
+    expect(disposeBinding).toHaveBeenCalledTimes(1);
   });
 
   it('does not infer typed provider acceptance from Pi turn evidence before the exact RPC response', async () => {

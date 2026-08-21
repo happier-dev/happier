@@ -1,38 +1,14 @@
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentSessionModel } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { selectPiLaunchEnvironment } from '../launchEnvironment.js';
+import { createPiModelCatalogEntry } from '../models/catalog.js';
 
-type PiPreflightModelOption = Readonly<{
-  id: string;
-  name: string;
-  type: 'select';
-  currentValue: string;
-  options: readonly Readonly<{ value: string; name: string }>[];
-}>;
-
-export type PiPreflightModel = Readonly<{
-  id: string;
-  name: string;
-  description?: string;
-  modelOptions?: readonly PiPreflightModelOption[];
-}>;
+export type PiPreflightModel = AgentSessionModel;
 
 const PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
 const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
 const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
-
-const PI_THINKING_MODEL_OPTION: PiPreflightModelOption = Object.freeze({
-  id: 'reasoning_effort',
-  name: 'Thinking',
-  type: 'select',
-  currentValue: 'medium',
-  options: Object.freeze([
-    Object.freeze({ value: 'low', name: 'Low' }),
-    Object.freeze({ value: 'medium', name: 'Medium' }),
-    Object.freeze({ value: 'high', name: 'High' }),
-    Object.freeze({ value: 'xhigh', name: 'Max' }),
-  ]),
-});
 
 function buildPiPreflightEnvironment(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
   return { ...selectPiLaunchEnvironment(env).values, CI: '1' };
@@ -63,12 +39,13 @@ export function buildPiPreflightModelsFromListModelsOutput(outputRaw: string): r
     if (!provider || !model) continue;
 
     const supportsThinking = readThinkingSupport(parts[4]);
-    models.push({
-      id: `${provider}/${model}`,
+    const entry = createPiModelCatalogEntry({
+      provider,
+      modelId: model,
       name: model,
-      description: provider,
-      ...(supportsThinking === true ? { modelOptions: [PI_THINKING_MODEL_OPTION] } : {}),
+      supportsThinking: supportsThinking === true,
     });
+    if (entry) models.push(entry);
   }
 
   return models.length > 0 ? models : null;
