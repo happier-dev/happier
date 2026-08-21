@@ -88,13 +88,19 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
         disclosure?.state === 'expanded' ? 'caret-up' : disclosure?.state === 'collapsed' ? 'caret-down' : null;
 
     return (
-        <View style={styles.container}>
+        // Hover is tracked on the whole header region (row + action slots), not the row
+        // pressable: the slots are siblings of the pressable, so a row-level hover-out
+        // would hide the actions while the pointer moves onto them.
+        <View
+            testID="tool-timeline-row-header"
+            onPointerEnter={trackHoverState ? handleHoverIn : undefined}
+            onPointerLeave={trackHoverState ? handleHoverOut : undefined}
+            style={styles.container}
+        >
             <Pressable
                 testID={props.testID}
                 onPress={props.onPress ?? undefined}
                 disabled={!props.onPress}
-                onHoverIn={trackHoverState ? handleHoverIn : undefined}
-                onHoverOut={trackHoverState ? handleHoverOut : undefined}
                 style={({ pressed }) => [
                     styles.row,
                     props.density === 'compact' ? styles.rowCompact : null,
@@ -178,8 +184,6 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                             <Pressable
                                 testID={props.openActionTestID}
                                 onPress={handleOpenPress}
-                                onHoverIn={trackHoverState ? handleHoverIn : undefined}
-                                onHoverOut={trackHoverState ? handleHoverOut : undefined}
                                 accessibilityRole="button"
                                 accessibilityLabel={t('toolView.open')}
                                 style={({ pressed }) => [styles.open, pressed && styles.openPressed]}

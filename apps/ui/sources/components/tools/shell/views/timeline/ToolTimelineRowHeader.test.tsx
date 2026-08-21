@@ -224,7 +224,7 @@ describe('ToolTimelineRowHeader', () => {
         expect(getRevealOpacity()).toBe(0);
 
         await act(async () => {
-            screen.findByTestId('tool-timeline-row-open')?.props.onHoverIn?.();
+            screen.findByTestId('tool-timeline-row-header')?.props.onPointerEnter?.();
         });
 
         expect(getRevealOpacity()).toBe(1);
@@ -263,12 +263,59 @@ describe('ToolTimelineRowHeader', () => {
         const unhoveredTitleShrink = readTitleShrink();
 
         await act(async () => {
-            screen.findByTestId('tool-timeline-row')?.props.onHoverIn?.();
+            screen.findByTestId('tool-timeline-row-header')?.props.onPointerEnter?.();
         });
 
         expect(readAnimatedOpacity(pinSlot()?.props.style)).toBe(1);
         expect(readAnimatedOpacity(openSlot()?.props.style)).toBe(1);
         expect(readTitleShrink()).toBe(unhoveredTitleShrink);
+    });
+
+    it('keeps the row actions revealed while the pointer moves from the row onto the action buttons', async () => {
+        const { ToolTimelineRowHeader, TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID, TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID } =
+            await import('./ToolTimelineRowHeader');
+
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                testID="tool-timeline-row"
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={() => {}}
+                openActionTestID="tool-timeline-row-open"
+                revealAction={React.createElement('Pressable', { testID: 'tool-timeline-row-pin' })}
+            />,
+        );
+
+        // The hover region is the whole header (row + action slots), so entering over
+        // the row text reveals both actions...
+        const header = screen.findByTestId('tool-timeline-row-header');
+        await act(async () => {
+            header?.props.onPointerEnter?.();
+        });
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID)?.props.style)).toBe(1);
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)?.props.style)).toBe(1);
+
+        // ...and crossing out of the row pressable toward its sibling action slots must not
+        // hide them. The pin button carries no hover wiring of its own, so nothing else can
+        // hold the reveal open.
+        await act(async () => {
+            screen.findByTestId('tool-timeline-row')?.props.onHoverOut?.();
+        });
+        await act(async () => {
+            screen.findByTestId('tool-timeline-row-pin')?.props.onHoverOut?.();
+        });
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID)?.props.style)).toBe(1);
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)?.props.style)).toBe(1);
+
+        // Leaving the header region itself is what hides them again.
+        await act(async () => {
+            header?.props.onPointerLeave?.();
+        });
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID)?.props.style)).toBe(0);
+        expect(readAnimatedOpacity(screen.findByTestId(TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID)?.props.style)).toBe(0);
     });
 
     it('keeps a pinned row pin visible without dragging the open-details action into view', async () => {
@@ -344,7 +391,7 @@ describe('ToolTimelineRowHeader', () => {
         expect(getChevronLayerOpacity()).toBe(0);
 
         await act(async () => {
-            screen.findByTestId('tool-timeline-row')?.props.onHoverIn?.();
+            screen.findByTestId('tool-timeline-row-header')?.props.onPointerEnter?.();
         });
 
         expect(getChevronLayerOpacity()).toBe(1);
