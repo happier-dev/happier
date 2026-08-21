@@ -72,7 +72,7 @@ describe('listPiSessionCandidates exact-id lookup', () => {
     tempAgentDirs.clear();
   });
 
-  it('performs only the canonical resolver scan for a bare session id', async () => {
+  it('returns only the matching candidate for a bare session id', async () => {
     const agentDir = makeAgentDir('pi-list-exact-id-');
     writeSession(agentDir, '--proj-a--', SESSION_A);
     writeSession(agentDir, '--proj-b--', SESSION_B);
@@ -82,6 +82,17 @@ describe('listPiSessionCandidates exact-id lookup', () => {
     const result = await listPiSessionCandidates({ source, env, limit: 10, searchTerm: SESSION_A });
 
     expect(result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
+  });
+
+  it('does not repeat unrelated header discovery for a bare session id', async () => {
+    const agentDir = makeAgentDir('pi-list-exact-id-scan-');
+    writeSession(agentDir, '--proj-a--', SESSION_A);
+    writeSession(agentDir, '--proj-b--', SESSION_B);
+    const source: DirectSessionsSource = { kind: 'piAgentDir' };
+    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+
+    await listPiSessionCandidates({ source, env, limit: 10, searchTerm: SESSION_A });
+
     // Exact lookup may inspect the target more than once to build its title, but it must not
     // repeat the resolver's scan of unrelated headers through full candidate discovery.
     expect(trackedFs.openedPaths.filter((path) => path.endsWith(`${SESSION_B}.jsonl`))).toHaveLength(1);

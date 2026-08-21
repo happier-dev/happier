@@ -115,6 +115,8 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     const registered = new Map<string, (params: unknown) => Promise<unknown>>();
     const rpcHandlerManager: RpcHandlerRegistrar = {
       registerHandler: (method, handler) => {
+        // The registrar validates each method-specific handler before this heterogeneous test
+        // map erases its key.
         registered.set(method, async (params) => handler(params as never));
       },
     };
@@ -201,6 +203,8 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     const registered = new Map<string, (params: unknown) => Promise<unknown>>();
     const rpcHandlerManager: RpcHandlerRegistrar = {
       registerHandler: (method, handler) => {
+        // The registrar validates each method-specific handler before this heterogeneous test
+        // map erases its key.
         registered.set(method, async (params) => handler(params as never));
       },
     };
