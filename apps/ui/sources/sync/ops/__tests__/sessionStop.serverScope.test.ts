@@ -569,4 +569,27 @@ describe('sessionStopWithServerScope', () => {
     expect(mockStorageState.applySessionListRenderablePatches).not.toHaveBeenCalled();
     expect(mockStorageState.applySessions).not.toHaveBeenCalled();
   });
+
+  it('reports the released relay inner Forbidden response without a misleading protocol error or runner fallback', async () => {
+    mockStorageState.sessions = {
+      'sid-released-relay-forbidden': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+
+    await expect(sessionStopWithServerScope('sid-released-relay-forbidden', { serverId: 'server-b' })).resolves.toEqual({
+      success: false,
+      message: 'Forbidden',
+      code: 'session_stop_failed',
+    });
+    expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+  });
 });

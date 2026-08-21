@@ -180,10 +180,11 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       scopePrefix: 'machine_1',
       encryptionKey,
       encryptionVariant: 'dataKey',
-      authorizeRequest: async ({ method, params, authorization }) => {
+      authorizeRequest: async ({ method, params, authorization, transportResponseEnvelopeVersion }) => {
         expect(method).toBe('machine_1:demo.secure');
         expect(params).toEqual({ sessionId: 'sess_1' });
         expect(authorization).toEqual({ kind: 'session.write', sessionId: 'sess_1' });
+        expect(transportResponseEnvelopeVersion).toBe(1);
         return {
           ok: false,
           error: RPC_ERROR_MESSAGES.FORBIDDEN,
@@ -202,17 +203,18 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       method: 'machine_1:demo.secure',
       params: encodeBase64(encrypt(encryptionKey, 'dataKey', { sessionId: 'sess_1' })),
       authorization: { kind: 'session.write', sessionId: 'sess_1' },
+      transportResponseEnvelopeVersion: 1,
     });
 
     expect(handlerCalled).toBe(false);
-    expect(typeof res).toBe('string');
-    expect(
-      decrypt(
-        encryptionKey,
-        'dataKey',
-        decodeBase64(res as string),
-      ),
-    ).toEqual({
+    expect(res).toMatchObject({ v: 1 });
+    const encryptedResult = (res as { result: unknown }).result;
+    expect(typeof encryptedResult).toBe('string');
+    expect(decrypt(
+      encryptionKey,
+      'dataKey',
+      decodeBase64(encryptedResult as string),
+    )).toEqual({
       error: RPC_ERROR_MESSAGES.FORBIDDEN,
       errorCode: RPC_ERROR_CODES.FORBIDDEN,
     });

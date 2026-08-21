@@ -1,6 +1,7 @@
 import {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
+  RPC_METHODS,
   parseSocketRpcAuthorizationContext,
   resolveSocketRpcSessionWriteAuthorizationMethod,
   type SocketRpcAuthorizationContext,
@@ -26,15 +27,31 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   method: string;
   params: unknown;
   authorization?: SocketRpcAuthorizationContext;
+  transportResponseEnvelopeVersion?: 1;
 }>): Promise<RpcAuthorizationResult> {
-  if (!resolveSocketRpcSessionWriteAuthorizationMethod(request.method)) {
+  const authorizationMethod = resolveSocketRpcSessionWriteAuthorizationMethod(request.method);
+  if (!authorizationMethod) {
+    return { ok: true };
+  }
+
+  const requestedSessionId = readSessionIdFromParams(request.params);
+  if (
+    authorizationMethod === RPC_METHODS.STOP_SESSION
+    && !request.authorization
+    && request.transportResponseEnvelopeVersion === undefined
+    && requestedSessionId
+  ) {
+    // `server-v0.2.1` (4913c1e533c872a0712ba1c25b3104fd470aacc2)
+    // forwarded encrypted Stop params only after authenticating both sockets,
+    // before session-write proof and response envelopes existed. Keep exactly
+    // that released direction working. Current servers always stamp the proof
+    // and envelope, so a current request missing proof still fails closed.
     return { ok: true };
   }
 
   const authorization = parseSocketRpcAuthorizationContext(request.authorization);
   if (!authorization) return forbidden();
 
-  const requestedSessionId = readSessionIdFromParams(request.params);
   if (!requestedSessionId || requestedSessionId !== authorization.sessionId) {
     return forbidden();
   }

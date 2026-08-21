@@ -69,6 +69,7 @@ export interface RpcHandlerConfig {
         method: string;
         params: unknown;
         authorization?: SocketRpcAuthorizationContext;
+        transportResponseEnvelopeVersion?: 1;
     }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
     projectTransportAcknowledgement?: (request: Readonly<{
         method: string;
