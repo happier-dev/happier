@@ -2663,13 +2663,13 @@ export class PiRpcBackend implements AgentBackend {
           const provider = asNonEmptyString(model?.provider);
           if (!id || !provider) return null;
           const qualifiedId = qualifyPiModelId(provider, id);
-          const name = asNonEmptyString(model?.name) ?? qualifiedId ?? id;
+          const name = asNonEmptyString(model?.name);
           this.modelProviderById.set(id, provider);
           if (qualifiedId) this.modelProviderById.set(qualifiedId, provider);
           return createPiModelCatalogEntry({
             provider,
             modelId: id,
-            name,
+            ...(name ? { name } : {}),
             supportsThinking: model?.reasoning === true,
             thinkingEffort: thinkingLevelFromState,
           });

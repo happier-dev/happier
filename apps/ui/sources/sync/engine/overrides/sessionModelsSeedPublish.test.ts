@@ -90,7 +90,12 @@ describe('computeNextSessionModelsSeedMetadata', () => {
                 { id: '', name: 'Missing id' },
                 // A model-scoped option row that fails the id/name requirement must be dropped.
                 { id: 'missing-name' } as unknown as PreflightModelList['availableModels'][number],
-                { id: 'zai/glm-5.3-air', name: 'GLM-5.3 Air', description: 'Fast variant' },
+                {
+                    id: 'zai/glm-5.3-air',
+                    name: 'GLM-5.3 Air',
+                    description: 'Fast variant',
+                    extendedContextModelId: '  zai/glm-5.3-air-long  ',
+                },
             ],
             updatedAt: 1234,
         });
@@ -98,7 +103,12 @@ describe('computeNextSessionModelsSeedMetadata', () => {
         expect(next.sessionModelsV1?.availableModels).toEqual([
             // Blank descriptions are omitted: the reader schema requires min(1) when present.
             { id: 'zai/glm-5.3', name: 'GLM-5.3' },
-            { id: 'zai/glm-5.3-air', name: 'GLM-5.3 Air', description: 'Fast variant' },
+            {
+                id: 'zai/glm-5.3-air',
+                name: 'GLM-5.3 Air',
+                description: 'Fast variant',
+                extendedContextModelId: 'zai/glm-5.3-air-long',
+            },
         ]);
     });
 });

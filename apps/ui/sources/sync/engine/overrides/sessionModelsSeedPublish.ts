@@ -3,6 +3,10 @@ import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 
+function readNormalizedSessionControlIdentifier(value: unknown): string | null {
+    return readNonBlankSessionControlIdentifier(value)?.trim() ?? null;
+}
+
 /**
  * Seed the session model list from the new-session wizard's preflight probe.
  *
@@ -25,17 +29,18 @@ export function computeNextSessionModelsSeedMetadata(params: Readonly<{
     // first runtime publish a no-op instead of overwriting it.
     if (readSessionModelsState(params.metadata) !== null) return params.metadata;
 
-    const provider = readNonBlankSessionControlIdentifier(params.provider);
-    const currentModelId = readNonBlankSessionControlIdentifier(params.currentModelId);
+    const provider = readNormalizedSessionControlIdentifier(params.provider);
+    const currentModelId = readNormalizedSessionControlIdentifier(params.currentModelId);
     if (!provider || !currentModelId) return params.metadata;
 
     const availableModels = params.availableModels.flatMap((model) => {
-        const id = readNonBlankSessionControlIdentifier(model.id);
+        const id = readNormalizedSessionControlIdentifier(model.id);
         const name = readNonBlankSessionControlIdentifier(model.name);
         if (!id || !name) return [];
         const description = typeof model.description === 'string' && model.description.trim().length > 0
             ? model.description
             : null;
+        const extendedContextModelId = readNormalizedSessionControlIdentifier(model.extendedContextModelId);
         return [{
             id,
             name,
@@ -43,9 +48,7 @@ export function computeNextSessionModelsSeedMetadata(params: Readonly<{
             ...(typeof model.contextWindowTokens === 'number' && Number.isFinite(model.contextWindowTokens) && model.contextWindowTokens > 0
                 ? { contextWindowTokens: model.contextWindowTokens }
                 : {}),
-            ...(readNonBlankSessionControlIdentifier(model.extendedContextModelId)
-                ? { extendedContextModelId: model.extendedContextModelId }
-                : {}),
+            ...(extendedContextModelId ? { extendedContextModelId } : {}),
             ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0
                 ? { modelOptions: model.modelOptions }
                 : {}),

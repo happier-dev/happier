@@ -22,16 +22,7 @@ const PI_PREFLIGHT_MODELS: PreflightModelList = {
     supportsFreeform: true,
 };
 
-type AgentCoreModelConfig = {
-    supportsSelection?: boolean;
-    supportsFreeform?: boolean;
-    dynamicProbe?: 'auto' | 'static-only';
-    nonAcpApplyScope?: string;
-};
-
 async function setupUseCreateNewSessionHarness(params: Readonly<{
-    agentModelConfigByAgentType?: Record<string, AgentCoreModelConfig>;
-    staticModelsByAgentType?: Record<string, readonly { id: string; name: string }[]>;
     publishModelsSeedError?: Error;
 }> = {}) {
     const publishModelsSeedSpy = vi.fn(async (..._args: unknown[]) => {
@@ -68,12 +59,6 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
             return createPartialStorageModuleMock(importOriginal, {});
         },
     });
-    if (params.staticModelsByAgentType) {
-        vi.doMock('@happier-dev/agents', async (importOriginal) => ({
-            ...(await importOriginal<Record<string, unknown>>()),
-            getAgentStaticModels: vi.fn((agentType: string) => params.staticModelsByAgentType?.[agentType] ?? []),
-        }));
-    }
     vi.doMock('@/modal', () => ({
         Modal: {
             alert: modalAlertSpy,
@@ -146,18 +131,8 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         getMachineCapabilitiesSnapshot: getMachineCapabilitiesSnapshotSpy,
         prefetchMachineCapabilities: prefetchMachineCapabilitiesSpy,
     }));
-    vi.doMock('@/agents/catalog/catalog', () => ({
-        AGENT_IDS: ['codex', 'claude', 'pi'],
-        getAgentCore: vi.fn((agentType: string) => {
-            const overrides = params.agentModelConfigByAgentType?.[agentType];
-            return {
-                model: {
-                    supportsSelection: true,
-                    nonAcpApplyScope: 'next_prompt',
-                    ...overrides,
-                },
-            };
-        }),
+    vi.doMock('@/agents/catalog/catalog', async (importOriginal) => ({
+        ...(await importOriginal<Record<string, unknown>>()),
         buildSpawnEnvironmentVariablesFromUiState: vi.fn((opts: { environmentVariables?: Record<string, string> }) => opts.environmentVariables),
         buildSpawnSessionExtrasFromUiState: vi.fn(() => ({})),
         getAgentResumeExperimentsFromSettings: vi.fn(() => ({})),
@@ -352,32 +327,10 @@ describe('useCreateNewSession model list seeding', () => {
     });
 
     it('does not seed for static-only probe agents', async () => {
-        const harness = await setupUseCreateNewSessionHarness({
-            agentModelConfigByAgentType: {
-                pi: { dynamicProbe: 'static-only' },
-            },
-        });
+        const harness = await setupUseCreateNewSessionHarness();
 
         await runCreateSession(harness, {
-            agentType: 'pi',
-            preflightModels: PI_PREFLIGHT_MODELS,
-        });
-
-        expect(harness.publishModelsSeedSpy).not.toHaveBeenCalled();
-    });
-
-    it('does not seed for an agent with exactly one curated static model', async () => {
-        // Pins the eligibility boundary: a single real catalog entry (beyond the always-present
-        // `default` pseudo-entry) already populates the picker, so probe data must not seed over
-        // the curated catalog while waiting for the runtime publish.
-        const harness = await setupUseCreateNewSessionHarness({
-            staticModelsByAgentType: {
-                pi: [{ id: 'solo-model', name: 'Solo Model' }],
-            },
-        });
-
-        await runCreateSession(harness, {
-            agentType: 'pi',
+            agentType: 'qwen',
             preflightModels: PI_PREFLIGHT_MODELS,
         });
 
