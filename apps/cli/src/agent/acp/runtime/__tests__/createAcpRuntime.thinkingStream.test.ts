@@ -12,12 +12,12 @@ import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessio
 type ThinkingCommit = { body: ACPMessageData; segmentState: string };
 
 /** Narrow `meta.happierStreamSegmentV1` to its typed shape (canonical writer: buildStreamedTranscriptSegmentSnapshot). */
-function readSegmentState(meta: Record<string, unknown> | undefined): string {
+const readSegmentState = (meta: Record<string, unknown> | undefined): string => {
   const segment = meta?.happierStreamSegmentV1;
   if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return '';
   const state = (segment as Record<string, unknown>).segmentState;
   return typeof state === 'string' ? state : '';
-}
+};
 
 async function createRuntimeWithThinkingCommits(): Promise<{
   backend: ReturnType<typeof createFakeAcpRuntimeBackend>;
