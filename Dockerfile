@@ -13,7 +13,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -22,11 +22,13 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/agents/package.json packages/agents/
  COPY packages/cli-common/package.json packages/cli-common/
  COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/privacy-kit/package.json packages/privacy-kit/
  COPY packages/protocol/package.json packages/protocol/
  COPY packages/release-runtime/package.json packages/release-runtime/
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY apps/ui/tools/postinstall ./apps/ui/tools/postinstall
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
@@ -36,6 +38,8 @@ RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
 COPY scripts/workspaces ./scripts/workspaces
+COPY apps/stack/scripts/utils ./apps/stack/scripts/utils
+COPY packages/cli-common/workspaceBundleLock.mjs packages/cli-common/workspaceLockLease.mjs packages/cli-common/processInstance.mjs ./packages/cli-common/
 
 # Shared deps (alpine) for web UI export embeds.
 # We build the web export on the BUILDPLATFORM because the output is architecture-agnostic, and
@@ -47,7 +51,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -56,11 +60,13 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/agents/package.json packages/agents/
  COPY packages/cli-common/package.json packages/cli-common/
  COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/privacy-kit/package.json packages/privacy-kit/
  COPY packages/protocol/package.json packages/protocol/
  COPY packages/release-runtime/package.json packages/release-runtime/
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY apps/ui/tools/postinstall ./apps/ui/tools/postinstall
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
@@ -70,6 +76,8 @@ RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
 COPY scripts/workspaces ./scripts/workspaces
+COPY apps/stack/scripts/utils ./apps/stack/scripts/utils
+COPY packages/cli-common/workspaceBundleLock.mjs packages/cli-common/workspaceLockLease.mjs packages/cli-common/processInstance.mjs ./packages/cli-common/
 
 # Shared deps (debian) for server builds (needs toolchain for native deps)
 FROM node:${NODE_VERSION} AS deps-debian
@@ -79,7 +87,7 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
  COPY apps/cli/package.json apps/cli/
@@ -88,11 +96,13 @@ RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents
  COPY packages/agents/package.json packages/agents/
  COPY packages/cli-common/package.json packages/cli-common/
  COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/privacy-kit/package.json packages/privacy-kit/
  COPY packages/protocol/package.json packages/protocol/
  COPY packages/release-runtime/package.json packages/release-runtime/
  COPY packages/transfers/package.json packages/transfers/
  COPY packages/audio-stream-native/package.json packages/audio-stream-native/
  COPY packages/sherpa-native/package.json packages/sherpa-native/
+COPY apps/ui/tools/postinstall ./apps/ui/tools/postinstall
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
@@ -102,6 +112,8 @@ RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
 COPY scripts/workspaces ./scripts/workspaces
+COPY apps/stack/scripts/utils ./apps/stack/scripts/utils
+COPY packages/cli-common/workspaceBundleLock.mjs packages/cli-common/workspaceLockLease.mjs packages/cli-common/processInstance.mjs ./packages/cli-common/
 
 #
 # Targets
@@ -277,8 +289,10 @@ COPY .github/feature-policy ./.github/feature-policy
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common
+COPY packages/privacy-kit ./packages/privacy-kit
 COPY packages/protocol ./packages/protocol
 COPY packages/release-runtime ./packages/release-runtime
+RUN yarn workspace privacy-kit build
 RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
 RUN yarn workspace @happier-dev/release-runtime postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
@@ -298,6 +312,7 @@ ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
 COPY --from=server-builder --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=server-builder --chown=node:node /repo/packages/agents /repo/packages/agents
 COPY --from=server-builder --chown=node:node /repo/packages/cli-common /repo/packages/cli-common
+COPY --from=server-builder --chown=node:node /repo/packages/privacy-kit /repo/packages/privacy-kit
 COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packages/protocol
 COPY --from=server-builder --chown=node:node /repo/packages/release-runtime /repo/packages/release-runtime
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server

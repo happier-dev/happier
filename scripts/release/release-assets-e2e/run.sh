@@ -469,7 +469,7 @@ if [[ "$mode" == "local" ]]; then
     esac
 
     echo "[npm-e2e-smoke] building local happier-server binary for remote server smoke (${server_target})..."
-    node "$repo_root/scripts/pipeline/release/build-server-binaries.mjs" --channel=stable --targets="$server_target" >/dev/null
+    node "$repo_root/scripts/pipeline/release/build-server-binaries.mjs" --channel=stable --targets="$server_target" --server-component=happier-server >/dev/null
 
     server_artifact="$(ls -t "$repo_root"/dist/release-assets/server/happier-server-v*-"${server_target}".tar.gz 2>/dev/null | head -n 1 || true)"
     if [[ -z "$server_artifact" || ! -f "$server_artifact" ]]; then
@@ -949,18 +949,32 @@ while true; do
   sleep 2
 done
 
-echo "[npm-e2e-smoke] checking stack daemon..."
-"${compose[@]}" exec -T stack bash -lc 'hstack daemon status --json | node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(0,\"utf8\"));const s=String(j.status||\"\"); if(!/running/i.test(s)){console.error(s||\"missing status\"); process.exit(1)}"' >/dev/null
+echo "[npm-e2e-smoke] waiting for stack daemon..."
+daemon_start_ts="$(date +%s)"
+while true; do
+  if "${compose[@]}" exec -T stack bash -lc 'hstack daemon status --json | node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(0,\"utf8\"));const s=String(j.status||\"\");const running=/daemon is running/i.test(s) && !/daemon is not running/i.test(s);if(!running)process.exit(1)"' >/dev/null 2>&1; then
+    break
+  fi
+
+  now_ts="$(date +%s)"
+  if (( now_ts - daemon_start_ts > timeout_s )); then
+    echo "[npm-e2e-smoke] stack daemon did not become ready in ${timeout_s}s" >&2
+    "${compose[@]}" exec -T stack bash -lc 'hstack daemon status --json' >&2 || true
+    "${compose[@]}" --env-file "$env_file" logs --no-color stack >&2 || true
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "[npm-e2e-smoke] checking stack daemon connectivity (machine registration)..."
-"${compose[@]}" exec -T stack bash -lc '
+"${compose[@]}" exec -T stack env REGISTRATION_TIMEOUT_S="$timeout_s" bash -lc '
   set -euo pipefail
 
   cli_servers_dir="/root/.happier/stacks/main/cli/servers"
   preferred_access_key="${cli_servers_dir}/stack_main__id_default/access.key"
   base="http://127.0.0.1:3005"
 
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "$REGISTRATION_TIMEOUT_S"); do
     access_keys=""
     if [[ -f "$preferred_access_key" ]]; then
       access_keys="$preferred_access_key"
@@ -993,7 +1007,7 @@ echo "[npm-e2e-smoke] checking stack daemon connectivity (machine registration).
   fi
   echo "[npm-e2e-smoke] expected stack daemon to register a machine (GET /v1/machines)" >&2
   exit 1
-' >/dev/null
+'
 
 echo "[npm-e2e-smoke] running happier-cli smoke..."
 set +e

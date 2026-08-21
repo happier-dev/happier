@@ -78,6 +78,11 @@ test('npm-e2e-smoke phase1 supervisor detection uses wide ps output (avoids trun
     /ps\s+-eo\s+pid,args\s+-ww/,
     'expected phase1 supervisor detection to use ps -ww so the @happier-dev/stack/scripts/run.mjs path is not truncated'
   );
+  assert.equal(
+    raw.includes('@happier-dev\\\\/stack\\\\/scripts\\\\/run\\\\.mjs'),
+    false,
+    'expected the awk regex not to preserve doubled backslashes that terminate its regex early'
+  );
 });
 
 test('npm-e2e-smoke phase1 supervisor detection has a pgrep fallback', async () => {
@@ -100,7 +105,10 @@ test('npm-e2e-smoke kills lingering server-light process before phase2', async (
   const entrypointPath = join(smokeDir, 'bin', 'stack-entrypoint.sh');
   const raw = await readFile(entrypointPath, 'utf8');
   assert.match(raw, /kill_phase1_server_light/, 'expected a helper to kill phase1 server-light processes');
-  assert.match(raw, /--import tsx/, 'expected smoke to key off the server-light entrypoint args');
+  assert.ok(
+    raw.includes("awk '/sources\\/[m]ain\\.light\\.ts/"),
+    'expected smoke to match the stable server-light entrypoint without matching its own awk process'
+  );
 });
 
 test('npm-e2e-smoke uses --no-service for stop inside Docker', async () => {
@@ -167,6 +175,45 @@ test('npm-e2e-smoke stack run checks daemon registers a machine on the server', 
   const raw = await readFile(runnerPath, 'utf8');
   assert.match(raw, /\/v1\/machines/, 'expected smoke runner to probe /v1/machines for daemon connectivity');
   assert.match(raw, /access\.key/, 'expected smoke runner to read a token from access.key for authenticated probes');
+});
+
+test('npm-e2e-smoke waits for an actually running stack daemon before registration', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  assert.match(
+    raw,
+    /\/daemon is running\/i\.test\(s\)\s*&&\s*!\/daemon is not running\/i\.test\(s\)/,
+    'expected daemon readiness to reject the "Daemon is not running" status'
+  );
+  assert.doesNotMatch(
+    raw,
+    /if\(!\/running\/i\.test\(s\)\)/,
+    'expected smoke runner not to treat any status containing "running" as healthy'
+  );
+  assert.match(
+    raw,
+    /stack daemon did not become ready/,
+    'expected daemon readiness failures to retain an explicit diagnostic'
+  );
+});
+
+test('npm-e2e-smoke gives machine registration the configured release timeout', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  const registrationBlock = raw.slice(
+    raw.indexOf('checking stack daemon connectivity (machine registration)'),
+    raw.indexOf('running happier-cli smoke')
+  );
+  assert.match(
+    registrationBlock,
+    /REGISTRATION_TIMEOUT_S="\$timeout_s"/,
+    'expected machine registration to use the configured release validation timeout'
+  );
+  assert.doesNotMatch(
+    registrationBlock,
+    /seq 1 60/,
+    'expected machine registration not to use a fixed one-minute budget'
+  );
 });
 
 test('npm-e2e-smoke resolves stack cli access.key dynamically from canonical servers directory', async () => {
@@ -350,6 +397,11 @@ test('npm-e2e-smoke local mode prepares a local linux server binary for remote s
     runnerRaw,
     /build-server-binaries\.mjs/,
     'expected local mode runner to build a local happier-server release binary for remote server smoke'
+  );
+  assert.match(
+    runnerRaw,
+    /build-server-binaries\.mjs[^\n]*--server-component=happier-server/,
+    'expected remote server smoke to package the full runtime and its migration closure'
   );
   assert.match(
     runnerRaw,

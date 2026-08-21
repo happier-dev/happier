@@ -1413,6 +1413,7 @@ export async function extractFirstPartyReleaseArchiveToDirectory(
 ): Promise<void> {
   await extractArchivePayloadToDirectory({
     ...params,
+    tarLinkPolicy: params.tarLinkPolicy ?? 'skip',
     limits: {
       ...FIRST_PARTY_RELEASE_ARCHIVE_EXTRACTION_LIMITS,
       ...params.limits,

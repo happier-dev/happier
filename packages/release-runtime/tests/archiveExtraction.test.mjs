@@ -9,6 +9,7 @@ import * as tar from 'tar';
 
 import {
   extractArchivePayloadToDirectory,
+  extractFirstPartyReleaseArchiveToDirectory,
   inspectTarArchiveEntries,
 } from '../dist/archiveExtraction.js';
 
@@ -1115,6 +1116,36 @@ test('extractArchivePayloadToDirectory can skip tar links for a verified runtime
     assert.equal(await readFile(join(extractDir, 'payload', 'bin', 'node'), 'utf8'), 'runtime');
     await assert.rejects(
       readFile(join(extractDir, 'payload', 'bin', 'corepack'), 'utf8'),
+      (error) => error?.code === 'ENOENT',
+    );
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractFirstPartyReleaseArchiveToDirectory skips links from checksum-verified release payloads', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-first-party-links-'));
+  const payloadDir = join(rootDir, 'payload');
+  const archivePath = join(rootDir, 'payload.tar.gz');
+  const extractDir = join(rootDir, 'extract');
+  try {
+    await mkdir(join(payloadDir, 'node_modules', '.bin'), { recursive: true });
+    await writeFile(join(payloadDir, 'tool.js'), 'console.log("tool")\n', 'utf8');
+    await symlink('../../tool.js', join(payloadDir, 'node_modules', '.bin', 'tool'));
+    await tar.c(
+      { cwd: rootDir, file: archivePath, gzip: true, portable: true },
+      ['payload'],
+    );
+
+    await extractFirstPartyReleaseArchiveToDirectory({
+      archiveName: 'payload.tar.gz',
+      archivePath,
+      extractDir,
+    });
+
+    assert.equal(await readFile(join(extractDir, 'payload', 'tool.js'), 'utf8'), 'console.log("tool")\n');
+    await assert.rejects(
+      readFile(join(extractDir, 'payload', 'node_modules', '.bin', 'tool'), 'utf8'),
       (error) => error?.code === 'ENOENT',
     );
   } finally {

@@ -196,10 +196,10 @@ kill_phase1_no_ui_supervisor() {
   # In Docker, that supervisor can linger even after `hstack stop`, keeping the no-UI server alive.
   local pids_raw
   local pids
-  pids_raw="$(ps -eo pid,args -ww | awk '/@happier-dev\\/stack\\/scripts\\/run\\.mjs/ && /--no-daemon/ && /--no-ui/ {print $1}' || true)"
+  pids_raw="$(ps -eo pid,args -ww | awk '/@happier-dev\/stack\/scripts\/run\.mjs/ && /--no-daemon/ && /--no-ui/ {print $1}' || true)"
   if [[ -z "$pids_raw" ]]; then
     # More robust than ps parsing in some environments; procps provides pgrep.
-    pids_raw="$(pgrep -f '@happier-dev/stack/scripts/run\\.mjs.*--no-daemon.*--no-ui' || true)"
+    pids_raw="$(pgrep -f '@happier-dev/stack/scripts/run\.mjs.*--no-daemon.*--no-ui' || true)"
   fi
   pids="$(echo "$pids_raw" | tr '\n' ' ' | xargs echo 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
@@ -220,7 +220,7 @@ kill_phase1_server_light() {
   # If the phase1 supervisor is killed abruptly, the server-light process can linger and keep the port busy.
   local pids_raw
   local pids
-  pids_raw="$(ps -eo pid,args -ww | awk '/--import tsx \.\/sources\/main\.light\.ts/ {print $1}' || true)"
+  pids_raw="$(ps -eo pid,args -ww | awk '/sources\/[m]ain\.light\.ts/ {print $1}' || true)"
   pids="$(echo "$pids_raw" | tr '\n' ' ' | xargs echo 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
     return 0
