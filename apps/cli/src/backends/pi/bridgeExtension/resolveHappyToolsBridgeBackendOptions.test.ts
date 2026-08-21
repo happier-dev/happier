@@ -35,51 +35,69 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     })).toBeNull();
   });
 
-  it('materializes the asset and derives disable flags from the same prompt signals', async () => {
+  it('materializes a config-independent asset and derives the bridge config from prompt signals', async () => {
     const agentDir = tempAgentDir();
 
     const enabled = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
       settings: null,
       memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
     });
     expect(enabled).not.toBeNull();
-    expect(enabled?.disableRename).toBe(false);
-    expect(enabled?.disableMemory).toBe(false);
+    expect(enabled?.sessionRenameMode).toBe('ongoing');
+    expect(enabled?.promptOptionsEnabled).toBe(true); // responseOptions defaults to 'agent'
+    expect(enabled?.memoryMachineId).toBe('machine-1');
     expect(enabled?.extensionPath).toBe(resolvePiBridgeExtensionPath(agentDir));
     expect(existsSync(enabled!.extensionPath)).toBe(true);
 
+    // The asset is config-independent: every behavior knob rides launch flags, so
+    // sessions with different configs share one materialized file.
     const content = readFileSync(enabled!.extensionPath, 'utf8');
-    expect(content).toContain('const RENAME_ENABLED = true;');
-    expect(content).toContain('const MEMORY_ENABLED = true;');
+    expect(content).not.toContain('RENAME_ENABLED');
+    expect(content).not.toContain('MEMORY_ENABLED');
   });
 
-  it('disables rename when the session title updates mode is disabled in settings', async () => {
+  it('resolves the rename mode and response options from settings', async () => {
     const agentDir = tempAgentDir();
     const resolved = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
-      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled' } },
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled', responseOptions: 'agent' } },
       memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
     });
-    expect(resolved?.disableRename).toBe(true);
-    expect(resolved?.disableMemory).toBe(false);
+    expect(resolved?.sessionRenameMode).toBe('disabled');
+    expect(resolved?.promptOptionsEnabled).toBe(true);
 
-    const content = readFileSync(resolved!.extensionPath, 'utf8');
-    expect(content).toContain('const RENAME_ENABLED = false;');
+    const initial = await resolveHappyToolsBridgeBackendOptions({
+      agentDir,
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } },
+      memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
+    });
+    expect(initial?.sessionRenameMode).toBe('initial');
+    // The materialized asset does not change with config (one file for all configs).
+    expect(readFileSync(initial!.extensionPath, 'utf8')).toBe(readFileSync(resolved!.extensionPath, 'utf8'));
   });
 
-  it('disables memory tools when memory recall guidance is disabled', async () => {
+  it('binds memory to a machine id and disables it when guidance is off or no id is bound', async () => {
     const agentDir = tempAgentDir();
-    const resolved = await resolveHappyToolsBridgeBackendOptions({
+
+    const guidanceOff = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
       settings: null,
       memoryRecallGuidanceEnabled: false,
+      memoryMachineId: 'machine-1',
     });
-    expect(resolved?.disableRename).toBe(false);
-    expect(resolved?.disableMemory).toBe(true);
+    expect(guidanceOff?.memoryMachineId).toBeNull();
 
-    const content = readFileSync(resolved!.extensionPath, 'utf8');
-    expect(content).toContain('const MEMORY_ENABLED = false;');
+    const noMachineId = await resolveHappyToolsBridgeBackendOptions({
+      agentDir,
+      settings: null,
+      memoryRecallGuidanceEnabled: true,
+      memoryMachineId: null,
+    });
+    expect(noMachineId?.memoryMachineId).toBeNull();
   });
 
   it('bakes a Happier CLI launch spec into the asset', async () => {
@@ -88,6 +106,7 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
       agentDir,
       settings: null,
       memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
     });
     const content = readFileSync(resolved!.extensionPath, 'utf8');
     expect(content).toMatch(/const HAPPIER_CLI_FILE_PATH = ".*";/);

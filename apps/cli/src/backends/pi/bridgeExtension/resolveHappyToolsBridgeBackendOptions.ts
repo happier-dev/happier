@@ -1,4 +1,8 @@
-import { resolveCodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
+import {
+  isCodingPromptResponseOptionsEnabled,
+  resolveCodingPromptSessionTitleUpdatesModeV1,
+  type CodingPromptSessionTitleUpdatesModeV1,
+} from '@happier-dev/protocol';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 
@@ -6,14 +10,24 @@ import { ensurePiBridgeExtensionAsset } from './piBridgeExtensionAssets';
 
 /**
  * Resolved tools-bridge backend options for a Pi session. `extensionPath` is passed via
- * Pi's `--extension` argument; the booleans become the `--happy-disable-*` flags. Both
- * are computed from the same settings/signals that build the coding system prompt, so
- * the tools the extension registers can never drift from what the prompt advertises.
+ * Pi's `--extension` argument; the config fields become the `--happy-*` launch flags the
+ * generated extension derives BOTH its tool registration and its appended system-prompt
+ * addition from. All fields are computed from the same merged settings/signals that used
+ * to build the coding system prompt, so the tools the extension registers can never
+ * drift from the prompt guidance it appends.
  */
 export type HappyToolsBridgeBackendOptions = Readonly<{
   extensionPath: string;
-  disableRename: boolean;
-  disableMemory: boolean;
+  /** Session title updates mode (`disabled` gates both the tool and its guidance). */
+  sessionRenameMode: CodingPromptSessionTitleUpdatesModeV1;
+  /** Whether the response-options (`<options>`) guidance is enabled. */
+  promptOptionsEnabled: boolean;
+  /**
+   * Daemon machine id binding the memory tools. `null` keeps the memory tools and the
+   * memory-recall guidance off (a tool that is guaranteed to fail at call time must not
+   * be registered at all).
+   */
+  memoryMachineId: string | null;
 }>;
 
 /**
@@ -28,11 +42,17 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   agentDir: string | null;
   settings: Record<string, unknown> | null | undefined;
   memoryRecallGuidanceEnabled: boolean;
+  memoryMachineId?: string | null;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
   if (!params.agentDir) return null;
 
-  const disableRename = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null) === 'disabled';
-  const disableMemory = params.memoryRecallGuidanceEnabled !== true;
+  const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
+  const promptOptionsEnabled = isCodingPromptResponseOptionsEnabled(params.settings ?? null);
+  const memoryMachineId = params.memoryRecallGuidanceEnabled === true
+    && typeof params.memoryMachineId === 'string'
+    && params.memoryMachineId.trim()
+    ? params.memoryMachineId.trim()
+    : null;
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
   const argv = [...launchSpec.args];
@@ -40,12 +60,10 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   const launchArgPrefix = argv.length > 0 && argv[argv.length - 1] === 'tools' ? argv.slice(0, -1) : argv;
 
   const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir, {
-    renameEnabled: !disableRename,
-    memoryEnabled: !disableMemory,
     launchFilePath: launchSpec.filePath,
     launchArgPrefix,
     launchEnv: launchSpec.env ?? {},
   });
 
-  return { extensionPath, disableRename, disableMemory };
+  return { extensionPath, sessionRenameMode, promptOptionsEnabled, memoryMachineId };
 }
