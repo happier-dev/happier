@@ -126,6 +126,7 @@ async function createSessionAgentMcpScenario(params?: Readonly<{
 
   const { RpcHandlerManager } = await import('../../../../apps/cli/src/api/rpc/RpcHandlerManager');
   const { startHappyServer } = await import('../../../../apps/cli/src/mcp/startHappyServer');
+  const accountSettings = params?.accountSettings ?? accountSettingsParse({});
   const rpcHandlerManager = new RpcHandlerManager({
     scopePrefix: parentSessionId,
     encryptionKey: new Uint8Array([1, 2, 3, 4]),
@@ -142,7 +143,7 @@ async function createSessionAgentMcpScenario(params?: Readonly<{
     },
     {
       credentials: createCredentials(),
-      accountSettings: params?.accountSettings ?? accountSettingsParse({}),
+      getAccountSettings: () => accountSettings,
     },
   );
   const sdkClientIndexPath = resolve(repoRootDir(), 'apps/cli/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
@@ -258,7 +259,10 @@ describe('core e2e: session-agent spawn actions', () => {
         connectedServices,
         connectedServicesUpdatedAt: 1700000000003,
         mcpSelection,
-        initialPrompt: 'Use inherited parent context.',
+        pendingFirstInput: {
+          text: 'Use inherited parent context.',
+          localId: expect.stringMatching(/^spawn-first:/),
+        },
       }));
 
       const richConfig = buildAcpConfigOptionOverridesV1({
@@ -297,7 +301,10 @@ describe('core e2e: session-agent spawn actions', () => {
         sessionConfigOptionOverrides: richConfig,
         connectedServices,
         mcpSelection,
-        initialPrompt: 'Use explicit rich options.',
+        pendingFirstInput: {
+          text: 'Use explicit rich options.',
+          localId: expect.stringMatching(/^spawn-first:/),
+        },
       }));
 
       const spawnCallsBeforeEscalation = spawnDaemonSession.mock.calls.length;
@@ -340,8 +347,11 @@ describe('core e2e: session-agent spawn actions', () => {
     });
     try {
       const disabledPayload = parseMcpJsonText(await disabledScenario.client.callTool({
-        name: 'action_spec_get',
-        arguments: { id: 'session.spawn_new' },
+        name: 'action_execute',
+        arguments: {
+          actionId: 'session.spawn_new',
+          input: { initialMessage: 'Must remain disabled.' },
+        },
       }));
       expect(disabledPayload).toEqual(expect.objectContaining({
         errorCode: 'action_disabled',

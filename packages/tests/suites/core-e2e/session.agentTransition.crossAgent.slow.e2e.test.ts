@@ -487,7 +487,10 @@ describe('core e2e: same-Session cross-Agent transition', () => {
     expect(dividers).toHaveLength(1);
     const divider = dividers[0]!;
     expect(divider.localId).toBe(dividerLocalId);
-    const dividerSidecar = readSessionAgentTransitionDividerFromStoredRecordV1(decodeRow(divider, sessionKey));
+    const dividerSidecar = readSessionAgentTransitionDividerFromStoredRecordV1({
+      localId: divider.localId,
+      record: decodeRow(divider, sessionKey),
+    });
     expect(dividerSidecar).toEqual({
         v: 1,
         fromAgentId: 'claude',
