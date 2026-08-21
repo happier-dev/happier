@@ -111,7 +111,7 @@ export async function resolvePiDirectSessionFile(params: Readonly<{
             filePath,
             fileRelPath: `sessions/${dirName}/${name}`.replace(/\\/g, '/'),
             header,
-            mtimeMs: Math.trunc(s.mtimeMs),
+            mtimeMs: s.mtimeMs,
           };
         }
       } catch {

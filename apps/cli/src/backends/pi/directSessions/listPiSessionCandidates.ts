@@ -131,6 +131,40 @@ export async function listPiSessionCandidates(params: Readonly<{
   const rawSearchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
   const searchTerm = rawSearchTerm.toLowerCase();
 
+  // Exact-id fast path: when the search term is a bare session id, resolve straight to that file
+  // without first performing the same repository-wide header scan through discovery.
+  if (searchTerm && !rawSearchTerm.includes('/')) {
+    const resolved = await resolvePiDirectSessionFile({ source: params.source, env, remoteSessionId: rawSearchTerm }).catch(() => null);
+    if (resolved) {
+      let exactStat: Awaited<ReturnType<typeof stat>> | null = null;
+      try {
+        exactStat = await stat(resolved.filePath);
+      } catch {
+        exactStat = null;
+      }
+      if (exactStat?.isFile()) {
+        const pageOffset = Math.min(offset, 1);
+        if (pageOffset > 0) {
+          return { candidates: [], nextCursor: null };
+        }
+        const relSegments = resolved.fileRelPath.split('/');
+        const candidate = await buildPiCandidate({
+          session: {
+            id: rawSearchTerm,
+            remoteSessionId: resolved.header.id.trim() || rawSearchTerm,
+            cwd: resolved.header.cwd.trim() || null,
+            dirName: relSegments.at(-2) ?? '',
+            fileName: relSegments.at(-1) ?? '',
+            filePath: resolved.filePath,
+            mtimeMs: exactStat.mtimeMs,
+          },
+          env,
+        });
+        return { candidates: [candidate], nextCursor: null };
+      }
+    }
+  }
+
   let dirEntries: Dirent<string>[];
   try {
     dirEntries = await readdir(sessionsDir, { withFileTypes: true });
@@ -165,14 +199,17 @@ export async function listPiSessionCandidates(params: Readonly<{
           const s = await stat(filePath);
           if (!s.isFile()) return null;
           const header = await readPiSessionHeader(filePath).catch(() => null);
+          if (!header) return null;
+          const remoteSessionId = header.id.trim();
+          if (!remoteSessionId) return null;
           return {
             id,
-            remoteSessionId: header?.id?.trim() || id,
-            cwd: header?.cwd?.trim() || null,
+            remoteSessionId,
+            cwd: header.cwd.trim() || null,
             dirName,
             fileName,
             filePath,
-            mtimeMs: Math.trunc(s.mtimeMs),
+            mtimeMs: s.mtimeMs,
           };
         } catch {
           return null;
@@ -191,40 +228,6 @@ export async function listPiSessionCandidates(params: Readonly<{
       seenRemoteSessionIds.add(session.remoteSessionId);
       return true;
     });
-
-  // Exact-id fast path: when the search term is a bare session id, resolve straight to that file
-  // (authoritative, no scan-order dependence).
-  if (searchTerm && !rawSearchTerm.includes('/')) {
-    const resolved = await resolvePiDirectSessionFile({ source: params.source, env, remoteSessionId: rawSearchTerm }).catch(() => null);
-    if (resolved) {
-      let exactStat: Awaited<ReturnType<typeof stat>> | null = null;
-      try {
-        exactStat = await stat(resolved.filePath);
-      } catch {
-        exactStat = null;
-      }
-      if (exactStat?.isFile()) {
-        const pageOffset = Math.min(offset, 1);
-        if (pageOffset > 0) {
-          return { candidates: [], nextCursor: null };
-        }
-        const relSegments = resolved.fileRelPath.split('/');
-        const candidate = await buildPiCandidate({
-          session: {
-            id: rawSearchTerm,
-            remoteSessionId: resolved.header.id.trim() || rawSearchTerm,
-            cwd: resolved.header.cwd.trim() || null,
-            dirName: relSegments.at(-2) ?? '',
-            fileName: relSegments.at(-1) ?? '',
-            filePath: resolved.filePath,
-            mtimeMs: Math.trunc(exactStat.mtimeMs),
-          },
-          env,
-        });
-        return { candidates: [candidate], nextCursor: null };
-      }
-    }
-  }
 
   let searchIncomplete = false;
   let searchedPage: DirectSessionCandidateV1[] | null = null;

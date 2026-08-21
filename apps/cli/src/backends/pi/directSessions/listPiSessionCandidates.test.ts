@@ -100,6 +100,18 @@ describe('listPiSessionCandidates', () => {
     expect(exact.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([SESSION_A]);
   });
 
+  it('does not list files without a valid canonical session header', async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-invalid-header-'));
+    writeSession(agentDir, '--proj-a--', `2024-12-03T14-00-00-000Z_${SESSION_A}.jsonl`, [
+      userMsg('m1', null, 'missing header'),
+    ], 1_700_000_100);
+
+    const { source, env } = sourceEnv(agentDir);
+    const listed = await listPiSessionCandidates({ source, env, limit: 10 });
+
+    expect(listed.candidates).toEqual([]);
+  });
+
   it('consolidates copied files with the same header id onto the newest resolvable session', async () => {
     const agentDir = mkdtempSync(join(tmpdir(), 'pi-list-copied-'));
     writeSession(agentDir, '--proj-old--', 'old-copy.jsonl', [
