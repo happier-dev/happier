@@ -100,44 +100,40 @@ function profileMatchesServerUrl(profile, serverUrl) {
   });
 }
 
-export function resolvePreferredStackServerIdFromCliSettings({ cliHomeDir, serverUrl = '', env = process.env } = {}) {
+function resolveMatchingStackServerIdsFromCliSettings({ cliHomeDir, serverUrl = '', env = process.env } = {}) {
   const settings = readStackCliSettingsSnapshot({ cliHomeDir });
-  if (!settings) return '';
+  if (!settings) return [];
 
   const entries = Object.entries(settings.servers ?? {});
-  if (!entries.length) return '';
+  if (!entries.length) return [];
 
   const explicitServerId = resolveActiveServerIdOverride(env);
   const explicitProfile = explicitServerId ? settings.servers?.[explicitServerId] : null;
-  if (explicitServerId && profileMatchesServerUrl(explicitProfile, serverUrl)) {
-    return explicitServerId;
-  }
-
   const activeServerId = sanitizeServerIdForFilesystem(settings.activeServerId, '');
   const activeProfile = activeServerId ? settings.servers?.[activeServerId] : null;
-  if (activeServerId && profileMatchesServerUrl(activeProfile, serverUrl)) {
-    return activeServerId;
-  }
-
   const matches = entries
     .filter(([, profile]) => profileMatchesServerUrl(profile, serverUrl))
     .map(([id]) => sanitizeServerIdForFilesystem(id, ''))
     .filter(Boolean);
 
-  if (!matches.length) return '';
-  if (matches.length === 1) return matches[0];
+  const remaining = matches
+    .filter((id) => id !== explicitServerId && id !== activeServerId)
+    .sort((a, b) => {
+      const aStable = a.includes('__id_') ? 1 : 0;
+      const bStable = b.includes('__id_') ? 1 : 0;
+      if (aStable !== bStable) return aStable - bStable;
+      return a.localeCompare(b);
+    });
 
-  if (activeServerId && matches.includes(activeServerId)) {
-    return activeServerId;
-  }
+  return [...new Set([
+    explicitServerId && profileMatchesServerUrl(explicitProfile, serverUrl) ? explicitServerId : null,
+    activeServerId && profileMatchesServerUrl(activeProfile, serverUrl) ? activeServerId : null,
+    ...remaining,
+  ].filter(Boolean))];
+}
 
-  const preferred = [...matches].sort((a, b) => {
-    const aStable = a.includes('__id_') ? 1 : 0;
-    const bStable = b.includes('__id_') ? 1 : 0;
-    if (aStable !== bStable) return aStable - bStable;
-    return a.localeCompare(b);
-  });
-  return preferred[0] || '';
+export function resolvePreferredStackServerIdFromCliSettings(params = {}) {
+  return resolveMatchingStackServerIdsFromCliSettings(params)[0] || '';
 }
 
 function resolveActiveServerIdOverride(env = process.env) {
@@ -203,10 +199,18 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
   const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
   const stableScopeServerId = resolveActiveServerIdOverride(env);
   const daemonLifecycleScopeId = resolveDaemonLifecycleScopeIdOverride(env);
-  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl, env });
+  const matchingSettingsServerIds = resolveMatchingStackServerIdsFromCliSettings({
+    cliHomeDir: home,
+    serverUrl: normalizedServerUrl,
+    env,
+  });
+  const settingsServerId = matchingSettingsServerIds[0] || '';
   // Runtime identity follows the explicit stack scope. A matching settings profile is only a
   // credential migration source; letting it become active also changes the CLI machine-id scope.
   const activeServerId = stableScopeServerId || daemonLifecycleScopeId || urlHashServerId;
+  const matchingSettingsCredentialSourceIds = String(env?.HAPPIER_STACK_STACK ?? '').trim()
+    ? matchingSettingsServerIds.filter((id) => id !== activeServerId)
+    : [];
   const serverScopedPath = join(home, 'servers', activeServerId, 'access.key');
   const aliasServerIds = [
     settingsServerId && settingsServerId !== activeServerId ? settingsServerId : null,
@@ -217,10 +221,17 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
     .filter(Boolean);
   const uniqueAliasServerIds = [...new Set(aliasServerIds)];
   const aliasServerScopedPaths = uniqueAliasServerIds.map((id) => join(home, 'servers', id, 'access.key'));
+  // Matching persisted profiles are read/copy migration sources for a stack-owned scope, not
+  // destructive aliases. In particular, forced login must not clear sibling profile credentials.
+  const credentialSourceServerIds = [...new Set([
+    ...uniqueAliasServerIds,
+    ...matchingSettingsCredentialSourceIds,
+  ])];
+  const credentialSourcePaths = credentialSourceServerIds.map((id) => join(home, 'servers', id, 'access.key'));
   const urlHashServerScopedPath = aliasServerScopedPaths.find((path) => path.includes(`/servers/${urlHashServerId}/`)) || '';
   const hostPortServerScopedPath =
     aliasServerScopedPaths.find((path) => path.includes(`/servers/${hostPortServerId}/`)) || '';
-  const paths = [serverScopedPath, ...aliasServerScopedPaths, legacyPath].filter(Boolean);
+  const paths = [serverScopedPath, ...credentialSourcePaths, legacyPath].filter(Boolean);
   return {
     activeServerId,
     settingsServerId,
@@ -233,6 +244,7 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
     urlHashServerScopedPath,
     hostPortServerScopedPath,
     aliasServerScopedPaths,
+    credentialSourcePaths,
     paths,
   };
 }
@@ -386,8 +398,8 @@ export function findAnyDaemonStatePairInCliHome({ cliHomeDir }) {
 export function findExistingStackCredentialPath({ cliHomeDir, serverUrl = '', env = process.env }) {
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
   if (fileHasContent(resolved.serverScopedPath)) return resolved.serverScopedPath;
-  for (const aliasPath of resolved.aliasServerScopedPaths) {
-    if (fileHasContent(aliasPath)) return aliasPath;
+  for (const sourcePath of resolved.credentialSourcePaths) {
+    if (fileHasContent(sourcePath)) return sourcePath;
   }
   if (fileHasContent(resolved.legacyPath)) return resolved.legacyPath;
   return null;
