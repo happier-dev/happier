@@ -17,6 +17,7 @@ export function createCodexConnectedServicesMaterializer(): ConnectedServicesPro
 
       return {
         env: materialized.env,
+        targetMaterializedRoot: materialized.targetMaterializedRoot,
         cleanupOnFailure: null,
         cleanupOnExit: null,
         ...(materialized.diagnostics && materialized.diagnostics.length > 0

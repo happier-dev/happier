@@ -20,11 +20,13 @@ describe('syncCodexConnectedServiceHome', () => {
 
       // Shared session state is the default now, so explicitly opt this Codex home
       // out via the isolated state mode to exercise the isolated-preservation path.
-      await syncCodexConnectedServiceHome({
+      const result = await syncCodexConnectedServiceHome({
         destinationCodexHome,
         accountSettings: settings('linked', 'isolated'),
         processEnv: { CODEX_HOME: sourceCodexHome },
       });
+
+      expect(result.targetSqliteHome).toBe(destinationCodexHome);
 
       await mkdir(join(destinationCodexHome, 'sessions', '2026', '05', '20'), { recursive: true });
       await writeFile(join(destinationCodexHome, 'sessions', '2026', '05', '20', 'rollout.jsonl'), '{"id":"local"}\n');
@@ -45,7 +47,28 @@ describe('syncCodexConnectedServiceHome', () => {
     }
   });
 
-  it('imports local isolated rollouts and migrates real isolated state aside when shared state is enabled later', async () => {
+  it('keeps an explicitly separate SQLite home when the shared Codex home is already the destination', async () => {
+    const { root, destinationCodexHome } = await createCodexHomePair();
+    try {
+      const sourceSqliteHome = join(root, 'native-sqlite');
+      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
+
+      const result = await syncCodexConnectedServiceHome({
+        destinationCodexHome,
+        accountSettings: settings('linked', 'shared'),
+        processEnv: {
+          CODEX_HOME: destinationCodexHome,
+          CODEX_SQLITE_HOME: sourceSqliteHome,
+        },
+      });
+
+      expect(result.targetSqliteHome).toBe(sourceSqliteHome);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('imports local isolated rollouts while leaving SQLite state to CODEX_SQLITE_HOME', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
@@ -68,16 +91,14 @@ describe('syncCodexConnectedServiceHome', () => {
       await expect(readFile(join(destinationCodexHome, 'sessions', 'source-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"source"}\n');
       await expect(readFile(join(destinationCodexHome, 'history.jsonl'), 'utf8')).resolves.toBe('{"text":"source prompt"}\n');
       await expect(readFile(join(destinationCodexHome, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Source memory\n');
-      await expect(readFile(join(destinationCodexHome, 'logs_2.sqlite'), 'utf8')).resolves.toBe('source logs');
+      await expect(readFile(join(sourceCodexHome, 'logs_2.sqlite'), 'utf8')).resolves.toBe('source logs');
       await expect(readFile(join(sourceCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
       await expect(readFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
       const destinationEntries = await readdir(destinationCodexHome);
       const migratedSessionsEntry = destinationEntries.find((entry) => entry.startsWith('sessions.local-'));
       expect(migratedSessionsEntry).toBeDefined();
       await expect(readFile(join(destinationCodexHome, migratedSessionsEntry!, 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
-      const migratedStateEntry = destinationEntries.find((entry) => entry.startsWith('state_5.sqlite.local-'));
-      expect(migratedStateEntry).toBeDefined();
-      await expect(readFile(join(destinationCodexHome, migratedStateEntry!), 'utf8')).resolves.toBe('local sqlite');
+      await expect(readFile(join(destinationCodexHome, 'state_5.sqlite'), 'utf8')).resolves.toBe('local sqlite');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -138,6 +159,7 @@ describe('syncCodexConnectedServiceHome', () => {
             reason: 'symlink_unavailable',
           },
         ],
+        targetSqliteHome: destinationCodexHome,
       });
       await expect(readFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
     } finally {
@@ -182,42 +204,7 @@ describe('syncCodexConnectedServiceHome', () => {
     }
   });
 
-  it('keeps SQLite state isolated when file symlinks are unavailable', async () => {
-    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
-    try {
-      await writeFile(join(sourceCodexHome, 'state_5.sqlite'), 'initial');
-      await mkdir(destinationCodexHome, { recursive: true });
-      await writeFile(join(destinationCodexHome, 'state_5.sqlite'), 'local');
-
-      mockSymlinkFailureForTempLink('state_5.sqlite.happier-link');
-      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
-
-      const result = await syncCodexConnectedServiceHome({
-        destinationCodexHome,
-        accountSettings: settings('linked', 'shared'),
-        processEnv: { CODEX_HOME: sourceCodexHome },
-      });
-
-      expect(result).toMatchObject({
-        requestedStateMode: 'shared',
-        effectiveStateMode: 'isolated',
-        diagnostics: [
-          expect.objectContaining({
-            code: 'state_symlink_unavailable',
-            providerId: 'codex',
-            entryName: 'state_5.sqlite',
-            effectiveStateMode: 'isolated',
-          }),
-        ],
-      });
-      await expect(readFile(join(destinationCodexHome, 'state_5.sqlite'), 'utf8')).resolves.toBe('local');
-      await expect(readdir(destinationCodexHome)).resolves.not.toContainEqual(expect.stringContaining('.happier-link-'));
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('shares SQLite state from CODEX_SQLITE_HOME while keeping rollouts under CODEX_HOME', async () => {
+  it('shares SQLite state through one CODEX_SQLITE_HOME while keeping rollouts under CODEX_HOME', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {
       const sourceSqliteHome = join(root, 'source-sqlite-home');
@@ -229,7 +216,7 @@ describe('syncCodexConnectedServiceHome', () => {
       await writeFile(join(sourceSqliteHome, 'logs_2.sqlite'), 'logs');
       const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
 
-      await syncCodexConnectedServiceHome({
+      const result = await syncCodexConnectedServiceHome({
         destinationCodexHome,
         accountSettings: settings('linked', 'shared'),
         processEnv: {
@@ -238,55 +225,10 @@ describe('syncCodexConnectedServiceHome', () => {
         },
       });
 
+      expect(result.targetSqliteHome).toBe(sourceSqliteHome);
       await expect(readFile(join(destinationCodexHome, 'sessions', 'source-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"source"}\n');
-      await expect(readFile(join(destinationCodexHome, 'state_5.sqlite'), 'utf8')).resolves.toBe('sqlite-home');
-      await expect(readFile(join(destinationCodexHome, 'logs_2.sqlite'), 'utf8')).resolves.toBe('logs');
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('derives dynamic shared-state entries from descriptor patterns', async () => {
-    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
-    try {
-      const sourceSqliteHome = join(root, 'source-sqlite-home');
-      await mkdir(sourceSqliteHome, { recursive: true });
-      await writeFile(join(sourceSqliteHome, 'custom_42.sqlite'), 'custom');
-      await writeFile(join(sourceSqliteHome, 'state_5.sqlite'), 'legacy-state');
-
-      vi.resetModules();
-      vi.doMock('@/backends/codex/connectedServices/codexConnectedServiceStateSharingDescriptor', async () => {
-        const actual = await vi.importActual<typeof import('./codexConnectedServiceStateSharingDescriptor')>(
-          './codexConnectedServiceStateSharingDescriptor',
-        );
-        return {
-          ...actual,
-          codexConnectedServiceStateSharingDescriptor: {
-            ...actual.codexConnectedServiceStateSharingDescriptor,
-            dynamicEntryPatterns: {
-              sqlite: {
-                scope: 'state',
-                pattern: '^custom_\\d+\\.sqlite$',
-                mode: 'linked',
-                allowHardLinkFallback: false,
-              },
-            },
-          },
-        };
-      });
-      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
-
-      await syncCodexConnectedServiceHome({
-        destinationCodexHome,
-        accountSettings: settings('linked', 'shared'),
-        processEnv: {
-          CODEX_HOME: sourceCodexHome,
-          CODEX_SQLITE_HOME: sourceSqliteHome,
-        },
-      });
-
-      await expect(readFile(join(destinationCodexHome, 'custom_42.sqlite'), 'utf8')).resolves.toBe('custom');
       await expect(exists(join(destinationCodexHome, 'state_5.sqlite'))).resolves.toBe(false);
+      await expect(exists(join(destinationCodexHome, 'logs_2.sqlite'))).resolves.toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

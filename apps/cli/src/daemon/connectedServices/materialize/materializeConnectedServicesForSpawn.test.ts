@@ -80,6 +80,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     await writeFile(join(sourceCodexHome, 'accounts', 'personal.json'), '{"account":"personal"}\n');
     await mkdir(join(sourceCodexHome, 'sessions', '2026', '05', '20'), { recursive: true });
     await writeFile(join(sourceCodexHome, 'sessions', '2026', '05', '20', 'rollout-test.jsonl'), '{}\n');
+    const sourceSqliteHome = await mkdtemp(join(tmpdir(), 'happier-source-codex-sqlite-home-test-'));
     const record = buildConnectedServiceCredentialRecord({
       now: 10,
       serviceId: 'openai-codex',
@@ -105,7 +106,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       recordsByServiceId: new Map([['openai-codex', record]]),
       processEnv: {
         CODEX_HOME: sourceCodexHome,
-        CODEX_SQLITE_HOME: join(tmpdir(), 'must-not-leak-native-codex-sqlite-home'),
+        CODEX_SQLITE_HOME: sourceSqliteHome,
         HOME: tmpdir(),
       },
     });
@@ -115,7 +116,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.CODEX_HOME).toBe(
       join(expectedCodexRoot, 'codex-home'),
     );
-    expect(result!.env.CODEX_SQLITE_HOME).toBe(result!.env.CODEX_HOME);
+    expect(result!.env.CODEX_SQLITE_HOME).toBe(sourceSqliteHome);
     expect(result!.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]).toBe(
       expectedCodexRoot,
     );
@@ -221,15 +222,16 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(result).not.toBeNull();
+    expect(result!.env.CODEX_SQLITE_HOME).toBe(sourceCodexHome);
     await expect(readFile(join(result!.env.CODEX_HOME!, 'sessions', '2026', '05', '20', 'rollout-shared.jsonl'), 'utf8')).resolves.toBe('{"id":"shared"}\n');
     await expect(readFile(join(result!.env.CODEX_HOME!, 'archived_sessions', 'rollout-archived.jsonl'), 'utf8')).resolves.toBe('{"id":"archived"}\n');
     await expect(readFile(join(result!.env.CODEX_HOME!, 'session_index.jsonl'), 'utf8')).resolves.toBe('{"id":"shared"}\n');
     await expect(readFile(join(result!.env.CODEX_HOME!, 'history.jsonl'), 'utf8')).resolves.toBe('{"text":"source prompt"}\n');
     await expect(readFile(join(result!.env.CODEX_HOME!, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Source memory\n');
-    await expect(readFile(join(result!.env.CODEX_HOME!, 'state_5.sqlite'), 'utf8')).resolves.toBe('sqlite');
-    await expect(readFile(join(result!.env.CODEX_HOME!, 'state_5.sqlite-wal'), 'utf8')).resolves.toBe('wal');
-    await expect(readFile(join(result!.env.CODEX_HOME!, 'goals_1.sqlite'), 'utf8')).resolves.toBe('goals');
-    await expect(readFile(join(result!.env.CODEX_HOME!, 'logs_5.sqlite'), 'utf8')).resolves.toBe('logs');
+    await expect(lstat(join(result!.env.CODEX_HOME!, 'state_5.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(join(result!.env.CODEX_HOME!, 'state_5.sqlite-wal'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(join(result!.env.CODEX_HOME!, 'goals_1.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(join(result!.env.CODEX_HOME!, 'logs_5.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('removes managed Codex home shares when settings are isolated', async () => {

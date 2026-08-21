@@ -43,6 +43,7 @@ export type SyncCodexConnectedServiceHomeResult = Readonly<{
   requestedStateMode: CodexStateMode;
   effectiveStateMode: CodexStateMode;
   diagnostics: readonly CodexConnectedServiceStateSharingDiagnostic[];
+  targetSqliteHome: string;
 }>;
 
 function resolveCodexHomeSharingSettings(
@@ -63,40 +64,6 @@ function dedupeEntries(entries: readonly string[]): string[] {
     result.push(entry);
   }
   return result;
-}
-
-function resolveCodexStateDynamicEntryPatterns(): Readonly<Record<string, RegExp>> {
-  const patterns: Record<string, RegExp> = {};
-  for (const [patternId, entryPattern] of Object.entries(codexConnectedServiceStateSharingDescriptor.dynamicEntryPatterns ?? {})) {
-    if (entryPattern.scope !== 'state') continue;
-    try {
-      patterns[patternId] = new RegExp(entryPattern.pattern);
-    } catch {
-      continue;
-    }
-  }
-  return patterns;
-}
-
-async function listCodexDynamicStateEntries(
-  root: string,
-  dynamicPatterns: Readonly<Record<string, RegExp>>,
-): Promise<readonly string[]> {
-  const entries: string[] = [];
-  const patterns = Object.values(dynamicPatterns);
-  if (patterns.length === 0) return entries;
-  let names: string[];
-  try {
-    names = await readdir(root);
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err?.code === 'ENOENT') return entries;
-    throw error;
-  }
-  for (const name of names) {
-    if (patterns.some((pattern) => pattern.test(name))) entries.push(name);
-  }
-  return entries;
 }
 
 async function resolveCodexConfigEntryNames(sourceCodexHome: string): Promise<readonly string[]> {
@@ -164,6 +131,7 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
   return await withConnectedServiceStateSharingDestinationLock(params.destinationCodexHome, async () => {
     const settings = resolveCodexHomeSharingSettings(params.accountSettings ?? null);
     const processEnv = params.processEnv ?? process.env;
+    const sourceSqliteHome = resolve(resolveConfiguredCodexSqliteHome(processEnv));
     const sourceCodexHome = resolveSourceCodexHome({
       destinationCodexHome: params.destinationCodexHome,
       processEnv,
@@ -174,25 +142,16 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
         requestedStateMode: settings.stateMode,
         effectiveStateMode: settings.stateMode,
         diagnostics: [],
+        targetSqliteHome: settings.stateMode === 'shared'
+          ? sourceSqliteHome
+          : params.destinationCodexHome,
       };
     }
 
-    const sourceSqliteHome = resolve(resolveConfiguredCodexSqliteHome(processEnv));
-    const dynamicStatePatterns = resolveCodexStateDynamicEntryPatterns();
-    const sqliteStatePattern = dynamicStatePatterns.sqlite ?? null;
     await mkdir(params.destinationCodexHome, { recursive: true });
     const manifest = await readConnectedServiceStateSharingManifest(params.destinationCodexHome);
     const configEntryNames = await resolveCodexConfigEntryNames(sourceCodexHome);
-    const stateEntryNames = settings.stateMode === 'shared'
-      ? dedupeEntries([
-        ...codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path),
-        ...await listCodexDynamicStateEntries(sourceSqliteHome, dynamicStatePatterns),
-        ...await listCodexDynamicStateEntries(params.destinationCodexHome, dynamicStatePatterns),
-      ])
-      : dedupeEntries([
-        ...codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path),
-        ...await listCodexDynamicStateEntries(params.destinationCodexHome, dynamicStatePatterns),
-      ]);
+    const stateEntryNames = codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path);
 
     const applyResult = await applyConnectedServiceStateSharingDescriptor({
       descriptor: codexConnectedServiceStateSharingDescriptor,
@@ -211,7 +170,7 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
       existingManifest: manifest,
       configEntryNames,
       stateEntryNames,
-      resolveStateSourceRoot: (entryName) => sqliteStatePattern?.test(entryName) ? sourceSqliteHome : sourceCodexHome,
+      resolveStateSourceRoot: () => sourceCodexHome,
       mapStateSymlinkUnavailableDiagnostic: (error) => toStateSymlinkUnavailableDiagnostic(error),
       sessionImportRoots: settings.stateMode === 'shared'
         ? CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
@@ -232,6 +191,9 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
       requestedStateMode: settings.stateMode,
       effectiveStateMode: applyResult.manifest.effectiveStateMode,
       diagnostics: applyResult.diagnostics as readonly CodexConnectedServiceStateSharingDiagnostic[],
+      targetSqliteHome: applyResult.manifest.effectiveStateMode === 'shared'
+        ? sourceSqliteHome
+        : params.destinationCodexHome,
     };
   }, { providerId: 'codex' });
 }
