@@ -1,1 +1,1 @@
-{"v":1,"ts":1787492276145,"sessionId":"01a01909-60a6-7140-9422-f3c26f33f17b","model":"zai/glm-5.3","streaming":true,"tps":93.02792847096644,"tpsAvg":2.909964626576787,"tokens":654,"elapsedMs":224745,"ttftMs":31617}
+{"v":1,"ts":1787492409851,"sessionId":"01a01909-60a6-7140-9422-f3c26f33f17b","model":"zai/glm-5.3","streaming":true,"tps":33.088235294117645,"tpsAvg":2.0283446679165134,"tokens":700,"elapsedMs":345109,"ttftMs":31617}

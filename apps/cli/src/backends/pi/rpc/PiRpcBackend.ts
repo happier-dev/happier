@@ -18,6 +18,7 @@ import {
   type AcpPromptSubmissionEvidence,
 } from '@/agent/acp/AcpBackend';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { materializeProtectedTempTextArtifact, type ProtectedTempTextArtifact } from '@/utils/fs/protectedTempTextArtifact';
 import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
@@ -581,6 +582,14 @@ export type PiRpcSpawnOptions = {
   args: string[];
   env?: Record<string, string>;
   happierSessionId?: string | null;
+  /**
+   * Residual system-prompt content appended to pi's prompt via `--append-system-prompt`.
+   * Delivered as a protected temporary file (pi treats an existing path as a file source
+   * and re-reads it on resource reload): literal argv would be process-list-visible and
+   * unbounded. Materialized once before the first spawn, retained for the backend
+   * lifetime (process restarts reuse it), removed on disposal.
+   */
+  appendSystemPromptText?: string | null;
 };
 
 export class PiRpcBackend implements AgentBackend {
@@ -590,9 +599,11 @@ export class PiRpcBackend implements AgentBackend {
     args: string[];
     env: Record<string, string>;
     happierSessionId: string | null;
+    appendSystemPromptText: string | null;
   }>;
 
   private process: ChildProcessWithoutNullStreams | null = null;
+  private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
@@ -636,6 +647,7 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
       happierSessionId: asNonEmptyString(options.happierSessionId) ?? null,
+      appendSystemPromptText: asNonEmptyString(options.appendSystemPromptText) ?? null,
     };
   }
 
@@ -1157,9 +1169,18 @@ export class PiRpcBackend implements AgentBackend {
 
     const child = this.process;
     this.process = null;
-    if (!child) return;
+
+    // Terminal path: remove the protected append-system-prompt artifact with the backend.
+    const artifact = this.appendSystemPromptArtifact;
+    this.appendSystemPromptArtifact = null;
+
+    if (!child) {
+      await artifact?.cleanup();
+      return;
+    }
 
     await stopPiRpcProcess(child);
+    await artifact?.cleanup();
   }
 
   private async ensureProcess(): Promise<void> {
@@ -1177,7 +1198,25 @@ export class PiRpcBackend implements AgentBackend {
       return;
     }
 
-    this.spawnRpcProcess({ args: this.options.args });
+    this.spawnRpcProcess({ args: [...this.options.args, ...(await this.resolveAppendSystemPromptArgs())] });
+  }
+
+  /**
+   * `--append-system-prompt` arguments for the current backend lifetime. The prompt text
+   * is materialized into a protected temporary file once; pi resolves an existing path as
+   * a file source and re-reads it on resource reload, so restarts within this backend
+   * reuse the same artifact. Materialization failure rejects and prevents the spawn.
+   */
+  private async resolveAppendSystemPromptArgs(): Promise<string[]> {
+    const text = this.options.appendSystemPromptText;
+    if (!text) return [];
+    if (!this.appendSystemPromptArtifact) {
+      this.appendSystemPromptArtifact = await materializeProtectedTempTextArtifact({
+        prefix: 'happier-pi-append-system-prompt-',
+        contents: text,
+      });
+    }
+    return ['--append-system-prompt', this.appendSystemPromptArtifact.path];
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
@@ -1435,7 +1474,14 @@ export class PiRpcBackend implements AgentBackend {
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
     await this.stopRpcProcessForRestart();
-    this.spawnRpcProcess({ args: [...this.options.args, '--session', params.sessionArg] });
+    this.spawnRpcProcess({
+      args: [
+        ...this.options.args,
+        ...(await this.resolveAppendSystemPromptArgs()),
+        '--session',
+        params.sessionArg,
+      ],
+    });
 
     try {
       const lifecycle = params.lifecycle ?? this.createSessionOpenLifecycle();
