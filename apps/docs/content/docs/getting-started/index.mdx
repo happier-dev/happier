@@ -62,13 +62,17 @@ iwr https://happier.dev/install.ps1 -useb | iex
 
 The installer verifies the release signature, unpacks under `~/.happier`, and
 offers to set up automatic startup so the machine stays reachable with no
-terminal open. Say yes unless you have a reason not to.
+terminal open. Say yes unless you have a reason not to. On a fresh interactive
+install, it then continues directly into the setup flow below.
 
 It adds `~/.local/bin` to your shell profile, which the shell you are currently
 in has already read. Open a new terminal, or source your profile, before the
 next step.
 
 ## 3. Connect the machine to your account
+
+If the installer was unattended, you skipped guided setup, or sign-in did not
+finish, resume it with:
 
 ```bash
 happier setup

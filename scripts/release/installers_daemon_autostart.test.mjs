@@ -1164,3 +1164,62 @@ test('install.sh preserves existing preview background services during nonintera
     await scenario.cleanup();
   }
 });
+
+test('install.sh --yes runs non-interactively without HAPPIER_NONINTERACTIVE and creates no unrequested service state', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_NONINTERACTIVE: '',
+    __installerArgs: ['--yes'],
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [],
+      actions: [],
+      manualWarnings: [],
+    }),
+  });
+  try {
+    // Identical environment to the "no controlling tty" scenario above, which
+    // renders the interactive post-install summary (`doctor repair --report-only`).
+    // `--yes` must take the non-interactive path instead, and must not install
+    // or repair a background service nobody asked for.
+    assert.equal(
+      scenario.log.trim(),
+      '',
+      'expected --yes to skip every optional CLI interaction (summary, service install, repair)',
+    );
+    assert.doesNotMatch(scenario.stderr, /Unknown argument/);
+    assert.doesNotMatch(scenario.stderr, /\/dev\/tty/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh --non-interactive is an alias for --yes', async () => {
+  const scenario = await runInstallerScenario({
+    HAPPIER_NONINTERACTIVE: '',
+    __installerArgs: ['--non-interactive'],
+    HAPPIER_TEST_SERVICE_REPAIR_JSON: JSON.stringify({
+      ok: true,
+      executed: false,
+      existingServices: [],
+      actions: [],
+      manualWarnings: [],
+    }),
+  });
+  try {
+    assert.equal(scenario.log.trim(), '', 'expected --non-interactive to behave exactly like --yes');
+    assert.doesNotMatch(scenario.stderr, /Unknown argument/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh --help documents the non-interactive flag', async () => {
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const res = spawnSync('bash', [installerPath, '--help'], { encoding: 'utf8' });
+  assert.equal(res.status, 0, `--help failed: ${String(res.stderr ?? '')}`);
+  const help = String(res.stdout ?? '');
+  assert.match(help, /--yes/, 'usage should document --yes');
+  assert.match(help, /--non-interactive/, 'usage should document the --non-interactive alias');
+  assert.match(help, /HAPPIER_NONINTERACTIVE/, 'usage should point at the matching environment variable');
+});

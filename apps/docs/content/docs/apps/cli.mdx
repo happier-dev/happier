@@ -125,13 +125,14 @@ This is terminal/CLI pairing, not the same flow as device restore inside the app
 happier setup
 ```
 
-The installer stops once the binary is in place. `happier setup` picks up from
-there: it asks where your relay lives, points this computer at it, and runs the
-sign-in. It says so and does nothing only when this computer is genuinely
-finished — a relay is selected, the relay still accepts the stored sign-in, and
-this machine is registered against it. Credentials the relay has since rejected,
-or credentials with no registered machine behind them, are what setup exists to
-repair, so they do not count as configured.
+On a fresh interactive install, the installer continues directly into
+`happier setup`. Run it yourself when the installer was unattended, you skipped
+the guided step, or sign-in did not finish. Setup asks where your relay lives,
+points this computer at it, and runs the sign-in. It leaves an already-finished
+computer alone only when a relay is selected, the relay still accepts the stored
+sign-in, and this machine is registered against it. Credentials the relay has
+since rejected, or credentials with no registered machine behind them, are what
+setup exists to repair, so they do not count as configured.
 
 | Flag | Effect |
 | --- | --- |
