@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier PR Steward"
+  short_description: "Review, refine, port, and shepherd Happier PRs"
+  default_prompt: "Use $happier-pr-steward to analyze this Happier pull request, propose evidence-backed refinements, and shepherd approved changes through review."
