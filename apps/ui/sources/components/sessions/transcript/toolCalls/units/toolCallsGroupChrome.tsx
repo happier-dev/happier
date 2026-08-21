@@ -10,7 +10,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 
@@ -98,9 +98,10 @@ export function ToolCallsGroupUnitRowFrame(props: Readonly<{
     unitTestID: string;
     children: React.ReactNode;
 }>) {
+    const contentMaxWidth = useLayoutMaxWidth();
     return (
         <View style={unitStyles.centered}>
-            <View style={unitStyles.centeredContent}>
+            <View style={[unitStyles.centeredContent, { maxWidth: contentMaxWidth }]}>
                 <View
                     testID={props.unitTestID}
                     style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position)}
@@ -270,7 +271,6 @@ const unitStyles = StyleSheet.create((theme) => ({
     centeredContent: {
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
     },
     container: {
         marginHorizontal: 16,

@@ -8,7 +8,7 @@ import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/domains/messages/messageTypes";
 import { Metadata } from "@/sync/domains/state/storageTypes";
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { layout } from "@/components/ui/layout/layout";
+import { useLayoutMaxWidth } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
@@ -310,6 +310,7 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
   toolChromeCommon: TranscriptToolChromeCommon;
   toolRouteCommon: TranscriptToolRouteCommon;
 }) {
+  const contentMaxWidth = useLayoutMaxWidth();
   const interaction = props.interaction ?? FAIL_CLOSED_TRANSCRIPT_INTERACTION;
   const canFork = interaction.canFork === true;
   const committedCanForkRef = React.useRef(canFork);
@@ -330,7 +331,7 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
   ) === 'hidden') return null;
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
-      <View style={styles.messageContent}>
+      <View style={[styles.messageContent, { maxWidth: contentMaxWidth }]}>
         <RecoveredHistoryIndicator message={props.message} />
         <RenderBlock
           message={props.message}
@@ -1790,7 +1791,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'column',
     flexGrow: 1,
     flexBasis: 0,
-    maxWidth: layout.maxWidth,
   },
   recoveredHistoryIndicator: {
     marginHorizontal: 16,

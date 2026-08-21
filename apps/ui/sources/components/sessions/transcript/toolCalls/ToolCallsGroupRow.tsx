@@ -13,7 +13,7 @@ import {
     ToolCallsGroupViewWithSessionCommon,
 } from '@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView';
 import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolCallsGroupStatus } from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
@@ -54,6 +54,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: To
 export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsGroupRowWithSessionCommon(
     props: ToolCallsGroupRowProps & TranscriptSessionCommonProps,
 ) {
+    const contentMaxWidth = useLayoutMaxWidth();
     const toolMessagesRaw = useMessagesByIds(props.sessionId, props.toolMessageIds);
     const toolMessages = React.useMemo(() => {
         const byId = new Map<string, ToolCallMessage>();
@@ -103,7 +104,7 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
         <View testID={`${TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX}${webPrependAnchorId}`}>
             <TranscriptEnterWrapper id={props.toolCallsGroupId} createdAt={createdAt}>
                 <View style={styles.centered}>
-                    <View style={styles.centeredContent}>
+                    <View style={[styles.centeredContent, { maxWidth: contentMaxWidth }]}>
                         <ToolCallsGroupViewWithSessionCommon
                             id={props.toolCallsGroupId}
                             status={status}
@@ -138,6 +139,5 @@ const styles = StyleSheet.create(() => ({
     centeredContent: {
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
     },
 }));

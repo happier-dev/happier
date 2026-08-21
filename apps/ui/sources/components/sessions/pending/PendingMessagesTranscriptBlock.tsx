@@ -7,7 +7,7 @@ import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { t } from '@/text';
@@ -202,6 +202,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     onPaintedUtteranceBubbleMeasured?: (measurement: Readonly<{ localId: string; bubbleHeightPx: number }>) => void;
 }>) {
     const { theme } = useUnistyles();
+    const contentMaxWidth = useLayoutMaxWidth();
     const session = useSession(props.sessionId);
     const pendingInputServerId = session?.serverId ?? resolvePreferredServerIdForSessionId(props.sessionId);
     const serverFeaturesSnapshot = useServerFeaturesSnapshotForServerId(pendingInputServerId ?? null, {
@@ -1425,9 +1426,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
     return (
         <View testID="pendingMessages.block" style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
-            <View style={styles.messageContent}>
+            <View style={[styles.messageContent, { maxWidth: contentMaxWidth }]}>
                 <View style={styles.userMessageContainer}>
-                    <View style={{ width: '100%', maxWidth: layout.maxWidth }}>
+                    <View style={{ width: '100%', maxWidth: contentMaxWidth }}>
                         <View style={styles.sectionHeader}>
                             <TranscriptSeparatorRow
                                 iconName="clock"
@@ -1663,7 +1664,6 @@ const styles = StyleSheet.create(() => ({
         flexDirection: 'column',
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
     },
     userMessageContainer: {
         maxWidth: '100%',
