@@ -12,6 +12,20 @@ import type { AcceptedConnectedServiceAccountVerificationByServiceId } from '../
 import { evaluatePredictiveSoftSwitchSessionApplyPolicy } from './predictiveSoftSwitchPolicy';
 import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
+const WAITABLE_CLASSIFIED_FAILURE_REASONS: ReadonlySet<string> = new Set([
+    'usage_limit',
+    'rate_limit',
+    'temporary_throttle',
+]);
+
+function shouldWaitForClassifiedFailure(input: Readonly<{
+    reason: string;
+    recoveryMode: ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
+}>): boolean {
+    return WAITABLE_CLASSIFIED_FAILURE_REASONS.has(input.reason)
+        && (input.recoveryMode === 'wait_until_reset' || input.recoveryMode === 'switch_or_wait');
+}
+
 export type ConnectedServiceAuthGroupSwitchState<
     TServiceIdentity = string,
 > = Readonly<{
@@ -1482,20 +1496,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 }
                 selectionActiveProfileId = currentLoadedActiveProfileId;
             }
-            if (!loaded.policy.autoSwitch) {
-                this.emitSwitchResult({
-                    request: input,
-                    loaded,
-                    resultStatus: 'auto_switch_disabled',
-                    toProfileId: loaded.activeProfileId,
-                    toGeneration: loaded.generation,
-                    success: false,
-                    startedAtMs,
-                });
-                const result = { status: 'auto_switch_disabled', generation: loaded.generation } as const;
-                lease.completeResult(result, loaded);
-                return result;
-            }
+            const waitForClassifiedFailure = shouldWaitForClassifiedFailure({
+                reason: input.reason,
+                recoveryMode: loaded.policy.recoveryMode,
+            });
             if (loaded.policy.recoveryMode === 'off') {
                 this.emitSwitchResult({
                     request: input,
@@ -1510,7 +1514,57 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 lease.completeResult(result, loaded);
                 return result;
             }
+            if (!loaded.policy.autoSwitch) {
+                if (waitForClassifiedFailure) {
+                    const result = buildPolicyWaitUntilResetResult({
+                        loaded,
+                        retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+                    });
+                    this.emitSwitchResult({
+                        request: input,
+                        loaded,
+                        resultStatus: 'no_eligible_member',
+                        toProfileId: null,
+                        toGeneration: loaded.generation,
+                        success: false,
+                        startedAtMs,
+                        decisionTrace: readSwitchResultDecisionTrace(result),
+                    });
+                    lease.completeResult(result, loaded);
+                    return result;
+                }
+                this.emitSwitchResult({
+                    request: input,
+                    loaded,
+                    resultStatus: 'auto_switch_disabled',
+                    toProfileId: loaded.activeProfileId,
+                    toGeneration: loaded.generation,
+                    success: false,
+                    startedAtMs,
+                });
+                const result = { status: 'auto_switch_disabled', generation: loaded.generation } as const;
+                lease.completeResult(result, loaded);
+                return result;
+            }
             if (!isReasonEnabled(loaded.policy, input.reason)) {
+                if (waitForClassifiedFailure) {
+                    const result = buildPolicyWaitUntilResetResult({
+                        loaded,
+                        retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+                    });
+                    this.emitSwitchResult({
+                        request: input,
+                        loaded,
+                        resultStatus: 'no_eligible_member',
+                        toProfileId: null,
+                        toGeneration: loaded.generation,
+                        success: false,
+                        startedAtMs,
+                        decisionTrace: readSwitchResultDecisionTrace(result),
+                    });
+                    lease.completeResult(result, loaded);
+                    return result;
+                }
                 this.emitSwitchResult({
                     request: input,
                     loaded,
@@ -1589,6 +1643,14 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             });
             if (!selected.selected) {
                 if (selected.reason === 'manual_strategy') {
+                    if (waitForClassifiedFailure) {
+                        const result = buildPolicyWaitUntilResetResult({
+                            loaded,
+                            retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+                        });
+                        lease.completeResult(result, loaded);
+                        return result;
+                    }
                     this.emitSwitchResult({
                         request: input,
                         loaded,
@@ -1756,6 +1818,14 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         });
                         if (!retrySelected.selected) {
                             if (retrySelected.reason === 'manual_strategy') {
+                                if (waitForClassifiedFailure) {
+                                    const result = buildPolicyWaitUntilResetResult({
+                                        loaded: commitLoaded,
+                                        retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+                                    });
+                                    lease.completeResult(result, commitLoaded);
+                                    return result;
+                                }
                                 this.emitSwitchResult({
                                     request: input,
                                     loaded: commitLoaded,

@@ -26,6 +26,7 @@ import {
   readRuntimeAuthRecoverySwitchResult,
   resolveRuntimeAuthRecoveryProof,
 } from './resolveRuntimeAuthRecoveryOutcome';
+import { resolveRuntimeAuthRecoveryResultDisposition } from './resolveRuntimeAuthRecoveryResultDisposition';
 import { sanitizeConnectedServiceDiagnosticString } from './sanitizeConnectedServiceDiagnosticString';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
@@ -182,6 +183,14 @@ export type RuntimeAuthRecoverySchedulerLike = Readonly<{
     input: RuntimeAuthRecoveryKeyParts & Readonly<{ expectedAttemptId?: string; result?: unknown }>,
   ) =>
     Promise<RuntimeAuthRecoveryIntent | null>;
+  settleResultByKey?: (
+    input: RuntimeAuthRecoveryKeyParts & Readonly<{
+      expectedAttemptId?: string;
+      result: unknown;
+      classificationResetsAtMs: number | null;
+      classificationFailureKind: ConnectedServiceRuntimeFailureClassification['kind'];
+    }>,
+  ) => Promise<RuntimeAuthRecoveryIntent | null>;
   markProviderOutcomeProofByIdentity?: (input: RuntimeAuthRecoveryProofByIdentityInput) =>
     Promise<ReadonlyArray<RuntimeAuthRecoveryIntent>>;
   drainPendingVisibleEvents?: (
@@ -211,8 +220,6 @@ const DEFAULT_RUNTIME_AUTH_RECOVERY_TERMINAL_RECORD_RETENTION_MS = 7 * 24 * 60 *
 const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_DEGRADED_ATTEMPTS = 60;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_COALESCED_REPLAYS = 12;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_DEGRADED_BACKOFF_MS = 60_000;
-const DEFAULT_RUNTIME_AUTH_RECOVERY_GROUP_EXHAUSTED_WAIT_FLOOR_MS = 30_000;
-const DEFAULT_RUNTIME_AUTH_RECOVERY_SWITCH_LIMIT_WAIT_FLOOR_MS = 5 * 60_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -363,128 +370,18 @@ function readSwitchAttemptResultStatus(result: unknown): string | null {
   return readString(inner?.status) ?? readString(outer?.status);
 }
 
-function readSwitchAttemptResultRecord(result: unknown): Record<string, unknown> | null {
-  const outer = asRecord(result);
-  return asRecord(outer?.result) ?? outer;
-}
-
-function readFutureMs(value: unknown, nowMs: number): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > nowMs
-    ? Math.trunc(value)
-    : null;
-}
-
-type RuntimeAuthRecoveryDurableWait = Readonly<{
-  nextRetryAtMs: number;
-  reason: 'no_eligible_member' | 'switch_limit_reached' | 'awaiting_limit_reset';
-}>;
-
-// F0 extension (incident Jun-11 F-NEW-1 / FIX-4): non-group (profile-pinned/native) selections
-// have no switch target, but a WAITABLE limit failure with a computable future reset is a
-// durable wait, not a terminal `recovery_action_required` / `not_group_selection`.
-// Credential/sharing action kinds stay terminal — no reset horizon makes a reconnect
-// unnecessary.
-const RUNTIME_AUTH_WAITABLE_ACTION_REQUIRED_KINDS: ReadonlySet<string> = new Set([
-  'profile_action_required',
-  'connected_service_required',
-]);
-const RUNTIME_AUTH_WAITABLE_FAILURE_REASONS: ReadonlySet<string> = new Set([
-  'usage_limit',
-  'rate_limit',
-  'temporary_throttle',
-]);
-
-function resolveNonGroupDurableWaitCandidateMs(input: Readonly<{
-  switchResult: Readonly<Record<string, unknown>>;
-  status: string;
-  intent: RuntimeAuthRecoveryIntent;
-  nowMs: number;
-}>): number | null {
-  if (input.status === 'recovery_action_required') {
-    const action = asRecord(input.switchResult.action);
-    const actionKind = readString(action?.kind);
-    const actionReason = readString(action?.reason);
-    if (!actionKind || !RUNTIME_AUTH_WAITABLE_ACTION_REQUIRED_KINDS.has(actionKind)) return null;
-    if (!actionReason || !RUNTIME_AUTH_WAITABLE_FAILURE_REASONS.has(actionReason)) return null;
-  } else if (input.status === 'not_group_selection') {
-    if (!RUNTIME_AUTH_WAITABLE_FAILURE_REASONS.has(input.intent.classification.kind)) return null;
-  } else {
-    return null;
-  }
-  // Only PROVIDER reset evidence qualifies — intentionally NOT the intent's own scheduler
-  // backoff (which is near-now and would convert "no computable reset → terminal" into an
-  // endless retry loop for selections that have nothing to wait for). No floor either.
-  return readFutureMs(input.intent.classification.resetsAtMs ?? null, input.nowMs);
-}
-
-function resolveEarliestFutureWaitCandidateMs(
-  candidates: ReadonlyArray<number | null>,
-  nowMs: number,
-): number | null {
-  const future = candidates.filter((value): value is number => (
-    typeof value === 'number' && Number.isFinite(value) && value > nowMs
-  ));
-  if (future.length === 0) return null;
-  return Math.min(...future);
-}
-
-function readExcludedMemberRetryAtMsCandidates(
-  switchResult: Readonly<Record<string, unknown>>,
-): ReadonlyArray<number | null> {
-  if (!Array.isArray(switchResult.excluded)) return [];
-  return switchResult.excluded.map((entry) => (
-    asRecord(entry) ? readNonNegativeNumber(entry.retryAtMs) : null
-  ));
-}
-
-function resolveRuntimeAuthRecoveryDurableWait(input: Readonly<{
+function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
   result: unknown;
   intent: RuntimeAuthRecoveryIntent;
   nowMs: number;
-}>): RuntimeAuthRecoveryDurableWait | null {
-  const switchResult = readSwitchAttemptResultRecord(input.result);
-  const status = readSwitchAttemptResultStatus(input.result);
-  if (!switchResult || !status) return null;
-  if (status === 'no_eligible_member' && switchResult.groupExhausted === true) {
-    // The switch result's own retryAtMs/resetsAtMs are the authoritative group-reset
-    // evidence and win when in the future; broader candidates (excluded-member
-    // retries, the classification reset, the intent's own schedule) are fallbacks,
-    // with a floor so the wait can never collapse to `now`.
-    const candidate = readFutureMs(switchResult.retryAtMs, input.nowMs)
-      ?? readFutureMs(switchResult.resetsAtMs, input.nowMs)
-      ?? resolveEarliestFutureWaitCandidateMs([
-        ...readExcludedMemberRetryAtMsCandidates(switchResult),
-        input.intent.classification.resetsAtMs ?? null,
-        input.intent.nextRetryAtMs,
-      ], input.nowMs);
-    return {
-      reason: 'no_eligible_member',
-      nextRetryAtMs: candidate ?? input.nowMs + DEFAULT_RUNTIME_AUTH_RECOVERY_GROUP_EXHAUSTED_WAIT_FLOOR_MS,
-    };
-  }
-  if (status === 'switch_limit_reached') {
-    const candidate = resolveEarliestFutureWaitCandidateMs([
-      input.intent.classification.resetsAtMs ?? null,
-      input.intent.nextRetryAtMs,
-    ], input.nowMs);
-    return {
-      reason: 'switch_limit_reached',
-      nextRetryAtMs: candidate ?? input.nowMs + DEFAULT_RUNTIME_AUTH_RECOVERY_SWITCH_LIMIT_WAIT_FLOOR_MS,
-    };
-  }
-  const nonGroupWaitCandidateMs = resolveNonGroupDurableWaitCandidateMs({
-    switchResult,
-    status,
-    intent: input.intent,
+}>) {
+  return resolveRuntimeAuthRecoveryResultDisposition({
+    result: input.result,
+    classificationFailureKind: input.intent.classification.kind,
+    classificationResetsAtMs: input.intent.classification.resetsAtMs ?? null,
+    additionalWaitCandidatesMs: [input.intent.nextRetryAtMs],
     nowMs: input.nowMs,
   });
-  if (nonGroupWaitCandidateMs !== null) {
-    return {
-      reason: 'awaiting_limit_reset',
-      nextRetryAtMs: nonGroupWaitCandidateMs,
-    };
-  }
-  return null;
 }
 
 function resolveClassifiedFailureRetryAfterMs(input: Readonly<{
@@ -1194,22 +1091,22 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
           if (temporaryRetryStatus) {
             return { status: 'superseded' as const, reason: temporaryRetryStatus };
           }
-          const durableWait = resolveRuntimeAuthRecoveryDurableWait({
+          const disposition = resolveRuntimeAuthRecoveryDisposition({
             result,
             intent,
             nowMs: this.#nowMs(),
           });
-          if (durableWait !== null) {
+          if (disposition?.kind === 'durable_wait') {
             return {
               status: 'wait' as const,
-              nextRetryAtMs: durableWait.nextRetryAtMs,
-              lastError: durableWait.reason,
+              nextRetryAtMs: disposition.nextRetryAtMs,
+              lastError: disposition.reason,
               intent: {
                 ...intent,
                 status: 'waiting',
                 attemptCount: Math.max(0, intent.attemptCount - 1),
-                nextRetryAtMs: durableWait.nextRetryAtMs,
-                lastError: durableWait.reason,
+                nextRetryAtMs: disposition.nextRetryAtMs,
+                lastError: disposition.reason,
                 terminalReason: null,
               },
             };
@@ -1253,6 +1150,17 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
               ...(this.#providerOutcomePendingWaitMs === null
                 ? {}
                 : { nextRetryAtMs: this.#nowMs() + this.#providerOutcomePendingWaitMs }),
+            };
+          }
+          if (disposition?.kind === 'terminal') {
+            return {
+              status: 'terminal' as const,
+              lastError: disposition.reason,
+              intent: {
+                ...intent,
+                lastError: disposition.reason,
+                terminalReason: disposition.reason,
+              },
             };
           }
           if (isTerminalRecoveryResult(result)) {
@@ -1857,6 +1765,60 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     });
     if (awaiting) this.#rememberIntent(awaiting);
     return awaiting;
+  }
+
+  async settleResultByKey(
+    input: RuntimeAuthRecoveryKeyParts & Readonly<{
+      expectedAttemptId?: string;
+      result: unknown;
+      classificationResetsAtMs: number | null;
+      classificationFailureKind: ConnectedServiceRuntimeFailureClassification['kind'];
+    }>,
+  ): Promise<RuntimeAuthRecoveryIntent | null> {
+    const key = this.#buildKey(input);
+    const settled = await this.#scheduler.transact<RuntimeAuthRecoveryIntent | null>({
+      sessionId: key,
+      transaction: (currentValue) => {
+        const current = normalizeRuntimeAuthRecoveryIntent(currentValue);
+        if (
+          !current
+          || !isPendingRuntimeAuthRecoveryStatus(current.status)
+          || (input.expectedAttemptId && current.attemptId !== input.expectedAttemptId)
+        ) {
+          return { intent: current, result: null };
+        }
+        const disposition = resolveRuntimeAuthRecoveryResultDisposition({
+          result: input.result,
+          classificationFailureKind: input.classificationFailureKind,
+          classificationResetsAtMs: input.classificationResetsAtMs,
+          nowMs: this.#nowMs(),
+        });
+        if (!disposition) return { intent: current, result: null };
+        if (disposition.kind === 'durable_wait') {
+          const waiting: RuntimeAuthRecoveryIntent = {
+            ...current,
+            status: 'waiting',
+            attemptCount: current.attemptCount + 1,
+            nextRetryAtMs: disposition.nextRetryAtMs,
+            lastError: disposition.reason,
+            terminalAtMs: null,
+            terminalReason: null,
+          };
+          return { intent: waiting, result: waiting };
+        }
+        const terminal = settleVisibleTransition({
+          ...current,
+          status: 'cancelled',
+          nextRetryAtMs: null,
+          terminalAtMs: this.#nowMs(),
+          terminalReason: disposition.reason,
+          lastError: disposition.reason,
+        }, 'terminal', disposition.reason);
+        return { intent: terminal, result: terminal };
+      },
+    });
+    if (settled) this.#rememberIntent(settled);
+    return settled;
   }
 
   /**

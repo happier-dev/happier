@@ -92,6 +92,7 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater non-group action-req
     const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
       report: buildActionRequiredReport({ actionKind: 'profile_action_required', reason: 'usage_limit' }),
       classification,
+      nowMs: () => 1_700_000_000_000,
     });
     expect(updater).not.toBeNull();
 
@@ -178,5 +179,67 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater resume prompt mode p
     const next = updater!(asMetadata({}));
 
     expect(readWrittenResumePromptMode(next)).toBe('off');
+  });
+});
+
+describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater policy-result projection', () => {
+  function buildSwitchReport(result: Record<string, unknown>): ConnectedServiceRuntimeAuthFailureDaemonReport {
+    return {
+      handled: true,
+      report: {
+        ok: true,
+        result: {
+          status: 'switch_attempted',
+          result,
+        },
+      },
+      statusCode: 'switch_attempted',
+      statusMessage: null,
+    } as ConnectedServiceRuntimeAuthFailureDaemonReport;
+  }
+
+  const groupClassification = {
+    ...classification,
+    serviceId: 'openai-codex',
+    profileId: 'primary',
+    groupId: 'codex-main',
+  } as ConnectedServiceRuntimeFailureClassification;
+
+  it('projects a disabled-switch policy result as terminal instead of leaving a null waiting intent', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildSwitchReport({ status: 'auto_switch_disabled', generation: 4 }),
+      classification: groupClassification,
+      nowMs: () => 1_700_000_000_000,
+    });
+
+    expect(updater?.(asMetadata({}))).toMatchObject({
+      sessionUsageLimitRecoveryV1: {
+        status: 'exhausted',
+        nextCheckAtMs: null,
+        lastProbeError: 'auto_switch_disabled',
+      },
+    });
+  });
+
+  it('keeps timing-less group exhaustion waiting at the shared anti-storm floor', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildSwitchReport({
+        status: 'no_eligible_member',
+        generation: 4,
+        groupExhausted: true,
+        retryAtMs: null,
+        excluded: [],
+      }),
+      classification: { ...groupClassification, resetsAtMs: null },
+      nowMs: () => 1_700_000_000_000,
+    });
+
+    expect(updater?.(asMetadata({}))).toMatchObject({
+      sessionUsageLimitRecoveryV1: {
+        status: 'waiting',
+        nextCheckAtMs: 1_700_000_030_000,
+        lastProbeError: 'no_eligible_member',
+      },
+    });
   });
 });

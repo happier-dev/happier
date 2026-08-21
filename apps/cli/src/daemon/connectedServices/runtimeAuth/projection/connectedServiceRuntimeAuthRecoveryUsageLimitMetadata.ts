@@ -11,6 +11,7 @@ import type { Metadata } from '@/api/types';
 import { deriveUsageLimitRecoveryTiming } from '@/session/usageLimitRecoveryControls/deriveUsageLimitRecoveryTiming';
 import type { ConnectedServiceRuntimeAuthFailureDaemonReport } from '../reportConnectedServiceRuntimeAuthFailureToDaemon';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';
+import { resolveRuntimeAuthRecoveryResultDisposition } from '../resolveRuntimeAuthRecoveryResultDisposition';
 
 const DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS = 3;
 const FALLBACK_WAIT_CHECK_DELAY_MS = 60_000;
@@ -21,6 +22,7 @@ type ProjectedRecoveryState = Readonly<{
   status: SessionUsageLimitRecoveryV1['status'];
   lastProbeError: string | null;
   activeProfileId: string | null;
+  nextCheckAtMs?: number | null;
 }>;
 
 function readRecord(value: unknown): MetadataRecord | null {
@@ -141,24 +143,10 @@ function buildIssueFingerprint(input: Readonly<{
   ].join(':');
 }
 
-// Incident Jun-11 F-NEW-1 / FIX-4: the daemon arms a durable wait until the provider reset
-// for non-group (profile-pinned/native) waitable limit failures. The metadata projection must
-// mirror that wait instead of contradicting it with "exhausted / action required". Keep the
-// eligibility in lockstep with the scheduler's durable-wait owner
-// (RuntimeAuthRecoveryScheduler resolveNonGroupDurableWaitCandidateMs).
-const WAITABLE_ACTION_REQUIRED_KINDS: ReadonlySet<string> = new Set([
-  'profile_action_required',
-  'connected_service_required',
-]);
-const WAITABLE_ACTION_REQUIRED_REASONS: ReadonlySet<string> = new Set([
-  'usage_limit',
-  'rate_limit',
-  'temporary_throttle',
-]);
-
 function resolveProjectedRecoveryState(input: Readonly<{
   report: ConnectedServiceRuntimeAuthFailureDaemonReport;
   classification: ConnectedServiceRuntimeFailureClassification;
+  nowMs: number;
 }>): ProjectedRecoveryState | null {
   const result = readOuterResult(input.report.report);
   if (!result) return null;
@@ -180,18 +168,19 @@ function resolveProjectedRecoveryState(input: Readonly<{
     case 'recovery_action_required': {
       const action = readRecord(result.action);
       const actionKind = readString(action?.kind);
-      const actionReason = readString(action?.reason);
-      // Mirror the daemon's at-report-time durable-wait decision: a KNOWN reset horizon is
-      // what makes the failure waitable (the scheduler owner enforces future-ness when arming).
-      const resetsAtMs = input.classification.resetsAtMs;
-      const waitable = actionKind !== null
-        && WAITABLE_ACTION_REQUIRED_KINDS.has(actionKind)
-        && actionReason !== null
-        && WAITABLE_ACTION_REQUIRED_REASONS.has(actionReason)
-        && typeof resetsAtMs === 'number'
-        && Number.isFinite(resetsAtMs);
-      if (waitable) {
-        return { status: 'waiting', lastProbeError: actionKind, activeProfileId: null };
+      const disposition = resolveRuntimeAuthRecoveryResultDisposition({
+        result,
+        classificationFailureKind: input.classification.kind,
+        classificationResetsAtMs: input.classification.resetsAtMs ?? null,
+        nowMs: input.nowMs,
+      });
+      if (disposition?.kind === 'durable_wait') {
+        return {
+          status: 'waiting',
+          lastProbeError: actionKind ?? disposition.reason,
+          activeProfileId: null,
+          nextCheckAtMs: disposition.nextRetryAtMs,
+        };
       }
       return {
         status: 'exhausted',
@@ -201,19 +190,28 @@ function resolveProjectedRecoveryState(input: Readonly<{
     }
     case 'switch_attempted': {
       const switchResult = readSwitchResult(result);
+      const disposition = resolveRuntimeAuthRecoveryResultDisposition({
+        result,
+        classificationFailureKind: input.classification.kind,
+        classificationResetsAtMs: input.classification.resetsAtMs ?? null,
+        nowMs: input.nowMs,
+      });
+      if (disposition?.kind === 'durable_wait') {
+        return {
+          status: 'waiting',
+          lastProbeError: disposition.reason,
+          activeProfileId: readString(switchResult?.activeProfileId),
+          nextCheckAtMs: disposition.nextRetryAtMs,
+        };
+      }
+      if (disposition?.kind === 'terminal') {
+        return {
+          status: 'exhausted',
+          lastProbeError: disposition.reason,
+          activeProfileId: readString(switchResult?.activeProfileId),
+        };
+      }
       switch (switchResult?.status) {
-        case 'no_eligible_member':
-          return {
-            status: 'exhausted',
-            lastProbeError: 'no_eligible_member',
-            activeProfileId: readString(switchResult.activeProfileId),
-          };
-        case 'switch_limit_reached':
-          return {
-            status: 'waiting',
-            lastProbeError: 'switch_limit_reached',
-            activeProfileId: readString(switchResult.activeProfileId),
-          };
         case 'switched':
           return {
             status: 'waiting',
@@ -239,6 +237,7 @@ function resolveNextCheckAtMs(input: Readonly<{
   status: SessionUsageLimitRecoveryV1['status'];
   current: SessionUsageLimitRecoveryV1 | null;
   recoveryRecord: MetadataRecord | null;
+  projectedNextCheckAtMs?: number | null;
   classification: ConnectedServiceRuntimeFailureClassification;
   armedAtMs: number;
   nowMs: number;
@@ -246,6 +245,7 @@ function resolveNextCheckAtMs(input: Readonly<{
   if (input.status === 'cancelled' || input.status === 'exhausted') return null;
   const fromRecovery = readNonNegativeInteger(input.recoveryRecord?.nextRetryAtMs);
   if (fromRecovery !== null) return fromRecovery;
+  if (typeof input.projectedNextCheckAtMs === 'number') return input.projectedNextCheckAtMs;
   const timing = deriveUsageLimitRecoveryTiming({
     occurredAtMs: input.armedAtMs,
     resetAtMs: input.classification.resetsAtMs,
@@ -268,6 +268,7 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
   const projectedState = resolveProjectedRecoveryState({
     report: input.report,
     classification: input.classification,
+    nowMs: now,
   });
   if (!projectedState) return null;
 
@@ -296,6 +297,7 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       status: projectedState.status,
       current,
       recoveryRecord,
+      projectedNextCheckAtMs: projectedState.nextCheckAtMs ?? null,
       classification: input.classification,
       armedAtMs,
       nowMs: now,

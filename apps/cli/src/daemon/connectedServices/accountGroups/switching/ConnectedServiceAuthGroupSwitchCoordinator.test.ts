@@ -513,7 +513,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     owner.finish();
   });
 
-  it('does not switch when automatic switching is disabled by group policy', async () => {
+  it('waits after a classified usage limit when switching is disabled but recovery allows waiting', async () => {
     let didCommit = false;
     const events: unknown[] = [];
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
@@ -536,17 +536,40 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       serviceId: 'openai-codex',
       groupId: 'main',
       reason: 'usage_limit',
-    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+      resetsAtMs: 9_000,
+    })).resolves.toMatchObject({
+      status: 'no_eligible_member',
+      generation: 1,
+      groupExhausted: true,
+      retryAtMs: 9_000,
+    });
     expect(didCommit).toBe(false);
-    expect(events).toEqual([
-      expect.objectContaining({
-        type: 'connected_service_auth_group_switch',
-        resultStatus: 'auto_switch_disabled',
-        success: false,
-        fromProfileId: 'primary',
-        toProfileId: 'primary',
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'connected_service_auth_group_switch',
+      resultStatus: 'no_eligible_member',
+      success: false,
+    }));
+  });
+
+  it('does not turn a proactive soft threshold into a durable wait when automatic switching is disabled', async () => {
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      loadState: async () => ({
+        ...state('primary', 1),
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: false },
       }),
-    ]);
+      commitSwitch: async () => state('backup', 2),
+      applyGeneration: async () => ({ ok: true }),
+    });
+
+    await expect(coordinator.switchBeforeTurn({
+      sessionId: 'soft-threshold-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
   });
 
   it('honors recoveryMode off without committing an automatic recovery switch', async () => {
@@ -733,23 +756,29 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       reason: 'usage_limit',
     });
 
-    await expect(first).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
-    await expect(second).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+    await expect(first).resolves.toMatchObject({
+      status: 'no_eligible_member',
+      generation: 1,
+      groupExhausted: true,
+    });
+    await expect(second).resolves.toMatchObject({
+      status: 'no_eligible_member',
+      generation: 1,
+      groupExhausted: true,
+    });
     expect(applied).toEqual([]);
     expect(events).toEqual([
       expect.objectContaining({
         type: 'connected_service_auth_group_switch',
-        resultStatus: 'auto_switch_disabled',
+        resultStatus: 'no_eligible_member',
         success: false,
         fromProfileId: 'primary',
-        toProfileId: 'primary',
       }),
       expect.objectContaining({
         type: 'connected_service_auth_group_switch',
-        resultStatus: 'auto_switch_disabled',
+        resultStatus: 'no_eligible_member',
         success: false,
         fromProfileId: 'primary',
-        toProfileId: 'primary',
       }),
     ]);
   });

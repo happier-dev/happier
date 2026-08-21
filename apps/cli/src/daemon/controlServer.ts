@@ -1555,6 +1555,21 @@ export function createDaemonControlApp({
           });
         }
       }
+      await runtimeAuthRecoveryScheduler?.settleResultByKey?.({
+        sessionId,
+        serviceId: classification.serviceId,
+        profileId: classification.profileId ?? null,
+        groupId: classification.groupId ?? null,
+        ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+        result,
+        classificationFailureKind: classification.kind,
+        classificationResetsAtMs: classification.resetsAtMs ?? null,
+      }).catch((error) => {
+        logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery result settlement failed', {
+          sessionId,
+          error: readSafeDaemonControlErrorDiagnostic(error),
+        });
+      });
       if (isLocallyCompleteWithoutProof(result)) {
         await runtimeAuthRecoveryScheduler?.markAwaitingProviderOutcomeProofByKey?.({
           sessionId,
