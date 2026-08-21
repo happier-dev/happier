@@ -1,0 +1,17 @@
+{
+  "title": "Apps and interface",
+  "pages": [
+    "index",
+    "app",
+    "control-panel",
+    "cli",
+    "cli-sessions",
+    "daemon",
+    "windows",
+    "attachments",
+    "markdown",
+    "themes",
+    "keyboard-shortcuts",
+    "custom-mobile-build"
+  ]
+}

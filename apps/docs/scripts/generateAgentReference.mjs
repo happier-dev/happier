@@ -34,7 +34,7 @@ const UI_PROVIDERS = join(REPO, 'apps', 'ui', 'sources', 'agents', 'providers');
 const UI_PLUGIN_BUNDLE = join(
   REPO, 'apps', 'ui', 'sources', 'agents', 'registry', 'generatedBundledPluginEntries.ts',
 );
-export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'providers', 'capabilities.mdx');
+export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'agents', 'capabilities.mdx');
 
 const AGENTS_DIST = join(REPO, 'packages', 'agents', 'dist', 'index.js');
 const CLI_RUNTIME_DIST = join(REPO, 'packages', 'agents', 'dist', 'providers', 'providerCliRuntime.js');
@@ -280,7 +280,7 @@ ${stable.length} of the ${ids.length} agents are marked Stable: ${stable.join(',
 The rest are Experimental — they work, and people use them daily, but their
 integration is younger and more likely to change. Availability of an agent is
 separate from availability of a feature; see
-[Server feature flags](/features/feature-flags) for the latter.
+[Server feature flags](/extras/feature-flags) for the latter.
 
 ## Agents at a glance
 
@@ -292,7 +292,7 @@ installer, run that first — see the agent's own page for the exact command.
 
 **Custom ACP** is not a bundled agent. It is how you point Happier at any agent
 that speaks the Agent Client Protocol, so its row describes the adapter rather
-than a particular vendor. See [Custom ACP](/providers/custom-acp).
+than a particular vendor. See [Custom ACP](/agents/custom-acp).
 
 Several subcommands accept aliases, so the name you already have in your fingers
 usually works: ${aliased.join('; ')}.
@@ -308,12 +308,12 @@ ${sessions}
 started outside Happier. "Fork" means the agent's own runtime can branch a
 conversation; where it cannot, Happier's replay fork still works, because that
 is Happier's own mechanism rather than the agent's. See
-[Session forking](/features/session-forking).
+[Session forking](/sessions/session-forking).
 
 The last column is a declaration rather than a gate — nothing currently reads
 it, so it does not decide whether you can browse an agent's own sessions. What
 you can actually browse and import is described in
-[Browse and import provider sessions](/features/browse-and-import-sessions).
+[Continuing a session](/sessions/continuing-a-session).
 
 ## Running a turn
 
@@ -321,7 +321,7 @@ ${runtime}
 
 Steering is what lets you add a correction to a turn already in flight instead
 of interrupting it. Where an agent cannot steer, Happier interrupts and resends,
-which is slower and loses less than it sounds — see [Steering](/features/steering).
+which is slower and loses less than it sounds — see [Steering](/sessions/steering).
 
 **Session modes are not permission modes.** Where the list comes *from the
 agent*, Happier shows whichever modes that build advertises for the session, so
@@ -356,13 +356,13 @@ ${auth}
 
 Agents whose background checks are manual only will not be re-probed on a timer;
 their status refreshes when you open the backend's settings screen or start a
-session. See [Agent authentication](/features/provider-authentication).
+session. See [Agent authentication](/agents/provider-authentication).
 
 ## Related
 
-- [Coding agents](/providers) — one page per agent, with setup and known limits.
-- [Model and engine selection](/features/model-and-engine-selection)
-- [Server feature flags](/features/feature-flags)
+- [Coding agents](/agents) — one page per agent, with setup and known limits.
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Server feature flags](/extras/feature-flags)
 `;
 }
 

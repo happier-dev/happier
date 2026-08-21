@@ -125,7 +125,7 @@ ${m.installWindows}
 \`\`\`
 
 The installer verifies every release signature before unpacking. See
-[CLI](/clients/cli) for the other install routes, release channels, and what to
+[CLI](/apps/cli) for the other install routes, release channels, and what to
 do when the command is not found afterwards.
 
 ## Related

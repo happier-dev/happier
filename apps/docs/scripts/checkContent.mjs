@@ -166,6 +166,10 @@ export function checkInternalLinks({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) 
  * house style enforceable: a navigation path is a UI label and should be marked
  * up as one, which is also how a reader tells it apart from ordinary prose.
  *
+ * Both arrow spellings are accepted. The site overwhelmingly uses `→`, but the
+ * two dozen ASCII `->` chains were invisible to this check until now — and one
+ * of them was naming a settings row by the wrong label.
+ *
  * Scoped to chains rooted at `Settings`. Everything else written with the same
  * arrow notation — an ElevenLabs API-key permission (`Voices → Read`), a form
  * field and its option (`Applies to → One machine`), a SwiftBar menu
@@ -195,12 +199,24 @@ export function checkUiLabels({
   // apostrophe inside a value ("don't") and silently loses most of the file —
   // which reads as "this label does not exist" for thousands of real strings.
   const shipped = new Set();
-  const VALUE = /(?::\s*|^\s*(?:return\s+)?)(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`([^`${]*)`)\s*[,;)\]}]?\s*$/;
+  // Every quoted string on the line, not just one anchored at its end.
+  //
+  // Anchoring to end-of-line looks reasonable — most entries are one per line —
+  // but it silently drops every label in a multi-property object written inline,
+  // e.g. `mobileLayout: { title: 'Mobile session layout', footer: '...' }`. The
+  // shipped label is then reported as missing from the app, which is the worst
+  // failure mode for this check: it accuses correct documentation of being wrong,
+  // and a check that cries wolf gets ignored. Keys in this file are unquoted
+  // identifiers, so every quoted run is a value.
+  //
+  // Still line-scoped. A whole-file tokenizer de-syncs on the first apostrophe
+  // inside a value ("don't") and loses most of the file from there on.
+  const VALUE = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`([^`${]*)`/g;
   for (const line of translations.split('\n')) {
-    const match = line.match(VALUE);
-    if (!match) continue;
-    const value = match[1] ?? match[2] ?? match[3];
-    if (value) shipped.add(value.replace(/\\'/g, "'").replace(/\\"/g, '"'));
+    for (const match of line.matchAll(VALUE)) {
+      const value = match[1] ?? match[2] ?? match[3];
+      if (value) shipped.add(value.replace(/\\'/g, "'").replace(/\\"/g, '"'));
+    }
   }
 
   const problems = [];
@@ -213,8 +229,8 @@ export function checkUiLabels({
       if (FOREIGN_UI.test(line)) continue;
       for (const span of line.matchAll(/\*\*([^*]+)\*\*|`([^`]+)`/g)) {
         const inner = span[1] ?? span[2];
-        if (!inner.includes('→')) continue;
-        const segments = inner.split('→');
+        if (!/→|->/.test(inner)) continue;
+        const segments = inner.split(/\s*(?:→|->)\s*/);
         if (segments[0].replace(/[*`_]/g, '').trim() !== 'Settings') continue;
         for (const raw of segments.slice(1)) {
           const segment = raw.replace(/[*`_]/g, '').trim();
@@ -343,6 +359,46 @@ export function checkCliCommandCoverage({
     }));
 }
 
+
+/**
+ * Every page on disk must be reachable from its section's `meta.json`, and
+ * every nav entry must point at something real.
+ *
+ * This exists because of a bug I shipped: after the features section was
+ * regrouped, the generators still wrote to their pre-move `OUTPUT_PATH`, so
+ * regenerating recreated pages at the *old* locations. Those duplicates were
+ * valid MDX, resolved fine, and were invisible to every other check — they were
+ * simply not in any sidebar. A page nobody can navigate to is a page that rots.
+ */
+export function checkNavCoverage({ contentRoot = DEFAULT_CONTENT_ROOT } = {}) {
+  const problems = [];
+  const walk = (dir) => {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    const metaPath = join(dir, 'meta.json');
+    const pages = entries.filter((e) => e.isFile() && e.name.endsWith('.mdx')).map((e) => e.name.slice(0, -4));
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    const where = relative(contentRoot, dir).replace(/\\/g, '/') || '.';
+
+    let listed = null;
+    try {
+      listed = JSON.parse(readFileSync(metaPath, 'utf8')).pages ?? [];
+    } catch {
+      if (pages.length) problems.push({ at: `${where}/meta.json`, label: where, reason: 'directory has pages but no meta.json' });
+    }
+    if (listed) {
+      for (const orphan of pages.filter((p) => !listed.includes(p))) {
+        problems.push({ at: `${where}/${orphan}.mdx`, label: orphan, reason: 'page is not listed in meta.json, so nothing links to it' });
+      }
+      for (const phantom of listed.filter((p) => !pages.includes(p) && !dirs.includes(p))) {
+        problems.push({ at: `${where}/meta.json`, label: phantom, reason: 'meta.json lists a page that does not exist' });
+      }
+    }
+    for (const sub of dirs) walk(join(dir, sub));
+  };
+  walk(contentRoot);
+  return problems;
+}
+
 export async function runContentChecks(options = {}) {
   const { checkGeneratedPages } = await import('./generateReference.mjs');
   return {
@@ -351,6 +407,7 @@ export async function runContentChecks(options = {}) {
       ...checkUiLabels(options),
       ...checkFeatureEnvCoverage(options),
       ...checkCliCommandCoverage(options),
+      ...checkNavCoverage(options),
     ],
     generated: await checkGeneratedPages(options),
   };

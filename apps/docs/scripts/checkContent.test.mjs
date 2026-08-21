@@ -8,6 +8,7 @@ import {
   checkCliCommandCoverage,
   checkFeatureEnvCoverage,
   checkInternalLinks,
+  checkNavCoverage,
   checkUiLabels,
   routeForFile,
   slugifyHeading,
@@ -89,6 +90,24 @@ test('accepts a navigation path whose segments all ship', () => {
   });
   const translations = join(
     fixture({ 'en.ts': "  title: 'AI backends',\n  claude: 'Claude',\n" }),
+    'en.ts',
+  );
+
+  assert.deepEqual(checkUiLabels({ contentRoot: root, translationsFile: translations }), []);
+});
+
+test('finds a label declared in an inline multi-property object', () => {
+  // The end-anchored extractor this replaced only saw a value at the end of a
+  // line, so a label written alongside a sibling property was invisible and the
+  // check called correct documentation wrong. Five real pages were accused this
+  // way before it was noticed.
+  const root = fixture({
+    'p.mdx': 'Open **Settings → Session → Mobile session layout**.\n',
+  });
+  const translations = join(
+    fixture({
+      'en.ts': "  session: 'Session',\n  mobileLayout: { title: 'Mobile session layout', footer: 'Choose the layout.' },\n",
+    }),
     'en.ts',
   );
 
@@ -195,4 +214,35 @@ test('an undocumented CLI command fails the check, and aliases are exempt', () =
   });
   // `sessions` is a documented plural alias; `ghost` is genuinely missing.
   assert.deepEqual(problems.map((p) => p.label), ['happier ghost']);
+});
+
+test('an ASCII-arrow settings path is checked like a real one', () => {
+  // The site mostly writes `→`, but two dozen pages used `->` and were
+  // invisible to this check — including one naming a row by the wrong label.
+  const root = fixture({ 'p.mdx': 'Open **Settings -> Features -> Gone** to enable it.\n' });
+  const translations = join(fixture({ 'en.ts': "  a: 'Features',\n" }), 'en.ts');
+
+  const problems = checkUiLabels({ contentRoot: root, translationsFile: translations });
+  assert.deepEqual(problems.map((p) => p.label), ['Gone']);
+});
+
+test('a page missing from meta.json is reported as unreachable', () => {
+  // The exact bug this guards: a generator wrote to a stale path after a move,
+  // leaving valid MDX that no sidebar referenced.
+  const root = fixture({
+    'sessions/meta.json': JSON.stringify({ title: 'Sessions', pages: ['permissions'] }),
+    'sessions/permissions.mdx': '# Permissions\n',
+    'sessions/orphan.mdx': '# Left behind by a stale OUTPUT_PATH\n',
+  });
+  const problems = checkNavCoverage({ contentRoot: root });
+  assert.deepEqual(problems.map((p) => p.label), ['orphan']);
+});
+
+test('a meta.json entry with no file is reported too', () => {
+  const root = fixture({
+    'code/meta.json': JSON.stringify({ title: 'Code', pages: ['git', 'deleted-page'] }),
+    'code/git.mdx': '# Git\n',
+  });
+  const problems = checkNavCoverage({ contentRoot: root });
+  assert.deepEqual(problems.map((p) => p.label), ['deleted-page']);
 });

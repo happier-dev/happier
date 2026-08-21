@@ -30,7 +30,7 @@ const REPO = resolve(HERE, '..', '..', '..');
 const CATALOG_DIST = join(REPO, 'packages', 'protocol', 'dist', 'features', 'catalog.js');
 const UI_REGISTRY = join(REPO, 'apps', 'ui', 'sources', 'sync', 'domains', 'features', 'registry', 'uiFeatureRegistry.ts');
 const TRANSLATIONS = join(REPO, 'apps', 'ui', 'sources', 'text', 'translations', 'en.ts');
-export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'features', 'feature-flags.mdx');
+export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'extras', 'feature-flags.mdx');
 
 /**
  * Leaf-key lookup into the translations file, with collision detection: if two
@@ -182,8 +182,8 @@ dependant alone does nothing.
 
 ## Related
 
-- [Environment variables](/deployment/env) — the \`HAPPIER_FEATURE_*\` variables that set these.
-- [Agent capabilities](/providers/capabilities) — what varies by agent rather than by flag.
+- [Environment variables](/self-hosting/env) — the \`HAPPIER_FEATURE_*\` variables that set these.
+- [Agent capabilities](/agents/capabilities) — what varies by agent rather than by flag.
 `;
 }
 

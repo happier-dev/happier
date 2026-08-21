@@ -1,0 +1,84 @@
+---
+title: Kilo (experimental)
+description: Configure Kilo in Happier, including install, machine-local login, and current limitations.
+---
+
+Happier supports **Kilo** as a local CLI-backed provider.
+
+<Callout type="info">
+  Kilo is an **experimental** integration. It works and people use it
+  daily, but its surface is younger than Claude, Codex or OpenCode and is
+  more likely to change. What it supports today is in
+  [Agent capabilities](/agents/capabilities).
+</Callout>
+
+## Requirements
+
+- Kilo CLI installed locally
+- binary available on `PATH` (or set `HAPPIER_KILO_PATH`)
+
+## Install Kilo
+
+Install Kilo on your machine, then restart Happier:
+
+```bash
+npm install -g @kilocode/cli@latest
+kilo --version
+```
+
+Happier can install it for you:
+
+```bash
+happier install provider kilo
+kilo --version
+```
+
+## Local authentication in Happier
+
+Kilo supports launching its native login flow from:
+
+- **Settings → AI & Agents → AI backends → Kilo**
+
+From there you can:
+
+- open Kilo and start its `/connect` flow directly inside Happier
+- use **Check now** to re-run auth detection on the selected machine
+
+Auth-status detection for Kilo is currently conservative. Happier can open the login flow, but may still show **Unknown** if Kilo does not expose a safe non-interactive local auth signal.
+
+For the shared user guide, see [Provider authentication](/agents/provider-authentication).
+
+## Enable Kilo in Happier (experimental)
+
+Kilo is behind Happier’s experimental providers rollout.
+
+In the app:
+
+1. **Settings**
+2. **AI & Agents → AI backends**
+3. **Kilo (experimental)**
+
+## Notes
+
+- Kilo runs locally on your machine through the real Kilo CLI.
+- Session capabilities such as resume, models, modes, and permissions remain capability-driven and can evolve with the installed runtime.
+- When in doubt, treat Kilo’s own CLI configuration as the source of truth for provider-native behavior.
+
+## Troubleshooting
+
+### “Kilo not found”
+
+- Confirm Kilo is installed: `kilo --version`
+- Restart Happier after installing.
+- If Kilo isn’t on PATH, set `HAPPIER_KILO_PATH` to the absolute path of the `kilo` binary.
+
+### “Not authenticated”
+
+Use the Kilo provider settings page in Happier or run Kilo’s normal local login flow in your terminal, then use **Check now**.
+
+## Related
+
+- [Agent capabilities](/agents/capabilities) — what this agent supports, generated from the manifest.
+- [Choosing an agent](/agents)
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Agent authentication](/agents/provider-authentication)

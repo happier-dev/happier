@@ -3,19 +3,20 @@
   "pages": [
     "index",
     "getting-started",
-    "features",
-    "clients",
-    "providers",
-    "platforms",
-    "deployment",
-    "server",
+    "sessions",
+    "organize",
+    "code",
+    "agents",
+    "extending",
+    "accounts",
+    "voice",
+    "apps",
+    "extras",
     "security",
-    "advanced",
-    "architecture",
-    "protocol",
     "releases",
+    "legal",
+    "self-hosting",
     "development",
-    "hstack",
-    "legal"
+    "hstack"
   ]
 }

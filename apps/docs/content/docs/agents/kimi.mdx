@@ -1,0 +1,79 @@
+---
+title: Kimi
+description: Configure Kimi in Happier via ACP-backed local runtime integration.
+---
+
+Happier supports Kimi as a local CLI-backed provider.
+
+<Callout type="info">
+  Kimi is an **experimental** integration. It works and people use it
+  daily, but its surface is younger than Claude, Codex or OpenCode and is
+  more likely to change. What it supports today is in
+  [Agent capabilities](/agents/capabilities).
+</Callout>
+
+## Requirements
+
+- Kimi CLI installed locally.
+- Binary available on `PATH` (or set `HAPPIER_KIMI_PATH`).
+
+## Install Kimi
+
+Happier can run the vendor installer for you:
+
+```bash
+happier install provider kimi
+```
+
+Or install it yourself (macOS / Linux):
+
+```bash
+curl -LsSf https://code.kimi.com/install.sh | bash
+kimi --version
+```
+
+Windows (PowerShell):
+
+```powershell
+Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression
+kimi --version
+```
+
+## Local authentication in Happier
+
+Kimi supports launching its native setup/login flow from:
+
+- **Settings → AI & Agents → AI backends → Kimi**
+
+Happier opens Kimi and sends `/setup` for you.
+
+Auth-status detection for Kimi is currently conservative, so Happier may still show **Unknown** even though the login flow is available.
+
+For the shared user guide, see [Provider authentication](/agents/provider-authentication).
+
+## Start Kimi with Happier
+
+```bash
+happier kimi
+```
+
+## Notes
+
+- Resume availability is session-specific in Happier and depends on valid resume metadata plus the current backend/settings.
+- Model, mode, and permission behavior can still vary by installed Kimi runtime.
+- Tool calls are normalized to canonical Happier tool renderers.
+
+## Troubleshooting
+
+If Kimi is not detected:
+
+1. Verify `kimi --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_KIMI_PATH` if needed.
+
+## Related
+
+- [Agent capabilities](/agents/capabilities) — what this agent supports, generated from the manifest.
+- [Choosing an agent](/agents)
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Agent authentication](/agents/provider-authentication)

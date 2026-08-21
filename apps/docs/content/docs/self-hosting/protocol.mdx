@@ -1,0 +1,26 @@
+---
+title: Protocol
+description: The event contract between clients, the relay and the machines running your agents.
+---
+
+Everything Happier does across devices rides on one contract: a versioned event
+protocol shared by the clients, the relay and the CLI daemon.
+
+Two properties of it are worth knowing even if you never read the schemas:
+
+- **The socket carries the data, both ways.** Message bodies arrive over the
+  WebSocket rather than being fetched over HTTP afterwards, and clients write
+  back over the same connection.
+- **Writes are optimistically concurrent.** Versioned fields carry an
+  `expectedVersion`, and a stale write is rejected with the current version
+  attached rather than overwriting. Conflict resolution belongs to the client,
+  which is what lets two devices work on one session without locking it.
+
+[How Happier fits together](/self-hosting/how-it-works) covers what that means in practice,
+including why it matters when you put a reverse proxy in front of a self-hosted
+relay.
+
+## Related
+
+- [How Happier fits together](/self-hosting/how-it-works)
+- [Security](/security) — what the relay can read.

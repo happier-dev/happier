@@ -1,13 +1,26 @@
 ---
-title: Development
-description: Engineering docs for contributors (testing, CI, and release gates).
+title: Contributing
+description: Building Happier itself — the local stack, tests, and what CI expects.
 ---
 
-This section documents Happier development itself.
+This section is for people working **on** Happier rather than with it. If you
+are here to use Happier, [Start here](/getting-started) is the page you want.
 
-Start here:
+Happier runs as several workspaces in one repository — the clients, the CLI and
+daemon, the relay, and the shared contract packages between them. Most changes
+touch more than one, which is why the local stack exists: it runs the whole
+thing against your own checkout so you can see a change end to end.
 
-- [Local development (hstack)](/hstack/development)
-- [App environment variables (Expo)](/development/app-env)
-- [Testing](/development/testing)
-- [Release Artifacts](/development/release-artifacts)
+## Where to start
+
+<Cards>
+  <Card title="Local stack" href="/hstack/development" description="Run the server, CLI and app together against your own checkout." />
+  <Card title="Testing and CI" href="/development/testing" description="What the suites cover and what CI will hold you to." />
+  <Card title="App environment variables" href="/development/app-env" description="Expo-side configuration for the clients." />
+  <Card title="Desktop and web QA" href="/development/desktop-qa" description="Driving a real window when a change can only be judged by using it." />
+</Cards>
+
+## Related
+
+- [Release channels](/releases) — how a change reaches users.
+- [Release artifacts](/development/release-artifacts)

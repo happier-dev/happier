@@ -1,0 +1,11 @@
+{
+  "title": "Code and review",
+  "pages": [
+    "index",
+    "files-and-editor",
+    "diffs",
+    "review-comments",
+    "git",
+    "pull-requests"
+  ]
+}

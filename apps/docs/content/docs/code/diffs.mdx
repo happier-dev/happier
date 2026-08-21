@@ -1,0 +1,96 @@
+---
+title: Diffs and review
+description: Read what changed in a workspace — by repository, by turn, by session, or by what you have staged.
+---
+
+Before you approve work, you want to see it. Happier's changed-files list and
+Review surface let you read a session's changes as one continuous diff instead
+of opening each file in turn, and to narrow that to just what this session did.
+
+<Callout type="info">
+  Reading diffs is part of the normal session UI. Writing — staging, committing —
+  is separate and gated; see [Git](/code/git).
+</Callout>
+
+## Changed files list
+
+The changed-files list is the fast control surface for current repository state.
+
+You can use it to:
+
+- see the file status (`A`, `M`, `D`, etc.)
+- see additions/removals per file
+- stage or unstage files
+- open a file diff
+- open file actions such as revert/discard when supported
+
+The list is optimized for fast scanning:
+
+- branch summary stays at the top
+- “Review” is available directly from the changed-files header
+- commit controls stay grouped at the bottom
+- file paths and filenames are aligned as a single readable label, with the filename kept prominent next to the line-change summary
+
+### Changed-files scopes
+
+When more than one changed-file scope is available, the changed-files header becomes a compact dropdown. The dropdown shows the active scope name and count, and keeps the **Review** button beside it.
+
+Possible scopes are:
+
+- **Changed files** / **Repository changed files**: all current repository changes from the latest SCM snapshot.
+- **Latest turn changes**: provider-backed changes attributed to the most recent completed turn, when the provider/runtime reported them.
+- **Session-attributed changes**: best-effort changes attributed to this session across more than one turn.
+- **Selected for commit**: only files that are currently fully or partially selected for the next commit. This appears only after at least one file is selected.
+
+The scope selector appears only when it is useful. If there is only the repository view, Happier shows the normal changed-files title instead of a redundant dropdown.
+
+Changing scope changes the list you are looking at; it does not rewrite repository state. Selecting files for commit does not make them “session changes”. It only makes the **Selected for commit** scope available.
+
+The **All** action is scope-aware:
+
+- in repository view, it selects all repository changed files;
+- in Latest turn changes, it selects only files in that turn scope;
+- in Session-attributed changes, it selects only files in that session scope;
+- in Selected for commit, it keeps the selection bounded to the already selected set.
+
+Repository view remains the source of truth. Turn/session scopes are convenience filters that depend on the quality of provider/runtime attribution.
+
+## Review
+
+**Review** is the “scroll through the actual work” surface for current uncommitted changes.
+
+Instead of opening one file at a time, Review lets you inspect the diff set as a continuous working review.
+
+### What Review is for
+
+Use Review when you want to:
+
+- scroll through many changed files in one pass
+- collapse files you are done with
+- open a specific file in edit mode without losing your place
+- go back to the review tab and continue where you stopped
+
+### Review behavior
+
+- Diffs load progressively as needed instead of trying to mount everything at once.
+- Nearby diffs are prefetched so scrolling feels continuous.
+- If you manually collapse a diff, Happier remembers that and does not auto-expand it again just because you scroll away and back.
+- Switching away from Review and coming back restores your previous position.
+
+### Editing from Review
+
+Review is not a dead-end viewer.
+
+From Review you can open a changed file into its own details tab, edit it, then return to Review without losing the review context.
+
+On mobile cockpit layouts, Review opens in the **Tabs** surface. Use the back button to return to the Git list you opened it from, or use the bottom tabs to switch surfaces without adding extra tab switches to the back stack.
+
+Attribution uses direct operation signals and provider/runtime change sets first. When multiple sessions are active on the same repository, attribution reliability is lower, so Happier favors repository truth over weak inference.
+If a scoped view cannot be supported confidently, Happier falls back to repository view or hides that scope rather than showing an empty or misleading list.
+
+## Related
+
+- [Review comments](/code/review-comments) — turning a diff into instructions for an agent.
+- [Git](/code/git) — acting on what you have read.
+- [Files and the editor](/code/files-and-editor)
+- [Pull requests](/code/pull-requests)

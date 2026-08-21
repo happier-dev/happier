@@ -1,0 +1,307 @@
+---
+title: Voice
+description: Choose a voice mode, understand how voice conversations map to sessions, and configure ElevenLabs or local voice in Happier.
+---
+
+Happier supports four voice modes in **Settings → Voice**:
+
+- **Off**: disables all voice features.
+- **Happier Voice**: realtime ElevenLabs voice using Happier-managed credentials and server-side quotas.
+- **Use my ElevenLabs**: realtime ElevenLabs voice using your own API key and agent.
+- **Local voice**: a configurable STT/TTS pipeline with device, self-hosted, Google, and local-neural providers.
+
+## Start here
+
+If you only need one rule of thumb:
+
+- choose **Happier Voice** for the simplest “just works” realtime voice experience
+- choose **Use my ElevenLabs** if you want full control over your own ElevenLabs account and agent
+- choose **Local voice** if you want device speech, self-hosted endpoints, or on-device neural speech
+
+## Common settings
+
+All voice modes share a few top-level settings:
+
+### Preferred language
+
+**Preferred language** sets the language Happier should prefer for spoken responses and voice-side interactions.
+
+Use this when:
+
+- you want the assistant to answer in a specific language
+- your speech provider supports multiple languages
+- you want local voice and ElevenLabs voice to stay aligned with the same preference
+
+### Voice UI defaults
+
+Voice settings also include UI behavior such as:
+
+- whether voice defaults to **global** or **session** scope
+- whether the voice surface prefers the **sidebar**, the **session screen**, or **auto**
+- whether the activity feed is shown and auto-expands
+
+These are app-level UX settings. They do not change how a provider itself speaks or reasons.
+
+### Voice activity feed
+
+**Enable voice activity feed** shows recent voice events directly in the UI while voice is active.
+
+You can also enable **Auto-expand on start** if you want the activity feed to open automatically whenever a voice session starts.
+
+### Privacy
+
+Happier includes privacy controls for what voice providers can see.
+
+Defaults are intentionally conservative for sensitive data:
+
+- session summaries and recent messages can be shared
+- tool names and permission requests can be shared
+- file paths and tool arguments are **off by default**
+
+If you need stricter privacy, start by disabling:
+
+- **Share recent messages**
+- **Share file paths**
+- **Share tool arguments**
+
+## Voice conversations and session targeting
+
+Voice in Happier is more than a floating microphone button. It has its own conversation state and can act on real sessions.
+
+### Hidden voice conversation
+
+When voice is active, Happier keeps a hidden voice conversation session.
+
+Open it when you want to:
+
+- review what the assistant heard
+- read voice replies as text
+- continue the same conversation by typing
+- inspect request announcements, tool calls, or tool results
+
+The hidden voice conversation does **not** replace your main coding session. It is the voice-side conversation layer.
+
+### Target session
+
+Voice actions still need a real session to act on.
+
+That target session is the session where voice can:
+
+- send messages
+- answer requests
+- switch modes when supported
+- continue work on your behalf
+
+This is why voice can behave like a real assistant instead of just transcribing speech into a random text box.
+
+## Where the voice starts
+
+For local voice agent mode, start location depends on **where** you launch voice and on your directory policy:
+
+- **Start from the sidebar / global voice surface**: starts from **voice home**
+- **Start from a session surface**: starts from that session’s **project root**
+- **If “Stay in voice home” is enabled**: session starts also stay in **voice home**
+
+This gives you a neutral default for global voice use, while still letting session-started voice work directly against the current project when you want that behavior.
+
+## Happier Voice
+
+**Happier Voice** is the managed realtime option.
+
+Use it when you want:
+
+- the least setup
+- a true realtime voice session
+- server-managed access control, quota enforcement, and subscription rules
+
+Happier Voice is available only when the connected server advertises it through `/v1/features`.
+
+### Native background audio
+
+On native builds, active realtime ElevenLabs calls use a call-style audio mode so the conversation can continue more reliably when the app is backgrounded or the screen locks.
+
+This background-call behavior applies to the realtime ElevenLabs path, not to Local voice.
+
+## Use my ElevenLabs
+
+**Use my ElevenLabs** also runs a realtime ElevenLabs conversation, but it uses your own ElevenLabs account settings.
+
+This mode is useful when you want:
+
+- your own ElevenLabs billing
+- your own ElevenLabs agent
+- direct control over voice, model, and voice tuning
+
+### What you configure
+
+In **Settings → Voice → Use My ElevenLabs**, you can configure:
+
+- **API key**
+- **Agent ID**
+- **Voice**
+- **Realtime model**
+- **Speaker boost**
+- **Voice tuning** such as stability, similarity, style, and speed
+- **Welcome mode**
+
+The voice picker is searchable and supports inline preview playback, so you can audition voices before choosing one.
+
+### API key permissions
+
+When creating a restricted ElevenLabs API key for Happier, enable:
+
+- **Text to Speech** → **Access**
+- **Voices** → **Read**
+- **Conversational AI / Agents** → **Read & Write**
+- optional: **User** → **Read**
+
+### Saved credentials
+
+Your ElevenLabs API key is saved in Happier as an encrypted secret setting rather than a plaintext field, so you do not need to re-enter it every time.
+
+### Auto-provisioning a Happier agent
+
+If you do not want to create or update the ElevenLabs agent manually, Happier can help provision it for you.
+
+From the ElevenLabs section you can:
+
+- create a new Happier-compatible agent
+- update an existing Happier agent template
+- reuse an existing agent if you already have one
+
+This is the easiest way to keep your ElevenLabs agent aligned with Happier’s current tool and prompt wiring.
+
+## Local voice
+
+**Local voice** is the configurable voice pipeline.
+
+It supports:
+
+- **STT** from the device, OpenAI-compatible endpoints, Google Gemini, or local neural STT
+- **TTS** from the device, OpenAI-compatible endpoints, Google Cloud, or local neural TTS
+
+Local voice is the right choice when you want:
+
+- a self-hosted speech stack
+- device speech services
+- a hybrid setup such as device STT + cloud TTS
+- on-device neural speech models such as Kokoro TTS or Sherpa STT
+
+Local voice settings also include voice-agent behavior such as backend selection, machine targeting, resumability, and working-directory policy when you use **Agent** mode.
+
+### Backend and model lists are machine-aware
+
+When you use **Agent** mode, Happier does not guess a fake model list locally.
+
+- the **Voice agent backend** list follows your enabled backend toggles
+- the **Agent machine** setting decides which machine Happier probes for backend capabilities
+- the **chat model** and **commit model** lists come from that selected machine when the backend supports dynamic model probing
+
+This means the exact model list can differ between machines.
+
+If the selected machine cannot provide a dynamic list for the chosen backend, Happier falls back to the safe options that are always valid:
+
+- **Use CLI settings**
+- **Custom…**
+
+In practice, this usually means one of these is true on the selected machine/account:
+
+- the backend is not installed there
+- the backend is installed but not authenticated there
+- the backend does not expose a dynamic model probe for that machine context
+
+If you expect a richer model list, first check:
+
+- **Settings → Voice → Agent machine**
+- the selected backend is actually available on that machine
+- that machine is signed in for the backend you selected
+
+### Conversation modes
+
+Local voice supports two conversation modes:
+
+- **Direct to session**: your transcribed speech is sent straight into the session
+- **Agent**: your speech goes through a dedicated voice agent first
+
+Use **Direct to session** when you want speech input to behave like direct dictation into a session.
+
+Use **Agent** when you want a colleague-style voice layer that can ask follow-up questions, summarize, and use structured actions before writing anything back.
+
+### TTS still matters in direct-to-session mode
+
+Even in **Direct to session**, TTS can still be enabled so Happier can read agent replies back to you.
+
+### Hands-free mode
+
+When you use **Device STT**, Happier can also expose hands-free endpointing controls such as silence timeout and minimum speech duration.
+
+### Test TTS
+
+Use **Test TTS** to verify the currently selected local TTS provider.
+
+That single button is the canonical end-to-end test for local voice output, regardless of whether you are using device TTS, OpenAI-compatible TTS, Google Cloud TTS, or local neural TTS.
+
+See the full setup guide: [Local voice providers](/voice/local-providers).
+
+## What voice can do
+
+Voice uses the same structured action system as the rest of Happier.
+
+Common voice actions include:
+
+- sending a message to a session
+- answering permission requests
+- answering user-action requests
+- changing the active target session
+- changing tracked sessions
+- searching or resolving supported actions
+- switching session mode when supported
+
+This is why voice is more reliable than a plain free-form speech interface: it can call typed actions instead of guessing.
+
+## Practical setup recipes
+
+### I want the simplest realtime voice setup
+
+Use **Happier Voice**.
+
+### I want ElevenLabs, but with my own billing and voices
+
+Use **Use my ElevenLabs**.
+
+### I want local or self-hosted speech services
+
+Use **Local voice**.
+
+### I want speech input without turning every utterance into a session message
+
+Use **Local voice → Conversation mode → Agent**.
+
+## Troubleshooting
+
+### Voice is connected, but nothing is spoken back
+
+Check:
+
+- that TTS is enabled for the selected provider
+- that the correct TTS provider is selected
+- that **Test TTS** succeeds in the Local voice section
+
+### My ElevenLabs voice list is empty
+
+Check:
+
+- your API key is present
+- the key has **Voices → Read** permission
+- the selected agent and voice still exist in ElevenLabs
+
+### Local voice does not reach my self-hosted server
+
+On mobile, `localhost` usually points to the phone itself, not your computer. Use your computer’s LAN IP or a tunnel instead.
+
+## Related pages
+
+- [Local voice providers](/voice/local-providers)
+- [Permissions](/sessions/permissions)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Happier tools](/extending/happier-tools)

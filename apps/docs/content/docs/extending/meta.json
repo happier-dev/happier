@@ -1,0 +1,13 @@
+{
+  "title": "Extending Happier",
+  "pages": [
+    "index",
+    "mcp-servers",
+    "happier-as-mcp-server",
+    "happier-tools",
+    "prompts-and-skills",
+    "installables",
+    "subagents",
+    "agent-autonomy"
+  ]
+}

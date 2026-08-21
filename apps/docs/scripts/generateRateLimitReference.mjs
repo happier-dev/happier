@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
 const CATALOG = join(REPO, 'apps', 'server', 'sources', 'app', 'api', 'utils', 'apiRateLimitCatalog.ts');
-export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'deployment', 'rate-limits.mdx');
+export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'self-hosting', 'rate-limits.mdx');
 
 /** Mirrors `toUpperSnakeCase` in the server's rate-limit catalog. */
 export function toUpperSnakeCase(input) {
@@ -97,8 +97,8 @@ ${['| Endpoint | Default | Counted per | Environment variables |', '| --- | --- 
 
 ## Related
 
-- [Environment variables](/deployment/env) — everything else the server reads.
-- [Server quickstart](/server/quickstart)
+- [Environment variables](/self-hosting/env) — everything else the server reads.
+- [Server quickstart](/self-hosting/quickstart)
 `;
 }
 

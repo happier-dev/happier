@@ -1,0 +1,88 @@
+---
+title: Organizing sessions
+description: Folders, tags, pins and multi-select — how to keep a long session list navigable, and what carries across your devices.
+---
+
+Once you are running more than a handful of sessions, the list becomes the
+problem. Happier gives you four ways to impose order on it, and all four are
+stored on the server, so the arrangement you build on your laptop is the one you
+see on your phone.
+
+Folders are on by default. Nothing here needs turning on unless your server
+operator has disabled `sessions.folders`.
+
+## Folders
+
+Folders group sessions the way directories group files, and they nest.
+
+- Create, rename, move and delete them, and nest one inside another.
+- Assign a session by dragging it onto a folder, or through the session's
+  context menu.
+- Drag a session onto the workspace root to take it out of a folder without
+  putting it in another.
+- Focus a folder to see only its contents, with breadcrumbs back out.
+- Collapse folders you are not working in.
+
+**Deleting a folder does not delete its sessions.** They move up to the parent
+folder, or to the workspace root if the folder was top level. There is no
+variant that discards the contents, which is deliberate — a mis-click on a
+folder should never lose work.
+
+Drag and drop works the same way on web, iOS and Android, including
+drag-scrolling when the target is off screen. If the server rejects a change
+you made while offline, the move rolls back rather than silently diverging.
+
+## Tags
+
+Tags cut across folders. A session lives in exactly one folder but can carry
+several tags, so tags are the right tool for a state or a theme that spans
+projects — `needs-review`, `flaky`, `customer-x`.
+
+Filter by one tag or several at once. Deleting a tag removes it from every
+session that carried it and leaves the sessions alone.
+
+## Pins
+
+Pin the few sessions you keep coming back to and they stay at the top of the
+list, above everything else, regardless of folder.
+
+Pinned sessions appear during the first paint of a long list rather than after
+you scroll, which is the point of pinning them. Archiving a session removes it
+from the pinned list and gives the pin quota back.
+
+## Selecting several at once
+
+Long-press a row, or use its menu, to start a selection. Then archive, delete,
+move, mark read, or change attention handling for all of them together. The
+selection survives the list updating underneath you and survives scrolling.
+
+## Ordering
+
+Within a scope — pinned, a folder, a tag, a workspace, a group — you can set
+your own order rather than accepting the default sort. That order is stored per
+scope, so the arrangement inside one folder does not disturb another.
+
+## Limits
+
+Generous, but not unbounded. Each is per account:
+
+| Thing | Limit |
+| --- | --- |
+| Folders | 500 |
+| Tags | 500 |
+| Pinned sessions | 500 |
+| Sessions kept in Needs attention | 500 |
+| Workspace and group labels | 1000 |
+| Sessions changed in one bulk action | 500 |
+| Custom order entries per scope | 1000 |
+
+These bound the snapshot every client parses on first paint, which is why they
+exist at all. A write past the limit is refused with an explanation rather than
+being accepted and silently dropped.
+
+## Related
+
+- [Session read and unread state](/organize/session-read-state) — including
+  **Keep in Needs attention**, which is separate from unread.
+- [New session shortcuts](/sessions/new-session-shortcuts)
+- [Feature flags](/extras/feature-flags) — `sessions.folders`.

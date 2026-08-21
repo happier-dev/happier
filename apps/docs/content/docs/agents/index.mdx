@@ -1,0 +1,57 @@
+---
+title: Coding agents
+description: The coding agents Happier can run for you, what they have in common, and where to find the one you use.
+---
+
+Happier does not replace your coding agent. It runs the one you already use — on your own machine, in your own checkout — and gives you a way to watch it, steer it, approve its work and reply to it from anywhere.
+
+Fourteen agents are wired up today. Whichever you pick, the parts that belong to Happier work the same way: the transcript, the pending queue, permissions and approvals, session settings, notifications, and the tools an agent can call. What differs is what each agent's own CLI exposes — which models it offers, whether it can resume a session, whether it accepts images.
+
+Those differences are real and worth checking before you commit to a workflow. They live in one generated place:
+
+<Cards>
+  <Card title="Agent capabilities" href="/agents/capabilities" description="Every agent's models, auth, session and media support, generated from the agent manifest." />
+</Cards>
+
+## Getting an agent running
+
+Each agent's page covers the same three things: installing its CLI, authenticating it, and the limits that will actually affect you. The shape is deliberately identical so you can move between them.
+
+Two things are true for all of them:
+
+- **You install the agent's CLI yourself.** Happier detects what is already on the machine; it does not bundle any agent. Some agents have a managed install Happier can run for you, and the capability tables say which.
+- **Authentication belongs to the agent.** Happier reads its login state and, for some agents, can hold the credentials for you through [Connected Services](/accounts/connected-services) so you do not have to sign in separately on every machine.
+
+## Built-in agents
+
+<Cards>
+  <Card title="Claude" href="/agents/claude" />
+  <Card title="Codex" href="/agents/codex" />
+  <Card title="Cursor" href="/agents/cursor" />
+  <Card title="OpenCode" href="/agents/opencode" />
+  <Card title="Gemini" href="/agents/gemini" />
+  <Card title="Grok" href="/agents/grok" />
+  <Card title="Copilot" href="/agents/copilot" />
+  <Card title="Qwen Code" href="/agents/qwen" />
+  <Card title="Kimi" href="/agents/kimi" />
+  <Card title="Auggie" href="/agents/augment" />
+  <Card title="Kilo" href="/agents/kilo" />
+  <Card title="Kiro" href="/agents/kiro" />
+  <Card title="Pi" href="/agents/pi" />
+</Cards>
+
+## Anything else that speaks ACP
+
+For a CLI that is not on that list, Happier ships a generic **Custom ACP** family. You define selectable ACP backends once, and they then appear as ordinary agent choices everywhere in the app — the new-session picker, session settings, the lot.
+
+<Cards>
+  <Card title="Custom ACP" href="/agents/custom-acp" />
+  <Card title="Custom ACP" href="/agents/custom-acp" />
+</Cards>
+
+## Related
+
+- [Model and engine selection](/agents/model-and-engine-selection) — how Happier decides which models to offer
+- [Provider authentication](/agents/provider-authentication) — the shared authentication flow
+- [Session handoff](/sessions/session-handoff) — moving a session between machines
+- [Continue with another Agent](/sessions/continue-with-another-agent) — changing the agent running a session

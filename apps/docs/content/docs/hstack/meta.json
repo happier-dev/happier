@@ -1,5 +1,5 @@
 {
-  "title": "hstack (local stack)",
+  "title": "Contributing: local stack",
   "pages": [
     "index",
     "setup",
@@ -23,5 +23,6 @@
     "mobile-ios",
     "tauri",
     "isolated-linux-vm"
-  ]
+  ],
+  "root": true
 }

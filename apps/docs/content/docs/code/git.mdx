@@ -1,0 +1,274 @@
+---
+title: Git
+description: Stage, commit, branch, stash, push and pull from inside a session, with guardrails on anything that could lose work.
+---
+
+Happier can drive Git in the session's workspace, so reviewing a change and
+committing it are the same sitting rather than a context switch to a terminal.
+
+What it deliberately does not do is expose history-editing. There is no reset,
+rebase, cherry-pick or drop in the app. Those are the operations where a
+mistaken tap on a phone destroys work, and they stay where you have a shell and
+your full attention.
+
+<Callout type="warn">
+  Git **write** actions are gated behind
+  **Settings → Features → Source control operations**, which is experimental and
+  **off by default**. Reading a repository's state and diffs needs nothing —
+  see [Diffs and review](/code/diffs).
+</Callout>
+
+## Git
+
+The **Git** tab is the repository status surface for the current session.
+
+### What you can do
+
+- Review changed files and diffs
+- Stage and unstage changes
+- Select whole files or selected lines/hunks where supported
+- Commit staged work
+- Fetch, pull, and push when Git write operations are enabled
+- Initialize Git when the current folder is not a repository
+- Publish a local repository to GitHub
+- Switch branches
+- Create branches
+- Publish a branch that does not yet have an upstream
+- Open, reuse, and checkout pull requests or merge requests
+- Open a pull request / merge request in a separate worktree-backed session
+- Inspect and manage Happier-created stashes
+- Browse commit history and open historical commit diffs
+
+## Repository setup
+
+### Initialize Git from Happier
+
+If the selected folder is not a Git repository, Happier shows an initialization action instead of leaving the Git tab as a dead end.
+
+When you confirm, Happier runs `git init` for that folder and then refreshes the Git status.
+
+What initialization does:
+
+- creates the repository metadata for the current folder
+- keeps the folder contents as they are
+- does not stage files
+- does not create an initial commit
+- does not create or publish a remote
+
+If the folder is already a Git repository by the time the action runs, Happier treats that as success and refreshes status.
+
+### Publish a local repository to GitHub
+
+When a Git repository does not already have a detected GitHub remote, Happier can publish it to GitHub from the Git tab.
+
+The publish form lets you choose:
+
+- the GitHub owner, including organizations available to the authenticated account
+- the repository name
+- visibility: private, public, or internal when GitHub supports it for that owner
+- HTTPS or SSH remote URL
+- whether to push the current branch after creating the repository
+- what to do if the selected remote name already exists
+
+Happier creates the GitHub repository first, then updates the local Git remote through Happier's own SCM backend. Even when it uses the GitHub CLI as the network adapter, it does not let `gh repo create` mutate local Git state directly.
+
+Authentication order:
+
+1. a connected GitHub account token in Happier
+2. an already-authenticated local or managed `gh` CLI
+
+If neither is available, Happier explains the missing auth and points you toward connecting GitHub or authenticating/installing `gh`.
+
+Current scope:
+
+- GitHub repository publishing is supported.
+- GitLab and Bitbucket repository creation are not currently supported from Happier.
+- Publishing is explicit; Happier does not create a repository, remote, commit, or push without a user action.
+
+## Remote operations
+
+The remote-actions area covers routine network operations without leaving the session.
+
+Depending on repository state and capabilities, Happier can show:
+
+- **Fetch** to update remote refs
+- **Pull** when the current branch can fast-forward
+- **Push** when the current branch has an upstream
+- **Publish branch** when the current branch has no upstream yet
+- **Publish to GitHub** when the repository has no GitHub remote
+
+### Publish branch
+
+When the current branch has no upstream tracking branch, Happier shows **Publish** instead of a normal push action.
+
+Publishing sets the upstream and pushes the branch in one step, similar to desktop Git clients.
+
+You can trigger this from the branch menu and, when relevant, from the remote-actions area that would otherwise offer push/pull.
+
+### Remote operation safety
+
+Happier keeps the remote workflow conservative:
+
+- pull uses fast-forward only
+- pull requires a clean worktree
+- push is blocked when `HEAD` is detached
+- push is blocked while the local branch is behind upstream
+- push, pull, and revert are blocked while conflicts are present
+
+These rules are backend invariants. The UI explains the blocked state instead of offering an action that Git would reject or that could rewrite history.
+
+## Commit history
+
+The **History** sub-tab shows past commits for the current repository.
+
+Opening a commit creates a details tab that uses the same general diff-viewing model as Review:
+
+- progressively rendered diffs
+- collapsible file sections
+- stateful tab behavior in the details pane
+
+This is intended to make “current changes” and “historical commit inspection” feel like the same mental model, not two unrelated tools.
+
+Typical use cases:
+
+- inspect what changed in a previous commit
+- compare current work against a known good commit
+- open a past commit, then jump back to current Review
+
+## Committing staged work
+
+The commit composer sits at the bottom of the Git tab.
+
+### Commit message generator
+
+Happier includes a **Generate commit message** action in the commit composer.
+
+- It is **enabled by default**.
+- It uses a one-shot execution-run task to propose a commit message.
+- It uses the current commit selection/scope as input when applicable.
+- It applies the final suggested commit message text, not the structured response payload used internally by the generator.
+- You can choose the backend and add custom instructions in **Settings → Source control**.
+
+Good use cases:
+
+- you want a fast Conventional Commit suggestion
+- you staged only part of the repo and want a message scoped to that selection
+- you want a draft message, then refine it manually before committing
+
+The generator suggests text. It does not auto-commit.
+
+### Selection-aware commits
+
+Depending on the SCM backend and capabilities, Happier can support:
+
+- file-scoped selection
+- line/hunk-level selection
+- whole working-tree commits
+
+This lets you create more intentional commits without dropping into the terminal for routine staging flows.
+
+## Branch management
+
+The branch summary at the top of the Git tab shows the current branch and branch state.
+
+From the branch menu you can:
+
+- see the current branch
+- switch to another branch
+- create a new branch
+- publish the current branch when it has no upstream yet
+- checkout a pull request or merge request into the current worktree
+- open a pull request or merge request in a separate worktree-backed session
+
+### Branch switching with uncommitted changes
+
+When you switch branches with local changes, Happier can handle that in two ways:
+
+- **Leave my changes on the current branch**
+- **Bring my changes to the target branch**
+
+The default behavior is to ask, unless you changed the branch-switch preference in Settings.
+
+#### Leave my changes on the current branch
+
+Happier creates or updates a Happier-managed stash for the current branch, then checks out the target branch.
+
+Use this when:
+
+- your current edits belong to the current branch
+- you want a clean checkout on the destination branch
+
+#### Bring my changes to the target branch
+
+Happier tries to carry your uncommitted changes across the branch switch.
+
+If Git would block the checkout because local changes would be overwritten, Happier falls back to a transient stash/apply flow so the changes can still move with you.
+
+Use this when:
+
+- you started working on the wrong branch
+- your uncommitted edits should follow you to the new branch
+
+## Managed stashes
+
+Happier creates and tracks its own stash entries for branch-switch workflows.
+
+These stashes appear in the Git tab as **Managed stashes**.
+
+From the stash surface you can:
+
+- see all Happier-managed stash entries
+- open a stash details view
+- inspect the stash diff
+- restore a stash
+- discard a stash
+
+### When stashes are created
+
+Common cases:
+
+- you choose **Leave my changes on the current branch** during a branch switch
+- Happier needs a transient stash to complete a **Bring my changes** workflow safely
+
+Transient stashes are internal safety rails for branch switching. If the carry-over apply succeeds they disappear automatically; if Git reports conflicts, Happier keeps the stash so you can inspect or restore it manually.
+
+### Restore vs discard
+
+- **Restore** applies the stash back into the working tree and removes it if the operation succeeds
+- **Discard** removes the stash without applying it
+
+If Git reports a conflict while restoring, Happier keeps the stash instead of silently dropping it.
+
+## Lock recovery
+
+If Git reports a stale `index.lock` during branch checkout, Happier can offer a focused recovery prompt.
+
+When you confirm, Happier asks Git for the exact lock path and removes only that validated `index.lock` file inside the repository's Git directory. It then retries the failed checkout once.
+
+Happier does not run `git clean`, `git reset`, or broader repository cleanup as part of lock recovery.
+
+## Guardrails
+
+Happier refuses an operation rather than attempting one that could lose work:
+
+- Initializing a repository and publishing to GitHub both require an explicit action from you.
+- Publish, push and pull are blocked when the repository state says the operation is unsafe.
+- Pull is **fast-forward only**, and pull and revert require a clean worktree.
+- Push, pull and revert are blocked when `HEAD` is detached, and while conflicts are present.
+- Push is blocked when the local branch is behind its upstream.
+- Stale lock recovery removes only a validated `index.lock` inside the repository's own Git directory.
+- Destructive history editing — reset, rebase, cherry-pick, drop — is not exposed in the app at all.
+
+## Limits
+
+- Branch and stash management are implemented for Git. Other SCM backends are read-only.
+- Line-level staging works on text diffs; binary and conflict cases fall back to whole-file actions.
+- The commit-message generator needs daemon support for execution runs.
+- Publishing a repository is supported for GitHub. GitLab and Bitbucket repository publishing are not.
+
+## Related
+
+- [Diffs and review](/code/diffs) — reading changes before you commit them.
+- [Pull requests](/code/pull-requests) — publishing a branch and opening a request.
+- [Review comments](/code/review-comments)
+- [Files and the editor](/code/files-and-editor)

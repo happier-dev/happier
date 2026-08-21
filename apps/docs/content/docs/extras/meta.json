@@ -1,0 +1,13 @@
+{
+  "title": "Extras",
+  "pages": [
+    "index",
+    "automations",
+    "notifications-routing",
+    "notifications-setup",
+    "embedded-terminal",
+    "pets",
+    "bug-reports",
+    "feature-flags"
+  ]
+}

@@ -71,12 +71,30 @@ next step.
 ## 3. Connect the machine to your account
 
 ```bash
-happier auth login
+happier setup
 ```
 
-This prints a URL and a QR code. Scan it with the app, or open the URL in a
-browser where you are already signed in, and approve. The terminal continues on
-its own once you do.
+Setup asks the one question the installer cannot answer for itself — where your
+relay lives — then points this computer at it and signs you in. Your account
+lives on the relay you choose, so that gets settled before sign-in rather than
+after.
+
+If you already know the answer, skip the question:
+
+```bash
+happier setup --cloud                 # Happier Cloud
+happier setup --relay https://…       # a relay you already run
+happier setup --this-computer         # install a relay here too
+```
+
+Signing in prints a URL and a QR code. Scan it with the app, or open the URL in
+a browser where you are already signed in, and approve. The terminal continues
+on its own once you do, and hands itself back if you do not — the sign-in stays
+approvable, and `happier setup` picks up where it left off.
+
+Setup also checks whether you have a coding agent installed, and says so if you
+do not — it will not stop you, but it is the step people skip and then hit at
+the very end.
 
 ## 4. Start your first session
 
@@ -119,6 +137,6 @@ not registered, `happier doctor repair` will fix it.
 ## Where to go next
 
 - [Get the apps](/getting-started/get-the-apps) — every client, and which to start with.
-- [Coding agents](/providers) — setup and limits for each agent.
-- [Agent capabilities](/providers/capabilities) — what varies between them.
-- [Run your own relay](/server/quickstart) — if you would rather not use Happier Cloud.
+- [Coding agents](/agents) — setup and limits for each agent.
+- [Agent capabilities](/agents/capabilities) — what varies between them.
+- [Run your own relay](/self-hosting/quickstart) — if you would rather not use Happier Cloud.

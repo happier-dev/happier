@@ -1,0 +1,125 @@
+---
+title: Feature flags
+description: Every capability Happier can gate, who controls it, and what it defaults to — generated from the feature catalog.
+---
+
+Not everything Happier can do is switched on for everybody. A capability can be
+gated in three places, and a feature is only usable when all three agree:
+
+1. **The server** advertises which features it supports. Self-hosters control
+   this with `HAPPIER_FEATURE_*` environment variables; on Happier Cloud it is
+   set for you.
+2. **The build** can deny features regardless of the server, through
+   `HAPPIER_BUILD_FEATURES_ALLOW` and `HAPPIER_BUILD_FEATURES_DENY`.
+3. **You** turn some of them on in **Settings → Features**.
+
+Every feature in the catalog is **fail-closed**: if the client cannot get a
+clear answer about whether a feature is available, it treats it as unavailable.
+That is why a feature can seem to vanish when a server is unreachable, and why
+a misconfigured self-hosted server hides features rather than half-enabling them.
+
+There are 71 features in the catalog. 22 of them have a switch you can
+reach; the other 49 are decided before you get there.
+
+## Features you can turn on yourself
+
+These appear in **Settings → Features**. 15 of the 22 are marked experimental.
+
+| Feature | Id | Kind | Default |
+| --- | --- | --- | --- |
+| **Attachment uploads** | `attachments.uploads` | Experimental | Off |
+| **Automations** | `automations` | Experimental | On |
+| **Channel bridges** | `channelBridges` | Experimental | Off |
+| **Connected services** | `connectedServices` | Experimental | Off |
+| **Connected services quotas** | `connectedServices.quotas` | Experimental | Off |
+| **Subagents** | `execution.runs` | Experimental | Off |
+| **Diff syntax highlighting** | `files.diffSyntaxHighlighting` | Standard | On |
+| **Embedded file editor** | `files.editor` | Standard | On |
+| **Rich markdown editor** | `files.markdownRichEditor` | Experimental | Off |
+| **File review comments** | `files.reviewComments` | Standard | On |
+| **Advanced syntax highlighting** | `files.syntaxHighlighting.advanced` | Standard | On |
+| **Memory search** | `memory.search` | Experimental | Off |
+| **Pets** | `pets.companion` | Standard | On |
+| **Source control operations** | `scm.writeOperations` | Experimental | Off |
+| **Direct sessions** | `sessions.direct` | Standard | On |
+| **Session folders** | `sessions.folders` | Standard | On |
+| **Friends** | `social.friends` | Experimental | Off |
+| **Embedded terminal** | `terminal.embeddedPty` | Experimental | Off |
+| **Usage reporting** | `usage.reporting` | Experimental | On |
+| **Voice** | `voice` | Experimental | Off |
+| **Voice agent** | `voice.agent` | Experimental | Off |
+| **Zen** | `zen.navigation` | Experimental | On |
+
+Experimental toggles are hidden until you turn on the experiments switch at the
+top of that screen. If a page tells you to enable something here and you cannot
+find the row, that switch is almost always why.
+
+A toggle only offers what the server already allows. Turning something on
+locally cannot enable a feature the server has not advertised.
+
+## Features the server decides
+
+These have no user-facing switch. A self-hoster sets them through the
+environment; on Happier Cloud they are managed for you. `server` means the
+server owns the decision outright; `client` means the client owns the
+behaviour but still needs the server to advertise the capability.
+
+| Id | What it gates | Owned by | Depends on |
+| --- | --- | --- | --- |
+| `actions.approvals` | ActionSpec-driven approval request queue and inbox UI surfaces. | client | `inbox.global` |
+| `agent.goals` | Generalized agent session goal controls and work-state goal projection (umbrella over provider-specific goal sub-gates). | client | — |
+| `app.analytics` | Anonymous analytics and instrumentation (PostHog). | client | — |
+| `app.crashReports` | Crash reports and error telemetry (Sentry). | client | — |
+| `app.ui.changelog` | What’s New / changelog UI surfaces (banner, settings entry, changelog screen). | client | — |
+| `app.ui.onboardingShowcase` | First-launch onboarding story-deck modal (shares renderer with release notes). | client | — |
+| `app.ui.releaseNotes` | Curated release-notes story-deck modal (Notelet-style cards). Shares renderer with onboarding showcase. | client | — |
+| `app.ui.sessionGettingStartedGuidance` | Session getting-started guidance UI (includes CLI install instructions). | client | — |
+| `app.ui.storeReviewPrompts` | In-app store review prompts (native App Store / Play Store review sheet). | client | — |
+| `auth.login.keyChallenge` | Key-challenge login route availability (POST /v1/auth). | server | — |
+| `auth.mtls` | mTLS client certificate authentication support. | server | — |
+| `auth.pairing.desktopQrMobileScan` | Pairing session support for desktop/web QR → logged-out mobile scan sign-in. | server | — |
+| `auth.recovery.providerReset` | Auth provider reset support during recovery flows. | server | — |
+| `auth.ui.recoveryKeyReminder` | Recovery key reminder UI behavior. | server | — |
+| `bugReports` | Bug report submission and diagnostics capability. | server | — |
+| `channelBridges.telegram` | Telegram channel bridge provider. | server | `channelBridges` |
+| `connectedServices.accountFallback` | Connected service account group fallback and automatic active account switching APIs. | server | `connectedServices.accountGroups`, `sessions.usageLimitRecovery` |
+| `connectedServices.accountGroups` | Connected service account groups and member management APIs. | server | `connectedServices` |
+| `e2ee.keylessAccounts` | Keyless account support (accounts may omit E2EE signing keys). | server | — |
+| `encryption.accountOptOut` | Per-account encryption opt-out toggle support. | server | `encryption.plaintextStorage` |
+| `encryption.plaintextStorage` | Plaintext session storage support (no E2EE at rest). | server | — |
+| `inbox.global` | Global inbox aggregation surfaces (approvals, permissions, social, updates). | client | — |
+| `machines` | Machine control-plane transport capabilities. | client | — |
+| `machines.transfer` | Same-account machine transfer control plane. | client | `machines` |
+| `machines.transfer.directPeer` | Direct peer machine transfer capability. | server | `machines.transfer` |
+| `machines.transfer.serverRouted` | Server-routed machine transfer fallback capability. | server | `machines.transfer` |
+| `mcp.servers` | MCP servers management and injection support. | client | — |
+| `pets.sync` | Synced account pet library and cross-device pet package references. | server | — |
+| `prompts.assets.external` | External prompt assets import/export surfaces and daemon adapters. | client | `prompts.library` |
+| `prompts.library` | Prompt library (docs + skills bundles) stored as artifacts. | client | — |
+| `prompts.skills.registries` | Prompt/skills registries and marketplace integrations (registry-of-registries). | client | `prompts.library`, `prompts.assets.external` |
+| `providers.claude.unifiedTerminal` | Claude unified terminal runtime availability. | client | — |
+| `providers.claude.unifiedTerminal.tuiRuntimeControl` | Claude unified terminal TUI runtime-control controller (live model/effort/permission-mode controls). Falls back to restart/unsupported outcomes when disabled. | client | `providers.claude.unifiedTerminal` |
+| `providers.codex.appServer.goals` | Codex app-server native session goal controls and work-state projection (provider-specific sub-gate under the generalized agent.goals umbrella). | client | — |
+| `providers.codex.appServer.permissionProfiles` | Codex app-server permission profile transport. | client | `sessions.direct` |
+| `providers.codex.appServer.plugins` | Codex app-server readonly vendor plugin catalog and structured mentions. | client | `sessions.direct`, `prompts.skills.registries` |
+| `providers.codex.appServer.structuredInput` | Codex app-server structured turn inputs for text, images, skills, and vendor plugin mentions. | client | `sessions.direct`, `attachments.uploads` |
+| `session.media.generated` | Generated/provider/tool session media output substrate. | server | — |
+| `sessions` | Session-level product surfaces and control-plane capabilities. | client | — |
+| `sessions.agentSwitching` | Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe. | server | `sessions` |
+| `sessions.handoff` | Session handoff between machines. | server | `sessions` |
+| `sessions.usageLimitRecovery` | Session usage-limit recovery, wait/resume intent, and retry metadata APIs. | server | `sessions` |
+| `sharing.contentKeys` | Sharing content-key exchange support (E2EE sharing). | server | — |
+| `sharing.pendingDeliveryState` | Provider delivery-state materialization support for pending queue routes and fields. | server | `sharing.pendingQueueV2` |
+| `sharing.pendingQueueV2` | Pending queue v2 sharing/bridging surfaces and runtime. | server | — |
+| `sharing.public` | Public sharing link support for session content. | server | — |
+| `sharing.session` | Session sharing capability (share session with other users/devices). | server | — |
+| `updates.ota` | Expo over-the-air update checks and apply flows. | server | — |
+| `voice.happierVoice` | Happier-hosted voice backend availability (server-configured voice). | server | `voice` |
+
+Where a feature depends on another, both must be enabled — enabling the
+dependant alone does nothing.
+
+## Related
+
+- [Environment variables](/self-hosting/env) — the `HAPPIER_FEATURE_*` variables that set these.
+- [Agent capabilities](/agents/capabilities) — what varies by agent rather than by flag.

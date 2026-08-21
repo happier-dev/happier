@@ -1,12 +1,53 @@
 ---
-title: Releases
-description: How we promote main to preview/production deploy branches.
+title: Release channels
+description: What stable, preview and dev mean, how they relate, and how to move between them.
 ---
 
-We keep releases small and incremental:
+Happier ships on three channels, and which one you are on changes what you get.
+That distinction is load-bearing: a fix can be live on `dev` for weeks before it
+reaches `stable`.
 
-Release workflows can:
+| Channel | Command | What it is |
+| --- | --- | --- |
+| **stable** | `happier` | The production release. Conservative, and where most people should be. |
+| **preview** | `hprev` | The release candidate — what stable is about to become. |
+| **dev** | `hdev` | The integration lane. Everything lands here first, and it can be unstable. |
 
-- bump the component version on `main`
-- run a quick build/test
-- publish artifacts (e.g. the CLI to npm)
+They install side by side and keep their own shims, so you can run `hdev` for a
+project that needs a recent fix while `happier` stays on stable. Each lane
+updates itself against its own channel.
+
+Install commands for each are on the [CLI](/apps/cli) page.
+
+## How a change reaches you
+
+Development uses a three-branch model, and it flows in one direction:
+
+```
+dev  →  preview  →  main
+```
+
+`dev` is the integration branch and the repository default — changes land there
+first. `preview` is the release-candidate branch that preview builds come from.
+`main` is stable. Version and changelog materialization happens over the `dev`
+source range *before* promotion, so `main` is a destination rather than a place
+work starts.
+
+<Callout type="info">
+  If you are on `stable` and hit something that looks like a known bug, it is
+  worth checking whether it is already fixed on `dev`. The gap between the two
+  can be substantial.
+</Callout>
+
+## Switching
+
+Installing another lane does not remove the one you have — run the installer
+endpoint for the channel you want and use its command. `happier status` reports
+which channel the CLI you just invoked belongs to, which is the quickest way to
+tell what you are actually running.
+
+## Related
+
+- [CLI](/apps/cli) — install commands and lane management.
+- [Check your setup](/getting-started/check-your-setup) — `happier status`.
+- [Updates](/releases/updates) — how updating works across apps, CLIs and images.

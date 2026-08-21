@@ -1,0 +1,23 @@
+{
+  "title": "Self-hosting",
+  "pages": [
+    "index",
+    "quickstart",
+    "docker",
+    "env",
+    "rate-limits",
+    "auth",
+    "auth-github",
+    "auth-oidc",
+    "auth-mtls",
+    "auth-custom-providers",
+    "encryption",
+    "retention",
+    "self-host-runtime",
+    "repo-local",
+    "proxmox",
+    "how-it-works",
+    "protocol"
+  ],
+  "root": true
+}

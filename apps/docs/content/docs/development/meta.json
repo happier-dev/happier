@@ -1,11 +1,12 @@
 {
-  "title": "Development",
+  "title": "Contributing",
   "pages": [
     "index",
-    "app-env",
-    "desktop-qa",
     "testing",
+    "desktop-qa",
+    "app-env",
     "devcontainers",
     "release-artifacts"
-  ]
+  ],
+  "root": true
 }

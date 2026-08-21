@@ -1,0 +1,79 @@
+---
+title: Pi (experimental)
+description: Configure Pi Coding Agent in Happier (ACP), including install and detection.
+---
+
+Happier can run **Pi Coding Agent** through the local `pi` CLI.
+
+<Callout type="info">
+  Pi is an **experimental** integration. It works and people use it
+  daily, but its surface is younger than Claude, Codex or OpenCode and is
+  more likely to change. What it supports today is in
+  [Agent capabilities](/agents/capabilities).
+</Callout>
+
+## Install Pi
+
+Happier can install it for you:
+
+```bash
+happier install provider pi
+pi --version
+```
+
+Or install manually:
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+pi --version
+```
+
+## Start Pi with Happier
+
+```bash
+happier pi
+```
+
+## Local authentication in Happier
+
+Pi does not currently expose a native interactive login flow through Happier provider settings.
+
+Instead, Happier shows the machine-local auth state for Pi in:
+
+- **Settings → AI & Agents → AI backends → Pi**
+
+Today that status is based on supported environment-backed credentials on the selected machine.
+
+For the shared user guide, see [Provider authentication](/agents/provider-authentication).
+
+## Authentication (connected services)
+
+Pi can reuse connected services profiles when spawned by Happier:
+
+- `openai-codex` (subscription OAuth)
+- `openai` (API key)
+- `claude-subscription` (OAuth or setup-token) for Claude subscription auth
+- `anthropic` for Anthropic API key auth (`ANTHROPIC_API_KEY`)
+
+Happier materializes compatible connected services into Pi's isolated `PI_CODING_AGENT_DIR/auth.json` before launch. Claude subscription OAuth profiles are written as Pi OAuth credentials; setup-token and API-key profiles are written as Pi API-key credentials.
+
+If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
+
+Policy note: Claude subscription OAuth credentials are intended for ordinary Claude subscription use in native Anthropic applications. Developers building third-party products should use Anthropic API keys or supported cloud providers unless their policy/legal review permits this Pi integration path.
+
+See: [Connected services](/accounts/connected-services)
+
+## Troubleshooting
+
+If Pi is not detected:
+
+1. Verify `pi --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.
+
+## Related
+
+- [Agent capabilities](/agents/capabilities) — what this agent supports, generated from the manifest.
+- [Choosing an agent](/agents)
+- [Model and engine selection](/agents/model-and-engine-selection)
+- [Agent authentication](/agents/provider-authentication)

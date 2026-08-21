@@ -24,7 +24,7 @@ const SETTINGS = join(
   REPO, 'apps', 'ui', 'sources', 'sync', 'domains', 'settings', 'registry', 'account',
   'accountKeyboardShortcutSettingDefinitions.ts',
 );
-export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'features', 'keyboard-shortcuts.mdx');
+export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'apps', 'keyboard-shortcuts.mdx');
 
 /**
  * Human names for command ids, grouped the way someone looking for a shortcut
@@ -203,8 +203,8 @@ differ.
 
 ## Related
 
-- [Session settings](/features/session-settings)
-- [Prompts, skills, templates, and registries](/features/prompts-and-skills) — what else the palette can reach.
+- [Session settings](/sessions/session-settings)
+- [Prompts, skills, templates, and registries](/extending/prompts-and-skills) — what else the palette can reach.
 `;
 }
 

@@ -1,0 +1,101 @@
+---
+title: Pull requests
+description: Publish a branch and open or reuse a pull request from inside a session, using a connected credential or your local gh.
+---
+
+When the work is done, the next step is usually a pull request. Happier can
+publish the branch and open or reuse the request without you switching to a
+browser or a terminal.
+
+<Callout type="warn">
+  Pull-request actions are Git write operations, so they need
+  **Settings → Features → Source control operations**, which is experimental and
+  **off by default**.
+</Callout>
+
+## Pull requests and merge requests
+
+The Git tab includes a pull request / merge request surface for the current branch when Happier can detect a hosting provider from the repository remotes.
+
+It can show:
+
+- an existing pull request or merge request for the current branch
+- the target repository and branch direction
+- whether the branch is ready to open a request
+- blocked reasons and the next safe action when a request cannot be opened yet
+
+### Provider support
+
+| Provider | Current support |
+| --- | --- |
+| GitHub | Remote detection, compare URLs, connected-account REST read/write, optional authenticated `gh` fallback, repository publishing, PR checkout, and PR worktree preparation. |
+| GitLab | Remote detection, compare URLs, optional authenticated `glab` read/write/checkout, and MR worktree preparation. GitLab connected accounts are not yet supported. |
+| Bitbucket | Remote detection and compare URLs. Authenticated Bitbucket PR creation is not currently supported. |
+| Unknown remotes | Safe unsupported state with no write actions. |
+
+GitHub Enterprise-style remotes can be detected. Connected-account REST operations are designed for GitHub.com; enterprise/self-hosted cases usually depend on CLI auth or compare URLs.
+
+GitLab self-managed remotes keep their detected base URL. When `glab` is used, Happier checks authentication for the detected host when possible.
+
+### Opening or reusing a request
+
+When the current branch is ready, Happier can open or reuse a pull request / merge request from the Git tab.
+
+Authentication order:
+
+- **GitHub**: connected GitHub account first, then authenticated `gh`, then no-auth compare URL.
+- **GitLab**: authenticated `glab`, then no-auth compare URL.
+- **Bitbucket**: no-auth compare URL.
+
+If Happier cannot create a request directly, it opens the provider's compare page so you can finish in the browser.
+
+### Default branch guard
+
+If the current branch is the repository's default branch, Happier avoids opening a request directly from that branch when the backend policy requires a feature branch.
+
+Instead, the UI offers the safe next step:
+
+- create a feature branch first, or
+- when local commits and capabilities allow it, create the feature branch and continue the pull-request flow as one guided action
+
+This keeps the user in Happier instead of blocking them with an instruction to go to the terminal.
+
+### Dirty and unpublished branches
+
+Happier does not silently create a pull request from a dirty unpublished branch.
+
+If the branch has uncommitted work or no published upstream, commit and publish the branch first. The stacked action can combine supported steps such as commit, push, and create request when the repository state allows it.
+
+### Checkout a PR or MR
+
+The branch menu can checkout a pull request or merge request into the current worktree.
+
+Accepted references include:
+
+- `42`
+- `#42`
+- a GitHub pull request URL
+- a GitLab merge request URL
+- `gh pr checkout 42`
+- `glab mr checkout 17`
+- a branch name when the text is not a URL or numeric request id
+
+Local checkout uses the existing Git protections for dirty worktrees and conflicts. Happier does not discard local changes to make checkout succeed.
+
+### Open a PR or MR in a worktree
+
+You can also open a pull request or merge request in a separate worktree-backed session.
+
+Happier resolves the request through the hosting-provider adapter, prepares the checkout through the existing worktree/source-controller path, and opens a new session at that worktree path.
+
+Use this when:
+
+- you want to review a request without disturbing your current branch
+- you want to test someone else's branch in isolation
+- you want to keep your current worktree clean while opening an external PR/MR
+
+## Related
+
+- [Git](/code/git) — branches, commits and remotes.
+- [Diffs and review](/code/diffs)
+- [Review comments](/code/review-comments)

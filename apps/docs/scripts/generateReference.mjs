@@ -68,8 +68,28 @@ export async function checkGeneratedPages({ generators = GENERATORS } = {}) {
 
 const isEntrypoint = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
 if (isEntrypoint) {
+  // Tolerate an unbuildable source exactly as `checkGeneratedPages` does. A
+  // generator reading a sibling package that is not built in this checkout used
+  // to throw here and abort the loop, so one unbuilt workspace silently stopped
+  // every *later* generator from regenerating — and the writer disagreeing with
+  // the checker is the worst version of that, because the build then reports the
+  // pages as stale with no way to refresh them.
+  let failed = 0;
   for (const generator of GENERATORS) {
-    writeFileSync(generator.outputPath, await generator.render(), 'utf8');
+    let rendered;
+    try {
+      rendered = await generator.render();
+    } catch (error) {
+      if (error && (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT')) {
+        console.log(`skipped ${generator.name} — its source is not built in this checkout`);
+        continue;
+      }
+      console.error(`FAILED  ${generator.name}: ${error?.message ?? error}`);
+      failed += 1;
+      continue;
+    }
+    writeFileSync(generator.outputPath, rendered, 'utf8');
     console.log(`wrote ${relative(process.cwd(), generator.outputPath)}  (${generator.name})`);
   }
+  if (failed > 0) process.exitCode = 1;
 }
