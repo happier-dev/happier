@@ -5,7 +5,7 @@ export function showAuthHelp(): void {
 ${chalk.bold('happier auth')} - Authentication management
 
 ${chalk.bold('Usage:')}
-  happier auth login [--no-open] [--force] [--method web|mobile] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
+  happier auth login [--no-open] [--force] [--method web|mobile] [--wait-timeout <seconds>] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
   happier auth request --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                                    Create a claim-gated auth request (headless-friendly)
   happier auth approve --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]              Approve an auth request using your local credentials
   happier auth wait --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                Wait for approval and write credentials for this machine
@@ -18,6 +18,7 @@ ${chalk.bold('Options:')}
   --no-open  Do not attempt to open a browser (prints URL instead)
   --force    Clear credentials, machine ID, and stop daemon before re-auth
   --method   Force authentication method (web|mobile). Useful for headless/non-TTY.
+  --wait-timeout  Stop waiting for approval after N seconds and print how to finish (default: wait indefinitely)
   --print-configure-links  Print advanced “configure relay” links for tooling (rare)
   --all      When used with logout, remove local data for all relays
   --json       Print machine-readable JSON (recommended for containers)

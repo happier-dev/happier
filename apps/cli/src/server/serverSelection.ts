@@ -237,6 +237,8 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
   args = serverUrl.rest;
   const localServerUrl = takeFlagValue(args, '--local-server-url');
   args = localServerUrl.rest;
+  const publicServerUrl = takeFlagValue(args, '--public-server-url');
+  args = publicServerUrl.rest;
   const webappUrl = takeFlagValue(args, '--webapp-url');
   args = webappUrl.rest;
   const persist = takeFlagBool(args, '--persist');
@@ -244,7 +246,7 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
   const noPersist = takeFlagBool(args, '--no-persist');
   args = noPersist.rest;
 
-  if (server.value && serverUrl.value) {
+  if (server.value && (serverUrl.value || publicServerUrl.value)) {
     throw new Error('Cannot use --server and --server-url together');
   }
 
@@ -252,10 +254,15 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
     throw new Error('Cannot use --server and --local-server-url together');
   }
 
-  if (webappUrl.value && !serverUrl.value) {
+  const selectedServerUrl = publicServerUrl.value ?? serverUrl.value;
+  const selectedLocalServerUrl = publicServerUrl.value
+    ? (localServerUrl.value ?? serverUrl.value)
+    : localServerUrl.value;
+
+  if (webappUrl.value && !selectedServerUrl) {
     throw new Error('Cannot use --webapp-url without --server-url');
   }
-  if (localServerUrl.value && !serverUrl.value) {
+  if (selectedLocalServerUrl && !selectedServerUrl) {
     throw new Error('Cannot use --local-server-url without --server-url');
   }
 
@@ -288,10 +295,12 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
     return args;
   }
 
-  if (serverUrl.value) {
-    const normalizedServerUrl = normalizeUrlOrThrow(serverUrl.value, '--server-url');
+  if (selectedServerUrl) {
+    const normalizedServerUrl = normalizeUrlOrThrow(selectedServerUrl, publicServerUrl.value ? '--public-server-url' : '--server-url');
     const normalizedWebappUrl = webappUrl.value ? normalizeUrlOrThrow(webappUrl.value, '--webapp-url') : null;
-    const normalizedLocalServerUrl = localServerUrl.value ? normalizeUrlOrThrow(localServerUrl.value, '--local-server-url') : null;
+    const normalizedLocalServerUrl = selectedLocalServerUrl
+      ? normalizeUrlOrThrow(selectedLocalServerUrl, localServerUrl.value ? '--local-server-url' : '--server-url')
+      : null;
     if (!shouldPersistServerUrlSelection) {
       if (normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl) {
         process.env.HAPPIER_PUBLIC_SERVER_URL = normalizedServerUrl;

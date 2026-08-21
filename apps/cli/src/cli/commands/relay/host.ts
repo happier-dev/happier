@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import chalk from 'chalk';
@@ -7,15 +8,15 @@ import chalk from 'chalk';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
-import {
-  collectCurrentMachineReachableServerUrlCandidates,
-  listCurrentMachineNetworkAddressCandidates,
-} from '@/server/reachability/currentMachineReachableServerUrlCandidates';
-import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
+import { listCurrentMachineNetworkAddressCandidates } from '@/server/reachability/currentMachineReachableServerUrlCandidates';
+import { buildServerUrlReachabilityHintLines } from '@/server/reachability/serverUrlReachabilityHint';
+import { getActiveServerProfile, upsertServerProfileByUrl, type ServerProfile } from '@/server/serverProfiles';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
   resolveManagedCliReleaseChannelSync,
+  resolveRelayRuntimeDefaults,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { createRelayHostEngine } from '@happier-dev/cli-common/relayHost';
 import {
@@ -27,7 +28,21 @@ import {
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
 import { getReleaseRingPublicLabel, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+  classifyTailscaleServeRootSlot,
+  runTailscaleServeEnable,
+  runTailscaleServeStatus,
+} from '@happier-dev/cli-common/tailscale';
+import { readTailscaleStatusSnapshot } from '@/integrations/tailscale/tailscaleStatus';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '../server/commandUtilities';
+import { describeRelayBindSignupExposure } from './hostBindSignupNotice';
+import { resolveRelayHostReachableServerUrl } from './hostReachability';
+import {
+  decideTailscaleServeOffer,
+  offerAndPublishRelayOnTailnet,
+  shouldProbeTailscaleForServeOffer,
+} from './hostTailscaleServe';
 
 type RelayHostStatusJson = Readonly<{
   installed: boolean;
@@ -62,6 +77,12 @@ function relayUrlsMatch(left: string, right: string): boolean {
 function resolveInstalledRelayProfileTarget(params: Readonly<{
   relayUrl: string;
   activeProfileBeforeInstall: Awaited<ReturnType<typeof getActiveServerProfile>> | null;
+  /**
+   * The address other devices should use, when it differs from the bind URL.
+   * Only consulted once the existing configuration has failed to supply a
+   * canonical URL of its own, so an already-configured relay keeps its answer.
+   */
+  reachableServerUrl?: string | null;
 }>): Readonly<{
   name: string;
   serverUrl: string;
@@ -101,11 +122,35 @@ function resolveInstalledRelayProfileTarget(params: Readonly<{
     };
   }
 
+  const reachableServerUrl = String(params.reachableServerUrl ?? '').trim();
+  if (reachableServerUrl && !relayUrlsMatch(reachableServerUrl, relayUrl)) {
+    return {
+      name: active && active.id !== 'cloud' ? active.name : defaultNameFromUrl(reachableServerUrl),
+      serverUrl: reachableServerUrl,
+      localServerUrl: relayUrl,
+      webappUrl: defaultWebappUrlFromServerUrl(reachableServerUrl),
+    };
+  }
+
   return {
     name: active && active.id !== 'cloud' ? active.name : defaultNameFromUrl(relayUrl),
     serverUrl: relayUrl,
     webappUrl: defaultWebappUrlFromServerUrl(relayUrl),
   };
+}
+
+/**
+ * What a running daemon would actually connect to for a profile. Re-installing
+ * the same relay must not ask to restart a background service that is already
+ * following it.
+ */
+function relayProfileConnectionIdentity(profile: ServerProfile | null): string {
+  if (!profile) return '';
+  return [
+    profile.id,
+    normalizeRelayUrlForComparison(profile.serverUrl),
+    normalizeRelayUrlForComparison(profile.localServerUrl ?? ''),
+  ].join('|');
 }
 
 const TEST_FIRST_PARTY_PAYLOAD_ROOT_ENV = 'HAPPIER_TEST_FIRST_PARTY_PAYLOAD_ROOT';
@@ -630,6 +675,23 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   if (op === 'install') {
+    // Captured before the install runs. The relay generates its own master
+    // secret the first time it starts and never mentions it again; a data
+    // directory that does not exist yet is what tells us this install is that
+    // first time. A remote install creates it on the other machine, where this
+    // path would be a lie, so it is left out of that case entirely.
+    const localRelayDataDir = ssh
+      ? null
+      : resolveRelayRuntimeDefaults({
+        platform: process.platform,
+        mode,
+        // `channel` here is the public label ('dev'); the engine resolves its own
+        // defaults through the same normalizer, so both land on the same paths.
+        channel: normalizePublicReleaseRingId(channel) || 'stable',
+        homeDir: homedir(),
+      }).dataDir;
+    const relayDataDirExistedBeforeInstall = localRelayDataDir ? existsSync(localRelayDataDir) : true;
+
     let bindHost: string | null = null;
     if (exposeFlag.present || hostFlag.value?.trim() === '0.0.0.0') {
       bindHost = '0.0.0.0';
@@ -671,7 +733,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
     const installParams: RelayRuntimeTaskParams = {
       ...taskParams,
       ...(mergedEnv ? { env: mergedEnv } : {}),
-      ...(!ssh && selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
+      ...(selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
     };
     const result = ssh
       ? (() => {
@@ -684,13 +746,14 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
             copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
               await runner.copyLocalDirectoryToRemote(localPath, remotePath);
             },
-            installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
+            installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, localBinaryPath, remoteHomeDir }) => {
               const out = await installRemoteFirstPartyComponent({
                 componentId,
                 channel,
                 ssh,
                 knownHostsMode,
                 installerBinaryPath,
+                localBinaryPath,
                 remoteHomeDir,
               }, {
                 resolveRemoteReleaseTarget: async () => await resolveRemoteReleaseTarget(),
@@ -775,11 +838,125 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
     const activeProfileBeforeInstall = await getActiveServerProfile().catch(() => null);
     const payload: RelayHostInstallJson = await result;
-    const installedProfile = resolveInstalledRelayProfileTarget({
+
+    if (!json) {
+      console.log(chalk.green('✓ Relay host installed'));
+      console.log(chalk.gray(`  ${payload.relayUrl}`));
+      if (localRelayDataDir && !relayDataDirExistedBeforeInstall) {
+        console.log('');
+        console.log(chalk.yellow('  This relay generated a master secret in'));
+        console.log(chalk.gray(`    ${localRelayDataDir}`));
+        console.log(chalk.gray('  It encrypts what the relay stores, is saved nowhere else, and cannot be'));
+        console.log(chalk.gray("  regenerated. Keep it with your backup of the relay's database."));
+        console.log('');
+      }
+
+      // A relay bound past loopback is reachable by whoever shares that network,
+      // and anonymous signup is on by default. Say so once, here, where the bind
+      // was just chosen. Information only: no prompt, no policy, no changed env.
+      // Read from the emitted env rather than `bindHost` so `--env
+      // HAPPIER_SERVER_HOST=...` — the other way to move this bind — is not a
+      // silent gap. Skipped for `--ssh`, which cannot carry a bind flag and
+      // whose relay is not on "this computer" anyway.
+      const signupExposure = ssh ? null : describeRelayBindSignupExposure(mergedEnv?.HAPPIER_SERVER_HOST ?? null);
+      if (signupExposure) {
+        console.log('');
+        console.log(chalk.yellow(`  ${signupExposure.headline}`));
+        for (const line of signupExposure.details) {
+          console.log(chalk.gray(`  ${line}`));
+        }
+        console.log('');
+      }
+    }
+
+    // The bind URL is what the relay listens on, not what a phone can reach.
+    // Settle that here, before the profile is written, so `happier auth login`
+    // binds the account to an address the user's other devices can actually
+    // use. `--json` callers (including the SSH installer, which drives a remote
+    // `relay host install --json`) are left exactly as they were: probing this
+    // machine's interfaces would be answering the wrong question for them.
+    const configuredProfile = resolveInstalledRelayProfileTarget({
       relayUrl: payload.relayUrl,
       activeProfileBeforeInstall,
     });
-    await upsertServerProfileByUrl({
+    const shouldResolveReachableUrl =
+      !json && !ssh && relayUrlsMatch(configuredProfile.serverUrl, payload.relayUrl);
+
+    // Publishing on the tailnet has to happen before candidates are collected:
+    // the Serve URL is what makes a loopback relay reachable, and the collector
+    // below is what discovers and ranks it.
+    const interactiveInstall = isInteractiveTerminal() && !yesFlag.present;
+    if (
+      shouldResolveReachableUrl
+      // Checked before anything is asked of Tailscale, so an install that could
+      // never offer does not pay for a `tailscale` subprocess to find that out.
+      && shouldProbeTailscaleForServeOffer({
+        interactive: interactiveInstall,
+        relayUrl: payload.relayUrl,
+      })
+    ) {
+      const serveStatus = await runTailscaleServeStatus().catch(() => null);
+      const publish = await offerAndPublishRelayOnTailnet({
+        decision: decideTailscaleServeOffer({
+          interactive: interactiveInstall,
+          tailscale: await readTailscaleStatusSnapshot(),
+          relayUrl: payload.relayUrl,
+          serveSlot: serveStatus === null
+            ? null
+            : classifyTailscaleServeRootSlot(serveStatus, payload.relayUrl),
+        }),
+        confirm: async (question) => await promptConfirmYesNo(question, { default: 'yes' }),
+        enableServe: async (upstreamUrl) => await runTailscaleServeEnable({ upstreamUrl }),
+      });
+
+      if (publish.kind === 'conflict') {
+        console.log(chalk.yellow(`  Tailscale ${publish.exposure === 'funnel' ? 'Funnel' : 'Serve'} already uses this HTTPS address.`));
+        if (publish.httpsUrl) console.log(chalk.gray(`    ${publish.httpsUrl}`));
+        console.log(chalk.gray('  Existing Tailscale routing was left unchanged.'));
+      } else if (publish.kind === 'approvalNeeded') {
+        console.log(chalk.yellow('  Your tailnet needs an admin to approve this before the address works:'));
+        console.log(chalk.yellow(`    ${publish.approvalUrl}`));
+        console.log(chalk.gray('  Re-run `happier relay host install` once it is approved.'));
+      } else if (publish.kind === 'failed') {
+        // The relay is installed by now; a Serve failure must not unwind it.
+        console.log(chalk.yellow(`  Could not publish on your tailnet: ${publish.message}`));
+        console.log(chalk.gray('  The relay is installed. You can publish it later with `tailscale serve`.'));
+      }
+    }
+
+    const reachable = shouldResolveReachableUrl
+      ? await resolveRelayHostReachableServerUrl({
+          relayUrl: payload.relayUrl,
+          interactive: isInteractiveTerminal() && !yesFlag.present,
+        })
+      : null;
+
+    if (reachable?.kind === 'localOnly') {
+      for (const line of buildServerUrlReachabilityHintLines(payload.relayUrl)) {
+        console.log(chalk.gray(`  ${line}`));
+      }
+    } else if (reachable?.kind === 'selected') {
+      if (reachable.chosenBy === 'default') {
+        console.log(chalk.gray('  Reachable from other devices at:'));
+        for (const candidate of reachable.candidates) {
+          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
+        }
+        if (reachable.rejectedAnswer) {
+          console.log(chalk.yellow(`  Not a usable relay URL: ${reachable.rejectedAnswer}`));
+        }
+      }
+      console.log(chalk.gray(`  Using ${reachable.url} as this relay's address.`));
+      if (reachable.chosenBy === 'default') {
+        console.log(chalk.gray('  Run `happier server add` to use a different address.'));
+      }
+    }
+
+    const installedProfile = resolveInstalledRelayProfileTarget({
+      relayUrl: payload.relayUrl,
+      activeProfileBeforeInstall,
+      reachableServerUrl: reachable?.kind === 'selected' ? reachable.url : null,
+    });
+    const activeProfileAfterInstall = await upsertServerProfileByUrl({
       ...installedProfile,
       use: !preserveActiveServer,
     });
@@ -794,19 +971,20 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.green('✓ Relay host installed'));
-    console.log(chalk.gray(`  ${payload.relayUrl}`));
-    if (bindHost === '0.0.0.0') {
-      const reachableCandidates = await collectCurrentMachineReachableServerUrlCandidates({
-        localServerUrl: payload.relayUrl,
+    // The background service resolved its relay when it started, which was
+    // before this install pointed the machine somewhere else. Without this it
+    // keeps talking to the previous relay while the install reports success.
+    if (
+      !preserveActiveServer
+      && relayProfileConnectionIdentity(activeProfileBeforeInstall)
+        !== relayProfileConnectionIdentity(activeProfileAfterInstall)
+    ) {
+      await runServerSelectionBackgroundServiceFollowUp({
+        interactive: isInteractiveTerminal(),
+        targetServerUrl: activeProfileAfterInstall.serverUrl,
       });
-      if (reachableCandidates.length > 0) {
-        console.log(chalk.gray('  Exposed on all interfaces - other machines can connect via:'));
-        for (const candidate of reachableCandidates) {
-          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
-        }
-      }
     }
+
     return;
   }
 

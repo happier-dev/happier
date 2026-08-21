@@ -38,6 +38,14 @@ vi.mock('@/daemon/controlClient', () => ({
   stopDaemon: () => stopDaemonMock(),
 }));
 
+vi.mock('@/daemon/ownership/daemonServiceInventory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/daemon/ownership/daemonServiceInventory')>();
+  return {
+    ...actual,
+    resolveInstalledDaemonServiceInventoryForCurrentRelay: async () => [],
+  };
+});
+
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
@@ -46,6 +54,7 @@ vi.mock('@/ui/logger', () => ({
 
 describe('happier auth login --print-configure-links', () => {
   const prev = process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
+  const prevWaitTimeout = process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
 
   beforeEach(() => {
     // This test relies on per-file module mocks; ensure we never reuse a cached login module
@@ -56,6 +65,8 @@ describe('happier auth login --print-configure-links', () => {
   afterEach(() => {
     if (prev === undefined) delete process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
     else process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = prev;
+    if (prevWaitTimeout === undefined) delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+    else process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = prevWaitTimeout;
     authAndSetupMachineIfNeededMock.mockReset();
     authAndSetupMachineIfNeededMock.mockResolvedValue({
       machineId: 'm1',
@@ -93,6 +104,34 @@ describe('happier auth login --print-configure-links', () => {
       const { handleAuthLogin } = await import('./login');
       await handleAuthLogin([]);
       expect(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS).toBeUndefined();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('hands --wait-timeout to the wait the auth flow performs', async () => {
+    // The bound only exists if both files agree on this key; a rename on either
+    // side leaves `happier setup` holding the terminal forever and says nothing.
+    delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin(['--wait-timeout', '300']);
+
+      expect(process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS).toBe('300000');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('leaves the wait unbounded when no bound was asked for', async () => {
+    delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin([]);
+
+      expect(process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS).toBeUndefined();
     } finally {
       consoleSpy.mockRestore();
     }

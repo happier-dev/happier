@@ -40,12 +40,16 @@ describe('RelayHostEngine remote installation ownership', () => {
     expect(installedComponents).toEqual(['happier-cli']);
     expect(commands.some((command) => command.includes('relay host install'))).toBe(true);
     expect(commands.some((command) => command.includes('--env') && command.includes('PORT=3005'))).toBe(true);
+    expect(commands.some((command) => command.includes('--preserve-active-server'))).toBe(false);
+    expect(commands.some((command) => command.includes('--yes'))).toBe(false);
+    expect(commands.some((command) => command.startsWith('sudo '))).toBe(false);
     expect(commands.some((command) => command.includes('self-host-state.json'))).toBe(false);
     expect(commands.some((command) => command.includes('systemctl'))).toBe(false);
   });
 
   it('forwards an explicit local server payload through the canonical remote installer', async () => {
     const installations: Array<{ componentId: string; localBinaryPath?: string }> = [];
+    const commands: string[] = [];
     let installCommand = '';
     const engine = createRelayHostEngine({
       resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
@@ -60,32 +64,52 @@ describe('RelayHostEngine remote installation ownership', () => {
         };
       },
       runRemoteText: async ({ remoteCommand }) => {
+        commands.push(remoteCommand);
+        if (remoteCommand.includes('HEALTH_URL=') && remoteCommand.includes('3999')) {
+          return { status: 0, stdout: 'HAPPIER_RELAY_HEALTH_OK\n', stderr: '' };
+        }
+        if (!remoteCommand.includes('relay host install')) {
+          return { status: 0, stdout: '', stderr: '' };
+        }
         installCommand = remoteCommand;
         return {
-          status: 0,
+          status: 2,
           stdout: `${JSON.stringify({
-            ok: true,
-            kind: 'relay_host_install',
-            data: { relayUrl: 'http://127.0.0.1:3005', mode: 'system' },
+            ok: false,
+            kind: 'relay_host',
+            error: { message: 'relay runtime did not become healthy (http://127.0.0.1:3005/v1/version)' },
           })}\n`,
           stderr: '',
         };
       },
     });
 
-    await engine.installOrUpdate({
+    await expect(engine.installOrUpdate({
       target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
       channel: 'preview',
       mode: 'system',
       selfHostRelayBinaryOverride: '/tmp/local/happier-server',
-    });
+      env: {
+        PORT: '3999',
+        HAPPIER_DB_PROVIDER: 'postgres',
+        DATABASE_URL: 'postgresql://happier:secret@postgres/happier',
+      },
+    })).resolves.toEqual({ relayUrl: 'http://127.0.0.1:3999', mode: 'system' });
 
     expect(installations).toEqual([
       { componentId: 'happier-cli' },
       { componentId: 'happier-server', localBinaryPath: '/tmp/local/happier-server' },
     ]);
-    expect(installCommand).toContain(`--server-binary "$HOME"/'.happier/happier-server/preview/current/bin/happier-server'`);
+    expect(installCommand).toContain(`--self-host-server-binary "$HOME"/'.happier/happier-server/preview/current/bin/happier-server'`);
+    expect(installCommand).not.toContain('--server-binary');
     expect(installCommand).toContain('--mode system');
+    expect(installCommand).toMatch(/^sudo -n /u);
+    expect(commands).toEqual(expect.arrayContaining([
+      expect.stringContaining('happier-server-migrate'),
+    ]));
+    expect(commands.find((command) => command.includes('happier-server-migrate'))).toContain(
+      'DATABASE_URL=',
+    );
   });
 
   it('surfaces the canonical remote installer error instead of interpreting partial output', async () => {

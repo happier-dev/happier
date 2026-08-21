@@ -9,7 +9,7 @@ ${chalk.bold('happier server')} - Manage relay profiles
 ${chalk.bold('Usage:')}
   happier server list
   happier server current
-  happier server add [--name <name>] [--server-url <url>] [--public-server-url <url>] [--webapp-url <url>] [--use] [--no-use] [--start-daemon] [--install-service]
+  happier server add [--name <name>] [--server-url <url>] [--public-server-url <url>] [--webapp-url <url>] [--use] [--no-use] [--yes] [--start-daemon] [--install-service]
   happier server use <name-or-id>
   happier server remove <name-or-id> [--force]
   happier server test [<name-or-id>]
@@ -19,6 +19,7 @@ ${chalk.bold('Notes:')}
   • Profiles are stored in ${configuration.settingsFile}
   • Credentials are stored per relay profile under ${configuration.serversDir}
   • Public relay URL is used for QR codes/deep links (defaults to relay URL)
+  • add checks the relay answers /v1/version before saving it; --yes saves it without checking
   • Env vars override for one run: HAPPIER_SERVER_URL / HAPPIER_PUBLIC_SERVER_URL / HAPPIER_WEBAPP_URL
 `);
 }

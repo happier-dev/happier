@@ -1,12 +1,28 @@
 import axios from 'axios';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
+import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
+import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import { configuration } from '@/configuration';
-import type { Credentials } from '@/persistence';
+import { readCredentials, type Credentials } from '@/persistence';
+
+import { promptInput, runCliAction } from './server/commandUtilities';
 
 type BackgroundServiceFollowUpMode = 'user' | 'system';
 type ServerChangeCredentialState = 'authenticated' | 'authentication-required' | 'unknown';
+
+/**
+ * Child relay-selection commands set this only while `happier setup` owns the
+ * larger relay → auth → service sequence. The follow-up decision still has one
+ * owner here; the child merely defers it until authentication has completed.
+ */
+export const DEFER_SERVER_SELECTION_FOLLOW_UP_ENV = 'HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP';
+
+function shouldDeferServerSelectionFollowUp(): boolean {
+    const raw = String(process.env[DEFER_SERVER_SELECTION_FOLLOW_UP_ENV] ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
 
 function isDefaultFollowingService(entry: DaemonServiceListEntry): boolean {
     return entry.targetMode === 'default-following';
@@ -313,7 +329,10 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
         }
 
         if (authOutcome === 'authenticated') {
-            credentialState = 'authenticated';
+            // `happier auth login` owns restarting default-following services
+            // after it writes the new credentials. Restarting again here would
+            // duplicate that work and can prompt twice in one command.
+            return;
         }
 
         await promptForDefaultFollowingBackgroundServiceRestart({
@@ -332,5 +351,81 @@ export async function runDefaultFollowingBackgroundServiceServerChangeFollowUp(p
         })) {
             params.log(line);
         }
+    }
+}
+
+/**
+ * Canonical reconciliation for "the active relay just changed".
+ *
+ * A default-following background service resolves the active relay once, at
+ * start. Every command that switches the active relay has to come back through
+ * here, or the daemon keeps talking to the relay it was started against while
+ * the CLI reports success against the new one.
+ */
+export async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
+    interactive: boolean;
+    targetServerUrl: string;
+}>): Promise<void> {
+    if (shouldDeferServerSelectionFollowUp()) {
+        return;
+    }
+
+    const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+    const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+    if (resolveInstalledDefaultFollowingDaemonServiceModes(services).length === 0) {
+        return;
+    }
+
+    const credentials = await readCredentials().catch(() => null);
+    await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
+        interactive: params.interactive,
+        promptInput,
+        runCliAction,
+        targetServerUrl: params.targetServerUrl,
+        credentials,
+        log: console.log,
+        services,
+    });
+}
+
+/**
+ * Authentication has just written credentials for the active relay.
+ * Default-following services resolve both relay and credentials at startup, so
+ * this is the canonical point that makes them observe the completed sign-in.
+ * No second question is needed: the user just approved the authentication.
+ */
+export async function reconcileDefaultFollowingBackgroundServicesAfterAuthentication(
+    params: Readonly<{
+        services?: readonly DaemonServiceListEntry[];
+        runCliAction?: (args: string[]) => Promise<void>;
+        log?: (message: string) => void;
+    }> = {},
+): Promise<boolean> {
+    const log = params.log ?? console.log;
+    const runAction = params.runCliAction ?? runCliAction;
+    const services = params.services ?? await resolveInstalledDaemonServiceInventoryForCurrentRelay(
+        resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env }),
+    );
+    const modes = resolveInstalledDefaultFollowingDaemonServiceModes(services);
+    if (modes.length === 0) {
+        return true;
+    }
+
+    if (hasMissingHomeMetadataDefaultFollowingService(services)) {
+        for (const line of renderMissingHomeRepairGuidance({ modes })) log(line);
+        return false;
+    }
+    if (countInstalledDefaultFollowingServices(services) > 1 || hasDuplicateDefaultFollowingModes(modes)) {
+        for (const line of renderRepairGuidance({ modes })) log(line);
+        return false;
+    }
+
+    try {
+        await restartDefaultFollowingBackgroundServices({ modes, runCliAction: runAction });
+        return true;
+    } catch {
+        log('Authentication succeeded, but the background service could not be restarted.');
+        for (const line of renderManualRestartFollowUp({ subject: 'the active relay', modes })) log(line);
+        return false;
     }
 }

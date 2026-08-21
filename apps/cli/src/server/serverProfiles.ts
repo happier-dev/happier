@@ -377,7 +377,15 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
           ...existing,
           name: name || existing.name,
           serverUrl,
-          ...(localServerUrl && localServerUrl !== serverUrl ? { localServerUrl } : {}),
+          // Omission preserves an existing split URL. Supplying a local URL
+          // equal to the canonical URL explicitly collapses that split.
+          ...(opts.localServerUrl !== undefined
+            ? {
+                localServerUrl: localServerUrl && localServerUrl !== serverUrl
+                  ? localServerUrl
+                  : undefined,
+              }
+            : {}),
           webappUrl,
           updatedAt: now,
           lastUsedAt: shouldUse ? now : existing.lastUsedAt,

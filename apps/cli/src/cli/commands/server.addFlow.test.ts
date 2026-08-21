@@ -172,7 +172,7 @@ describe('happier server add guided flow', () => {
 
       const output = captureConsoleLogAndMuteStdout();
       try {
-        await handleServerCommand(['add']);
+        await handleServerCommand(['add', '--yes']);
       } finally {
         output.restore();
       }
@@ -221,7 +221,7 @@ describe('happier server add guided flow', () => {
 
       const output = captureConsoleLogAndMuteStdout();
       try {
-        await handleServerCommand(['add']);
+        await handleServerCommand(['add', '--yes']);
       } finally {
         output.restore();
       }
@@ -283,6 +283,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -319,6 +320,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -350,6 +352,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'CloudCopy',
         '--server-url',
@@ -389,6 +392,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -425,6 +429,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -468,6 +473,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Local',
         '--server-url',
@@ -514,6 +520,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Selfhost',
         '--server-url',
@@ -552,6 +559,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'A',
         '--server-url',
@@ -562,6 +570,7 @@ describe('happier server add guided flow', () => {
       ]);
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'B',
         '--server-url',
@@ -587,6 +596,7 @@ describe('happier server add guided flow', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',

@@ -233,6 +233,45 @@ describe('server profiles', () => {
     });
   });
 
+  it('clears a split local URL when the canonical relay URL becomes local again', async () => {
+    await withTempDir('happier-cli-servers-upsert-clear-local-url-', async (homeDir) => {
+      patchServerProfileEnv({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, upsertServerProfileByUrl } = await import('./serverProfiles');
+      await addServerProfile({
+        name: 'selfhost',
+        serverUrl: 'https://stack.example.test',
+        localServerUrl: 'http://127.0.0.1:3012',
+        webappUrl: 'https://stack.example.test',
+        use: true,
+      });
+
+      const preserved = await upsertServerProfileByUrl({
+        name: 'selfhost',
+        serverUrl: 'https://stack.example.test',
+        webappUrl: 'https://stack.example.test',
+        use: true,
+      });
+      expect(preserved.localServerUrl).toBe('http://127.0.0.1:3012');
+
+      const updated = await upsertServerProfileByUrl({
+        name: 'selfhost',
+        serverUrl: 'http://127.0.0.1:3012',
+        localServerUrl: 'http://127.0.0.1:3012',
+        webappUrl: 'http://127.0.0.1:3012',
+        use: true,
+      });
+
+      expect(updated.serverUrl).toBe('http://127.0.0.1:3012');
+      expect(updated.localServerUrl).toBeUndefined();
+    });
+  });
+
   it('migrates server-scoped access.key when switching from env-derived serverId to a named profile', async () => {
     await withTempDir('happier-cli-servers-migrate-access-key-', async (homeDir) => {
       patchServerProfileEnv({

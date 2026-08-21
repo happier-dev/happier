@@ -1,14 +1,36 @@
 import chalk from 'chalk';
 import os from 'node:os';
 
-import { clearCredentials, clearMachineId, readCredentials, readSettings } from '@/persistence';
-import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
+import { clearCredentials, clearMachineId } from '@/persistence';
+import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
+import { reconcileDefaultFollowingBackgroundServicesAfterAuthentication } from '../backgroundServiceFollowUp';
 
 import { resolveAuthMethodFlag } from './methodFlag';
+
+/**
+ * `--wait-timeout <seconds>`: how long to keep this terminal waiting for the
+ * sign-in to be approved.
+ *
+ * For callers that have to give the terminal back — `happier setup` runs this
+ * command with inherited stdio — an unbounded wait is a terminal nobody can
+ * reclaim. Omitted, the wait stays unbounded, which is right for someone sitting
+ * in front of a QR code.
+ */
+function readWaitTimeoutSecondsFlag(args: readonly string[]): number | null {
+  const index = args.indexOf('--wait-timeout');
+  if (index < 0) return null;
+  const raw = String(args[index + 1] ?? '').trim();
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    console.error(chalk.red('--wait-timeout needs a positive number of seconds, for example `--wait-timeout 300`.'));
+    process.exit(1);
+  }
+  return seconds;
+}
 
 export async function handleAuthLogin(args: string[]): Promise<void> {
   args = await applyServerSelectionFromArgs(args);
@@ -16,6 +38,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   const forceAuth = args.includes('--force') || args.includes('-f');
   const noOpen = args.includes('--no-open') || args.includes('--no-browser') || args.includes('--no-browser-open');
   const printConfigureLinks = args.includes('--print-configure-links');
+  const waitTimeoutSeconds = readWaitTimeoutSecondsFlag(args);
   let method: 'web' | 'mobile' | null = null;
   try {
     method = resolveAuthMethodFlag(args);
@@ -31,6 +54,10 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
 
   if (printConfigureLinks) {
     process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = '1';
+  }
+
+  if (waitTimeoutSeconds !== null) {
+    process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = String(waitTimeoutSeconds * 1000);
   }
 
   if (forceAuth) {
@@ -59,36 +86,35 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   }
 
   if (!forceAuth) {
-    let existingCreds = await readCredentials();
-    const settings = await readSettings();
+    // Same readiness question `auth status` answers, asked through the same
+    // owner: stored bytes alone cannot tell a usable sign-in from a rejected one.
+    const readiness = await resolveActiveServerAuthReadiness();
+    let existingCreds = readiness.credentials;
 
-    if (existingCreds) {
-      const authValidation = await validateStoredAuthTokenAgainstActiveServer(existingCreds.token);
-      if (authValidation.state === 'invalid') {
-        console.log(chalk.yellow('⚠️  Stored credentials were rejected by the selected relay'));
-        console.log(chalk.gray('  Repairing local authentication state before logging in again...\n'));
-        try {
-          logger.debug('Stopping daemon before auth repair...');
-          await stopDaemon();
-          console.log(chalk.gray('✓ Stopped daemon'));
-        } catch (error) {
-          logger.debug('Daemon was not running or failed to stop during auth repair:', error);
-        }
-        await clearCredentials();
-        await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth' });
-        existingCreds = null;
+    if (readiness.unusableReason === 'credentials-rejected') {
+      console.log(chalk.yellow('⚠️  Stored credentials were rejected by the selected relay'));
+      console.log(chalk.gray('  Repairing local authentication state before logging in again...\n'));
+      try {
+        logger.debug('Stopping daemon before auth repair...');
+        await stopDaemon();
+        console.log(chalk.gray('✓ Stopped daemon'));
+      } catch (error) {
+        logger.debug('Daemon was not running or failed to stop during auth repair:', error);
       }
+      await clearCredentials();
+      await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth' });
+      existingCreds = null;
     }
 
-    if (existingCreds && settings?.machineId) {
+    if (existingCreds && readiness.machineRegistered) {
       console.log(chalk.green('✓ Already authenticated'));
-      console.log(chalk.gray(`  Machine ID: ${settings.machineId}`));
+      console.log(chalk.gray(`  Machine ID: ${readiness.machineId}`));
       console.log(chalk.gray(`  Host: ${os.hostname()}`));
       console.log(chalk.gray(`  Use 'happier auth login --force' to re-authenticate`));
       return;
     }
 
-    if (existingCreds && !settings?.machineId) {
+    if (existingCreds && !readiness.machineRegistered) {
       console.log(chalk.yellow('⚠️  Credentials exist but machine ID is missing'));
       console.log(chalk.gray('  This can happen if --auth flag was used previously'));
       console.log(chalk.gray('  Fixing by setting up machine...\n'));
@@ -99,6 +125,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     const result = await authAndSetupMachineIfNeeded();
     console.log(chalk.green('\n✓ Authentication successful'));
     console.log(chalk.gray(`  Machine ID: ${result.machineId}`));
+    await reconcileDefaultFollowingBackgroundServicesAfterAuthentication();
   } catch (error) {
     console.error(chalk.red('Authentication failed:'), error instanceof Error ? error.message : 'Unknown error');
     process.exit(1);

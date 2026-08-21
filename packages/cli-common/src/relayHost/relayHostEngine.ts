@@ -37,7 +37,10 @@ import {
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '../firstPartyRuntime/selfHostServerEnv.js';
 import { buildRelayRuntimeHealthProbeCommand, RELAY_RUNTIME_HEALTH_OK_TOKEN } from './buildRelayRuntimeHealthProbeCommand.js';
-import { buildRemoteRelayRuntimeInstallCommand } from './remoteRelayRuntimeInstallCommand.js';
+import {
+  buildRemoteRelayRuntimeInstallCommand,
+  buildRemoteRelayRuntimeMigrationCommand,
+} from './remoteRelayRuntimeInstallCommand.js';
 
 import type {
   RelayRuntimeStatusSnapshot,
@@ -334,6 +337,8 @@ async function resolveRemoteRelayHealth(params: Readonly<{
   knownHostsMode: 'app' | 'system';
   relayUrl: string;
   healthPath: string;
+  maxAttempts?: number;
+  sleepSeconds?: number;
 }>): Promise<boolean> {
   const probeResult = await params.deps.runRemoteText({
     ssh: params.ssh,
@@ -341,8 +346,8 @@ async function resolveRemoteRelayHealth(params: Readonly<{
     remoteCommand: buildRelayRuntimeHealthProbeCommand({
       baseUrl: params.relayUrl,
       path: params.healthPath,
-      maxAttempts: 1,
-      sleepSeconds: 0,
+      maxAttempts: params.maxAttempts ?? 1,
+      sleepSeconds: params.sleepSeconds ?? 0,
     }),
   }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
   const probeStdout = String(probeResult.stdout ?? '');
@@ -1780,6 +1785,13 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const knownHostsMode: 'app' | 'system' = params.ssh.knownHostsPath ? 'app' : 'system';
     const channel = normalizeChannel(params.parsed.channel);
     const mode = normalizeMode(params.parsed.mode);
+    const defaults = resolveRelayRuntimeDefaults({ channel, mode });
+    const requestedRelayUrl = resolveConfiguredSelfHostBaseUrl({
+      fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+      envText: Object.entries(params.parsed.env ?? {})
+        .map(([key, value]) => `${key}=${String(value ?? '')}`)
+        .join('\n'),
+    });
 
     const remoteCli = await deps.installRemoteComponent({
       componentId: 'happier-cli',
@@ -1803,6 +1815,27 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
         })
       : null;
 
+    const migrationCommand = uploadedServer
+      ? buildRemoteRelayRuntimeMigrationCommand({
+          serverBinaryPath: uploadedServer.binaryPath,
+          env: params.parsed.env ?? {},
+        })
+      : null;
+    if (migrationCommand) {
+      const migration = await deps.runRemoteText({
+        ssh: params.ssh,
+        knownHostsMode,
+        remoteCommand: migrationCommand,
+      });
+      if (migration.status !== 0) {
+        throw new Error(
+          migration.stderr.trim()
+          || migration.stdout.trim()
+          || 'Remote relay database migration failed',
+        );
+      }
+    }
+
     const result = await deps.runRemoteText({
       ssh: params.ssh,
       knownHostsMode,
@@ -1819,11 +1852,26 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     const envelopeData = envelope?.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
       ? envelope.data as Record<string, unknown>
       : null;
+    const envelopeError = envelope?.error && typeof envelope.error === 'object' && !Array.isArray(envelope.error)
+      ? envelope.error as Record<string, unknown>
+      : null;
+    const remoteMessage = typeof envelopeError?.message === 'string' ? envelopeError.message.trim() : '';
     if (result.status !== 0 || envelope?.ok !== true || envelope.kind !== 'relay_host_install') {
-      const envelopeError = envelope?.error && typeof envelope.error === 'object' && !Array.isArray(envelope.error)
-        ? envelope.error as Record<string, unknown>
-        : null;
-      const remoteMessage = typeof envelopeError?.message === 'string' ? envelopeError.message.trim() : '';
+      const legacyHealthMismatch = uploadedServer
+        && remoteMessage.includes('did not become healthy')
+        && requestedRelayUrl !== `http://${defaults.serverHost}:${defaults.serverPort}`
+        && await resolveRemoteRelayHealth({
+          deps,
+          ssh: params.ssh,
+          knownHostsMode,
+          relayUrl: requestedRelayUrl,
+          healthPath: defaults.healthPath,
+          maxAttempts: 30,
+          sleepSeconds: 1,
+        });
+      if (legacyHealthMismatch) {
+        return { relayUrl: requestedRelayUrl, mode };
+      }
       throw new Error(remoteMessage || result.stderr.trim() || 'Remote canonical relay installer failed');
     }
 
@@ -1832,7 +1880,12 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
     if (!relayUrl || !installedMode) {
       throw new Error('Remote canonical relay installer returned an unsupported response');
     }
-    return { relayUrl, mode: installedMode };
+    return {
+      relayUrl: requestedRelayUrl !== `http://${defaults.serverHost}:${defaults.serverPort}`
+        ? requestedRelayUrl
+        : relayUrl,
+      mode: installedMode,
+    };
   }
 
   async function assertRemoteRelayRuntimeHealthy(params: Readonly<{

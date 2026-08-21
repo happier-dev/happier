@@ -1,5 +1,6 @@
 import {
   collectCurrentMachineReachableServerUrlCandidates,
+  type CurrentMachineReachableServerUrlCandidate,
   type CurrentMachineReachableServerUrlCandidateDeps,
 } from './currentMachineReachableServerUrlCandidates';
 import { promptInput } from '@/terminal/prompts/promptInput';
@@ -22,16 +23,32 @@ export async function promptForCurrentMachineReachableServerUrl(
   params: Readonly<{
     localServerUrl: string;
     remoteDescription?: string;
+    /**
+     * Overrides the line that introduces `localServerUrl`. The default says the
+     * relay is only reachable from this computer, which is true when a caller
+     * has just discovered a loopback URL but not when it is asking about a URL
+     * that is already reachable elsewhere.
+     */
+    localServerUrlIntro?: string;
+    /**
+     * Already-collected candidates. Callers that had to look at the candidates
+     * before deciding to prompt pass them back rather than paying for a second
+     * round of Tailscale lookups and TCP probes.
+     */
+    candidates?: readonly CurrentMachineReachableServerUrlCandidate[];
   }>,
   deps: PromptDeps = {},
 ): Promise<string> {
   const input = deps.promptInput ?? promptInput;
   const remoteDescription = String(params.remoteDescription ?? 'the remote machine').trim() || 'the remote machine';
-  const candidates = await collectCurrentMachineReachableServerUrlCandidates(params, deps);
+  const intro = String(params.localServerUrlIntro ?? '').trim()
+    || 'The selected relay is only reachable from this computer:';
+  const candidates = params.candidates
+    ?? await collectCurrentMachineReachableServerUrlCandidates(params, deps);
 
   if (candidates.length === 0) {
     return (await input([
-      'The selected relay is only reachable from this computer:',
+      intro,
       `  ${params.localServerUrl}`,
       '',
       `Enter an address ${remoteDescription} can use to reach this computer's relay: `,
@@ -39,7 +56,7 @@ export async function promptForCurrentMachineReachableServerUrl(
   }
 
   const lines = [
-    'The selected relay is only reachable from this computer:',
+    intro,
     `  ${params.localServerUrl}`,
     '',
     `Choose the address ${remoteDescription} should use to reach this computer's relay:`,

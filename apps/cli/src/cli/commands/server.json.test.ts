@@ -5,7 +5,7 @@ import { reloadConfiguration } from '@/configuration';
 import { addServerProfile } from '@/server/serverProfiles';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { handleServerCommand } from './server';
 
 describe('happier server --json', () => {
@@ -28,7 +28,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_list JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -37,7 +37,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['list', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_list');
@@ -52,7 +52,7 @@ describe('happier server --json', () => {
   });
 
   it('does not crash when a stored serverUrl is not a valid URL', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -62,7 +62,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['list', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       const list = Array.isArray(parsed.data?.profiles) ? parsed.data.profiles : [];
@@ -78,7 +78,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_current JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -86,7 +86,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['current', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_current');
@@ -100,12 +100,13 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_add JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -116,7 +117,7 @@ describe('happier server --json', () => {
         '--json',
       ]);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_add');
@@ -131,7 +132,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_use JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -140,7 +141,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['use', createdB.id, '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_use');
@@ -153,7 +154,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_remove JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -162,7 +163,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['remove', createdB.id, '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_remove');
@@ -176,7 +177,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_set JSON envelope', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -189,7 +190,7 @@ describe('happier server --json', () => {
         '--json',
       ]);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_set');
@@ -202,7 +203,7 @@ describe('happier server --json', () => {
   });
 
   it('derives webappUrl from the new serverUrl when --webapp-url is omitted', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -220,7 +221,7 @@ describe('happier server --json', () => {
         '--json',
       ]);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_set');
@@ -234,7 +235,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_test JSON envelope (ok=true)', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     let server: Server | null = null;
 
     const prevExitCode = process.exitCode;
@@ -262,7 +263,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['test', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_test');
@@ -280,7 +281,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_test JSON envelope (ok=false)', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
     let server: Server | null = null;
 
     const prevExitCode = process.exitCode;
@@ -308,7 +309,7 @@ describe('happier server --json', () => {
 
       await handleServerCommand(['test', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('server_test');
@@ -326,7 +327,7 @@ describe('happier server --json', () => {
   });
 
   it('prints a server_add error envelope on invalid arguments in --json mode', async () => {
-    const output = captureConsoleLogAndMuteStdout();
+    const output = captureStdoutJsonOutput();
 
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -337,7 +338,7 @@ describe('happier server --json', () => {
     try {
       await handleServerCommand(['add', '--json']);
 
-      const parsed = JSON.parse(output.logs.join('\n').trim());
+      const parsed = output.json<any>();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('server_add');

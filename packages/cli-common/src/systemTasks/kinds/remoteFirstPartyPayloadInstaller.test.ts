@@ -97,6 +97,64 @@ describe('installRemoteFirstPartyComponent', () => {
     }
   });
 
+  it('installs an explicit local binary instead of downloading the channel artifact', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-remote-first-party-local-binary-'));
+    const localBinaryPath = join(rootDir, 'happier-server');
+    let preparePayloadCalled = false;
+
+    try {
+      await writeFile(localBinaryPath, 'local-server-binary', 'utf8');
+      await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'),
+        'export const PrismaClient = class {};\n',
+        'utf8',
+      );
+      const installed = await installRemoteFirstPartyComponent(
+        {
+          componentId: 'happier-server',
+          channel: 'preview',
+          ssh: {
+            target: 'dev@example.test',
+            auth: 'agent',
+          },
+          localBinaryPath,
+        },
+        {
+          resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'arm64' }),
+          runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+          copyLocalDirectoryToRemote: async ({ localPath }) => {
+            const extracted = await extractTarFixture({ archivePath: join(localPath, 'payload-root.tar') });
+            try {
+              expect(
+                await readFile(join(extracted.extractRoot, 'payload-root', 'happier-server'), 'utf8'),
+              ).toBe('local-server-binary');
+              expect(
+                await readFile(
+                  join(extracted.extractRoot, 'payload-root', 'node_modules', '@prisma', 'client', 'index.js'),
+                  'utf8',
+                ),
+              ).toContain('PrismaClient');
+            } finally {
+              await extracted.cleanup();
+            }
+          },
+          preparePayload: async () => {
+            preparePayloadCalled = true;
+            throw new Error('channel payload should not be prepared');
+          },
+          now: () => 123,
+        },
+      );
+
+      expect(preparePayloadCalled).toBe(false);
+      expect(installed.versionId).toBe('local-123');
+      expect(installed.source).toBeNull();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects remoteHomeDir values that are unsafe to embed in shell commands', async () => {
     await expect(
       installRemoteFirstPartyComponent(

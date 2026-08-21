@@ -1,8 +1,7 @@
 import chalk from 'chalk';
 import os from 'node:os';
 
-import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { readCredentials, readSettings } from '@/persistence';
+import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
@@ -11,8 +10,8 @@ import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const args = await applyServerSelectionFromArgs(argv);
   const json = wantsJson(args);
-  const credentials = await readCredentials();
-  const settings = await readSettings();
+  const readiness = await resolveActiveServerAuthReadiness();
+  const credentials = readiness.credentials;
 
   if (json && !credentials) {
     await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
@@ -29,8 +28,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
-  const authValidation = await validateStoredAuthTokenAgainstActiveServer(credentials.token);
-  if (authValidation.state === 'invalid') {
+  if (readiness.unusableReason === 'credentials-rejected') {
     if (json) {
       await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
       return;
@@ -42,8 +40,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
-  const machineId = settings?.machineId;
-  const machineRegistered = typeof machineId === 'string' && machineId.trim().length > 0;
+  const { machineId, machineRegistered } = readiness;
 
   let daemonRunning = false;
   try {
@@ -60,7 +57,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
         authenticated: true,
         encryption: { type: credentials.encryption.type },
         machineRegistered,
-        ...(machineRegistered ? { machineId: machineId!.trim() } : {}),
+        ...(machineRegistered && machineId ? { machineId } : {}),
         host: os.hostname(),
         happyHomeDir: configuration.happyHomeDir,
         daemonRunning,
@@ -73,7 +70,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
 
   if (machineRegistered) {
     console.log(chalk.green('✓ Machine registered'));
-    console.log(chalk.gray(`  Machine ID: ${machineId!.trim()}`));
+    console.log(chalk.gray(`  Machine ID: ${machineId}`));
     console.log(chalk.gray(`  Host: ${os.hostname()}`));
   } else {
     console.log(chalk.yellow('⚠️  Machine not registered'));

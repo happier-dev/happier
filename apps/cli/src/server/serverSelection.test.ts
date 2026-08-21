@@ -74,6 +74,33 @@ describe('server selection flags', () => {
     });
   });
 
+  it('accepts legacy public-server-url flags from remote setup wrappers', async () => {
+    await withTempDir('happier-cli-server-select-public-legacy-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { applyServerSelectionFromArgs } = await import('./serverSelection');
+      const config = await import('@/configuration');
+
+      const remaining = await applyServerSelectionFromArgs([
+        '--server-url=http://stack:3005',
+        '--public-server-url=http://public-stack:3005',
+        '--webapp-url=http://stack:3005',
+      ]);
+      expect(remaining).toEqual([]);
+      expect(config.configuration.serverUrl).toBe('http://public-stack:3005');
+      expect((config.configuration as any).apiServerUrl).toBe('http://stack:3005');
+      expect(process.env.HAPPIER_PUBLIC_SERVER_URL).toBe('http://public-stack:3005');
+      expect(process.env.HAPPIER_SERVER_URL).toBe('http://stack:3005');
+    });
+  });
+
   it('persists a new server profile when --server-url is used with --persist', async () => {
     await withTempDir('happier-cli-server-select-persist-', async (homeDir) => {
       envScope.patch({

@@ -72,7 +72,7 @@ describe('happier server add reachable URL flow', () => {
 
       const output = captureConsoleLogAndMuteStdout();
       try {
-        await handleServerCommand(['add']);
+        await handleServerCommand(['add', '--yes']);
       } finally {
         output.restore();
       }

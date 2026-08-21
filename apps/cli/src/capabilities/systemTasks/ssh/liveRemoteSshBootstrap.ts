@@ -394,7 +394,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
         remotePath,
       });
     },
-    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
+    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, localBinaryPath, remoteHomeDir }) => {
       const transportKnownHostsPath = knownHostsMode === 'app' ? params.knownHostsPath : undefined;
       const installed = await installRemoteFirstPartyComponent({
         componentId,
@@ -402,6 +402,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
         ssh,
         knownHostsMode,
         installerBinaryPath,
+        localBinaryPath,
         remoteHomeDir,
       }, {
         resolveRemoteReleaseTarget: async () => {

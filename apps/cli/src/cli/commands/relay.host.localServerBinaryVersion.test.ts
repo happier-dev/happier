@@ -10,6 +10,7 @@ import { captureConsoleLogAndMuteStdout } from '../../testkit/logger/captureOutp
 let mockedPreparedPayloadRoot = '';
 let mockedPreparedVersionId = 'preview-release-0.2.1';
 let resolvedLocalInstallVersion: string | null = null;
+let receivedSelfHostRelayBinaryOverride: string | null = null;
 
 vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -39,6 +40,7 @@ vi.mock('@happier-dev/cli-common/relayHost', async (importOriginal) => {
                 healthy: true,
             }),
             installOrUpdate: async (params: any) => {
+                receivedSelfHostRelayBinaryOverride = params.selfHostRelayBinaryOverride ?? null;
                 resolvedLocalInstallVersion = deps.resolveLocalInstallVersion
                     ? await deps.resolveLocalInstallVersion({
                         channel: 'preview',
@@ -65,6 +67,7 @@ describe('happier relay host install local server-binary version tracking', () =
     beforeEach(async () => {
         vi.resetModules();
         resolvedLocalInstallVersion = null;
+        receivedSelfHostRelayBinaryOverride = null;
         envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
         home = await createTempDir('happier-relay-local-version-home-');
         preparedPayloadRoot = await createTempDir('happier-relay-local-version-prepared-');
@@ -113,6 +116,49 @@ describe('happier relay host install local server-binary version tracking', () =
             expect(parsed.kind).toBe('relay_host_install');
             expect(resolvedLocalInstallVersion).toBe(basename(serverPayloadRoot));
             expect(resolvedLocalInstallVersion).not.toBe(mockedPreparedVersionId);
+            expect(process.exitCode).toBe(0);
+        } finally {
+            output.restore();
+            process.exitCode = prevExitCode;
+        }
+    });
+
+    it('forwards a local server binary to remote relay installation', async () => {
+        const output = captureConsoleLogAndMuteStdout();
+        const prevExitCode = process.exitCode;
+        process.exitCode = undefined;
+        const serverBinaryPath = join(serverPayloadRoot, 'bin', 'happier-server');
+
+        try {
+            const { commandRegistry } = await import('../commandRegistry');
+
+            await commandRegistry.relay({
+                args: [
+                    'relay',
+                    'host',
+                    'install',
+                    '--ssh',
+                    'dev@example.test',
+                    '--server-binary',
+                    serverBinaryPath,
+                    '--json',
+                ],
+                rawArgv: [
+                    'node',
+                    'hprev',
+                    'relay',
+                    'host',
+                    'install',
+                    '--ssh',
+                    'dev@example.test',
+                    '--server-binary',
+                    serverBinaryPath,
+                    '--json',
+                ],
+                terminalRuntime: null,
+            });
+
+            expect(receivedSelfHostRelayBinaryOverride).toBe(serverBinaryPath);
             expect(process.exitCode).toBe(0);
         } finally {
             output.restore();

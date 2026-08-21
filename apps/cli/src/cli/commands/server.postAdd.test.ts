@@ -57,6 +57,7 @@ describe('happier server add', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -93,6 +94,7 @@ describe('happier server add', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -134,6 +136,7 @@ describe('happier server add', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Company',
         '--server-url',
@@ -175,6 +178,7 @@ describe('happier server add', () => {
 
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Alpha',
         '--server-url',
@@ -184,6 +188,7 @@ describe('happier server add', () => {
       ]);
       await handleServerCommand([
         'add',
+        '--yes',
         '--name',
         'Beta',
         '--server-url',

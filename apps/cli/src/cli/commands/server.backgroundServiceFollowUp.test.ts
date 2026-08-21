@@ -307,14 +307,11 @@ describe('happier server background service follow-up', () => {
 
             expect(promptQuestions).toEqual([
                 'Authenticate Happier against https://b.example.test now? [Y/n]: ',
-                'Restart the background service so it now follows https://b.example.test? [Y/n]: ',
             ]);
             expect(spawnHappyCLIMock).toHaveBeenNthCalledWith(1, ['auth', 'login'], expect.objectContaining({
                 stdio: 'inherit',
             }));
-            expect(spawnHappyCLIMock).toHaveBeenNthCalledWith(2, ['service', 'restart'], expect.objectContaining({
-                stdio: 'inherit',
-            }));
+            expect(spawnHappyCLIMock).toHaveBeenCalledTimes(1);
         } finally {
             restoreTty();
             if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -673,12 +670,7 @@ describe('happier server background service follow-up', () => {
         const { runDefaultFollowingBackgroundServiceServerChangeFollowUp } =
             await import('./backgroundServiceFollowUp');
         const output: string[] = [];
-        const runCliAction = vi.fn(async (args: string[]) => {
-            if (args[0] === 'auth') {
-                return;
-            }
-            throw new Error('restart failed');
-        });
+        const runCliAction = vi.fn(async () => undefined);
         axiosGetMock.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { response: { status: 401 } }));
 
         await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
@@ -704,11 +696,35 @@ describe('happier server background service follow-up', () => {
             }],
         });
 
-        expect(runCliAction).toHaveBeenNthCalledWith(1, ['auth', 'login']);
-        expect(runCliAction).toHaveBeenNthCalledWith(2, ['service', 'restart']);
-        expect(output.join('\n')).toContain('Background service follow-up failed after the primary change was already applied.');
-        expect(output.join('\n')).toContain('happier service restart');
+        expect(runCliAction).toHaveBeenCalledTimes(1);
+        expect(runCliAction).toHaveBeenCalledWith(['auth', 'login']);
         expect(output.join('\n')).not.toContain('happier auth login');
+    });
+
+    it('restarts every valid default-following service after guided authentication without another prompt', async () => {
+        const { reconcileDefaultFollowingBackgroundServicesAfterAuthentication } =
+            await import('./backgroundServiceFollowUp');
+        const runCliAction = vi.fn(async () => undefined);
+
+        await reconcileDefaultFollowingBackgroundServicesAfterAuthentication({
+            services: [{
+                serverId: 'default',
+                name: 'Default background service',
+                installed: true,
+                path: '/tmp/happier-daemon.default.service',
+                platform: 'linux',
+                mode: 'system',
+                releaseChannel: currentReleaseChannel(),
+                label: 'happier-daemon.default',
+                targetMode: 'default-following',
+            }],
+            runCliAction,
+            log: vi.fn(),
+        });
+
+        expect(runCliAction).toHaveBeenCalledTimes(1);
+        expect(runCliAction).toHaveBeenCalledWith(['service', 'restart', '--mode', 'system']);
+        expect(promptQuestions).toEqual([]);
     });
 
     it('treats transient account-profile probe failures as unknown instead of forcing re-auth', async () => {

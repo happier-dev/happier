@@ -1,4 +1,6 @@
-import { basename } from 'node:path';
+import { chmod, cp, lstat, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -128,12 +130,50 @@ export function resolveRemoteInstalledFirstPartyBinaryPath(params: Readonly<{
   return `${remoteHomeDir}/${variant.installRootName}/current/${component.binaryRelativePath}`;
 }
 
+async function prepareLocalBinaryPayload(params: Readonly<{
+  channel: PublicReleaseRingId;
+  componentId: FirstPartyComponentId;
+  localBinaryPath: string;
+  versionId: string;
+}>): Promise<PreparedFirstPartyComponentPayload> {
+  const sourceStats = await lstat(params.localBinaryPath);
+  if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) {
+    throw new Error(`Local first-party binary must be a regular file: ${params.localBinaryPath}`);
+  }
+
+  const component = getFirstPartyComponentCatalogEntry(params.componentId);
+  const scratchRoot = await mkdtemp(join(tmpdir(), `happier-local-${params.componentId}-`));
+  const payloadRoot = join(scratchRoot, 'payload-root');
+  const payloadBinaryPath = join(payloadRoot, component.binaryRelativePath);
+  try {
+    await cp(dirname(params.localBinaryPath), payloadRoot, {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+    await chmod(payloadBinaryPath, 0o755);
+    return {
+      componentId: params.componentId,
+      channel: params.channel,
+      versionId: params.versionId,
+      payloadRoot,
+      source: null,
+      cleanup: async () => {
+        await rm(scratchRoot, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await rm(scratchRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 export async function installRemoteFirstPartyComponent(params: Readonly<{
   componentId: FirstPartyComponentId;
   channel?: string;
   ssh: SystemTaskSshConnectionConfig;
   knownHostsMode?: 'app' | 'system';
   installerBinaryPath?: string;
+  localBinaryPath?: string;
   remoteHomeDir?: string;
 }>, deps: RemoteFirstPartyInstallDeps): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
   const resolvedDeps = {
@@ -147,13 +187,21 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
     ssh: params.ssh,
     knownHostsMode: params.knownHostsMode,
   });
-  const prepared = await resolvedDeps.preparePayload({
-    componentId: params.componentId,
-    channel,
-    os: target.os,
-    arch: target.arch,
-    userAgent: 'happier-bootstrap',
-  });
+  const localBinaryPath = String(params.localBinaryPath ?? '').trim();
+  const prepared = localBinaryPath
+    ? await prepareLocalBinaryPayload({
+        channel,
+        componentId: params.componentId,
+        localBinaryPath,
+        versionId: `local-${resolvedDeps.now()}`,
+      })
+    : await resolvedDeps.preparePayload({
+        componentId: params.componentId,
+        channel,
+        os: target.os,
+        arch: target.arch,
+        userAgent: 'happier-bootstrap',
+      });
 
   try {
     const scpReadyPayload = await createScpReadyPayloadArchive(prepared.payloadRoot);

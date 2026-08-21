@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials } from '@/persistence';
 import {
   addServerProfile,
   getActiveServerProfile,
@@ -11,7 +10,7 @@ import {
   upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
-import { probeServerVersion } from '@/server/serverTest';
+import { probeServerVersion, type ProbeServerVersionResult } from '@/server/serverTest';
 
 import {
   argvValue,
@@ -33,12 +32,7 @@ import {
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
-import { resolveInstalledDaemonServiceInventoryForCurrentRelay } from '@/daemon/ownership/daemonServiceInventory';
-import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
-import {
-  runDefaultFollowingBackgroundServiceServerChangeFollowUp,
-  resolveInstalledDefaultFollowingDaemonServiceModes,
-} from '../backgroundServiceFollowUp.js';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp.js';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -113,6 +107,57 @@ function resolveTailscaleServeStatusTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
+function relayProbeFailureDetailLines(result: Extract<ProbeServerVersionResult, { ok: false }>): readonly string[] {
+  return [
+    `  url: ${result.url}`,
+    ...(result.status ? [`  status: ${result.status}`] : []),
+    `  error: ${result.error}`,
+  ];
+}
+
+/**
+ * Check that a relay URL actually answers before it is written to settings,
+ * using the same `/v1/version` probe `happier server test` runs.
+ *
+ * A relay that does not answer is nearly always a typo or a URL that is not up
+ * yet; persisting it only moves the failure to `happier auth login`, where it
+ * is much harder to read. The answer therefore follows the same shape as the
+ * local/LAN question in `cmdAdd`: an interactive terminal is asked, and every
+ * non-interactive caller (`--json`, no TTY) gets the prompt's own default —
+ * refuse — with `--yes` as the deterministic opt-out.
+ */
+async function assertRelayUrlAnswersBeforePersisting(params: Readonly<{
+  probeUrl: string;
+  interactive: boolean;
+}>): Promise<void> {
+  const result = await probeServerVersion(params.probeUrl);
+  if (result.ok) return;
+
+  const headline = `No Happier relay answered at ${params.probeUrl}.`;
+  const detailLines = relayProbeFailureDetailLines(result);
+
+  if (!params.interactive) {
+    throw relayUnreachableError([
+      headline,
+      ...detailLines,
+      '  Nothing was saved. Check the URL, or pass --yes to save it anyway.',
+    ].join('\n'));
+  }
+
+  console.log(chalk.yellow(headline));
+  for (const line of detailLines) console.log(chalk.gray(line));
+  const answer = await promptInput('Save this relay profile anyway? [y/N]: ');
+  if (parseYesNoWithDefault(answer, false)) return;
+
+  throw relayUnreachableError(`Relay not saved: ${params.probeUrl} did not answer a version check.`);
+}
+
+function relayUnreachableError(message: string): Error {
+  const error: Error & { code?: string } = new Error(message);
+  error.code = 'server_unreachable';
+  return error;
+}
+
 async function cmdList(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   const profiles = await listServerProfiles();
@@ -176,6 +221,7 @@ async function cmdAdd(args: string[]): Promise<void> {
   let shouldUse = hasUse;
   let startDaemon = args.includes('--start-daemon');
   let installService = args.includes('--install-service');
+  const assumeYes = args.includes('--yes');
 
   if (json && (startDaemon || installService)) {
     const err: any = new Error('Unsupported in --json mode: --start-daemon/--install-service');
@@ -292,6 +338,10 @@ async function cmdAdd(args: string[]): Promise<void> {
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : defaultWebappUrlFromServerUrl(serverUrl);
 
+  if (!assumeYes) {
+    await assertRelayUrlAnswersBeforePersisting({ probeUrl: localServerUrl || serverUrl, interactive });
+  }
+
   const created = await addServerProfile({ name, serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
   const active = shouldUse ? created : await getActiveServerProfile();
 
@@ -392,9 +442,7 @@ async function cmdTest(args: string[]): Promise<void> {
   }
   if (!result.ok) {
     console.error(chalk.red(`✗ Relay test failed: ${profile.serverUrl}`));
-    console.error(chalk.gray(`  url: ${result.url}`));
-    if (result.status) console.error(chalk.gray(`  status: ${result.status}`));
-    console.error(chalk.gray(`  error: ${result.error}`));
+    for (const line of relayProbeFailureDetailLines(result)) console.error(chalk.gray(line));
     process.exit(1);
   }
   console.log(chalk.green(`✓ Relay reachable: ${profile.serverUrl}`));
@@ -475,28 +523,5 @@ async function cmdSet(args: string[]): Promise<void> {
   await runServerSelectionBackgroundServiceFollowUp({
     interactive: isInteractiveTerminal(),
     targetServerUrl: created.serverUrl,
-  });
-}
-
-async function runServerSelectionBackgroundServiceFollowUp(params: Readonly<{
-  interactive: boolean;
-  targetServerUrl: string;
-}>): Promise<void> {
-  const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
-  const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
-  const installedDefaultFollowingServiceModes = resolveInstalledDefaultFollowingDaemonServiceModes(services);
-  if (installedDefaultFollowingServiceModes.length === 0) {
-    return;
-  }
-
-  const credentials = await readCredentials().catch(() => null);
-  await runDefaultFollowingBackgroundServiceServerChangeFollowUp({
-    interactive: params.interactive,
-    promptInput,
-    runCliAction,
-    targetServerUrl: params.targetServerUrl,
-    credentials,
-    log: console.log,
-    services,
   });
 }

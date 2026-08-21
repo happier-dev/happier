@@ -17,7 +17,8 @@ import { logger } from './logger';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
-import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl, isLoopbackHttpServerUrl } from '@/server/serverUrlClassification';
+import { isLoopbackHttpServerUrl, isLoopbackServerHost } from '@/server/serverUrlClassification';
+import { buildServerUrlReachabilityHintLines } from '@/server/reachability/serverUrlReachabilityHint';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import {
     createTerminalPairingAuthentication,
@@ -44,19 +45,6 @@ function isAuthorizedWithTokenAndResponse(
     );
 }
 
-function isLoopbackServerHost(serverUrl: string): boolean {
-    try {
-        const url = new URL(serverUrl);
-        const host = String(url.hostname ?? '').trim().toLowerCase();
-        if (!host) return false;
-        if (host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
-        if (host.endsWith('.localhost')) return true;
-        return false;
-    } catch {
-        return false;
-    }
-}
-
 function shouldAutoInferPublicServerUrl(): boolean {
     const raw = String(process.env.HAPPIER_TAILSCALE_AUTO_PUBLIC_URL ?? '').trim().toLowerCase();
     if (!raw) return true;
@@ -68,35 +56,27 @@ function resolveTailscaleServeStatusTimeoutMs(): number {
     return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
+/**
+ * How long this terminal will wait for the sign-in to be approved.
+ *
+ * Unbounded by default, because a person watching a QR code on their desk is
+ * not a hung process. Callers that hand this flow a terminal they have to give
+ * back — `happier setup`, which runs `auth login` with inherited stdio — ask for
+ * a bound with `happier auth login --wait-timeout <seconds>`, which arrives here
+ * the same way the poll interval and the auth method already do.
+ */
+function resolveTerminalAuthWaitTimeoutMs(): number | null {
+    const raw = Number.parseInt(String(process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS ?? ''), 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
 function printServerUrlReachabilityHint(serverUrl: string): void {
-    let url: URL | null = null;
-    try {
-        url = new URL(serverUrl);
-    } catch {
-        url = null;
+    const lines = buildServerUrlReachabilityHintLines(serverUrl);
+    if (lines.length === 0) return;
+    for (const line of lines) {
+        console.log(line);
     }
-
-    if (isInsecureRemoteHttpServerUrl(serverUrl)) {
-        console.log('Warning: your relay URL uses HTTP on a non-local host.');
-        console.log('This is insecure, and many web flows require HTTPS. Prefer an https:// URL (Tailscale Serve or a reverse proxy).');
-        console.log('');
-        return;
-    }
-
-    if (isLoopbackServerHost(serverUrl) && url?.protocol !== 'https:') {
-        console.log('Note: your relay URL is a localhost/loopback URL.');
-        console.log('This will work only on this same machine.');
-        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your relay URL.');
-        console.log('');
-        return;
-    }
-
-    if (isLocalishServerUrl(serverUrl) && url?.protocol !== 'https:') {
-        console.log('Note: your relay URL looks like a LAN-only URL.');
-        console.log('This will work only when your phone/laptop are on the same LAN/VPN.');
-        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your relay URL.');
-        console.log('');
-    }
+    console.log('');
 }
 
 function printMobileLinkMissingServerUrlHint(params: Readonly<{ serverUrl: string; kind: 'terminalConnect' | 'configureServer' }>): void {
@@ -366,13 +346,14 @@ async function postTerminalAuthRequestCompatible(params: Readonly<{
     publicKey: string;
     supportsV2?: boolean;
     claimSecretHash?: string;
+    timeoutMs?: number;
 }>): Promise<PostTerminalAuthRequestCompatibleResponse> {
     try {
         const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
             publicKey: params.publicKey,
             ...(typeof params.supportsV2 === 'boolean' ? { supportsV2: params.supportsV2 } : {}),
             ...(typeof params.claimSecretHash === 'string' ? { claimSecretHash: params.claimSecretHash } : {}),
-        });
+        }, params.timeoutMs ? { timeout: params.timeoutMs } : undefined);
         return res.data;
     } catch (error: any) {
         const code = error?.response?.status;
@@ -381,7 +362,7 @@ async function postTerminalAuthRequestCompatible(params: Readonly<{
             // Retry with the minimal legacy payload.
             const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
                 publicKey: params.publicKey,
-            });
+            }, params.timeoutMs ? { timeout: params.timeoutMs } : undefined);
             return res.data;
         }
         throw error;
@@ -580,11 +561,27 @@ async function waitForAuthentication(params: Readonly<{
     try {
         const pollIntervalMsRaw = Number(process.env.HAPPIER_AUTH_POLL_INTERVAL_MS ?? '');
         const pollIntervalMs = Number.isFinite(pollIntervalMsRaw) && pollIntervalMsRaw > 0 ? pollIntervalMsRaw : 1000;
+        const waitTimeoutMs = resolveTerminalAuthWaitTimeoutMs();
+        const waitDeadlineMs = waitTimeoutMs === null ? null : Date.now() + waitTimeoutMs;
         const publicKey = encodeBase64(params.keypair.publicKey);
+
+        const remainingRequestTimeoutMs = (): number | undefined => {
+            if (waitDeadlineMs === null) return undefined;
+            return Math.max(1, waitDeadlineMs - Date.now());
+        };
+        const waitExpired = (): boolean => waitDeadlineMs !== null && Date.now() >= waitDeadlineMs;
+        const printWaitExpired = (): void => {
+            console.log('\n\nStopped waiting for the sign-in to be approved.');
+            console.log('Run `happier auth login` again to create a new sign-in request.');
+        };
 
         let mode: 'status-claim' | 'legacy-post' = 'status-claim';
 
         while (!cancelled) {
+            if (waitExpired()) {
+                printWaitExpired();
+                return null;
+            }
             try {
                 const tryFinalizeWithTokenAndEncryptedResponse = async (token: string, responseB64: string): Promise<Credentials | null> => {
                     const r = decodeBase64(responseB64);
@@ -620,7 +617,11 @@ async function waitForAuthentication(params: Readonly<{
                 const legacyPollOnce = async (): Promise<
                     PostTerminalAuthRequestCompatibleResponse
                 > => {
-                    const data = await postTerminalAuthRequestCompatible({ publicKey, supportsV2: true });
+                    const data = await postTerminalAuthRequestCompatible({
+                        publicKey,
+                        supportsV2: true,
+                        timeoutMs: remainingRequestTimeoutMs(),
+                    });
                     return data;
                 };
 
@@ -636,6 +637,7 @@ async function waitForAuthentication(params: Readonly<{
                     try {
                         statusRes = await axios.get(`${configuration.apiServerUrl}/v1/auth/request/status`, {
                             params: { publicKey },
+                            timeout: remainingRequestTimeoutMs(),
                         });
                     } catch (e: any) {
                         const code = e?.response?.status;
@@ -664,7 +666,7 @@ async function waitForAuthentication(params: Readonly<{
                             const claimRes = await axios.post(`${configuration.apiServerUrl}/v1/auth/request/claim`, {
                                 publicKey,
                                 claimSecret: params.claimSecret,
-                            });
+                            }, { timeout: remainingRequestTimeoutMs() });
 
                             const claimData = claimRes?.data;
                             if (claimData?.state !== 'authorized') {
@@ -709,7 +711,16 @@ async function waitForAuthentication(params: Readonly<{
                     }
                 }
             } catch (error) {
+                if (waitExpired()) {
+                    printWaitExpired();
+                    return null;
+                }
                 console.log('\n\nFailed to check authentication status. Please try again.');
+                return null;
+            }
+
+            if (waitExpired()) {
+                printWaitExpired();
                 return null;
             }
 

@@ -63,6 +63,7 @@ export async function installOrUpdateRelayRuntimeDefault(
       ssh: SshConnectionConfig;
       knownHostsMode?: 'app' | 'system';
       installerBinaryPath?: string;
+      localBinaryPath?: string;
       remoteHomeDir?: string;
     }>) => Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>>;
   }> = {},
@@ -183,6 +184,7 @@ function buildRelayHostEngineDeps(params: Readonly<{
     ssh: SshConnectionConfig;
     knownHostsMode?: 'app' | 'system';
     installerBinaryPath?: string;
+    localBinaryPath?: string;
     remoteHomeDir?: string;
   }>) => Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>>;
   localInstallPolicy?: RelayHostEngineDeps['localInstallPolicy'];
@@ -240,13 +242,14 @@ function buildRelayHostEngineDeps(params: Readonly<{
     },
     runRemoteText: async ({ ssh, remoteCommand, knownHostsMode }) => await runRemoteTextCapture(ssh, remoteCommand, knownHostsMode),
     copyLocalDirectoryToRemote: async ({ ssh, localPath, remotePath, knownHostsMode }) => await copyLocalDirectoryToRemoteCapture({ ssh, localPath, remotePath, knownHostsMode }),
-    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, remoteHomeDir }) => {
+    installRemoteComponent: async ({ componentId, channel, ssh, knownHostsMode, installerBinaryPath, localBinaryPath, remoteHomeDir }) => {
       const result = await installRemoteFirstPartyComponent({
         componentId,
         channel,
         ssh,
         knownHostsMode,
         installerBinaryPath,
+        localBinaryPath,
         remoteHomeDir,
       });
       return {

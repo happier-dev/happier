@@ -16,8 +16,10 @@ import {
   argvValue,
   defaultNameFromUrl,
   defaultWebappUrlFromServerUrl,
+  isInteractiveTerminal,
   normalizeUrlOrThrow,
 } from '../server/commandUtilities';
+import { runServerSelectionBackgroundServiceFollowUp } from '../backgroundServiceFollowUp';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
@@ -186,6 +188,14 @@ async function cmdSet(args: string[], options: CmdSetOptions = {}): Promise<void
     console.log(chalk.gray(`= Relay unchanged: ${upserted.name} (${upserted.id})`));
   }
   console.log(chalk.gray(`  ${upserted.serverUrl}`));
+
+  // Saving a profile changes nothing for a running daemon; activating one does.
+  if (used) {
+    await runServerSelectionBackgroundServiceFollowUp({
+      interactive: isInteractiveTerminal(),
+      targetServerUrl: upserted.serverUrl,
+    });
+  }
 }
 
 function parseLocalChannelFlag(args: readonly string[]): Readonly<{ channel: 'stable' | 'preview' | 'dev' | null; rest: string[] }> {
