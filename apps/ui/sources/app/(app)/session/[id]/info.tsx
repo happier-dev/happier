@@ -528,7 +528,10 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             openSession: (childSessionId) => completeSessionForkNavigation({
                 childSessionId,
                 parentSessionId: session.id,
-                navigate: (targetSessionId) => { void navigateToSession(targetSessionId, { serverId: routeScope.serverId }); },
+                serverId: routeScope.serverId,
+                navigate: (targetSessionId, options) => {
+                    void navigateToSession(targetSessionId, { serverId: options?.serverId ?? routeScope.serverId });
+                },
             }),
         }),
         [navigateToSession, routeScope, session.id],
@@ -904,8 +907,8 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             replayEnabled: sessionReplayEnabled,
             executionRunsEnabled: executionRunsEnabled === true,
             agentSwitchingEnabled,
-            navigateToSession: (childSessionId) => {
-                void navigateToSession(childSessionId, { serverId: routeScope.serverId });
+            navigateToSession: (childSessionId, options) => {
+                void navigateToSession(childSessionId, { serverId: options?.serverId ?? sessionServerId ?? null });
             },
             navigateToNewSession: (route) => {
                 router.push(route as any);

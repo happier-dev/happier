@@ -1711,8 +1711,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             draft: launchIntentWithoutText,
             machineId: selectedMachineId,
             targetServerId: targetServerId ?? null,
+            sourceContext: sourceContextState.sourceContext,
         });
-    }, [currentAuthoringDraft, selectedMachineId, targetServerId]);
+    }, [currentAuthoringDraft, selectedMachineId, sourceContextState.sourceContext, targetServerId]);
     const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
     React.useEffect(() => {
         if (previousLaunchIntentSignatureRef.current === launchIntentSignature) return;

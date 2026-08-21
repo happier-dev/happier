@@ -50,10 +50,10 @@ const BANNER_PADDING_HORIZONTAL = 14;
 const BANNER_PADDING_VERTICAL = 10;
 
 /**
- * Visual control height. Deliberately compact: banners sit in the composer stack where a
- * full-height button would out-weigh the copy it belongs to. The tappable area is extended to the
- * platform minimum through `hitSlop` instead, so pointer devices keep a refined control and touch
- * devices still get a forgiving target.
+ * Visual control minimum height. Banners sit in the composer stack where a full-height button
+ * would out-weigh its copy, but a fixed height clips an action when the reader increases their
+ * text size. The tappable area is extended to the platform minimum through `hitSlop` instead, so
+ * pointer devices keep a refined control and touch devices still get a forgiving target.
  */
 const ACTION_HEIGHT = 28;
 const ACTION_TOUCH_TARGET = Platform.OS === 'android' ? 48 : 44;
@@ -71,10 +71,11 @@ const ACTION_RADIUS = COMPOSER_SURFACE_RADIUS - BANNER_PADDING_VERTICAL;
 const actionBaseStyle = {
     flexShrink: 0,
     maxWidth: '100%',
-    height: ACTION_HEIGHT,
+    minHeight: ACTION_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
+    paddingVertical: 4,
     borderRadius: ACTION_RADIUS,
 } as const satisfies ViewStyle;
 
@@ -114,6 +115,8 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
     return (
         <View
             testID={props.testID}
+            role={tone === 'warning' ? 'alert' : 'status'}
+            accessibilityLiveRegion={tone === 'warning' ? 'assertive' : 'polite'}
             onLayout={handleLayout}
             style={[
                 {

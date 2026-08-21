@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
     SPAWN_SESSION_ERROR_CODES,
     SPAWN_SESSION_ERROR_DETAIL_KINDS,
     type SpawnSessionResult,
@@ -20,12 +22,15 @@ function makeResumeUnreachableResult(): Extract<SpawnSessionResult, { type: 'err
             agentId: 'pi',
             reason: 'no_resumable_session_file',
             uxDiagnostic: {
-                code: 'provider_session_state_unavailable_for_resume',
+                code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
                 failurePhase: 'continuity',
                 source: 'spawn_resume',
                 agentId: 'pi',
                 retryable: false,
-                suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account'],
+                suggestedActions: [
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.startFreshUnderSelectedAccount,
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.resumeCurrentAccount,
+                ],
                 diagnostics: {
                     reason: 'no_resumable_session_file',
                 },
@@ -42,12 +47,15 @@ function makeGenericUxDiagnosticResult(): Extract<SpawnSessionResult, { type: 'e
         errorDetail: {
             kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_UX_DIAGNOSTIC,
             uxDiagnostic: {
-                code: 'connected_service_materialization_identity_missing',
+                code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
                 failurePhase: 'materialization',
                 source: 'spawn_resume',
                 agentId: 'codex',
                 retryable: false,
-                suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account'],
+                suggestedActions: [
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.startFreshUnderSelectedAccount,
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.resumeCurrentAccount,
+                ],
                 diagnostics: {
                     reason: 'missing_identity_and_resume_state',
                 },
@@ -64,12 +72,15 @@ function makeGenericRetryOnlyUxDiagnosticResult(): Extract<SpawnSessionResult, {
         errorDetail: {
             kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_UX_DIAGNOSTIC,
             uxDiagnostic: {
-                code: 'metadata_update_failed',
+                code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.metadataUpdateFailed,
                 failurePhase: 'metadata',
                 source: 'new_session',
                 agentId: 'codex',
                 retryable: true,
-                suggestedActions: ['retry', 'open_connected_accounts'],
+                suggestedActions: [
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
+                    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts,
+                ],
                 diagnostics: {
                     reason: 'metadata_update_failed',
                 },
@@ -103,14 +114,20 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         })).toBeNull();
     });
 
-    it('explains WHY using the concrete structured reason and exposes a start-fresh action', () => {
+    it('uses the canonical typed diagnostic copy and exposes a start-fresh action', () => {
         const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeResumeUnreachableResult());
         if (!presentation) throw new Error('expected a switch-unavailable presentation');
 
-        // The dialog carries the concrete machine-readable reason (so the explanation is grounded in
-        // WHY, not a generic failure), plus the agent id for context.
-        expect(presentation.reason).toBe('no_resumable_session_file');
-        expect(presentation.agentId).toBe('pi');
+        expect(presentation.titleKey).toBe(
+            'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
+        );
+        expect(presentation.bodyKey).toBe(
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
+        );
+        expect(presentation.bodyParams).toMatchObject({
+            reason: 'no_resumable_session_file',
+            agentId: 'pi',
+        });
 
         // It offers a distinct, recognizable "start fresh under the new account" action alongside a
         // cancel/dismiss action — asserted by structural action ids, not display copy.
@@ -118,35 +135,19 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         expect(actionKinds).toContain('start_fresh');
         expect(actionKinds).toContain('dismiss');
 
-        // Title + explanatory body are addressed via i18n keys (we assert keys, not English copy).
-        expect(typeof presentation.titleKey).toBe('string');
-        expect(typeof presentation.bodyKey).toBe('string');
-        expect(presentation.titleKey.length).toBeGreaterThan(0);
-        expect(presentation.bodyKey.length).toBeGreaterThan(0);
-    });
-
-    it('passes the structured reason and agent id as body interpolation params', () => {
-        const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeResumeUnreachableResult());
-        if (!presentation) throw new Error('expected a switch-unavailable presentation');
-
-        // The explanatory body interpolates the concrete reason + agent so the user sees WHY the
-        // switch could not continue, not just that it failed.
-        expect(presentation.bodyParams).toMatchObject({
-            reason: 'no_resumable_session_file',
-            agentId: 'pi',
-        });
     });
 
     it('renders generic connected-service UX diagnostic spawn details through the shared presentation owner', () => {
         const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeGenericUxDiagnosticResult());
         if (!presentation) throw new Error('expected a switch-unavailable presentation');
 
-        expect(presentation.reason).toBe('missing_identity_and_resume_state');
-        expect(presentation.agentId).toBe('codex');
-        expect(presentation.bodyParams).toMatchObject({
-            reason: 'missing_identity_and_resume_state',
-            agentId: 'codex',
-        });
+        expect(presentation.titleKey).toBe(
+            'connectedServices.diagnostics.title.connected_service_materialization_identity_missing',
+        );
+        expect(presentation.bodyKey).toBe(
+            'connectedServices.diagnostics.body.connected_service_materialization_identity_missing',
+        );
+        expect(presentation.bodyParams).toBeUndefined();
         expect(presentation.actions.map((action) => action.kind)).toEqual(['start_fresh', 'dismiss']);
     });
 

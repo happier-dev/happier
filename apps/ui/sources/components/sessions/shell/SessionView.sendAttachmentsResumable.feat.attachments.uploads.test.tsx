@@ -288,7 +288,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
         ...actual,
-        continueSessionWithReplay: vi.fn(),
         sessionAbort: vi.fn(),
         resumeSession: (...args: any[]) => resumeSessionSpy(...args),
         sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
@@ -635,6 +634,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         draftHookState.valuesBySessionId.clear();
         clearSessionAttachmentDrafts('s1');
         clearSessionDraftValues(TEST_SERVER_ACCOUNT_SCOPE, 's1', { lifecycle: 'composerCleared' });
+        // Neither half of the armed composer decision clears on a composer
+        // clear, by design; a Session-delete lifecycle is what takes them both.
+        clearSessionDraftValues(TEST_SERVER_ACCOUNT_SCOPE, 's1', { lifecycle: 'sessionDeleted' });
     });
 
     it('restores unsent attachment drafts when the session input remounts', async () => {
@@ -2317,6 +2319,209 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 // owners that already publish it — no status operation of its own.
                 expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ forceRefresh: true }));
                 expect(refreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        /**
+         * A text send through the armed destination, so the composer's own draft
+         * — the thing a remount leaves sendable — is what the case observes.
+         */
+        async function sendArmedText(result: unknown, text: string) {
+            modalAlertSpy.mockClear();
+            armSecondAgent();
+            runSessionAgentTransitionSpy.mockImplementationOnce(async () => result as any);
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            pendingFireAndForget.length = 0;
+            if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+            const agentInput = findTestInstanceByTypeWithProps(screen.tree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', text, 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            for (const pending of [...pendingFireAndForget]) await pending;
+            return screen;
+        }
+
+        function readPersistedSubmission() {
+            return readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.agentContinuationSubmission',
+            );
+        }
+
+        // The whole point. An unestablished outcome leaves the draft in the
+        // composer on purpose, and every guard that stops it becoming a SECOND
+        // logical message — the notice, the send block, and the retained
+        // identity — lived in state a remount threw away.
+        it('carries an unestablished switch across a remount instead of leaving the draft sendable', async () => {
+            // Reconciliation reads canonical facts through the owners that
+            // already publish them; holding that read open is the window the
+            // reader can leave the Session in — and the one the composer must
+            // still be held in when they come back.
+            ensureSessionVisibleSpy.mockImplementation((() => new Promise(() => {})) as never);
+            const first = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                expect(first.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(draftHookState.valuesBySessionId.get('s1')).toBe('switch and send this');
+                expect(readPersistedSubmission()).toMatchObject({
+                    localId: 'armed-local-id',
+                    submittedText: 'switch and send this',
+                    result: { type: 'outcome_unknown' },
+                    reconciled: false,
+                });
+            } finally {
+                act(() => { first.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+
+            // Navigating away and back is a fresh mount: nothing in memory survives.
+            runSessionAgentTransitionSpy.mockClear();
+            sendMessageSpy.mockClear();
+            enqueuePendingMessageSpy.mockClear();
+            const second = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            try {
+                expect(second.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(second.findAllByTestId('session.agentTransitionOutcome.banner').length)
+                    .toBeGreaterThan(0);
+                // The record survived with the identity a retry must reuse.
+                expect(readPersistedSubmission()).toMatchObject({ localId: 'armed-local-id' });
+
+                // And the still-visible draft cannot leave as a NEW logical
+                // message while nothing has established whether it already went.
+                const agentInput = findTestInstanceByTypeWithProps(second.tree!, 'AgentInput' as any, {}) as any;
+                await act(async () => {
+                    invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+                });
+                for (const pending of [...pendingFireAndForget]) await pending;
+                expect(sendMessageSpy).not.toHaveBeenCalled();
+                expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+                expect(runSessionAgentTransitionSpy).not.toHaveBeenCalled();
+                // The refusal is visible rather than silent: the banner already
+                // on screen is re-expanded rather than replaced by a restatement.
+                expect(second.findAllByTestId('session.agentTransitionOutcome.banner').length)
+                    .toBeGreaterThan(0);
+            } finally {
+                act(() => { second.tree?.unmount(); });
+                ensureSessionVisibleSpy.mockImplementation((async () => ({ kind: 'available' })) as never);
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // The narrower half: the answer that resolves an unestablished switch
+        // routinely arrives after the call returned. Taking the notice down
+        // while leaving the message in the composer is the same duplicate one
+        // tap away.
+        it('compare-clears the unchanged submitted draft when custody only lands later', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                expect(screen.getTextContent()).toContain('session.agentContinuation.transition.unknown');
+                expect(draftHookState.valuesBySessionId.get('s1')).toBe('switch and send this');
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(draftHookState.valuesBySessionId.get('s1')).toBe('');
+                // The arm goes with the draft: this depth spends the switch.
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                expect(readPersistedSubmission()).toBeUndefined();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // A draft the reader has since rewritten is not the submitted one, and
+        // taking it away would destroy work to tidy up a banner.
+        it('leaves an edited draft alone when custody of the submitted one lands', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                const agentInput = findTestInstanceByTypeWithProps(screen.tree!, 'AgentInput' as any, {}) as any;
+                await act(async () => {
+                    invokeTestInstanceHandler(agentInput, 'onChangeText', 'a different message', 'AgentInput');
+                });
+
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(draftHookState.valuesBySessionId.get('s1')).toBe('a different message');
+                // The rewritten text is a new message, so canonical custody
+                // must spend the original arm/localId without clearing it.
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not clear a newer same-target arm when the previous transition reaches custody', async () => {
+            const screen = await sendArmedText(
+                { type: 'outcome_unknown', localId: 'armed-local-id' },
+                'switch and send this',
+            );
+            try {
+                // The reader disarmed and selected the same target again. Its
+                // intent happens to compare equal, but its localId names a new
+                // transition and must not be spent by the old one's custody.
+                armedContinuationState.localId = 'newer-armed-local-id';
+                syncPendingRowForLocalId('armed-local-id');
+
+                expect(clearArmedContinuationSpy).not.toHaveBeenCalled();
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        // Restoration re-validates, exactly as a restored arm does. A record
+        // whose Session has since answered it must not come back as a banner
+        // pointing at a resolved transition, still less as a send block.
+        it('clears a persisted switch the Session has already answered instead of resurrecting it', async () => {
+            sessionPendingStoreState.current = {
+                s1: {
+                    messages: [{ source: 'server_pending', localId: 'armed-local-id' }],
+                    discarded: [],
+                    isLoaded: true,
+                },
+            };
+            writeSessionDraftValue(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.agentContinuationSubmission', {
+                localId: 'armed-local-id',
+                intent: {
+                    v: 1,
+                    mode: 'same_session',
+                    sourceAgentId: 'codex',
+                    selection: { v: 1, agentId: 'claude' },
+                },
+                result: { type: 'outcome_unknown', localId: 'armed-local-id' },
+                submittedText: 'switch and send this',
+                reconciled: true,
+            });
+
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            try {
+                expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
+                expect(readPersistedSubmission()).toBeUndefined();
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

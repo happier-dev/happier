@@ -79,6 +79,45 @@ describe('SessionWarningActionBanner', () => {
         expect(onSecondary).toHaveBeenCalledTimes(1);
     });
 
+    it('announces warnings urgently and neutral notices politely through the banner itself', async () => {
+        const { SessionWarningActionBanner } = await import('./SessionWarningActionBanner');
+
+        const warning = await renderScreen(
+            <SessionWarningActionBanner testID="warning" title="Limit reached" />,
+        );
+        const neutral = await renderScreen(
+            <SessionWarningActionBanner testID="neutral" tone="neutral" title="No action needed" />,
+        );
+
+        expect(warning.findByTestId('warning')?.props).toMatchObject({
+            role: 'alert',
+            accessibilityLiveRegion: 'assertive',
+        });
+        expect(neutral.findByTestId('neutral')?.props).toMatchObject({
+            role: 'status',
+            accessibilityLiveRegion: 'polite',
+        });
+    });
+
+    it('lets a large-text action grow instead of clipping it at the compact visual height', async () => {
+        const { SessionWarningActionBanner } = await import('./SessionWarningActionBanner');
+
+        const screen = await renderScreen(
+            <SessionWarningActionBanner
+                testID="warning"
+                actionTestID="warning-primary"
+                title="Limit reached"
+                actionLabel="Resume when the provider allows this session to continue"
+                onActionPress={vi.fn()}
+            />,
+        );
+
+        const actionStyle = flattenStyle(screen.findByTestId('warning-primary')?.props.style({ pressed: false }));
+        expect(actionStyle.height).toBeUndefined();
+        expect(actionStyle.minHeight).toBe(28);
+        expect(actionStyle.paddingVertical).toBeGreaterThan(0);
+    });
+
     it('keeps action buttons to the right of the warning copy on desktop', async () => {
         const { SessionWarningActionBanner } = await import('./SessionWarningActionBanner');
 

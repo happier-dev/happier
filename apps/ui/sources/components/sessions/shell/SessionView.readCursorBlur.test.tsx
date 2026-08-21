@@ -204,7 +204,6 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 vi.mock('@/sync/ops', () => ({
-    continueSessionWithReplay: vi.fn(),
     sessionAbort: vi.fn(),
     resumeSession: vi.fn(),
     sessionAttachmentsUploadFile: vi.fn(),

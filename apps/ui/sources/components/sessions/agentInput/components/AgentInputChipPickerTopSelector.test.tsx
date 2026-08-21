@@ -113,6 +113,8 @@ describe('AgentInputChipPickerTopSelector', () => {
         const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
         expect(codexStyle.width).toBe(36);
         expect(codexStyle.height).toBe(36);
+        expect(codexStyle.minWidth).toBeGreaterThanOrEqual(44);
+        expect(codexStyle.minHeight).toBeGreaterThanOrEqual(44);
         expect(codexStyle.backgroundColor).toEqual(expect.any(String));
         expect(Boolean(codexStyle.boxShadow || codexStyle.elevation)).toBe(true);
         expect(claudeStyle.backgroundColor).toBe('transparent');

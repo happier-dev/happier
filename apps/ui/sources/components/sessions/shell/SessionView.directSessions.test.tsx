@@ -567,7 +567,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    continueSessionWithReplay: vi.fn(),
     sessionAbort: vi.fn(),
     resumeSession: resumeSessionSpy,
     sessionAttachmentsUploadFile: vi.fn(),

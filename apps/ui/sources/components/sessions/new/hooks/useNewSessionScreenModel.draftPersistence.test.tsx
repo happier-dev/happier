@@ -167,6 +167,41 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         );
     });
 
+    it('treats the source-context recipe as part of the new-session launch intent', async () => {
+        searchParamsState.value = { dataId: 'source-context-a' };
+        const sourceContextA = {
+            v: 1 as const,
+            kind: 'session_replay' as const,
+            sourceSessionId: 'source-session-a',
+            forkPoint: { type: 'seq' as const, upToSeqInclusive: 12 },
+        };
+        tempSessionDataState.value = {
+            sourceContext: sourceContextA,
+            sourceContextServerId: 'server-a',
+        };
+
+        const hook = await renderNewSessionScreenModel(() => {});
+        const signatureForSourceA = useCreateNewSessionArgsRef.current?.launchIntentSignature;
+        expect(signatureForSourceA).toEqual(expect.any(String));
+        expect(JSON.parse(signatureForSourceA as string)).toMatchObject({ sourceContext: sourceContextA });
+
+        searchParamsState.value = { dataId: 'source-context-b' };
+        const sourceContextB = {
+            ...sourceContextA,
+            sourceSessionId: 'source-session-b',
+        };
+        tempSessionDataState.value = {
+            sourceContext: sourceContextB,
+            sourceContextServerId: 'server-a',
+        };
+        await hook.rerender();
+
+        const signatureForSourceB = useCreateNewSessionArgsRef.current?.launchIntentSignature;
+        expect(signatureForSourceB).toEqual(expect.any(String));
+        expect(signatureForSourceB).not.toBe(signatureForSourceA);
+        expect(JSON.parse(signatureForSourceB as string)).toMatchObject({ sourceContext: sourceContextB });
+    });
+
     it('hydrates the persisted target server when no route server is selected', async () => {
         targetServerState.allowedTargetServerIds = ['server-a', 'server-b'];
         persistedDraft.targetServerId = 'server-b';

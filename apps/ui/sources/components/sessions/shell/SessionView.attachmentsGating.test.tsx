@@ -266,7 +266,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
   return createSyncOpsModuleMock({
     importOriginal,
     overrides: {
-      continueSessionWithReplay: vi.fn(),
       sessionAbort: (...args: unknown[]) => sessionAbortMock(...args),
       resumeSession: vi.fn(),
       sessionAttachmentsUploadFile: vi.fn(),

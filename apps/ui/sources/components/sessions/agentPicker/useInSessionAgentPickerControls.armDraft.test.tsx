@@ -100,6 +100,7 @@ type HookProps = Readonly<{
     currentAgentId?: string | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     featureEnabled?: boolean;
+    machine?: SessionAgentContinuationMachineTarget;
     source?: SessionAgentContinuationSourceState;
 }>;
 
@@ -113,7 +114,7 @@ async function renderControls(props: HookProps = {}) {
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
         featureEnabled: hookProps.featureEnabled ?? true,
         source: hookProps.source ?? supportedSource,
-        machine: onlineMachine,
+        machine: hookProps.machine ?? onlineMachine,
         detail: {
             settings: {} as never,
             capabilityServerId: 'server-1',
@@ -157,6 +158,20 @@ function armedIntentFor(targetAgentId: string) {
         mode: 'same_session' as const,
         sourceAgentId: 'claude',
         selection: { v: 1 as const, agentId: targetAgentId },
+    };
+}
+
+function createDeferred<T>() {
+    let resolvePromise: ((value: T | PromiseLike<T>) => void) | null = null;
+    const promise = new Promise<T>((resolve) => {
+        resolvePromise = resolve;
+    });
+    return {
+        promise,
+        resolve(value: T) {
+            if (resolvePromise === null) throw new Error('Deferred promise was not initialized');
+            resolvePromise(value);
+        },
     };
 }
 
@@ -335,6 +350,63 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         const hook = await renderControls();
 
         expect(hook.getCurrent().armedContinuationModelLabel).toBe('GPT-5');
+    });
+
+    it('keeps an arm through a daemon reinspection that remains eligible', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'builtInAgent:codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        expect(localId).toEqual(expect.any(String));
+        const reinspection = createDeferred<typeof AVAILABLE>();
+        machineRpcWithServerScope.mockImplementationOnce(() => reinspection.promise);
+
+        await hook.rerender({ machine: { ...onlineMachine, daemonGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
+
+        // A changed daemon invalidates the old answer, not the reader's choice.
+        // The choice stays armed until the replacement answer establishes it is
+        // no longer honourable.
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+
+        await act(async () => {
+            reinspection.resolve(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+    });
+
+    it('clears an arm only after a reconnect reinspection settles unavailable', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'builtInAgent:codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        expect(localId).toEqual(expect.any(String));
+        const reinspection = createDeferred<typeof UNSUPPORTED>();
+        machineRpcWithServerScope.mockImplementationOnce(() => reinspection.promise);
+
+        await hook.rerender({ machine: { ...onlineMachine, connectionGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
+
+        // `checking` is not evidence the arm is stale. Clearing here loses the
+        // user's target while the new runtime pair is simply answering.
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+        expect(readPersistedArm()).toBeDefined();
+
+        await act(async () => {
+            reinspection.resolve(UNSUPPORTED);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
+        expect(readPersistedArm()).toBeUndefined();
     });
 
     it('drops the persisted arm with the live one when the rail that could cancel it goes', async () => {

@@ -413,21 +413,29 @@ export function useInSessionAgentPickerControls(
         ? railLatchRef.current.decided === true
         : railOffersRowsNow;
 
+    // UI rail visibility and arm validity deliberately diverge during a fresh
+    // inspection. A changed runtime pair turns every cached answer into
+    // `checking`; that is not proof an existing choice is stale. Preserve an arm
+    // until the replacement inspection settles, then keep it only when the rail
+    // can still offer its cancellation gesture.
+    const armMayRemain = !railDecisionSettled || railOffersRowsNow;
+
     // An armed choice belongs to one Session, one running Agent, one open feature
-    // gate, and one live rail. If any of them changes underneath the composer the
-    // intent is stale and must not silently survive — the submit path reads this
-    // value and nothing else, so an arm that outlives a closing gate is the gate
-    // bypassed.
+    // gate, and one settled rail decision. If any established fact changes
+    // underneath the composer the intent is stale and must not silently survive —
+    // the submit path reads this value and nothing else, so an arm that outlives a
+    // closing gate is the gate bypassed.
     //
-    // The rail belongs in that scope because selection IS arming: there is no
-    // confirm step, so re-selecting the running Agent's row is the only gesture
-    // that cancels, and that row only carries it while the rail is offered. An arm
-    // that outlived the rail would be an arm with no way out — the send control
+    // Once that decision settles, the rail belongs in this scope because selection
+    // IS arming: there is no confirm step, so re-selecting the running Agent's row
+    // is the only gesture that cancels. Pending reinspection is deliberately not a
+    // lost gesture; it only hides the rows until the machine answers. An arm that
+    // outlived a settled no-rail result would have no way out — the send control
     // still promises "Continue with {Agent}", every ordinary send is re-routed
     // into a transition the machine now refuses, and a refusal deliberately KEEPS
     // the arm, so not even sending clears it. Leaving the Session was the only
     // escape.
-    const armScopeKey = `${featureEnabled ? 'on' : 'off'}:${railOffersRows ? 'rail' : 'norail'}:${sessionId} ${source.currentBackendTargetKey ?? ''}`;
+    const armScopeKey = `${featureEnabled ? 'on' : 'off'}:${armMayRemain ? 'rail' : 'norail'}:${sessionId} ${source.currentBackendTargetKey ?? ''}`;
     const armScopeKeyRef = React.useRef(armScopeKey);
     // A render may not write to storage, so the invalidation records the fact and
     // the reconciler below takes the persisted half away with the live one.

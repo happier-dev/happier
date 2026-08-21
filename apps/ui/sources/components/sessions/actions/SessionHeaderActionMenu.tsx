@@ -247,10 +247,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       openSession: (childSessionId: string) => completeSessionForkNavigation({
         childSessionId,
         parentSessionId: props.sessionId,
-        navigate: (targetSessionId) => { void navigateToSession(targetSessionId); },
+        serverId: sessionServerId ?? null,
+        navigate: (targetSessionId, options) => {
+          void navigateToSession(targetSessionId, { serverId: options?.serverId ?? sessionServerId ?? null });
+        },
       }),
     }),
-    [navigateToSession, props.sessionId],
+    [navigateToSession, props.sessionId, sessionServerId],
   );
   const teleportAvailability = React.useMemo(
     () => getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId }),
@@ -492,8 +495,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               replayEnabled: sessionReplayEnabled,
               executionRunsEnabled: executionRunsEnabled === true,
               agentSwitchingEnabled,
-              navigateToSession: (childSessionId) => {
-                void navigateToSession(childSessionId);
+              navigateToSession: (childSessionId, options) => {
+                void navigateToSession(childSessionId, { serverId: options?.serverId ?? sessionServerId ?? null });
               },
               navigateToNewSession: (route) => {
                 router.push(route as any);
