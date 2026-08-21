@@ -86,6 +86,12 @@ export type FloatingTabBarSurfaceProps = Readonly<{
     children: React.ReactNode;
     bottomInset: number;
     /**
+     * Gap between the capsule top and the content above the bar. Defaults to the
+     * standard float gap; a bar that docks directly beneath fixed content (the
+     * session composer's status row) passes a tighter gap.
+     */
+    topGap?: number;
+    /**
      * The bar sits on an opaque reserved band (in-flow cockpit chrome). The band
      * itself is painted by the chrome host so it can fade independently; this flag
      * only softens the cast shadow, which reads too strong over the opaque band.
@@ -126,7 +132,7 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
     return (
         <View
             pointerEvents="box-none"
-            style={[styles.positioner, { paddingBottom: bottomPadding }]}
+            style={[styles.positioner, { paddingTop: props.topGap ?? FLOATING_TOP_GAP, paddingBottom: bottomPadding }]}
         >
             {props.trailingAccessory == null ? bar : (
                 // Three cells: two equal flexible sides with the bar between them, so the bar stays

@@ -658,6 +658,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: 8,
         paddingTop: 8,
     },
+    containerMobileBottomSpacing: {
+        paddingBottom: 0,
+    },
     innerContainer: {
         width: '100%',
         position: 'relative',
@@ -3281,6 +3284,115 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         </View>
     );
 
+    const hasStatusIndicators = Boolean(
+        props.connectionStatus || contextUsageState || props.providerUsageGauge || (props.statusBadges && props.statusBadges.length > 0),
+    );
+    const statusRowElement = hasStatusIndicators ? (
+        <>
+            <View style={[
+                styles.statusContainer,
+                isMobileLayoutWidth(screenWidth) ? { paddingBottom: 0, paddingTop: 4 } : undefined,
+            ]}>
+                <View style={styles.statusRow}>
+                    {props.connectionStatus && (
+                        <View style={styles.connectionStatusGroup}>
+                            <StatusDot
+                                color={props.connectionStatus.dotColor}
+                                isPulsing={props.connectionStatus.isPulsing}
+                                size={6}
+                                style={styles.statusDot}
+                            />
+                            <Text
+                                testID={AGENT_INPUT_TEST_IDS.connectionStatusText}
+                                style={[styles.statusText, { color: props.connectionStatus.color }]}
+                            >
+                                {props.connectionStatus.text}
+                            </Text>
+                        </View>
+                    )}
+                    {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
+                        <AgentInputStatusBadge
+                            key={key}
+                            anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
+                            onPress={renderPopover
+                                ? () => {
+                                    setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
+                                    onPress?.();
+                                }
+                                : onPress}
+                            renderPopover={renderPopover}
+                            {...badge}
+                        />
+                    ))}
+                </View>
+                <View testID="agent-input-status-trailing" style={styles.statusTrailing}>
+                    <View style={[
+                        styles.permissionModeContainer,
+                        (contextUsageState || props.providerUsageGauge) ? { marginRight: 8 } : null,
+                    ]}>
+                        {shouldRenderPermissionChip(permissionChipLabel) ? (
+                            <Text
+                                style={[
+                                    styles.permissionModeText,
+                                    {
+                                        color: effectivePermissionPolicy.effectiveMode === 'acceptEdits' ? theme.colors.permission.acceptEdits :
+                                            effectivePermissionPolicy.effectiveMode === 'bypassPermissions' ? theme.colors.permission.bypass :
+                                                effectivePermissionPolicy.effectiveMode === 'plan' ? theme.colors.permission.plan :
+                                                    effectivePermissionPolicy.effectiveMode === 'read-only' ? theme.colors.permission.readOnly :
+                                                        effectivePermissionPolicy.effectiveMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
+                                                            effectivePermissionPolicy.effectiveMode === 'yolo' ? theme.colors.permission.yolo :
+                                                                theme.colors.text.secondary,
+                                    },
+                                ]}
+                            >
+                                {permissionChipLabel}
+                            </Text>
+                        ) : null}
+                    </View>
+                    {(() => {
+                        const showOnlyOneGauge = screenWidth < 375 && Boolean(contextUsageState && props.providerUsageGauge);
+                        const providerIsMoreUrgent = props.providerUsageGauge?.tone === 'critical'
+                            || (props.providerUsageGauge?.tone === 'warning' && contextUsageState?.severity !== 'critical');
+                        const showProviderGauge = Boolean(props.providerUsageGauge) && (!showOnlyOneGauge || providerIsMoreUrgent);
+                        const showContextGauge = Boolean(contextUsageState) && (!showOnlyOneGauge || !providerIsMoreUrgent);
+                        const hiddenContextUsageState = showOnlyOneGauge && !showContextGauge ? contextUsageState : null;
+                        const hiddenProviderUsageGauge = showOnlyOneGauge && !showProviderGauge ? props.providerUsageGauge : null;
+                        const showHiddenGaugeOverflow = Boolean(hiddenContextUsageState || hiddenProviderUsageGauge);
+                        return (
+                            <>
+                                {showContextGauge && contextUsageState ? (
+                                    <AgentInputContextUsageBadge state={contextUsageState} />
+                                ) : null}
+                                {showProviderGauge && props.providerUsageGauge ? (
+                                    <AgentInputProviderUsageBadge
+                                        viewModel={props.providerUsageGauge}
+                                        marginLeft={showContextGauge ? 8 : 0}
+                                        onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
+                                        recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
+                                    />
+                                ) : null}
+                                {showHiddenGaugeOverflow ? (
+                                    <AgentInputHiddenUsageOverflow
+                                        contextUsageState={hiddenContextUsageState}
+                                        providerUsageGauge={hiddenProviderUsageGauge}
+                                        onProviderUsageRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
+                                        providerUsageRecoveryCreditPending={props.providerUsageRecoveryCreditPending}
+                                        marginLeft={(showContextGauge || showProviderGauge) ? 8 : 0}
+                                    />
+                                ) : null}
+                            </>
+                        );
+                    })()}
+                </View>
+            </View>
+            {activeStatusBadge?.renderPopover?.({
+                open: true,
+                anchorRef: statusBadgeAnchorRef,
+                onRequestClose: closeStatusBadgePopover,
+            })}
+        </>
+    ) : null;
+
     return (
         <SyncPerformanceReactProfiler id="sessions.agentInput">
             <View
@@ -3292,6 +3404,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 style={[
                     styles.container,
                     { paddingHorizontal: props.contentPaddingHorizontal ?? (screenWidth > 700 ? 16 : 8) },
+                    // On phone layouts the status row is the lowest composer element and the
+                    // floating cockpit bar floats its capsule directly beneath it — the bar owns
+                    // the whole gap (its topGap), so the container adds no extra bottom padding.
+                    isMobileLayoutWidth(screenWidth) ? styles.containerMobileBottomSpacing : null,
                 ]}
             >
                 <View style={[
@@ -3393,106 +3509,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     testID="agent-input-command-menu"
                 />
                 {/* Connection status, context usage, and permission mode */}
-                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || (props.statusBadges && props.statusBadges.length > 0)) && (
-                    <View style={styles.statusContainer}>
-                        <View style={styles.statusRow}>
-                            {props.connectionStatus && (
-                                <View style={styles.connectionStatusGroup}>
-                                    <StatusDot
-                                        color={props.connectionStatus.dotColor}
-                                        isPulsing={props.connectionStatus.isPulsing}
-                                        size={6}
-                                        style={styles.statusDot}
-                                    />
-                                    <Text
-                                        testID={AGENT_INPUT_TEST_IDS.connectionStatusText}
-                                        style={[styles.statusText, { color: props.connectionStatus.color }]}
-                                    >
-                                        {props.connectionStatus.text}
-                                    </Text>
-                                </View>
-                            )}
-                            {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
-                                <AgentInputStatusBadge
-                                    key={key}
-                                    anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
-                                    onPress={renderPopover
-                                        ? () => {
-                                            setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
-                                            onPress?.();
-                                        }
-                                        : onPress}
-                                    renderPopover={renderPopover}
-                                    {...badge}
-                                />
-                            ))}
-                        </View>
-                        <View testID="agent-input-status-trailing" style={styles.statusTrailing}>
-                            <View style={[
-                                styles.permissionModeContainer,
-                                (contextUsageState || props.providerUsageGauge) ? { marginRight: 8 } : null,
-                            ]}>
-                                {shouldRenderPermissionChip(permissionChipLabel) ? (
-                                    <Text
-                                        style={[
-                                            styles.permissionModeText,
-                                            {
-                                                color: effectivePermissionPolicy.effectiveMode === 'acceptEdits' ? theme.colors.permission.acceptEdits :
-                                                    effectivePermissionPolicy.effectiveMode === 'bypassPermissions' ? theme.colors.permission.bypass :
-                                                        effectivePermissionPolicy.effectiveMode === 'plan' ? theme.colors.permission.plan :
-                                                            effectivePermissionPolicy.effectiveMode === 'read-only' ? theme.colors.permission.readOnly :
-                                                                effectivePermissionPolicy.effectiveMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
-                                                                    effectivePermissionPolicy.effectiveMode === 'yolo' ? theme.colors.permission.yolo :
-                                                                        theme.colors.text.secondary, // Use secondary text color for default
-                                            },
-                                        ]}
-                                    >
-                                        {permissionChipLabel}
-                                    </Text>
-                                ) : null}
-                            </View>
-                            {(() => {
-                                const showOnlyOneGauge = screenWidth < 375 && Boolean(contextUsageState && props.providerUsageGauge);
-                                const providerIsMoreUrgent = props.providerUsageGauge?.tone === 'critical'
-                                    || (props.providerUsageGauge?.tone === 'warning' && contextUsageState?.severity !== 'critical');
-                                const showProviderGauge = Boolean(props.providerUsageGauge) && (!showOnlyOneGauge || providerIsMoreUrgent);
-                                const showContextGauge = Boolean(contextUsageState) && (!showOnlyOneGauge || !providerIsMoreUrgent);
-                                const hiddenContextUsageState = showOnlyOneGauge && !showContextGauge ? contextUsageState : null;
-                                const hiddenProviderUsageGauge = showOnlyOneGauge && !showProviderGauge ? props.providerUsageGauge : null;
-                                const showHiddenGaugeOverflow = Boolean(hiddenContextUsageState || hiddenProviderUsageGauge);
-                                return (
-                                    <>
-                                        {showContextGauge && contextUsageState ? (
-                                            <AgentInputContextUsageBadge state={contextUsageState} />
-                                        ) : null}
-                                        {showProviderGauge && props.providerUsageGauge ? (
-                                            <AgentInputProviderUsageBadge
-                                                viewModel={props.providerUsageGauge}
-                                                marginLeft={showContextGauge ? 8 : 0}
-                                                onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
-                                                recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
-                                            />
-                                        ) : null}
-                                        {showHiddenGaugeOverflow ? (
-                                            <AgentInputHiddenUsageOverflow
-                                                contextUsageState={hiddenContextUsageState}
-                                                providerUsageGauge={hiddenProviderUsageGauge}
-                                                onProviderUsageRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
-                                                providerUsageRecoveryCreditPending={props.providerUsageRecoveryCreditPending}
-                                                marginLeft={(showContextGauge || showProviderGauge) ? 8 : 0}
-                                            />
-                                        ) : null}
-                                    </>
-                                );
-                            })()}
-                        </View>
-                    </View>
-                )}
-                {activeStatusBadge?.renderPopover?.({
-                    open: true,
-                    anchorRef: statusBadgeAnchorRef,
-                    onRequestClose: closeStatusBadgePopover,
-                })}
+                {isMobileLayoutWidth(screenWidth) ? null : statusRowElement}
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <View style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}>
@@ -3564,6 +3581,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     )}
                 </WebDropTargetView>
                 </View>
+                {/* On mobile, status row renders below the composer to extend chat space. */}
+                {isMobileLayoutWidth(screenWidth) ? statusRowElement : null}
                 </View>
             </View>
         </SyncPerformanceReactProfiler>

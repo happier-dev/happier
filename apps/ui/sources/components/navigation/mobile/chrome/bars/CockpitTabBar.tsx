@@ -14,6 +14,11 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 import { resolveSessionLateralSwipeTabRowOpacity } from '../lateralSwipe/sessionLateralSwipeMotion';
 
+// The session cockpit bar docks directly beneath the composer's status row on the
+// chat surface; the standard float gap reads as a dead band at that fixed-content
+// junction, so this bar floats just clear of whatever sits above it instead.
+const COCKPIT_TAB_BAR_TOP_GAP_PX = 2;
+
 const styles = StyleSheet.create((theme) => ({
     innerContainer: {
         flexDirection: 'row',
@@ -118,7 +123,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
     );
 
     return (
-        <FloatingTabBarSurface testID={props.barTestId} bottomInset={insets.bottom} opaqueBand>
+        <FloatingTabBarSurface testID={props.barTestId} bottomInset={insets.bottom} topGap={COCKPIT_TAB_BAR_TOP_GAP_PX} opaqueBand>
             <Animated.View style={[styles.innerContainer, { gap: metrics.rowGap }, rowStyle]}>
                 {props.tabs.map((tab) => {
                     const active = tab.id === props.activeSurface;
