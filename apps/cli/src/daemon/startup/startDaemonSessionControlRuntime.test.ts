@@ -3935,7 +3935,23 @@ describe('startDaemonSessionControlRuntime', () => {
         await runtime.stopControlServer();
     });
 
-    it('fences Resume before runner launch when startup preserved unresolved terminal topology', async () => {
+    it('repairs dead unresolved terminal topology through the canonical Stop owner before Resume', async () => {
+        const originalCreateSessionRunnerRespawnManager =
+            sessionRunnerRespawnModule.createSessionRunnerRespawnManager;
+        const markStopRequested = vi.fn();
+        const managerSpy = vi.spyOn(
+            sessionRunnerRespawnModule,
+            'createSessionRunnerRespawnManager',
+        ).mockImplementation((params) => {
+            const manager = originalCreateSessionRunnerRespawnManager(params);
+            return {
+                ...manager,
+                markStopRequested: (...args) => {
+                    markStopRequested(...args);
+                    return manager.markStopRequested(...args);
+                },
+            };
+        });
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-terminal-recovery',
             credentials: {
@@ -3965,14 +3981,21 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
         });
 
-        await expect(runtime.spawnSession({
-            directory: '/tmp/project',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            existingSessionId: 'session-unresolved-terminal',
-        })).resolves.toMatchObject({ type: 'error' });
-        expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
-
-        await runtime.stopControlServer();
+        try {
+            await expect(runtime.spawnSession({
+                directory: '/tmp/project',
+                backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                existingSessionId: 'session-unresolved-terminal',
+            })).resolves.toEqual({ type: 'success', sessionId: 'spawned-session' });
+            expect(markStopRequested).toHaveBeenCalledWith(
+                'session-unresolved-terminal',
+                expect.objectContaining({ reason: 'daemon_stop_session' }),
+            );
+            expect(executeSpawnSessionRequest).toHaveBeenCalledTimes(1);
+        } finally {
+            await runtime.stopControlServer();
+            managerSpy.mockRestore();
+        }
     });
 
     it('retires an exact positively dead startup attachment before launching a fresh Resume', async () => {

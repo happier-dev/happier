@@ -2687,6 +2687,9 @@ export async function startDaemonSessionControlRuntime(
     };
     const disconnectedTerminalHostResumeLifecycle = createDisconnectedTerminalHostResumeLifecycle({
         unresolvedTerminalHostSessionIds,
+        clearUnresolvedTerminalHostSession: (sessionId) => {
+            unresolvedTerminalHostSessionIds.delete(sessionId);
+        },
         findDisconnectedCandidate: (sessionId) =>
             disconnectedTerminalHostCandidates.find(
                 (candidate) => candidate.sessionId === sessionId
@@ -2810,6 +2813,7 @@ export async function startDaemonSessionControlRuntime(
                 if (options.existingSessionId) {
                     const preGateResult = await disconnectedTerminalHostResumeLifecycle.resolveResumePreGate(
                         options.existingSessionId,
+                        async (sessionId) => await stopSession(sessionId),
                     );
                     if (preGateResult) {
                         return {

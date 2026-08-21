@@ -21,6 +21,7 @@ type StopLifecycleResult = Readonly<{
 
 export function createDisconnectedTerminalHostResumeLifecycle(input: Readonly<{
   unresolvedTerminalHostSessionIds: ReadonlySet<string>;
+  clearUnresolvedTerminalHostSession: (sessionId: string) => void;
   findDisconnectedCandidate: (sessionId: string) => DisconnectedTerminalHostCandidate | null;
   resolveResumeGateForCandidate: (candidate: DisconnectedTerminalHostCandidate) => Promise<ResumeGate>;
   retireCandidate: (input: RetireCandidateInput) => void;
@@ -31,7 +32,10 @@ export function createDisconnectedTerminalHostResumeLifecycle(input: Readonly<{
     waitForStop: async (sessionId: string): Promise<void> => {
       await barrier.wait(sessionId);
     },
-    resolveResumePreGate: async (existingSessionIdRaw: string): Promise<null | {
+    resolveResumePreGate: async (
+      existingSessionIdRaw: string,
+      repairUnresolvedTopology?: (sessionId: string) => Promise<StopSessionResult>,
+    ): Promise<null | {
       type: 'error';
       errorMessage: string;
     }> => {
@@ -39,10 +43,23 @@ export function createDisconnectedTerminalHostResumeLifecycle(input: Readonly<{
       if (!existingSessionId) return null;
       await barrier.wait(existingSessionId);
       if (input.unresolvedTerminalHostSessionIds.has(existingSessionId)) {
-        return {
-          type: 'error',
-          errorMessage: 'The existing session has preserved terminal topology that cannot be verified. Stop it explicitly before retrying resume.',
-        };
+        const repairResult = repairUnresolvedTopology
+          ? await repairUnresolvedTopology(existingSessionId)
+          : null;
+        if (
+          repairResult
+          && (
+            repairResult.status === 'not_found'
+            || isTerminalHostPhysicallyRetiredStopResult(repairResult)
+          )
+        ) {
+          input.clearUnresolvedTerminalHostSession(existingSessionId);
+        } else {
+          return {
+            type: 'error',
+            errorMessage: 'The existing session has preserved terminal topology that cannot be verified. Stop it explicitly before retrying resume.',
+          };
+        }
       }
       const disconnectedCandidate = input.findDisconnectedCandidate(existingSessionId);
       if (!disconnectedCandidate) return null;

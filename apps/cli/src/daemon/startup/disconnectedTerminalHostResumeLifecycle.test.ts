@@ -5,6 +5,44 @@ import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttach
 import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTerminalHostResumeLifecycle';
 
 describe('disconnected terminal-host resume lifecycle', () => {
+  it('repairs unresolved legacy topology through the supplied canonical stop owner before Resume', async () => {
+    const unresolved = new Set(['sess-unresolved']);
+    const repairUnresolvedTopology = async () => ({ status: 'not_found' as const });
+    const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
+      unresolvedTerminalHostSessionIds: unresolved,
+      clearUnresolvedTerminalHostSession: (sessionId) => unresolved.delete(sessionId),
+      findDisconnectedCandidate: () => null,
+      resolveResumeGateForCandidate: async () => ({ action: 'resume' }),
+      retireCandidate: () => {},
+    });
+
+    await expect(lifecycle.resolveResumePreGate(
+      'sess-unresolved',
+      repairUnresolvedTopology,
+    )).resolves.toBeNull();
+    expect(unresolved.has('sess-unresolved')).toBe(false);
+  });
+
+  it('keeps unresolved legacy topology fenced when the canonical stop owner cannot prove retirement', async () => {
+    const unresolved = new Set(['sess-unresolved']);
+    const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
+      unresolvedTerminalHostSessionIds: unresolved,
+      clearUnresolvedTerminalHostSession: (sessionId) => unresolved.delete(sessionId),
+      findDisconnectedCandidate: () => null,
+      resolveResumeGateForCandidate: async () => ({ action: 'resume' }),
+      retireCandidate: () => {},
+    });
+
+    await expect(lifecycle.resolveResumePreGate(
+      'sess-unresolved',
+      async () => ({ status: 'incomplete', reason: 'legacy_attachment' }),
+    )).resolves.toEqual({
+      type: 'error',
+      errorMessage: 'The existing session has preserved terminal topology that cannot be verified. Stop it explicitly before retrying resume.',
+    });
+    expect(unresolved.has('sess-unresolved')).toBe(true);
+  });
+
   it('waits for stop retirement before allowing a concurrent resume', async () => {
     const attachmentId = createTerminalAttachmentId();
     const candidates = [{
@@ -34,6 +72,7 @@ describe('disconnected terminal-host resume lifecycle', () => {
 
     const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
       unresolvedTerminalHostSessionIds: new Set(),
+      clearUnresolvedTerminalHostSession: () => {},
       findDisconnectedCandidate: (sessionId) =>
         candidates.find((candidate) =>
           candidate.sessionId === sessionId && !retired.has(candidate.attachmentId),
@@ -73,6 +112,7 @@ describe('disconnected terminal-host resume lifecycle', () => {
     let retired = false;
     const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
       unresolvedTerminalHostSessionIds: new Set(),
+      clearUnresolvedTerminalHostSession: () => {},
       findDisconnectedCandidate: () => retired ? null : {
         sessionId: 'sess-retirement-incomplete',
         pid: 7_002,
