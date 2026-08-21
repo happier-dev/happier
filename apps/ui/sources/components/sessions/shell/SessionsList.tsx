@@ -13,7 +13,6 @@ import { SessionListVirtualizedList } from '@/components/ui/lists/flashListCompa
 import { usePathname, useRouter } from 'expo-router';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { SessionListViewItem, storage, useSetting } from '@/sync/domains/state/storage';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -33,7 +32,6 @@ import {
     type SessionListOrderingSectionMode,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import { isSessionListWorkingPlacementReason } from '@/sync/domains/session/listing/placement/sessionListPlacementProjection';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
     setSessionAttentionStanding,
     setSessionFolderAssignment,
@@ -156,6 +154,13 @@ import {
 import { SessionListSelectionActionBarHost } from './selection/SessionListSelectionActionBar';
 import { Icon } from '@/components/ui/icons/Icon';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
+
+const BULK_MUTATION_SCOPE_REQUIREMENT_BY_REASON = {
+    'server-id': 'a server id',
+    'server-profile': 'an available server profile',
+    credentials: 'server credentials',
+} as const;
 
 export { ProjectGroupHeader } from './ProjectGroupHeader';
 export { CollapsibleSectionHeader } from './CollapsibleSectionHeader';
@@ -1315,11 +1320,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             folderId: folder.folderId,
         });
         if (deleted.deletedFolderIds.length === 0) return;
-        const serverId = typeof folder.serverId === 'string' ? folder.serverId.trim() : '';
-        const serverProfile = serverId ? getServerProfileById(serverId) : null;
-        if (!serverProfile) return;
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-        if (!credentials) return;
+        const resolved = await resolveSessionOrganizationMutationScope(folder.serverId);
+        if (!resolved.ok) return;
         setSessionFoldersV1(deleted.next);
         if (focusedFolderId && deleted.deletedFolderIds.includes(focusedFolderId)) {
             handleClearSessionFolderFocus();
@@ -1405,19 +1407,11 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
 
     const sessionListBulkActionContext = React.useMemo<SessionBulkActionExecutionContext>(() => {
         const resolveMutationContext = async (target: SessionBulkActionTarget, actionName: string) => {
-            const serverId = typeof target.serverId === 'string' ? target.serverId.trim() : '';
-            if (!serverId) {
-                throw new Error(`${actionName} requires a server id`);
+            const resolved = await resolveSessionOrganizationMutationScope(target.serverId);
+            if (!resolved.ok) {
+                throw new Error(`${actionName} requires ${BULK_MUTATION_SCOPE_REQUIREMENT_BY_REASON[resolved.reason]}`);
             }
-            const serverProfile = getServerProfileById(serverId);
-            if (!serverProfile) {
-                throw new Error(`${actionName} requires an available server profile`);
-            }
-            const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-            if (!credentials) {
-                throw new Error(`${actionName} requires server credentials`);
-            }
-            return { credentials, serverId: serverProfile.id, serverUrl: serverProfile.serverUrl };
+            return resolved.scope;
         };
 
         return {

@@ -2,8 +2,6 @@ import React from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
@@ -59,6 +57,13 @@ import {
     buildSessionListKeyboardMoveResult,
     type SessionListKeyboardMoveDirection,
 } from '../move-sheet/buildSessionListKeyboardMoveResult';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
+
+const FOLDER_ASSIGNMENT_SCOPE_REQUIREMENT_BY_REASON = {
+    'server-id': 'server id',
+    'server-profile': 'server profile',
+    credentials: 'server credentials',
+} as const;
 
 type SessionFolderAssignableSessionItem = Readonly<{
     type: 'session';
@@ -390,14 +395,12 @@ export function useSessionListRowInteractions({
         folderId: string | null;
     }>) => {
         if (!folderActionsEnabledRef.current) return;
-        const serverProfile = getServerProfileById(assignment.serverId);
-        if (!serverProfile) throw new Error('Missing server profile for session folder assignment');
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-        if (!credentials) throw new Error('Missing server credentials for session folder assignment');
+        const resolved = await resolveSessionOrganizationMutationScope(assignment.serverId);
+        if (!resolved.ok) throw new Error(`Missing ${FOLDER_ASSIGNMENT_SCOPE_REQUIREMENT_BY_REASON[resolved.reason]} for session folder assignment`);
         await setSessionFolderAssignment({
-            credentials,
-            serverId: assignment.serverId,
-            serverUrl: serverProfile.serverUrl,
+            credentials: resolved.scope.credentials,
+            serverId: resolved.scope.serverId,
+            serverUrl: resolved.scope.serverUrl,
             sessionId: assignment.sessionId,
             folderId: assignment.folderId,
         });

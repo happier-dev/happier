@@ -1,6 +1,6 @@
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionAttentionStanding as setSessionAttentionStandingApi } from '@/sync/api/session/sessionOrganizationApi';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
@@ -31,6 +31,12 @@ export async function setSessionAttentionStanding(params: Readonly<{
     }
 }
 
+const MISSING_SCOPE_MESSAGE_BY_REASON = {
+    'server-id': 'Missing server for session attention standing',
+    'server-profile': 'Missing server profile for session attention standing',
+    credentials: 'Missing server credentials for session attention standing',
+} as const;
+
 export type SessionSetAttentionStandingResult = Readonly<{
     success: boolean;
     message?: string;
@@ -50,24 +56,15 @@ export async function sessionSetAttentionStandingWithServerScope(
 ): Promise<SessionSetAttentionStandingResult> {
     const requestedServerId = typeof opts?.serverId === 'string' ? opts.serverId.trim() : '';
     const serverId = requestedServerId || resolvePreferredServerIdForSessionId(sessionId) || '';
-    if (!serverId) {
-        return { success: false, message: 'Missing server for session attention standing' };
-    }
-    const serverProfile = getServerProfileById(serverId);
-    if (!serverProfile) {
-        return { success: false, message: 'Missing server profile for session attention standing' };
-    }
     try {
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, {
-            serverId: serverProfile.id,
-        });
-        if (!credentials) {
-            return { success: false, message: 'Missing server credentials for session attention standing' };
+        const resolved = await resolveSessionOrganizationMutationScope(serverId);
+        if (!resolved.ok) {
+            return { success: false, message: MISSING_SCOPE_MESSAGE_BY_REASON[resolved.reason] };
         }
         await setSessionAttentionStanding({
-            credentials,
-            serverId: serverProfile.id,
-            serverUrl: serverProfile.serverUrl,
+            credentials: resolved.scope.credentials,
+            serverId: resolved.scope.serverId,
+            serverUrl: resolved.scope.serverUrl,
             sessionId,
             standing,
         });

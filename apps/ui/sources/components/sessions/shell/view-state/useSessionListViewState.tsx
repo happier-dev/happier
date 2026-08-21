@@ -1,6 +1,5 @@
 import React from 'react';
 
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useIsTablet } from '@/utils/platform/responsive';
@@ -13,7 +12,6 @@ import {
     useSetting,
     useSettingMutable,
 } from '@/sync/domains/state/storage';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { applySessionFoldersToSessionListViewData } from '@/sync/domains/session/listing/sessionListViewData';
 import {
     buildSessionListIndexFromViewData,
@@ -68,6 +66,7 @@ import {
     type SessionListHeaderFilterInput,
 } from '../sessionListFilters';
 import { useSessionListSnapshotWhenInactive } from '../surface/useSessionListSnapshotWhenInactive';
+import { resolveSessionOrganizationMutationScope, type SessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 
 const EMPTY_SESSION_KEYS: ReadonlyArray<string> = Object.freeze([]);
 const EMPTY_SESSION_LIST_GROUP_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
@@ -121,12 +120,6 @@ function areFolderDefinitionsEqual(left: SessionFolderV1, right: SessionFolderV1
         && (left.sortKey ?? null) === (right.sortKey ?? null)
         && JSON.stringify(left.workspace) === JSON.stringify(right.workspace);
 }
-
-type SessionOrganizationMutationContext = Readonly<{
-    credentials: AuthCredentials;
-    serverId: string;
-    serverUrl?: string;
-}>;
 
 function measureSessionListRenderDerivation<T>(
     name: string,
@@ -227,14 +220,9 @@ export function useSessionListViewState({
 
     const allKnownTags = React.useMemo(() => getAllKnownTags(sessionTagsV1), [sessionTagsV1]);
 
-    const getOrganizationMutationContext = React.useCallback(async (): Promise<SessionOrganizationMutationContext | null> => {
-        const serverId = typeof activeOrganizationServerId === 'string' ? activeOrganizationServerId.trim() : '';
-        if (!serverId) return null;
-        const serverProfile = getServerProfileById(serverId);
-        if (!serverProfile) return null;
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-        if (!credentials) return null;
-        return { credentials, serverId, serverUrl: serverProfile.serverUrl };
+    const getOrganizationMutationContext = React.useCallback(async (): Promise<SessionOrganizationMutationScope | null> => {
+        const resolved = await resolveSessionOrganizationMutationScope(activeOrganizationServerId);
+        return resolved.ok ? resolved.scope : null;
     }, [activeOrganizationServerId]);
 
     const runOrganizationMutation = React.useCallback((mutation: () => Promise<void>) => {

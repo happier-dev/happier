@@ -90,8 +90,6 @@ import {
     normalizeSessionFolders,
     type SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
     setSessionFolderAssignment as setSessionOrganizationFolderAssignment,
     setSessionPin as setSessionOrganizationPin,
@@ -104,6 +102,7 @@ import {
     isSessionDebugInformationEnabled,
     resolveProviderSessionIdForDebug,
 } from '@/components/sessions/debug/sessionDebugInformation';
+import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 
 type RawJsonSectionId = 'agentState' | 'metadata' | 'sessionStatus' | 'session';
 
@@ -749,19 +748,11 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }), [organizationListViewState.sessionFoldersV1, scopedMutationServerId, session]);
 
     const getOrganizationMutationContext = useCallback(async () => {
-        const serverId = typeof scopedMutationServerId === 'string' ? scopedMutationServerId.trim() : '';
-        if (!serverId) {
+        const resolved = await resolveSessionOrganizationMutationScope(scopedMutationServerId);
+        if (!resolved.ok) {
             throw new HappyError(t('errors.unknownError'), false);
         }
-        const serverProfile = getServerProfileById(serverId);
-        if (!serverProfile) {
-            throw new HappyError(t('errors.unknownError'), false);
-        }
-        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
-        if (!credentials) {
-            throw new HappyError(t('errors.unknownError'), false);
-        }
-        return { credentials, serverId: serverProfile.id, serverUrl: serverProfile.serverUrl };
+        return resolved.scope;
     }, [scopedMutationServerId]);
 
     const handleTogglePinned = useCallback(async () => {
