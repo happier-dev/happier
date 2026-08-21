@@ -61,6 +61,8 @@ Do not make a destination implementation the design authority for the PR branch.
 
 For a PR targeting Remote Dev, port the complete PR intent plus every steward-authored and review-driven follow-up into `../dev`. This is a semantic migration, never a blind cherry-pick or same-file copy. Follow [remote-dev-to-dev.md](references/remote-dev-to-dev.md).
 
+First verify that `../dev` exists and is the intended Git checkout. If it is absent, continue the PR analysis and approved Remote Dev work, mark only the Dev port as blocked with the exact missing prerequisite, and ask the user for the checkout location or authorization to obtain it. Never create, clone, or guess a destination repository implicitly.
+
 Commit the Dev port as its own coherent related-only commit or commits, with the verified PR author as co-author. Preserve all unrelated Dev changes in the worktree and index.
 
 ## 7. Request review through an exact public preview

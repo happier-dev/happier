@@ -2,6 +2,8 @@
 
 Remote Dev is the predecessor preview line; `../dev` is the evolved next version that will eventually replace it. Never assume matching paths, APIs, target identities, ownership, or lifecycle.
 
+`../dev` is a convention of the maintainer's current workspace, not a portable guarantee. Verify that it exists, is a Git worktree, and belongs to the intended Happier repository before reading or writing it. If unavailable, do not create or clone it automatically: finish independent PR work and report the port as blocked with the required checkout or location.
+
 ## Required port audit
 
 After the Remote Dev PR and after every accepted follow-up:
