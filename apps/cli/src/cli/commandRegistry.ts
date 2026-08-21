@@ -24,6 +24,7 @@ import { handleServerCliCommand } from './commands/server';
 import { handleServiceCliCommand } from './commands/service';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
+import { handleSetupCliCommand } from './commands/setup';
 import { handleStatusCliCommand } from './commands/status';
 import { handleToolsCliCommand } from './commands/tools';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
@@ -81,6 +82,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,
+  setup: handleSetupCliCommand,
   status: handleStatusCliCommand,
   tools: handleToolsCliCommand,
   ...buildAgentCommandRegistry(),

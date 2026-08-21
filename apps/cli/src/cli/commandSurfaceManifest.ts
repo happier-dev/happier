@@ -16,6 +16,13 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: true,
   },
   {
+    command: 'setup',
+    rootHelpLabel: 'happier setup',
+    rootHelpDescription: 'Connect this computer to your Happier account',
+    rootHelpDetail: 'choose where your relay lives, then sign in',
+    allowTmux: false,
+  },
+  {
     command: 'auth',
     rootHelpLabel: 'happier auth',
     rootHelpDescription: 'Manage authentication',
