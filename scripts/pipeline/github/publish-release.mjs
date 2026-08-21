@@ -110,13 +110,14 @@ function formatExecError(err) {
  * @param {unknown} err
  * @returns {boolean}
  */
-function isTransientReleaseUploadError(err) {
+function isTransientReleaseTransferError(err) {
   const raw = formatExecError(err);
   return (
     /release not found/i.test(raw)
     || /404/i.test(raw)
     || /ETIMEDOUT/i.test(raw)
     || /ECONNRESET/i.test(raw)
+    || /connection reset by peer/i.test(raw)
     || /socket hang up/i.test(raw)
     || /Service Unavailable/i.test(raw)
     || /\b50[234]\b/.test(raw)
@@ -180,16 +181,27 @@ async function fileSha256(filePath) {
   return hash.digest('hex');
 }
 
-async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env, timeoutMs }) {
+async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env, timeoutMs, retries, retryDelayMs }) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-immutable-release-audit-'));
   try {
-    run('gh', [
-      'release', 'download', tag,
-      '--repo', repo,
-      '--pattern', name,
-      '--dir', scratch,
-      '--clobber',
-    ], { env, timeoutMs });
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      try {
+        run('gh', [
+          'release', 'download', tag,
+          '--repo', repo,
+          '--pattern', name,
+          '--dir', scratch,
+          '--clobber',
+        ], { env, timeoutMs });
+        break;
+      } catch (err) {
+        if (isTransientReleaseTransferError(err) && attempt < retries) {
+          sleepSync(retryDelayMs);
+          continue;
+        }
+        throw err;
+      }
+    }
     const downloadedPath = path.join(scratch, name);
     if (!fs.existsSync(downloadedPath)) {
       fail(`Immutable release audit did not download expected asset: ${name}`);
@@ -584,6 +596,8 @@ async function main() {
           expectedPath: /** @type {string} */ (localByName.get(name)),
           env: ghEnv,
           timeoutMs: transferTimeoutMs,
+          retries: uploadRetries,
+          retryDelayMs: uploadRetryDelayMs,
         });
       }
     }
@@ -601,7 +615,7 @@ async function main() {
           uploaded = true;
           break;
         } catch (err) {
-          if (!dryRun && isTransientReleaseUploadError(err) && attempt < uploadRetries) {
+          if (!dryRun && isTransientReleaseTransferError(err) && attempt < uploadRetries) {
             sleepSync(uploadRetryDelayMs);
             continue;
           }
@@ -619,6 +633,8 @@ async function main() {
           expectedPath,
           env: ghEnv,
           timeoutMs: transferTimeoutMs,
+          retries: uploadRetries,
+          retryDelayMs: uploadRetryDelayMs,
         });
       }
     }
@@ -637,7 +653,7 @@ async function main() {
         uploaded = true;
         break;
       } catch (err) {
-        if (!dryRun && isTransientReleaseUploadError(err) && attempt < uploadRetries) {
+        if (!dryRun && isTransientReleaseTransferError(err) && attempt < uploadRetries) {
           sleepSync(uploadRetryDelayMs);
           continue;
         }

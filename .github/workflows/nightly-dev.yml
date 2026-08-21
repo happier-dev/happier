@@ -83,10 +83,12 @@ jobs:
     needs: [resolve_resume, snapshot_source_issues]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
       release_message: ${{ steps.identity.outputs.release_message }}
+      release_needed: ${{ steps.release_need.outputs.release_needed }}
     steps:
       - name: Checkout requested nightly source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -102,10 +104,99 @@ jobs:
           test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_message=Automated nightly dev release." >> "$GITHUB_OUTPUT"
+      - name: Determine whether scheduled publication is needed
+        id: release_need
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            exit 0
+          fi
+
+          if ! prior_run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly-dev.yml --commit "$SOURCE_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"; then
+            echo "::warning::Could not inspect prior nightly runs; publication will proceed."
+            exit 0
+          fi
+          if [ -z "$prior_run" ]; then
+            exit 0
+          fi
+
+          resolve_tag_commit() {
+            tag="$1"
+            read -r object_type object_sha <<EOF
+          $(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.type + " " + .object.sha')
+          EOF
+            while [ "$object_type" = "tag" ]; do
+              read -r object_type object_sha <<EOF
+          $(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}" --jq '.object.type + " " + .object.sha')
+          EOF
+            done
+            test "$object_type" = "commit"
+            printf '%s\n' "$object_sha"
+          }
+
+          for tag in server-dev stack-dev cli-dev ui-web-dev; do
+            if ! actual="$(resolve_tag_commit "$tag")"; then
+              echo "::warning::Could not resolve ${tag}; publication will proceed."
+              exit 0
+            fi
+            if [ "$actual" != "$SOURCE_SHA" ]; then
+              exit 0
+            fi
+          done
+
+          echo "release_needed=false" >> "$GITHUB_OUTPUT"
+          echo "Exact SHA ${SOURCE_SHA} already completed and all core rolling tags still point to it."
+
+  verify_source_ci:
+    name: Verify exact nightly source CI
+    needs: [prepare_release_candidate]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Require successful canonical push CI for the exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-existing-ci.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow tests.yml \
+            --source-sha "$SOURCE_SHA" \
+            --source-branch dev
+
+  nightly_noop:
+    name: Skip already completed nightly
+    needs: [prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record no-op
+        env:
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+        run: echo "Nightly ${SOURCE_SHA} was already completed and promoted; no publication work is needed." >> "$GITHUB_STEP_SUMMARY"
 
   cli:
     name: CLI immutable candidate (dev)
-    needs: [resolve_resume, prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
@@ -119,7 +210,8 @@ jobs:
 
   hstack:
     name: HStack immutable candidate (dev)
-    needs: [resolve_resume, prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
@@ -133,7 +225,8 @@ jobs:
 
   server_runtime:
     name: Server immutable candidate (dev)
-    needs: [resolve_resume, prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
@@ -147,7 +240,8 @@ jobs:
 
   ui_web:
     name: UI web immutable candidate (dev)
-    needs: [resolve_resume, prepare_release_candidate]
+    needs: [resolve_resume, prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
@@ -161,7 +255,8 @@ jobs:
 
   resolve_validation_risk:
     name: Resolve changed-seam validation risk
-    needs: [prepare_release_candidate]
+    needs: [prepare_release_candidate, verify_source_ci]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -228,7 +323,7 @@ jobs:
 
   verify_resume_candidates:
     name: Verify successful immutable siblings for resume
-    if: ${{ always() && needs.prepare_release_candidate.result == 'success' && needs.release_verify.result != 'success' }}
+    if: ${{ always() && needs.prepare_release_candidate.outputs.release_needed == 'true' && needs.prepare_release_candidate.result == 'success' && needs.release_verify.result != 'success' }}
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify]
     uses: ./.github/workflows/verify-release-resume-candidates.yml
     with:
@@ -389,7 +484,7 @@ jobs:
 
   release_status:
     name: Project terminal nightly release status
-    if: ${{ always() }}
+    if: ${{ always() && needs.prepare_release_candidate.outputs.release_needed != 'false' }}
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
     runs-on: ubuntu-latest
     permissions:

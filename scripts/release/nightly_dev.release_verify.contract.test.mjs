@@ -25,7 +25,7 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
   for (const job of ['cli', 'hstack', 'server_runtime', 'ui_web']) {
     assert.match(
       raw,
-      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[resolve_resume, prepare_release_candidate\\][\\s\\S]*?publish_rolling:\\s*false`),
+      new RegExp(`${job}:[\\s\\S]*?needs:\\s*\\[resolve_resume, prepare_release_candidate, verify_source_ci\\][\\s\\S]*?publish_rolling:\\s*false`),
       `${job} should publish an immutable candidate without moving its rolling reference`,
     );
   }
@@ -53,6 +53,30 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
     /needs:\s*\[[^\]]*(?:ui_mobile|ui_desktop|docker)/,
     'candidate verification must not depend on jobs that already publish user-consumed mobile, desktop, or Docker outputs',
   );
+});
+
+test('nightly-dev admits exact-SHA CI before builds and safely skips an already completed scheduled SHA', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'nightly-dev.yml'), 'utf8');
+
+  assert.match(
+    raw,
+    /verify_source_ci:[\s\S]*?needs:\s*\[prepare_release_candidate\][\s\S]*?actions:\s*read[\s\S]*?verify-existing-ci\.mjs[\s\S]*?--source-sha "\$SOURCE_SHA"[\s\S]*?--source-branch dev/,
+    'the exact candidate SHA must have successful canonical push CI before publication starts',
+  );
+  assert.match(
+    raw,
+    /prepare_release_candidate:[\s\S]*?release_needed:\s*\$\{\{ steps\.release_need\.outputs\.release_needed \}\}[\s\S]*?EVENT_NAME:[\s\S]*?github\.event_name[\s\S]*?gh run list[\s\S]*?for tag in server-dev stack-dev cli-dev ui-web-dev[\s\S]*?release_needed=false/,
+    'scheduled no-op requires both a prior successful exact-SHA nightly and all core tags at that SHA',
+  );
+  for (const job of ['cli', 'hstack', 'server_runtime', 'ui_web', 'resolve_validation_risk']) {
+    assert.match(
+      raw,
+      new RegExp(`${job}:[\\s\\S]*?if:\\s*\\$\\{\\{ needs\\.prepare_release_candidate\\.outputs\\.release_needed == 'true' \\}\\}`),
+      `${job} must not run for a proven unchanged scheduled nightly`,
+    );
+  }
+  assert.match(raw, /nightly_noop:[\s\S]*?release_needed == 'false'[\s\S]*?already completed and promoted/);
+  assert.match(raw, /release_status:[\s\S]*?release_needed != 'false'/);
 });
 
 test('nightly-dev propagates generic unattended copy and terminal status', async () => {
@@ -87,7 +111,7 @@ test('nightly-dev propagates generic unattended copy and terminal status', async
   );
   assert.match(
     raw,
-    /release_status:[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*\}\}[\s\S]*?needs:\s*\[[^\]]*hstack[^\]]*promote_hstack[^\]]*\][\s\S]*?project-release-status\.mjs[\s\S]*?GITHUB_STEP_SUMMARY/,
+    /release_status:[\s\S]*?if:\s*\$\{\{\s*always\(\)[^}]*\}\}[\s\S]*?needs:\s*\[[^\]]*hstack[^\]]*promote_hstack[^\]]*\][\s\S]*?project-release-status\.mjs[\s\S]*?GITHUB_STEP_SUMMARY/,
     'nightly terminal status must include the HStack candidate and promotion outcomes',
   );
 });
