@@ -126,14 +126,14 @@ export async function routeSessionCatalogControl(params: RouteSessionCatalogCont
     return unsupported(params.operation, 'session_catalog_control_session_machine_unknown');
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return unsupported(params.operation, 'session_catalog_control_remote_unavailable');

@@ -27,6 +27,12 @@ export type NotifyRuntimeAuthFailure = (body: Readonly<{
 }>) => Promise<unknown>;
 
 type RouteSessionUsageLimitRecoverySwitchAccountNowParams = Readonly<{
+  /**
+   * Account scope for the machine REPLACEMENT chain the locality proof reads.
+   * Already supplied by the shared `routeParams` every usage-limit control
+   * route receives.
+   */
+  token: string;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata?: Record<string, unknown> | null;
@@ -152,12 +158,12 @@ function buildRuntimeAuthClassificationFromUsageLimitIssue(
   };
 }
 
-function ensureLocalSwitchAccountControlContext(
+async function ensureLocalSwitchAccountControlContext(
   params: RouteSessionUsageLimitRecoverySwitchAccountNowParams,
-): Readonly<
+): Promise<Readonly<
   | { ok: true }
   | { ok: false; result: ReturnType<typeof stableError> }
-> {
+>> {
   const metadata = params.metadata;
   if (!metadata) {
     return { ok: false, result: stableError('session_usage_limit_recovery_control_metadata_unavailable') };
@@ -173,13 +179,14 @@ function ensureLocalSwitchAccountControlContext(
     return { ok: false, result: stableError('session_usage_limit_recovery_control_session_machine_unknown') };
   }
   if (
-    !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return { ok: false, result: stableError('session_usage_limit_recovery_control_remote_unavailable') };
@@ -206,7 +213,7 @@ export async function routeSessionUsageLimitRecoverySwitchAccountNow(
     return operationResult(params, stableError('session_usage_limit_recovery_control_switch_unavailable'));
   }
 
-  const context = ensureLocalSwitchAccountControlContext(params);
+  const context = await ensureLocalSwitchAccountControlContext(params);
   if (!context.ok) return operationResult(params, context.result);
 
   try {

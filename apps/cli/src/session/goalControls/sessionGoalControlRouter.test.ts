@@ -5,12 +5,17 @@ import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(async (params: {
     updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
   }) => ({
     version: 2,
     metadata: params.updater({ concurrent: 'preserved' }),
   })),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
 }));
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -61,6 +66,13 @@ const ctx = {
 describe('routeSessionGoalControl', () => {
   beforeEach(() => {
     mocks.updateSessionMetadataWithRetry.mockClear();
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-local' },
+      { id: 'machine-remote' },
+    ]);
   });
 
   it('delegates inactive local set mutations to the provider adapter and persists returned metadata', async () => {
@@ -464,5 +476,68 @@ describe('routeSessionGoalControl', () => {
     expect(getGoal).toHaveBeenCalledTimes(1);
     expect(clearGoal).toHaveBeenCalledTimes(1);
     expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and the client already picks this daemon as
+   * the RPC target by walking the same replacement chain. A replacement is a
+   * genuinely new host, so it cannot earn the same-host-home proof.
+   */
+  it('delegates inactive goal controls for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-new' },
+      { id: 'machine-new' },
+    ]);
+    const setGoal = vi.fn(async () => ({ ok: true }));
+    const resolveAdapter = vi.fn(async () => ({ setGoal }));
+
+    await routeSessionGoalControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_replaced_goal',
+      rawSession: createRawSession({ id: 'sess_replaced_goal', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' }),
+      currentMachineId: 'machine-new',
+      currentMachineHost: 'new-laptop',
+      currentMachineHomeDir: '/Users/leeroy',
+      ctx,
+      mode: 'plain',
+      operation: 'set',
+      request: { status: 'paused' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    });
+
+    expect(setGoal).toHaveBeenCalledWith(expect.objectContaining({
+      currentMachineId: 'machine-new',
+      sessionMachineId: 'machine-old',
+    }));
+  });
+
+  it('still refuses inactive goal controls when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const resolveAdapter = vi.fn(async () => ({ setGoal: vi.fn() }));
+
+    await expect(routeSessionGoalControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({ machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old' }),
+      currentMachineId: 'machine-new',
+      ctx,
+      mode: 'plain',
+      operation: 'set',
+      request: { status: 'paused' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'session_goal_control_remote_unavailable',
+      error: 'session_goal_control_remote_unavailable',
+    });
+
+    expect(resolveAdapter).not.toHaveBeenCalled();
   });
 });

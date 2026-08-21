@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SessionUsageLimitRecoveryOperationResultV1Schema,
   type SessionRuntimeIssueV1,
@@ -6,6 +6,14 @@ import {
 } from '@happier-dev/protocol';
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+
+const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
+}));
 
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from './sessionUsageLimitRecoverySwitchAccountNow';
 
@@ -45,7 +53,7 @@ function createRawSession(issue: SessionRuntimeIssueV1 | null): RawSessionRecord
 
 function createLocalSwitchAccountParams(
   patch: Record<string, unknown> = {},
-): Record<string, unknown> {
+): Record<string, unknown> & Readonly<{ token: string }> {
   return {
     metadata: {
       machineId: 'machine-current',
@@ -56,6 +64,8 @@ function createLocalSwitchAccountParams(
     currentMachineHost: 'leeroy-mbp',
     currentMachineHomeDir: '/Users/leeroy',
     ...patch,
+    // Account scope for the replacement chain; last so a patch cannot drop it.
+    token: 'token',
   };
 }
 
@@ -68,6 +78,16 @@ function parseOperationResult(value: unknown): SessionUsageLimitRecoveryOperatio
 }
 
 describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
+  beforeEach(() => {
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-current' },
+      { id: 'machine-stale' },
+    ]);
+  });
+
   it('replays the latest switchable usage-limit issue through runtime auth recovery', async () => {
     const notifyRuntimeAuthFailure = vi.fn(async () => ({
       ok: true,
@@ -456,5 +476,68 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       sessionId: 'session-1',
       errorCode: 'session_usage_limit_recovery_control_switch_failed',
     });
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and a replacement is a genuinely new host
+   * that cannot earn the same-host-home proof.
+   */
+  it('runs switch account recovery for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-current' },
+      { id: 'machine-current' },
+    ]);
+    const notifyRuntimeAuthFailure = vi.fn(async () => ({
+      ok: true,
+      result: { status: 'switch_attempted', result: { status: 'switched' } },
+    }));
+
+    const result = await routeSessionUsageLimitRecoverySwitchAccountNow({
+      sessionId: 'session-1',
+      rawSession: {
+        ...createRawSession(createUsageLimitIssue()),
+        machineId: 'machine-old',
+      } as unknown as RawSessionRecord,
+      notifyRuntimeAuthFailure,
+      ...createLocalSwitchAccountParams({
+        metadata: { machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' },
+        currentMachineId: 'machine-current',
+        currentMachineHost: 'new-laptop',
+        currentMachineHomeDir: '/Users/leeroy',
+      }),
+    });
+
+    expect(parseOperationResult(result)).toMatchObject({ ok: true, sessionId: 'session-1' });
+    expect(notifyRuntimeAuthFailure).toHaveBeenCalledOnce();
+  });
+
+  it('still refuses switch account recovery when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const notifyRuntimeAuthFailure = vi.fn(async () => ({
+      ok: true,
+      result: { status: 'switch_attempted', result: { status: 'switched' } },
+    }));
+
+    const result = await routeSessionUsageLimitRecoverySwitchAccountNow({
+      sessionId: 'session-1',
+      rawSession: {
+        ...createRawSession(createUsageLimitIssue()),
+        machineId: 'machine-old',
+      } as unknown as RawSessionRecord,
+      notifyRuntimeAuthFailure,
+      ...createLocalSwitchAccountParams({
+        metadata: { machineId: 'machine-old' },
+        currentMachineId: 'machine-current',
+        currentMachineHost: null,
+        currentMachineHomeDir: null,
+      }),
+    });
+
+    expect(parseOperationResult(result)).toMatchObject({
+      ok: false,
+      errorCode: 'session_usage_limit_recovery_control_remote_unavailable',
+    });
+    expect(notifyRuntimeAuthFailure).not.toHaveBeenCalled();
   });
 });

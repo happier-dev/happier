@@ -2,7 +2,6 @@ import axios from 'axios';
 import { type MachineReplacementRecord } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import type { Credentials } from '@/persistence';
 
 /**
  * The Account's machine rows, reduced to the identity a REPLACEMENT walk needs.
@@ -19,7 +18,7 @@ import type { Credentials } from '@/persistence';
  * must ask only when the cheap identity comparison already failed.
  */
 export async function fetchAccountMachineReplacements(params: Readonly<{
-  credentials: Credentials;
+  credentials: Readonly<{ token: string }>;
   timeoutMs?: number;
 }>): Promise<readonly MachineReplacementRecord[] | null> {
   try {

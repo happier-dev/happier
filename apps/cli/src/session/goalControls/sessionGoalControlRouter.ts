@@ -169,14 +169,14 @@ export async function routeSessionGoalControl(params: RouteSessionGoalControlPar
     return stableError('session_goal_control_session_machine_unknown');
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return stableError('session_goal_control_remote_unavailable');

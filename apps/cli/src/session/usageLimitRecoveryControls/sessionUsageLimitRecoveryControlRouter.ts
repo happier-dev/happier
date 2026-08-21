@@ -349,12 +349,12 @@ async function persistUsageLimitRecoveryMetadata(
   });
 }
 
-function ensureLocalInactiveControlContext(
+async function ensureLocalInactiveControlContext(
   params: RouteSessionUsageLimitRecoveryControlParams,
-): Readonly<
+): Promise<Readonly<
   | { ok: true; metadata: Record<string, unknown>; sessionMachineId: string }
   | { ok: false; result: ReturnType<typeof stableError> }
-> {
+>> {
   const metadata = params.metadata;
   if (!metadata) {
     return { ok: false, result: stableError('session_usage_limit_recovery_control_metadata_unavailable') };
@@ -370,14 +370,14 @@ function ensureLocalInactiveControlContext(
     return { ok: false, result: stableError('session_usage_limit_recovery_control_session_machine_unknown') };
   }
   if (
-    sessionMachineId !== currentMachineId
-    && !resolveMachineControlLocalityProof({
+    !await resolveMachineControlLocalityProof({
       sessionMachineId,
       currentMachineId,
       sessionHost: resolveSessionMachineHost(metadata, params.rawSession),
       sessionHomeDir: resolveSessionMachineHomeDir(metadata, params.rawSession),
       currentMachineHost: params.currentMachineHost,
       currentMachineHomeDir: params.currentMachineHomeDir,
+      credentials: { token: params.token },
     })
   ) {
     return { ok: false, result: stableError('session_usage_limit_recovery_control_remote_unavailable') };
@@ -396,7 +396,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeEnable(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return operationResult(params, context.result);
 
   const nextIntent = await buildEnabledRecoveryIntent(params, context.metadata);
@@ -428,7 +428,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeCancel(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return operationResult(params, context.result);
 
   const existing = parseRecoveryIntent(context.metadata);
@@ -498,7 +498,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     }
   }
 
-  const context = ensureLocalInactiveControlContext(params);
+  const context = await ensureLocalInactiveControlContext(params);
   if (!context.ok) return operationResult(params, context.result);
 
   const resolveAdapter = params.resolveAdapter ?? getSessionUsageLimitRecoveryControlAdapter;

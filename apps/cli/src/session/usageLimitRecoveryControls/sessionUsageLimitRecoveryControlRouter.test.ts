@@ -9,12 +9,17 @@ import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(async (params: {
     updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
   }) => ({
     version: 2,
     metadata: params.updater({ concurrent: 'preserved' }),
   })),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
 }));
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -127,6 +132,13 @@ function lastMetadataUpdaterResult(input: Record<string, unknown>): Record<strin
 describe('sessionUsageLimitRecoveryControlRouter', () => {
   beforeEach(() => {
     mocks.updateSessionMetadataWithRetry.mockClear();
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-local' },
+      { id: 'machine-remote' },
+    ]);
   });
 
   it('arms inactive local wait-resume from the latest usage-limit issue without live session RPC', async () => {
@@ -1090,5 +1102,62 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
 
     expect(callLiveSessionRpc).toHaveBeenCalledTimes(1);
     expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and a replacement is a genuinely new host
+   * that cannot earn the same-host-home proof.
+   */
+  it('runs inactive check-now for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-new' },
+      { id: 'machine-new' },
+    ]);
+    const checkNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_replaced',
+      rawSession: createRawSession({ id: 'sess_replaced', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' }),
+      currentMachineId: 'machine-new',
+      currentMachineHost: 'new-laptop',
+      currentMachineHomeDir: '/Users/leeroy',
+      ctx,
+      mode: 'plain',
+      request: { sessionId: 'sess_replaced', provider: 'codex' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+    });
+
+    expect(parseOperationResult(result)).toMatchObject({ ok: true, sessionId: 'sess_replaced' });
+    expect(checkNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses inactive check-now when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const checkNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_chain_unreadable',
+      rawSession: createRawSession({ id: 'sess_chain_unreadable', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old' }),
+      currentMachineId: 'machine-new',
+      ctx,
+      mode: 'plain',
+      request: { sessionId: 'sess_chain_unreadable', provider: 'codex' },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(async () => ({ checkNow })),
+    });
+
+    expect(parseOperationResult(result)).toMatchObject({
+      ok: false,
+      errorCode: 'session_usage_limit_recovery_control_remote_unavailable',
+    });
+    expect(checkNow).not.toHaveBeenCalled();
   });
 });

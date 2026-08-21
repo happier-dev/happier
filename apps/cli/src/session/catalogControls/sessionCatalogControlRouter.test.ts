@@ -1,8 +1,16 @@
 import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+const mocks = vi.hoisted(() => ({
+  fetchAccountMachineReplacements: vi.fn(),
+}));
+
+vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
+  fetchAccountMachineReplacements: mocks.fetchAccountMachineReplacements,
+}));
+
 import { routeSessionCatalogControl } from './sessionCatalogControlRouter';
 
 function createCredentials(): Credentials {
@@ -45,6 +53,16 @@ const ctx = {
 };
 
 describe('routeSessionCatalogControl', () => {
+  beforeEach(() => {
+    mocks.fetchAccountMachineReplacements.mockReset();
+    // The Account genuinely knows both machines and neither replaced the other,
+    // so a refusal below is the guard deciding, not an empty chain.
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-local' },
+      { id: 'machine-remote' },
+    ]);
+  });
+
   it('delegates inactive local catalog requests to the provider adapter', async () => {
     const listSkills = vi.fn(async () => ({ unsupported: false, skills: [{ name: 'test-skill' }] }));
     const resolveAdapter = vi.fn(async () => ({ listSkills }));
@@ -158,6 +176,65 @@ describe('routeSessionCatalogControl', () => {
     })).resolves.toEqual({
       unsupported: true,
       skills: [],
+      diagnostic: 'session_catalog_control_remote_unavailable',
+    });
+
+    expect(resolveAdapter).not.toHaveBeenCalled();
+  });
+  /**
+   * The user's ruling: replacing a machine must not strand the Sessions the
+   * previous one hosted. Nothing re-homes a Session row, so its recorded host
+   * stays the PREDECESSOR forever, and a replacement is a genuinely new host
+   * that cannot earn the same-host-home proof.
+   */
+  it('delegates inactive catalog requests for a session whose recorded machine this one replaced', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue([
+      { id: 'machine-old', replacedByMachineId: 'machine-new' },
+      { id: 'machine-new' },
+    ]);
+    const listSkills = vi.fn(async () => ({ unsupported: false, skills: [{ name: 'inherited-skill' }] }));
+    const resolveAdapter = vi.fn(async () => ({ listSkills }));
+
+    await expect(routeSessionCatalogControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_replaced_catalog',
+      rawSession: createRawSession({ id: 'sess_replaced_catalog', machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old', host: 'old-laptop', homeDir: '/Users/leeroy' }),
+      currentMachineId: 'machine-new',
+      currentMachineHost: 'new-laptop',
+      currentMachineHomeDir: '/Users/leeroy',
+      ctx,
+      mode: 'plain',
+      operation: 'skills',
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    })).resolves.toEqual({ unsupported: false, skills: [{ name: 'inherited-skill' }] });
+
+    expect(listSkills).toHaveBeenCalledWith(expect.objectContaining({
+      currentMachineId: 'machine-new',
+      sessionMachineId: 'machine-old',
+    }));
+  });
+
+  it('still refuses inactive catalog requests when the replacement chain is unreadable', async () => {
+    mocks.fetchAccountMachineReplacements.mockResolvedValue(null);
+    const resolveAdapter = vi.fn(async () => ({ listSkills: vi.fn() }));
+
+    await expect(routeSessionCatalogControl({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({ machineId: 'machine-old' }),
+      metadata: createMetadata({ machineId: 'machine-old' }),
+      currentMachineId: 'machine-new',
+      ctx,
+      mode: 'plain',
+      operation: 'skills',
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter,
+    })).resolves.toMatchObject({
+      unsupported: true,
       diagnostic: 'session_catalog_control_remote_unavailable',
     });
 
