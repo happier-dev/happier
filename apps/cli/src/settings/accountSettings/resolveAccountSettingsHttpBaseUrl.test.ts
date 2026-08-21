@@ -6,7 +6,7 @@ describe('resolveAccountSettingsHttpBaseUrl', () => {
     vi.resetModules();
   });
 
-  it('uses the live runtime env endpoint instead of stale loaded configuration', async () => {
+  it('uses the canonical endpoint selected by loaded configuration', async () => {
     vi.stubEnv('HAPPIER_LOCAL_SERVER_URL', '');
     vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', '');
     vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:41001');
@@ -17,6 +17,6 @@ describe('resolveAccountSettingsHttpBaseUrl', () => {
 
     const { resolveAccountSettingsHttpBaseUrl } = await import('./resolveAccountSettingsHttpBaseUrl');
 
-    expect(resolveAccountSettingsHttpBaseUrl()).toBe('http://127.0.0.1:52002');
+    expect(resolveAccountSettingsHttpBaseUrl()).toBe('http://127.0.0.1:41001');
   });
 });

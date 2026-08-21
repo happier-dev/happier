@@ -68,7 +68,7 @@ describe('ApiMachineClient loopback url resolution', () => {
     expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
   });
 
-  it('uses the live runtime env endpoint instead of stale loaded configuration', async () => {
+  it('uses the canonical endpoint selected by loaded configuration', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://localhost:41001';
     delete process.env.HAPPIER_LOCAL_SERVER_URL;
     reloadConfiguration();
@@ -92,6 +92,6 @@ describe('ApiMachineClient loopback url resolution', () => {
 
     expect(mockIo).toHaveBeenCalled();
     const calledUrl = mockIo.mock.calls[0]?.[0];
-    expect(String(calledUrl)).toContain('http://127.0.0.1:52002');
+    expect(String(calledUrl)).toContain('http://127.0.0.1:41001');
   });
 });
