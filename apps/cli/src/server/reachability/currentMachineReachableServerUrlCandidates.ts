@@ -227,6 +227,18 @@ async function defaultCanConnectToTcpEndpoint(params: TcpProbeParams): Promise<b
   });
 }
 
+/**
+ * The tailnet addresses worth advertising as reachable server URLs.
+ *
+ * `loggedIn` is the wrong question here: `tailscale status --json` keeps
+ * reporting a node's tailnet IPs after `tailscale down`, so a signed-in machine
+ * with a stopped backend would offer addresses nothing is listening on. Only a
+ * running backend can carry traffic.
+ */
+export function tailscaleIpsForReachableCandidates(status: TailscaleStatusSnapshot): readonly string[] {
+  return status.running ? status.tailscaleIps : [];
+}
+
 async function defaultResolveTailscaleIps(params: Readonly<{
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -236,7 +248,7 @@ async function defaultResolveTailscaleIps(params: Readonly<{
       timeoutMs: params.timeoutMs ?? DEFAULT_TAILSCALE_TIMEOUT_MS,
       env: params.env ?? process.env,
     });
-    return status.loggedIn ? status.tailscaleIps : [];
+    return tailscaleIpsForReachableCandidates(status);
   } catch {
     return [];
   }

@@ -45,6 +45,15 @@ export type TailscaleStatusSnapshot = Readonly<{
    * `loggedIn`.
    */
   running: boolean;
+  /**
+   * Whether `tailscale status` actually reached the local tailscaled backend.
+   *
+   * False only when the CLI ran but could not talk to the daemon at all, so no
+   * backend state exists to report. It separates "installed, signed in, daemon
+   * down" from "needs login" — both of which otherwise look like
+   * `loggedIn: false, running: false`.
+   */
+  daemonReachable: boolean;
 }>;
 
 export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSnapshot {
@@ -74,7 +83,47 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
     tailscaleIps,
     loggedIn: hasLoggedInEvidence && !explicitLoginRequired,
     running,
+    daemonReachable: true,
   };
+}
+
+/**
+ * The snapshot for a machine whose tailscaled never answered.
+ *
+ * `tailscale status --json` exits non-zero and prints no JSON in this case, so
+ * there is nothing to parse — but "the daemon is down" is a state callers must
+ * render, not an exception they must catch.
+ */
+export function tailscaleStatusSnapshotForUnreachableDaemon(): TailscaleStatusSnapshot {
+  return {
+    backendState: null,
+    authUrl: null,
+    dnsName: null,
+    tailnetName: null,
+    tailscaleIps: [],
+    loggedIn: false,
+    running: false,
+    daemonReachable: false,
+  };
+}
+
+// Tailscale reports an unreachable local backend through its CLI output rather
+// than a distinct exit code, and the wording differs per platform. These stay
+// deliberately narrow so a missing binary keeps surfacing as a thrown error —
+// "not installed" and "installed but stopped" are different user problems.
+const DAEMON_UNREACHABLE_PATTERNS: readonly RegExp[] = [
+  /failed to connect to local (?:tailscaled|backend)/i,
+  /(?:doesn't|does not) appear to be running/i,
+  /is (?:the )?tailscaled? (?:service )?running\?/i,
+  /unable to connect to the tailscale service/i,
+];
+
+export function isTailscaleDaemonUnreachableOutput(text: string): boolean {
+  const normalized = String(text ?? '').trim();
+  if (!normalized) {
+    return false;
+  }
+  return DAEMON_UNREACHABLE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function parseTailscaleStatusJson(text: string): TailscaleStatusSnapshot {

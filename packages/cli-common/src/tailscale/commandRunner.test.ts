@@ -5,6 +5,7 @@ import {
   resolveTailscaleBin,
   runTailscaleLogin,
   runTailscaleServeEnable,
+  runTailscaleStatusJson,
   sanitizeTailscaleEnv,
   TailscaleCommandError,
   type TailscaleCommandRunner,
@@ -170,6 +171,8 @@ describe('runTailscaleStatusJson', () => {
         tailnetName: string | null;
         tailscaleIps: readonly string[];
         loggedIn: boolean;
+        running: boolean;
+        daemonReachable: boolean;
       }>;
     };
 
@@ -208,6 +211,7 @@ describe('runTailscaleStatusJson', () => {
       tailscaleIps: ['100.64.0.10'],
       loggedIn: true,
       running: true,
+      daemonReachable: true,
     });
   });
 
@@ -226,6 +230,8 @@ describe('runTailscaleStatusJson', () => {
         tailnetName: string | null;
         tailscaleIps: readonly string[];
         loggedIn: boolean;
+        running: boolean;
+        daemonReachable: boolean;
       }>;
     };
 
@@ -257,7 +263,85 @@ describe('runTailscaleStatusJson', () => {
       tailscaleIps: [],
       loggedIn: false,
       running: false,
+      daemonReachable: true,
     });
+  });
+});
+
+describe('runTailscaleStatusJson daemon reachability', () => {
+  const daemonDownRunner: TailscaleCommandRunner = async () => {
+    throw new TailscaleCommandError(
+      "Command failed: tailscale status --json\nfailed to connect to local tailscaled; it doesn't appear to be running",
+      {
+        command: '/bin/tailscale',
+        args: ['status', '--json'],
+        exitCode: 1,
+        stdout: '',
+        stderr: "failed to connect to local tailscaled; it doesn't appear to be running (sock=/var/run/tailscale/tailscaled.sock)",
+      },
+    );
+  };
+
+  it('returns a daemon-down snapshot instead of throwing when tailscaled is not running', async () => {
+    const result = await runTailscaleStatusJson(
+      { env: {} },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: vi.fn(daemonDownRunner),
+      },
+    );
+
+    expect(result.daemonReachable).toBe(false);
+    expect(result.running).toBe(false);
+    expect(result.loggedIn).toBe(false);
+    expect(result.backendState).toBeNull();
+  });
+
+  it('reports a signed-in machine whose backend is stopped as reachable but not running', async () => {
+    const result = await runTailscaleStatusJson(
+      { env: {} },
+      {
+        resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+        runCommand: vi.fn(async () => ({
+          command: '/bin/tailscale',
+          args: ['status', '--json'],
+          exitCode: 0,
+          stdout: JSON.stringify({
+            BackendState: 'Stopped',
+            AuthURL: '',
+            HaveNodeKey: true,
+            TailscaleIPs: ['100.64.0.10'],
+            Self: { DNSName: 'relay.tailf00.ts.net.' },
+            CurrentTailnet: { Name: 'example-tailnet' },
+          }),
+          stderr: '',
+        })),
+      },
+    );
+
+    expect(result.daemonReachable).toBe(true);
+    expect(result.loggedIn).toBe(true);
+    expect(result.running).toBe(false);
+  });
+
+  it('still throws when the tailscale binary itself cannot be executed', async () => {
+    await expect(
+      runTailscaleStatusJson(
+        { env: {} },
+        {
+          resolveTailscaleBin: vi.fn(async () => '/bin/tailscale'),
+          runCommand: vi.fn(async () => {
+            throw new TailscaleCommandError('spawn /bin/tailscale ENOENT', {
+              command: '/bin/tailscale',
+              args: ['status', '--json'],
+              exitCode: 1,
+              stdout: '',
+              stderr: '',
+            });
+          }),
+        },
+      ),
+    ).rejects.toThrow(/ENOENT/u);
   });
 });
 

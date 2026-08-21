@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseTailscaleStatusSnapshot } from './statusSnapshot.js';
+import {
+  isTailscaleDaemonUnreachableOutput,
+  parseTailscaleStatusSnapshot,
+  tailscaleStatusSnapshotForUnreachableDaemon,
+} from './statusSnapshot.js';
 
 const nodeIdentity = {
   Self: { DNSName: 'my-machine.tailnet.ts.net.' },
@@ -54,5 +58,43 @@ describe('parseTailscaleStatusSnapshot', () => {
 
     expect(snapshot.backendState).toBeNull();
     expect(snapshot.running).toBe(false);
+  });
+});
+
+describe('tailscaleStatusSnapshotForUnreachableDaemon', () => {
+  it('reports a daemon that never answered as neither reachable, running, nor logged in', () => {
+    const snapshot = tailscaleStatusSnapshotForUnreachableDaemon();
+
+    expect(snapshot.daemonReachable).toBe(false);
+    expect(snapshot.running).toBe(false);
+    expect(snapshot.loggedIn).toBe(false);
+    expect(snapshot.backendState).toBeNull();
+    expect(snapshot.tailscaleIps).toEqual([]);
+  });
+
+  it('marks every parsed snapshot as daemon-reachable, because parseable status came from the backend', () => {
+    expect(parseTailscaleStatusSnapshot({ ...nodeIdentity, BackendState: 'Running' }).daemonReachable).toBe(true);
+    expect(parseTailscaleStatusSnapshot({ ...nodeIdentity, BackendState: 'Stopped' }).daemonReachable).toBe(true);
+    expect(parseTailscaleStatusSnapshot({ BackendState: 'NeedsLogin' }).daemonReachable).toBe(true);
+  });
+});
+
+describe('isTailscaleDaemonUnreachableOutput', () => {
+  it.each([
+    "failed to connect to local tailscaled; it doesn't appear to be running (sock=/var/run/tailscale/tailscaled.sock)",
+    'failed to connect to local backend at http://local-tailscaled.sock',
+    'is tailscaled running?',
+    'Unable to connect to the Tailscale service. Is the Tailscale service running?',
+  ])('recognizes daemon-down output: %s', (text) => {
+    expect(isTailscaleDaemonUnreachableOutput(text)).toBe(true);
+  });
+
+  it.each([
+    'tailscale: command not found',
+    'spawn tailscale ENOENT',
+    '',
+    'Logged out.',
+  ])('does not claim daemon-down for unrelated output: %s', (text) => {
+    expect(isTailscaleDaemonUnreachableOutput(text)).toBe(false);
   });
 });

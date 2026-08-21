@@ -24,7 +24,12 @@ type SecureAccessTailscaleParams = Readonly<{
 
 type SecureAccessTailscaleState = Readonly<{
   installed: boolean;
+  /** Whether this machine has ever completed tailnet sign-in. */
   loggedIn: boolean;
+  /** Whether tailscaled is up and carrying traffic right now. */
+  running: boolean;
+  /** Whether `tailscale status` reached the local tailscaled at all. */
+  daemonReachable: boolean;
   authUrl: string | null;
   shareableHttpsUrl: string | null;
 }>;
@@ -140,6 +145,15 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       );
     }
 
+    // Without a reachable daemon there is no login state to report, so
+    // `loggedIn: false` must not be read as "sign in again".
+    if (!state.daemonReachable) {
+      throw new systemTasks.SystemTaskExecutionError(
+        'tailscale_not_running',
+        'Start Tailscale before enabling secure access.',
+      );
+    }
+
     if (!state.loggedIn) {
       if (parsed.loginPolicy !== 'interactive') {
         throw new systemTasks.SystemTaskExecutionError(
@@ -179,6 +193,16 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
           'Complete Tailscale sign-in before enabling secure access.',
         );
       }
+    }
+
+    // Signed in is not the same as usable: a stopped backend keeps full node
+    // identity, so this gate is what stops the flow from reporting a relay URL
+    // the user's phone cannot reach.
+    if (!state.running) {
+      throw new systemTasks.SystemTaskExecutionError(
+        'tailscale_not_running',
+        'Start Tailscale before enabling secure access.',
+      );
     }
 
     if (state.shareableHttpsUrl) {
@@ -391,6 +415,8 @@ async function inspectSecureAccessTailscaleState(
       return {
         installed: false,
         loggedIn: false,
+        running: false,
+        daemonReachable: false,
         authUrl: null,
         shareableHttpsUrl: null,
       };
@@ -398,10 +424,16 @@ async function inspectSecureAccessTailscaleState(
     throw error;
   }
 
-  if (!status.loggedIn) {
+  // Serve config survives `tailscale down`, so tailscale keeps replaying the
+  // HTTPS URL it *would* publish once the backend is back. Only a running
+  // backend can actually carry that traffic, so anything short of it reports no
+  // shareable URL rather than an address nothing is listening on.
+  if (!status.running) {
     return {
       installed: true,
-      loggedIn: false,
+      loggedIn: status.loggedIn,
+      running: false,
+      daemonReachable: status.daemonReachable,
       authUrl: status.authUrl,
       shareableHttpsUrl: null,
     };
@@ -416,6 +448,8 @@ async function inspectSecureAccessTailscaleState(
   return {
     installed: true,
     loggedIn: true,
+    running: true,
+    daemonReachable: true,
     authUrl: status.authUrl,
     shareableHttpsUrl: appendServePathToHttpsUrl(httpsBaseUrl, params.servePath),
   };

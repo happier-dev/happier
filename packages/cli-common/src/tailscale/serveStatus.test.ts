@@ -1,11 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  classifyTailscaleServeRootSlot,
   extractTailscaleServeHttpsUrl,
   parseTailscaleServeHttpsBaseUrlForPort,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
   tailscaleServeStatusMatchesInternalServerUrl,
 } from './serveStatus.js';
+
+describe('classifyTailscaleServeRootSlot', () => {
+  it('distinguishes an exact relay mapping from a free root slot', () => {
+    expect(classifyTailscaleServeRootSlot('', 'http://127.0.0.1:3005')).toEqual({ kind: 'free' });
+    expect(classifyTailscaleServeRootSlot([
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://localhost:3005',
+    ].join('\n'), 'http://127.0.0.1:3005')).toMatchObject({ kind: 'exact' });
+  });
+
+  it('refuses to treat another Serve mapping as replaceable', () => {
+    expect(classifyTailscaleServeRootSlot([
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:8080',
+    ].join('\n'), 'http://127.0.0.1:3005')).toMatchObject({ kind: 'conflict', exposure: 'serve' });
+  });
+
+  it('classifies a Funnel mapping as a conflict too', () => {
+    expect(classifyTailscaleServeRootSlot([
+      '# Funnel on:',
+      'https://machine.tailnet.ts.net',
+      '|-- / proxy http://127.0.0.1:8080',
+    ].join('\n'), 'http://127.0.0.1:3005')).toMatchObject({ kind: 'conflict', exposure: 'funnel' });
+  });
+});
 
 describe('parseTailscaleServeHttpsBaseUrlForPort', () => {
   it('returns the https base URL for the matching proxied port when multiple sections exist', () => {

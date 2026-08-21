@@ -67,6 +67,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 return {
                     installed: false,
                     loggedIn: false,
+                    running: false,
+                    daemonReachable: false,
                     authUrl: null,
                     shareableHttpsUrl: null,
                 };
@@ -74,6 +76,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             return {
                 installed: true,
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
                 authUrl: null,
                 shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             };
@@ -129,6 +133,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailnetName: 'example-tailnet',
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
+            running: true,
+            daemonReachable: true,
         });
         tailscaleMocks.runTailscaleServeStatus.mockResolvedValueOnce([
             'https://other.tailf00.ts.net',
@@ -158,6 +164,69 @@ describe('createSecureAccessTailscaleHandler', () => {
         }));
     });
 
+    it('refuses to claim secure access when the machine is signed in but tailscaled is stopped', async () => {
+        // `tailscale down` leaves node identity intact, so the snapshot still
+        // reports loggedIn: true — and tailscale keeps replaying the serve
+        // config it would apply once the backend comes back up. Trusting that
+        // tells the user their relay is reachable from their phone while
+        // nothing is listening on it.
+        tailscaleMocks.runTailscaleStatusJson.mockResolvedValue({
+            backendState: 'Stopped',
+            authUrl: null,
+            dnsName: 'relay.tailf00.ts.net',
+            tailnetName: 'example-tailnet',
+            tailscaleIps: ['100.64.0.10'],
+            loggedIn: true,
+            running: false,
+            daemonReachable: true,
+        });
+        tailscaleMocks.runTailscaleServeStatus.mockResolvedValue([
+            'https://relay.tailf00.ts.net',
+            '|-- / proxy http://127.0.0.1:3005',
+        ].join('\n'));
+
+        await expect(collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler(),
+            input: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                servePath: '/',
+                loginPolicy: 'skip',
+            },
+        })).rejects.toMatchObject({ code: 'tailscale_not_running' });
+
+        expect(tailscaleMocks.runTailscaleServeEnable).not.toHaveBeenCalled();
+    });
+
+    it('asks the user to start tailscale, not to sign in, when tailscaled never answered', async () => {
+        // Without a reachable daemon there is no login state to report, so
+        // `loggedIn: false` must not be read as "sign in again".
+        tailscaleMocks.runTailscaleStatusJson.mockResolvedValue({
+            backendState: null,
+            authUrl: null,
+            dnsName: null,
+            tailnetName: null,
+            tailscaleIps: [],
+            loggedIn: false,
+            running: false,
+            daemonReachable: false,
+        });
+
+        await expect(collectHandlerRun({
+            handler: createSecureAccessTailscaleHandler({
+                loginInteractive: vi.fn(async () => {
+                    throw new Error('login must not run while tailscaled is unreachable');
+                }),
+            }),
+            input: {
+                upstreamUrl: 'http://127.0.0.1:3005',
+                servePath: '/',
+                loginPolicy: 'interactive',
+            },
+        })).rejects.toMatchObject({ code: 'tailscale_not_running' });
+
+        expect(tailscaleMocks.runTailscaleServeEnable).not.toHaveBeenCalled();
+    });
+
     it('polls for serve approval and completes when the expected https URL becomes available', async () => {
         tailscaleMocks.runTailscaleStatusJson.mockResolvedValue({
             backendState: 'Running',
@@ -166,6 +235,8 @@ describe('createSecureAccessTailscaleHandler', () => {
             tailnetName: 'example-tailnet',
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
+            running: true,
+            daemonReachable: true,
         });
         tailscaleMocks.runTailscaleServeStatus
             .mockResolvedValueOnce('') // initial inspect: not enabled
@@ -225,6 +296,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: 'example-tailnet',
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
             };
         });
         tailscaleMocks.runTailscaleServeStatus.mockImplementation(async (options) => {
@@ -285,6 +358,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: null,
                 tailscaleIps: [],
                 loggedIn: false,
+                running: false,
+                daemonReachable: true,
             })
             .mockResolvedValueOnce({
                 backendState: 'Running',
@@ -293,6 +368,8 @@ describe('createSecureAccessTailscaleHandler', () => {
                 tailnetName: 'example-tailnet',
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
+                running: true,
+                daemonReachable: true,
             });
 
         tailscaleMocks.runTailscaleLogin.mockResolvedValueOnce({

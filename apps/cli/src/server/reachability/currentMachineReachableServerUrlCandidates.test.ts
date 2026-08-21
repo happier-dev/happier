@@ -1,9 +1,54 @@
 import { describe, expect, it } from 'vitest';
 
+import type { TailscaleStatusSnapshot } from '@happier-dev/cli-common/tailscale';
+
 import {
   collectCurrentMachineReachableServerUrlCandidates,
   listCurrentMachineNetworkAddressCandidates,
+  tailscaleIpsForReachableCandidates,
 } from './currentMachineReachableServerUrlCandidates';
+
+function statusSnapshot(overrides: Partial<TailscaleStatusSnapshot>): TailscaleStatusSnapshot {
+  return {
+    backendState: 'Running',
+    authUrl: null,
+    dnsName: 'mac.tailnet.ts.net',
+    tailnetName: 'tailnet.ts.net',
+    tailscaleIps: ['100.96.55.1'],
+    loggedIn: true,
+    running: true,
+    daemonReachable: true,
+    ...overrides,
+  };
+}
+
+describe('tailscaleIpsForReachableCandidates', () => {
+  it('offers tailnet IPs while the backend is running', () => {
+    expect(tailscaleIpsForReachableCandidates(statusSnapshot({}))).toEqual(['100.96.55.1']);
+  });
+
+  it('offers nothing for a signed-in machine whose backend is stopped', () => {
+    // `tailscale status --json` keeps reporting the node's tailnet IPs after
+    // `tailscale down`, so `loggedIn` alone would advertise an address that
+    // nothing is listening on.
+    const status = statusSnapshot({ backendState: 'Stopped', running: false });
+
+    expect(status.loggedIn).toBe(true);
+    expect(tailscaleIpsForReachableCandidates(status)).toEqual([]);
+  });
+
+  it('offers nothing when the tailscaled daemon never answered', () => {
+    expect(tailscaleIpsForReachableCandidates(statusSnapshot({
+      backendState: null,
+      dnsName: null,
+      tailnetName: null,
+      tailscaleIps: [],
+      loggedIn: false,
+      running: false,
+      daemonReachable: false,
+    }))).toEqual([]);
+  });
+});
 
 describe('current machine reachable server URL candidates', () => {
   it('prefers Tailscale Serve and only includes probed direct address URLs', async () => {
