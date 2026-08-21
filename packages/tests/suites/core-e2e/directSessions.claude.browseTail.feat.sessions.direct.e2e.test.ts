@@ -9,13 +9,19 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
-import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+import {
+  fakeClaudeFixturePath,
+  waitForFakeClaudeInvocation,
+  waitForFakeClaudeUserText,
+} from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
+import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 
 const run = createRunDirs({ runLabel: 'core' });
 const daemonStartupTimeoutMs = 90_000;
@@ -257,21 +263,24 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     const testDir = run.testDir('direct-sessions-claude-takeover-persist');
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     const claudeConfigDir = resolve(join(testDir, '.claude'));
-    const claudeSessionFile = resolve(join(claudeConfigDir, 'projects', 'proj-direct-persist', 'sess-direct-persist.jsonl'));
+    const workspaceDir = resolve('/tmp/direct-persist-project');
+    await mkdir(workspaceDir, { recursive: true });
+    const claudeProjectId = resolveClaudeProjectId(workspaceDir);
+    const claudeSessionFile = resolve(join(claudeConfigDir, 'projects', claudeProjectId, 'sess-direct-persist.jsonl'));
     const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
 
     await mkdir(daemonHomeDir, { recursive: true });
-    await mkdir(join(claudeConfigDir, 'projects', 'proj-direct-persist'), { recursive: true });
+    await mkdir(join(claudeConfigDir, 'projects', claudeProjectId), { recursive: true });
     await writeFile(
       claudeSessionFile,
       [
         jsonlLine({ type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-direct-persist' }),
         jsonlLine({ type: 'queue-operation', operation: 'dequeue', sessionId: 'sess-direct-persist' }),
-        jsonlLine({ type: 'user', uuid: 'persist-u1', cwd: '/tmp/direct-persist-project', message: { content: 'direct import hello' } }),
+        jsonlLine({ type: 'user', uuid: 'persist-u1', cwd: workspaceDir, message: { content: 'direct import hello' } }),
         jsonlLine({
           type: 'assistant',
           uuid: 'persist-a1',
-          cwd: '/tmp/direct-persist-project',
+          cwd: workspaceDir,
           message: {
             model: 'claude-test',
             content: [{ type: 'text', text: 'direct import reply' }],
@@ -302,6 +311,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
       env: {
         ...process.env,
         CI: '1',
@@ -331,7 +341,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
           const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST}`, {
             machineId: seeded.machineId,
             providerId: 'claude',
-            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-persist' },
+            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: claudeProjectId },
             limit: 20,
           });
           if (!res.ok) return false;
@@ -347,8 +357,8 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         providerId: 'claude',
         remoteSessionId: 'sess-direct-persist',
         titleHint: 'Direct persist fixture',
-        directoryHint: '/tmp/direct-persist-project',
-        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-persist' },
+        directoryHint: workspaceDir,
+        source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: claudeProjectId },
       });
       const linkResult = unwrapDataKeyRpcResult(link, 'direct Claude persisted link');
       expect(linkResult).toEqual(expect.objectContaining({
@@ -368,7 +378,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         async () => {
           const session = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
           const metadata = JSON.parse(session.metadata) as Record<string, unknown>;
-          return !('directSessionV1' in metadata) && typeof metadata.externalHistoryImportV1 === 'object' && metadata.path === '/tmp/direct-persist-project';
+          return !('directSessionV1' in metadata) && typeof metadata.externalHistoryImportV1 === 'object' && metadata.path === workspaceDir;
         },
         { timeoutMs: 60_000, context: 'direct session metadata converted to persisted' },
       );
@@ -380,7 +390,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
 	            sessionId,
 	            providerId: 'claude',
 	            remoteSessionId: 'sess-direct-persist',
-	            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-persist' },
+	            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: claudeProjectId },
 	          });
 	          const statusResult = unwrapDataKeyRpcResult(status, 'direct Claude persisted takeover status');
 	          return isDirectSessionRunnerActiveStatus(statusResult);
@@ -396,7 +406,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         providerId: 'claude',
         remoteSessionId: 'sess-direct-persist',
       }));
-      expect(metadataAfter.path).toBe('/tmp/direct-persist-project');
+      expect(metadataAfter.path).toBe(workspaceDir);
 
       const importedMessages = await fetchJson<any>(`${server.baseUrl}/v1/sessions/${sessionId}/messages?limit=20`, {
         headers: { Authorization: `Bearer ${auth.token}` },
@@ -417,8 +427,21 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         }),
       ]));
 
+      const stopped = await daemonControlPostJson<{ status: string }>({
+        port: daemon.state.httpPort,
+        path: '/stop-session',
+        controlToken: daemon.state.controlToken,
+        body: { sessionId },
+      });
+      expect(stopped.status).toBe(200);
+      expect(['stopped', 'requested']).toContain(stopped.data.status);
+      await waitFor(
+        async () => (await fetchSessionV2(server!.baseUrl, auth.token, sessionId)).active === false,
+        { timeoutMs: 30_000, context: 'converted direct session becomes inactive before queued resume' },
+      );
+
       const localId = `persisted-post-${randomUUID()}`;
-      const postPersistPrompt = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionId}/messages`, {
+      const postPersistPrompt = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionId}/pending`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${auth.token}`,
@@ -427,12 +450,21 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         },
         body: JSON.stringify({
           localId,
+          messageRole: 'user',
+          requestedAction: { v: 1, kind: 'enqueue' },
           content: {
             t: 'plain',
             v: {
               role: 'user',
               content: { type: 'text', text: 'persisted follow-up prompt' },
-              meta: { source: 'ui', sentFrom: 'e2e' },
+              meta: {
+                source: 'ui',
+                sentFrom: 'e2e',
+                claudeRemoteAgentSdkEnabled: false,
+                claudeUnifiedTerminalEnabled: true,
+                claudeUnifiedTerminalHost: 'auto',
+                claudeUnifiedTerminalResumeChoice: 'resume_full_session',
+              },
             },
           },
         }),
@@ -440,14 +472,28 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       });
       expect(postPersistPrompt.status).toBe(200);
 
-      const persistedInvocation = await waitForFakeClaudeInvocation(
+      const resumed = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
+        port: daemon.state.httpPort,
+        path: '/spawn-session',
+        controlToken: daemon.state.controlToken,
+        body: {
+          directory: workspaceDir,
+          existingSessionId: sessionId,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          terminal: { mode: 'plain' },
+        },
+      });
+      expect(resumed.status).toBe(200);
+      expect(resumed.data).toMatchObject({ success: true, sessionId });
+
+      const deliveredText = await waitForFakeClaudeUserText(
         fakeClaudeLogPath,
-        (invocation) => invocation.argv.includes('--resume') && invocation.argv.includes('sess-direct-persist'),
+        (text) => text.includes('persisted follow-up prompt'),
         { timeoutMs: 60_000, pollMs: 100 },
       );
-      expect(persistedInvocation.mode).toBe('sdk');
+      expect(deliveredText).toContain('persisted follow-up prompt');
     } finally {
       ui.close();
     }
-  }, 240_000);
+  }, 360_000);
 });

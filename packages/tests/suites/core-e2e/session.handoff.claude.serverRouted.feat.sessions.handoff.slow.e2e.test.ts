@@ -17,7 +17,6 @@ import { fakeClaudeLogContainsUserText, postPlainUiTextMessage } from '../../src
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
-// @ts-expect-error - This CJS helper is consumed directly by the runtime test fixture.
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 
 const run = createRunDirs({ runLabel: 'core' });
