@@ -42,6 +42,37 @@ describe('authorizeMachineRpcRequest', () => {
     })).toEqual({ ok: true });
   });
 
+  it('allows only the released server-v0.2.1 Stop shape without forwarded authorization', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.STOP_SESSION}`,
+      params: { sessionId: 's1' },
+    })).toEqual({ ok: true });
+  });
+
+  it('rejects a current-envelope Stop without server-provided session-write authorization', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.STOP_SESSION}`,
+      params: { sessionId: 's1' },
+      transportResponseEnvelopeVersion: 1,
+    })).toEqual({
+      ok: false,
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
+  it('rejects a released-shape Stop when the forwarded authorization targets another Session', () => {
+    expect(authorizeMachineRpcRequest({
+      method: `machine-1:${RPC_METHODS.STOP_SESSION}`,
+      params: { sessionId: 's2' },
+      authorization: { kind: 'session.write', sessionId: 's1' },
+    })).toEqual({
+      ok: false,
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+  });
+
   it('rejects a Session Agent transition with no server-provided edit proof', () => {
     expect(authorizeMachineRpcRequest({
       method: `machine-1:${RPC_METHODS.SESSION_AGENT_TRANSITION}`,

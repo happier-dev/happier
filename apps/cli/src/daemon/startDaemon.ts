@@ -2928,21 +2928,29 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
             if (normalizedExistingSessionId) {
               const inFlightStop = stopSessionInFlightBySessionId.get(normalizedExistingSessionId);
+              let precedingStopResult: StopSessionResult | null = null;
               if (inFlightStop) {
-                await inFlightStop;
+                precedingStopResult = await inFlightStop;
               }
               // A new Resume attempt starts a new lifecycle generation. Never let a prior
               // completed Stop make a racing or subsequently failed stop look successful.
               completedStopSessionIds.delete(normalizedExistingSessionId);
               if (unresolvedTerminalHostSessionIds.has(normalizedExistingSessionId)) {
-                logger.warn('[DAEMON RUN] Refusing Resume while preserved terminal topology is unreadable or legacy', {
-                  sessionId: normalizedExistingSessionId,
-                });
-                return {
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                  errorMessage: 'This session has preserved terminal topology that is unreadable or legacy. Repair or migrate that topology before trying Resume again.',
-                };
+                const repairResult = precedingStopResult ?? await stopSession(normalizedExistingSessionId);
+                if (repairResult.status === 'stopped' || repairResult.status === 'not_found') {
+                  unresolvedTerminalHostSessionIds.delete(normalizedExistingSessionId);
+                } else {
+                  logger.warn('[DAEMON RUN] Refusing Resume while preserved terminal topology is unreadable or legacy', {
+                    sessionId: normalizedExistingSessionId,
+                    stopStatus: repairResult.status,
+                    ...(repairResult.status === 'incomplete' ? { stopReason: repairResult.reason } : {}),
+                  });
+                  return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: 'This session has preserved terminal topology that is unreadable or legacy. Repair or migrate that topology before trying Resume again.',
+                  };
+                }
               }
               const disconnectedHostCandidate = disconnectedTerminalHostCandidates.find(
                 (candidate) => candidate.sessionId === normalizedExistingSessionId

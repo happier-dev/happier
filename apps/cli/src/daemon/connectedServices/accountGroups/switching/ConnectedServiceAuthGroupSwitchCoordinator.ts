@@ -68,6 +68,22 @@ export type {
   ConnectedServiceAuthGroupSwitchState,
 } from './pipeline/switchPipeline';
 
+const WAITABLE_CLASSIFIED_FAILURE_REASONS: ReadonlySet<string> = new Set([
+  'usage_limit',
+  'rate_limit',
+  'temporary_throttle',
+]);
+
+function shouldWaitForClassifiedFailure(input: Readonly<{
+  trigger: ConnectedServiceAuthGroupSwitchPipelineTrigger;
+  reason: string;
+  recoveryMode: ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
+}>): boolean {
+  return input.trigger === 'classified_failure'
+    && WAITABLE_CLASSIFIED_FAILURE_REASONS.has(input.reason)
+    && (input.recoveryMode === 'wait_until_reset' || input.recoveryMode === 'switch_or_wait');
+}
+
 export class ConnectedServiceAuthGroupQuotaProbeIncompleteError extends Error {
   readonly code = 'connected_service_auth_group_quota_probe_incomplete';
 
@@ -709,16 +725,37 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     phase: ConnectedServiceAuthGroupSwitchPipelinePhase;
     result: ConnectedServiceAuthGroupSwitchResult;
   }> | null {
-    if (!input.loaded.policy.autoSwitch || input.loaded.policy.recoveryMode === 'off') {
+    if (input.loaded.policy.recoveryMode === 'off') {
       return {
         phase: 'policy',
         result: { status: 'auto_switch_disabled', generation: input.loaded.generation },
       };
     }
+    const waitForClassifiedFailure = shouldWaitForClassifiedFailure({
+      trigger: input.trigger,
+      reason: input.request.reason,
+      recoveryMode: input.loaded.policy.recoveryMode,
+    });
+    if (!input.loaded.policy.autoSwitch) {
+      return {
+        phase: 'policy',
+        result: waitForClassifiedFailure
+          ? buildPolicyWaitUntilResetResult({
+              loaded: input.loaded,
+              retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input.request),
+            })
+          : { status: 'auto_switch_disabled', generation: input.loaded.generation },
+      };
+    }
     if (!isReasonEnabled(input.loaded.policy, input.request.reason)) {
       return {
         phase: 'policy',
-        result: { status: 'switch_reason_disabled', generation: input.loaded.generation },
+        result: waitForClassifiedFailure
+          ? buildPolicyWaitUntilResetResult({
+              loaded: input.loaded,
+              retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input.request),
+            })
+          : { status: 'switch_reason_disabled', generation: input.loaded.generation },
       };
     }
     if (input.loaded.policy.recoveryMode === 'wait_until_reset') {
@@ -1160,7 +1197,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       });
       if (!selected.selected) {
         const result: ConnectedServiceAuthGroupSwitchResult = selected.reason === 'manual_strategy'
-          ? { status: 'manual_strategy', generation: loaded.generation }
+          ? shouldWaitForClassifiedFailure({
+              trigger,
+              reason: input.reason,
+              recoveryMode: loaded.policy.recoveryMode,
+            })
+            ? buildPolicyWaitUntilResetResult({
+                loaded,
+                retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+              })
+            : { status: 'manual_strategy', generation: loaded.generation }
           : {
               status: 'no_eligible_member',
               generation: loaded.generation,
@@ -1307,7 +1353,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             });
             if (!retrySelected.selected) {
               const result: ConnectedServiceAuthGroupSwitchResult = retrySelected.reason === 'manual_strategy'
-                ? { status: 'manual_strategy', generation: commitLoaded.generation }
+                ? shouldWaitForClassifiedFailure({
+                    trigger,
+                    reason: input.reason,
+                    recoveryMode: commitLoaded.policy.recoveryMode,
+                  })
+                  ? buildPolicyWaitUntilResetResult({
+                      loaded: commitLoaded,
+                      retryAtMs: resolvePolicyRecoveryWaitRetryAtMs(input),
+                    })
+                  : { status: 'manual_strategy', generation: commitLoaded.generation }
                 : {
                     status: 'no_eligible_member',
                     generation: commitLoaded.generation,

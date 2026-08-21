@@ -29,11 +29,21 @@ import { delay } from '@/utils/time';
 import { readTerminalAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createDefaultTerminalHostRegistry } from '@/integrations/terminalHost/defaultRegistry';
 import { logger } from '@/ui/logger';
-import { RPC_METHODS, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
+import {
+  RPC_ERROR_CODES,
+  RPC_METHODS,
+  SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
+} from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
-  reason: 'transport_ambiguous' | 'marker_fallback_failed' | 'target_daemon_unavailable';
+  reason:
+    | 'transport_ambiguous'
+    | 'marker_fallback_failed'
+    | 'target_daemon_unavailable'
+    | 'target_daemon_forbidden'
+    | 'target_daemon_response_unsupported';
 }>;
 
 function stopOutcomeFromAttemptResult(
@@ -89,7 +99,7 @@ async function stopSessionOnOwningMachine(params: Readonly<{
   machineId: string;
 }>): Promise<StopSessionAttemptResult> {
   try {
-    const result = StopSessionResultSchema.safeParse(await callMachineRpc({
+    const rawResult = await callMachineRpc({
       credentials: params.credentials,
       machineId: params.machineId,
       method: RPC_METHODS.STOP_SESSION,
@@ -98,11 +108,25 @@ async function stopSessionOnOwningMachine(params: Readonly<{
         kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
         sessionId: params.sessionId,
       },
-    }));
-    return result.success
-      ? result.data
-      : { status: 'incomplete', reason: 'target_daemon_unavailable' };
-  } catch {
+    });
+    const result = StopSessionResultSchema.safeParse(rawResult);
+    if (!result.success) {
+      const errorEnvelope = rawResult && typeof rawResult === 'object'
+        ? rawResult as { error?: unknown; errorCode?: unknown }
+        : null;
+      if (
+        errorEnvelope?.error === 'Forbidden'
+        && errorEnvelope.errorCode === RPC_ERROR_CODES.FORBIDDEN
+      ) {
+        return { status: 'incomplete', reason: 'target_daemon_forbidden' };
+      }
+      return { status: 'incomplete', reason: 'target_daemon_response_unsupported' };
+    }
+    return result.data;
+  } catch (error) {
+    if (readRpcErrorCode(error) === RPC_ERROR_CODES.FORBIDDEN) {
+      return { status: 'incomplete', reason: 'target_daemon_forbidden' };
+    }
     return { status: 'incomplete', reason: 'target_daemon_unavailable' };
   }
 }

@@ -4385,7 +4385,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('fences explicit Resume before spawn when preserved terminal topology is unreadable or legacy', async () => {
+  it('repairs dead legacy terminal topology through the canonical Stop owner before Resume', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -4397,6 +4397,68 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         orphanedDeadDaemonSessions: [],
         unresolvedTerminalHostSessionIds: ['sess_unresolved_terminal_topology'],
         connectedServiceRestartIntents: [],
+      });
+      stopSessionMocks.stopSession.mockResolvedValueOnce({ status: 'stopped' });
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      let spawnSession = harness.getSpawnSession();
+      for (let attempt = 0; attempt < 20 && !spawnSession; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        spawnSession = harness.getSpawnSession();
+      }
+      if (!spawnSession) throw new Error('Expected spawnSession to be registered');
+
+      await expect(spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        existingSessionId: 'sess_unresolved_terminal_topology',
+        existingSessionAttachPayload: { v: 2, encryptionMode: 'plain' },
+      })).resolves.toMatchObject({ type: 'success' });
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledWith('sess_unresolved_terminal_topology');
+      expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
+      const respawnManager = sessionRespawnManagerCapture.instances[0];
+      expect(respawnManager?.markStopRequested).toHaveBeenCalledWith(
+        'sess_unresolved_terminal_topology',
+        expect.objectContaining({ reason: 'daemon_stop_session' }),
+      );
+      expect(respawnManager?.clearStopRequested).toHaveBeenCalledWith('sess_unresolved_terminal_topology');
+
+      harness.requestShutdown('happier-cli');
+      await run;
+      run = null;
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        connectedServiceRestartIntents: [],
+      });
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('keeps explicit Resume fenced when canonical Stop cannot verify legacy retirement', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    let run: Promise<void> | null = null;
+
+    try {
+      const reattachModule = await import('./sessions/reattachFromMarkers');
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockResolvedValue({
+        orphanedDeadDaemonSessions: [],
+        unresolvedTerminalHostSessionIds: ['sess_unresolved_terminal_topology'],
+        connectedServiceRestartIntents: [],
+      });
+      stopSessionMocks.stopSession.mockResolvedValueOnce({
+        status: 'incomplete',
+        reason: 'legacy_attachment',
       });
 
       const { startDaemon } = await import('./startDaemon');
@@ -4412,7 +4474,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         directory: '/tmp',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         existingSessionId: 'sess_unresolved_terminal_topology',
-        token: 'token-from-spawn-options',
+        existingSessionAttachPayload: { v: 2, encryptionMode: 'plain' },
       })).resolves.toEqual({
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -4433,6 +4495,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         orphanedDeadDaemonSessions: [],
         connectedServiceRestartIntents: [],
       });
+      stopSessionMocks.stopSession.mockResolvedValue({ status: 'stopped' });
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       exitSpy.mockRestore();

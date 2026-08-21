@@ -25,6 +25,7 @@ import {
   readRuntimeAuthRecoverySwitchResult,
   resolveRuntimeAuthRecoveryProof,
 } from './resolveRuntimeAuthRecoveryOutcome';
+import { resolveRuntimeAuthRecoveryResultDisposition } from './resolveRuntimeAuthRecoveryResultDisposition';
 import { buildRuntimeAuthRecoveryKey } from './recoveryKey/runtimeAuthRecoveryKey';
 import {
   buildRuntimeAuthRecoveryScheduledUxDiagnostic,
@@ -653,149 +654,17 @@ function readTemporaryRetryHandoffStatus(result: Readonly<Record<string, unknown
   return null;
 }
 
-// F0: group-exhausted (and switch-limited) recoveries are durable waits, never terminal.
-// For `no_eligible_member`, known reset evidence owns the next retry time. Without reset
-// evidence, the wait uses the anti-storm floor until capped exponential backoff grows beyond it.
 const DEFAULT_RUNTIME_AUTH_RECOVERY_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_BACKOFF_MS = 60_000;
-const DEFAULT_RUNTIME_AUTH_RECOVERY_GROUP_EXHAUSTED_WAIT_FLOOR_MS = 30_000;
-// The per-session switch budget frees on a rolling hour window the scheduler cannot
-// observe directly; poll it on a coarser floor so the durable wait itself provides the
-// storm protection (INC-2), instead of terminalizing the recovery.
-const DEFAULT_RUNTIME_AUTH_RECOVERY_SWITCH_LIMIT_WAIT_FLOOR_MS = 5 * 60_000;
-
-export type RuntimeAuthRecoveryDurableWait = Readonly<{
-  nextRetryAtMs: number | null;
-  reason: 'no_eligible_member' | 'switch_limit_reached' | 'awaiting_limit_reset';
-}>;
-
-// F0 extension (incident Jun-11 F-NEW-1 / FIX-4): non-group (profile-pinned/native) selections
-// have no switch target, but a WAITABLE limit failure with a computable reset is a durable wait,
-// not a terminal `recovery_action_required`. Credential/sharing action kinds stay terminal — no
-// reset horizon makes a reconnect unnecessary.
-const RUNTIME_AUTH_WAITABLE_ACTION_REQUIRED_KINDS: ReadonlySet<string> = new Set([
-  'profile_action_required',
-  'connected_service_required',
-]);
-const RUNTIME_AUTH_WAITABLE_FAILURE_REASONS: ReadonlySet<string> = new Set([
-  'usage_limit',
-  'rate_limit',
-  'temporary_throttle',
-]);
-
-function resolveActionRequiredDurableWaitCandidateMs(input: Readonly<{
-  switchResult: Readonly<Record<string, unknown>>;
-  classificationResetsAtMs: number | null;
-  nowMs: number;
-}>): number | null {
-  if (input.switchResult.status !== 'recovery_action_required') return null;
-  const action = isRecord(input.switchResult.action) ? input.switchResult.action : null;
-  const actionKind = readString(action?.kind);
-  const actionReason = readString(action?.reason);
-  if (!actionKind || !RUNTIME_AUTH_WAITABLE_ACTION_REQUIRED_KINDS.has(actionKind)) return null;
-  if (!actionReason || !RUNTIME_AUTH_WAITABLE_FAILURE_REASONS.has(actionReason)) return null;
-  // Only PROVIDER reset evidence qualifies — intentionally NOT the intent's own scheduler
-  // backoff (which is near-now and would convert "no computable reset → terminal" into an
-  // infinite floor loop for selections that have nothing to wait for).
-  return resolveEarliestFutureWaitCandidateMs([input.classificationResetsAtMs], input.nowMs);
-}
-
-function resolveEarliestFutureWaitCandidateMs(
-  candidates: ReadonlyArray<number | null>,
-  nowMs: number,
-): number | null {
-  const future = candidates.filter((value): value is number => (
-    typeof value === 'number' && Number.isFinite(value) && value > nowMs
-  ));
-  if (future.length === 0) return null;
-  return Math.min(...future);
-}
-
-function readExcludedMemberRetryAtMsCandidates(
-  switchResult: Readonly<Record<string, unknown>>,
-): ReadonlyArray<number | null> {
-  if (!Array.isArray(switchResult.excluded)) return [];
-  return switchResult.excluded.map((entry) => (
-    isRecord(entry) ? readNonNegativeNumber(entry.retryAtMs) : null
-  ));
-}
-
-/**
- * Single owner for the F0/INC-2 durable-wait classification of a recovery-handler
- * result. Group-exhausted `no_eligible_member` and `switch_limit_reached` are
- * durable waits, NEVER terminal: when every wait candidate is stale or absent the
- * policy floor applies instead of collapsing to "now" (or worse, cancelling the
- * intent, whose terminal record then blocks re-arming the same key — RD-REC-13).
- *
- * Consumed by BOTH the scheduler-retry path (which adds the intent's own
- * `nextRetryAtMs` as a wait candidate) and the in-band controlServer report path
- * (which must NOT add the just-intaken intent's near-now backoff as a candidate,
- * or the floor would be defeated).
- */
-export function resolveRuntimeAuthRecoveryDurableWaitPlan(input: Readonly<{
-  result: unknown;
-  classificationResetsAtMs: number | null;
-  additionalWaitCandidatesMs?: ReadonlyArray<number | null>;
-  unknownNoEligibleMemberBackoffMs?: number | null;
-  nowMs: number;
-}>): RuntimeAuthRecoveryDurableWait | null {
-  const switchResult = readSwitchAttemptResult(input.result);
-  if (!switchResult) return null;
-  const additionalCandidates = input.additionalWaitCandidatesMs ?? [];
-  if (switchResult.status === 'no_eligible_member' && switchResult.groupExhausted === true) {
-    const candidate = resolveEarliestFutureWaitCandidateMs([
-      readNonNegativeNumber(switchResult.retryAtMs),
-      readNonNegativeNumber(switchResult.resetsAtMs),
-      ...readExcludedMemberRetryAtMsCandidates(switchResult),
-      input.classificationResetsAtMs,
-      ...additionalCandidates,
-    ], input.nowMs);
-    const unknownResetBackoffMs = readNonNegativeNumber(input.unknownNoEligibleMemberBackoffMs);
-    return {
-      reason: 'no_eligible_member',
-      nextRetryAtMs: candidate ?? input.nowMs + Math.max(
-        DEFAULT_RUNTIME_AUTH_RECOVERY_GROUP_EXHAUSTED_WAIT_FLOOR_MS,
-        unknownResetBackoffMs ?? 0,
-      ),
-    };
-  }
-  if (switchResult.status === 'switch_limit_reached') {
-    const candidate = resolveEarliestFutureWaitCandidateMs([
-      input.classificationResetsAtMs,
-      ...additionalCandidates,
-    ], input.nowMs);
-    return {
-      reason: 'switch_limit_reached',
-      nextRetryAtMs: candidate ?? input.nowMs + DEFAULT_RUNTIME_AUTH_RECOVERY_SWITCH_LIMIT_WAIT_FLOOR_MS,
-    };
-  }
-  // F0 extension: a non-group waitable limit with a KNOWN future reset arms a durable wait
-  // until that reset. Without a computable wait-until the result stays terminal (the
-  // recovery genuinely requires user action). Because this lives in the shared plan owner,
-  // the scheduler-retry path and the in-band controlServer path classify identically
-  // (RD-REC-13 parity).
-  const actionRequiredCandidate = resolveActionRequiredDurableWaitCandidateMs({
-    switchResult,
-    classificationResetsAtMs: input.classificationResetsAtMs,
-    nowMs: input.nowMs,
-  });
-  if (actionRequiredCandidate !== null) {
-    return {
-      reason: 'awaiting_limit_reset',
-      nextRetryAtMs: actionRequiredCandidate,
-    };
-  }
-  return null;
-}
-
-function resolveRuntimeAuthRecoveryDurableWait(input: Readonly<{
+function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
   result: unknown;
   intent: RuntimeAuthRecoveryIntent;
   unknownNoEligibleMemberBackoffMs: number;
   nowMs: number;
-}>): RuntimeAuthRecoveryDurableWait | null {
-  return resolveRuntimeAuthRecoveryDurableWaitPlan({
+}>) {
+  return resolveRuntimeAuthRecoveryResultDisposition({
     result: input.result,
+    classificationFailureKind: input.intent.classification.kind,
     classificationResetsAtMs: input.intent.classification.resetsAtMs ?? null,
     additionalWaitCandidatesMs: [input.intent.nextRetryAtMs],
     unknownNoEligibleMemberBackoffMs: input.unknownNoEligibleMemberBackoffMs,
@@ -1470,7 +1339,7 @@ export class RuntimeAuthRecoveryScheduler {
           // Group-exhausted waits are durable provider-policy waits, never terminal.
           // Count the attempt for telemetry/backoff, but do not let the generic
           // max-attempt dead-letter rule override a known reset or backoff wait.
-          const durableWait = resolveRuntimeAuthRecoveryDurableWait({
+          const disposition = resolveRuntimeAuthRecoveryDisposition({
             result,
             intent,
             unknownNoEligibleMemberBackoffMs: computeRuntimeAuthRecoveryBackoffMs({
@@ -1481,18 +1350,32 @@ export class RuntimeAuthRecoveryScheduler {
             }),
             nowMs: deps.nowMs(),
           });
-          if (durableWait !== null) {
+          if (disposition?.kind === 'durable_wait') {
             return {
               status: 'wait',
-              nextRetryAtMs: durableWait.nextRetryAtMs,
-              lastError: durableWait.reason,
+              nextRetryAtMs: disposition.nextRetryAtMs,
+              lastError: disposition.reason,
               exhaustOnMaxAttempt: false,
               intent: {
                 ...intent,
                 status: 'waiting',
-                nextRetryAtMs: durableWait.nextRetryAtMs,
-                lastError: durableWait.reason,
+                nextRetryAtMs: disposition.nextRetryAtMs,
+                lastError: disposition.reason,
               },
+            };
+          }
+          if (disposition?.kind === 'terminal') {
+            return {
+              status: 'terminal',
+              lastError: disposition.reason,
+              intent: buildTerminalRuntimeAuthIntent({
+                intent: {
+                  ...intent,
+                  lastError: disposition.reason,
+                },
+                nowMs: deps.nowMs(),
+                terminalReason: disposition.reason,
+              }),
             };
           }
           if (isRuntimeAuthRecoveryTerminal(result)) {
@@ -1923,6 +1806,7 @@ export class RuntimeAuthRecoveryScheduler {
   async markDurableWaitForResultByKey(input: Readonly<{
     recoveryKey: string;
     result: unknown;
+    classificationFailureKind?: ConnectedServiceRuntimeFailureClassification['kind'] | null;
     classificationResetsAtMs: number | null;
     expectedAttemptId?: string;
   }>): Promise<RuntimeAuthRecoveryIntent | null> {
@@ -1931,8 +1815,9 @@ export class RuntimeAuthRecoveryScheduler {
     if (input.expectedAttemptId && intent.attemptId !== input.expectedAttemptId) return intent;
     if (isTerminalRuntimeAuthRecoveryStatus(intent.status)) return intent;
     const attemptCount = intent.attemptCount + 1;
-    const plan = resolveRuntimeAuthRecoveryDurableWaitPlan({
+    const disposition = resolveRuntimeAuthRecoveryResultDisposition({
       result: input.result,
+      classificationFailureKind: input.classificationFailureKind,
       classificationResetsAtMs: input.classificationResetsAtMs,
       unknownNoEligibleMemberBackoffMs: computeRuntimeAuthRecoveryBackoffMs({
         attemptCount,
@@ -1942,21 +1827,14 @@ export class RuntimeAuthRecoveryScheduler {
       }),
       nowMs: this.deps.nowMs(),
     });
-    if (!plan) return null;
-    const nextRetryAtMs = plan.nextRetryAtMs ?? (
-      this.deps.nowMs() + computeRuntimeAuthRecoveryBackoffMs({
-        attemptCount,
-        baseBackoffMs: this.baseBackoffMs,
-        maxBackoffMs: this.maxBackoffMs,
-        jitterMs: this.deps.jitterMs ?? (() => 0),
-      })
-    );
+    if (disposition?.kind !== 'durable_wait') return null;
+    const nextRetryAtMs = disposition.nextRetryAtMs;
     const waiting: RuntimeAuthRecoveryIntent = {
       ...intent,
       status: 'waiting',
       attemptCount,
       nextRetryAtMs,
-      lastError: plan.reason,
+      lastError: disposition.reason,
     };
     const settlement = await this.scheduler.upsertConditionallyByKey({
       sessionId: waiting.sessionId,
@@ -1974,7 +1852,7 @@ export class RuntimeAuthRecoveryScheduler {
       groupId: waiting.groupId,
       profileId: waiting.profileId,
       failurePhase: waiting.failurePhase,
-      reason: plan.reason,
+      reason: disposition.reason,
       nextRetryAtMs,
       classification: waiting.lastErrorClassification,
       failureKind: waiting.classification.kind,

@@ -13,6 +13,7 @@ export async function materializeCodexConnectedServiceAuth(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{
   env: Record<string, string>;
+  targetMaterializedRoot: string;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
 }>> {
   const codexHome = join(params.rootDir, 'codex-home');
@@ -23,9 +24,10 @@ export async function materializeCodexConnectedServiceAuth(params: Readonly<{
   });
   await writeCodexAuthStoreFile({ codexHome, record: params.record });
   return {
+    targetMaterializedRoot: params.rootDir,
     env: {
       CODEX_HOME: codexHome,
-      CODEX_SQLITE_HOME: codexHome,
+      CODEX_SQLITE_HOME: syncResult.targetSqliteHome,
     },
     ...(syncResult.diagnostics.length > 0 ? { diagnostics: syncResult.diagnostics } : {}),
   };

@@ -294,20 +294,25 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
       method: 'machine-1:daemon.sessionRunner.restart',
       params: encodeBase64(encrypt(encryptionKey, 'dataKey', { sessionId: 's2' })),
       authorization: { kind: 'session.write', sessionId: 's1' },
+      transportResponseEnvelopeVersion: 1,
     } as any);
 
     expect(authorizeRequest).toHaveBeenCalledWith({
       method: 'machine-1:daemon.sessionRunner.restart',
       params: { sessionId: 's2' },
       authorization: { kind: 'session.write', sessionId: 's1' },
+      transportResponseEnvelopeVersion: 1,
     });
     expect(handler).not.toHaveBeenCalled();
-    expect(typeof res).toBe('string');
+    expect(res).toEqual({
+      v: 1,
+      result: expect.any(String),
+    });
     expect(
       decrypt(
         encryptionKey,
         'dataKey',
-        decodeBase64(res as string),
+        decodeBase64((res as { result: string }).result),
       ),
     ).toEqual({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' });
   });

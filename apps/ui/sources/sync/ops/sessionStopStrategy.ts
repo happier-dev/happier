@@ -5,7 +5,7 @@ import {
 } from '../runtime/rpcErrors';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { StopSessionResultSchema, type StopSessionResult } from '@happier-dev/protocol';
 import { isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
@@ -195,6 +195,21 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
                 reason: fallbackEnvelope.reason,
                 message: fallbackEnvelope.message,
                 ...(fallbackEnvelope.errorCode ? { errorCode: fallbackEnvelope.errorCode } : {}),
+            };
+        }
+        if (
+            response
+            && typeof response === 'object'
+            && (response as { error?: unknown }).error === 'Forbidden'
+            && (response as { errorCode?: unknown }).errorCode === RPC_ERROR_CODES.FORBIDDEN
+        ) {
+            // server-v0.2.1 can forward an encrypted machine rejection as a successful
+            // relay result. Preserve the authorization failure instead of misclassifying
+            // this exact released shape as an unsupported Stop response.
+            return {
+                type: 'failed',
+                message: 'Forbidden',
+                errorCode: RPC_ERROR_CODES.FORBIDDEN,
             };
         }
         log.log(`[SESSION STOP] Unsupported machine RPC response ${JSON.stringify(
