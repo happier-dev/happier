@@ -68,7 +68,10 @@ rl.on('line', (line) => {
         type: 'response',
         command: 'get_available_models',
         success: true,
-        data: { models: [{ id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' }] }
+        data: { models: [
+          { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' },
+          { id: 'unnamed-model', provider: 'local' }
+        ] }
       });
       break;
     case 'get_commands':
@@ -2266,8 +2269,11 @@ describe('PiRpcBackend prompt error handling', () => {
       await backend.startSession();
       const state = (backend as any).getSessionModelState?.() ?? null;
       expect(state).toEqual({
-        currentModelId: 'gpt-4o-mini',
-        availableModels: [{ id: 'gpt-4o-mini', name: 'GPT-4o mini', description: 'openai' }],
+        currentModelId: 'openai/gpt-4o-mini',
+        availableModels: [
+          { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', description: 'openai' },
+          { id: 'local/unnamed-model', name: 'unnamed-model', description: 'local' },
+        ],
       });
     } finally {
       await backend.dispose();

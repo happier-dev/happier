@@ -166,6 +166,27 @@ describe('ClaudeUnifiedDialogChoiceBroker lifecycle', () => {
     });
   });
 
+  it('advertises structured answer support on the request it publishes', async () => {
+    // The request is published under the AskUserQuestion tool name, so a client that
+    // declines the ambiguous legacy downgrade gates submission on this capability.
+    // Without it the dialog is unanswerable remotely even though the broker accepts
+    // the modern structured answer, as the preceding test shows.
+    const { session, client } = createPermissionHandlerSessionStub('dialog-broker-capabilities');
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'dialog-1' });
+    broker.activate();
+
+    const pending = broker.requestDialogChoice({ dialog: dialog(EFFORT_DIALOG) });
+    void pending.catch(() => {});
+    await vi.waitFor(() => expect(client.agentState.requests['dialog-1']).toBeDefined());
+
+    expect(client.agentState.capabilities).toMatchObject({
+      askUserQuestionAnswersInPermission: true,
+      structuredQuestionAnswersV1Supported: true,
+    });
+
+    await broker.dispose();
+  });
+
   it('does not finish disposal while a denied choice cancellation is still persisting', async () => {
     const { session, client } = createPermissionHandlerSessionStub('dialog-broker-denied-cleanup');
     const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'dialog-1' });

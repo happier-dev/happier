@@ -1783,6 +1783,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         launchUserAttemptId,
         onLaunchUserAttemptIdChange,
         sourceContext: sourceContextState.sourceContext,
+        preflightModels,
     });
 
     const {

@@ -259,6 +259,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
           capabilities: {
             ...(state.capabilities && typeof state.capabilities === 'object' ? state.capabilities : {}),
             askUserQuestionAnswersInPermission: true,
+            structuredQuestionAnswersV1Supported: true,
           },
         }),
       }),

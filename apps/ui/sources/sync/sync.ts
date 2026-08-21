@@ -395,6 +395,8 @@ import { socketEmitWithAckFallback } from './engine/socket/socketEmitWithAckFall
 import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './engine/overrides/permissionModePublish';
 import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/overrides/acpSessionModeOverridePublish';
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
+import { publishSessionModelsSeedToMetadata as publishSessionModelsSeedToMetadataEngine } from './engine/overrides/sessionModelsSeedPublish';
+import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { getModelScopedConfigTombstonesV1Supported } from './domains/state/agentStateCapabilities';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -3252,10 +3254,34 @@ class Sync {
             sessionId: params.sessionId,
             modelId: params.modelId,
             updatedAt: params.updatedAt,
-            retireModelScopedConfigOverrides: getModelScopedConfigTombstonesV1Supported(
+                retireModelScopedConfigOverrides: getModelScopedConfigTombstonesV1Supported(
                 storage.getState().sessions[params.sessionId]?.agentState?.capabilities,
             ),
             updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    /**
+     * Seed `sessionModelsV1` from the new-session wizard's preflight probe. Best-effort and
+     * seed-only: providers without a static catalog publish the authoritative list once their
+     * runtime starts, and that publish overwrites this seed.
+     */
+    async publishSessionModelsSeedToMetadata(params: {
+        sessionId: string;
+        serverId?: string | null;
+        agentId: string;
+        currentModelId: string;
+        availableModels: PreflightModelList['availableModels'];
+        updatedAt: number;
+    }): Promise<void> {
+        await publishSessionModelsSeedToMetadataEngine({
+            sessionId: params.sessionId,
+            serverId: params.serverId,
+            provider: params.agentId,
+            currentModelId: params.currentModelId,
+            availableModels: params.availableModels,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater, options) => this.updateSessionMetadataWithRetry(sessionId, updater, options),
         });
     }
 
