@@ -100,7 +100,7 @@ import {
   type ConnectedServiceRuntimeFailureClassification,
 } from './connectedServices/runtimeAuth/types';
 import { isTemporaryRetryOwnedConnectedServiceRuntimeFailure } from './connectedServices/runtimeAuth/ConnectedServiceRecoveryPolicy';
-import { resolveRuntimeAuthRecoveryDurableWaitPlan } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { resolveRuntimeAuthRecoveryResultDisposition } from './connectedServices/runtimeAuth/resolveRuntimeAuthRecoveryResultDisposition';
 import {
   isProvenRuntimeAuthRecoverySuccess,
   resolveRuntimeAuthRecoveryProof,
@@ -192,6 +192,7 @@ type RuntimeAuthRecoverySchedulerForControlServer = Readonly<{
   markDurableWaitForResultByKey?: (input: Readonly<{
     recoveryKey: string;
     result: unknown;
+    classificationFailureKind?: ConnectedServiceRuntimeFailureClassification['kind'] | null;
     classificationResetsAtMs: number | null;
     expectedAttemptId: string;
   }>) => Promise<unknown>;
@@ -290,25 +291,11 @@ function isRuntimeAuthApplyFailureResult(result: unknown): boolean {
 // Mirror of the scheduler-retry terminal classification for the in-band report
 // path. `switch_limit_reached`, group-exhausted `no_eligible_member`, and non-group
 // waitable `recovery_action_required` results with a computable reset are NOT here:
-// those are durable waits (resolveRuntimeAuthRecoveryDurableWaitPlan, F0 / INC-2 /
+// those are durable waits (resolveRuntimeAuthRecoveryResultDisposition, F0 / INC-2 /
 // FIX-4) and the durable-wait gate runs BEFORE this terminal classification, so this
 // only sees recovery_action_required results without a computable wait-until.
 // Terminalizing waits cancelled the just-intaken intent, whose terminal record then
 // blocked re-arming the same key until the 7-day prune (RD-REC-13).
-function readRuntimeAuthTerminalReason(result: unknown): string | null {
-  if (!isRecord(result)) return null;
-  if (result.status === 'recovery_action_required') return 'recovery_action_required';
-  const switchResult = readRuntimeAuthSwitchResult(result);
-  if (!switchResult || typeof switchResult.status !== 'string') return null;
-  if (switchResult.status === 'recovery_action_required') return switchResult.status;
-  // A non-group-exhausted `no_eligible_member` has no wait signal and no member to
-  // wait for — terminal, exactly as the scheduler-retry path classifies it.
-  if (switchResult.status === 'no_eligible_member' && switchResult.groupExhausted !== true) {
-    return switchResult.status;
-  }
-  return null;
-}
-
 async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerForControlServer;
   reportId?: string;
@@ -1088,16 +1075,18 @@ export function createDaemonControlApp({
       // (so the terminal branch below never sees a durable-wait result even when
       // the scheduler double lacks the re-arm method); the wake TIME is resolved
       // by the scheduler on its own clock.
-      const durableWait = resolveRuntimeAuthRecoveryDurableWaitPlan({
+      const disposition = resolveRuntimeAuthRecoveryResultDisposition({
         result,
+        classificationFailureKind: classification.kind,
         classificationResetsAtMs: classification.resetsAtMs ?? null,
         nowMs: Date.now(),
       });
-      if (durableWait) {
+      if (disposition?.kind === 'durable_wait') {
         if (recoveryAttemptId) {
           await runtimeAuthRecoveryScheduler?.markDurableWaitForResultByKey?.({
             recoveryKey,
             result,
+            classificationFailureKind: classification.kind,
             classificationResetsAtMs: classification.resetsAtMs ?? null,
             expectedAttemptId: recoveryAttemptId,
           }).catch((error) => {
@@ -1110,7 +1099,7 @@ export function createDaemonControlApp({
         }
         return ok(result);
       }
-      const terminalReason = readRuntimeAuthTerminalReason(result);
+      const terminalReason = disposition?.kind === 'terminal' ? disposition.reason : null;
       if (terminalReason && canSettleRecoveryAttempt) {
         try {
           const terminalRecovery = await runtimeAuthRecoveryScheduler?.markTerminalByKey?.({

@@ -262,3 +262,72 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater non-group action-req
     });
   });
 });
+
+describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater policy-result projection', () => {
+  function buildSwitchReport(result: Record<string, unknown>): ConnectedServiceRuntimeAuthFailureDaemonReport {
+    return {
+      ...waitingReport,
+      report: {
+        ok: true,
+        result: {
+          status: 'switch_attempted',
+          result,
+        },
+      },
+    } as ConnectedServiceRuntimeAuthFailureDaemonReport;
+  }
+
+  it('projects a disabled-switch policy result as terminal instead of leaving a null waiting intent', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildSwitchReport({ status: 'auto_switch_disabled', generation: 4 }),
+      classification,
+      nowMs: () => 1_700_000_000_000,
+    });
+
+    expect(updater?.(asMetadata({}))).toMatchObject({
+      sessionUsageLimitRecoveryV1: {
+        status: 'exhausted',
+        nextCheckAtMs: null,
+        lastProbeError: 'auto_switch_disabled',
+      },
+    });
+  });
+
+  it('keeps timing-less group exhaustion waiting at the shared anti-storm floor', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildSwitchReport({
+        status: 'no_eligible_member',
+        generation: 4,
+        groupExhausted: true,
+        retryAtMs: null,
+        excluded: [],
+      }),
+      classification: { ...classification, resetsAtMs: null },
+      nowMs: () => 1_700_000_000_000,
+    });
+
+    expect(updater?.(asMetadata({}))).toMatchObject({
+      sessionUsageLimitRecoveryV1: {
+        status: 'waiting',
+        nextCheckAtMs: 1_700_000_030_000,
+        lastProbeError: 'no_eligible_member',
+      },
+    });
+  });
+
+  it('keeps a classified non-group usage limit waiting until its known reset', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildSwitchReport({ status: 'not_group_selection' }),
+      classification: { ...classification, groupId: null },
+      nowMs: () => 1_700_000_000_000,
+    });
+
+    expect(updater?.(asMetadata({}))).toMatchObject({
+      sessionUsageLimitRecoveryV1: {
+        status: 'waiting',
+        nextCheckAtMs: 1_700_000_060_000,
+        lastProbeError: 'awaiting_limit_reset',
+      },
+    });
+  });
+});

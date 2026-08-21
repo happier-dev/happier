@@ -11,6 +11,7 @@ import type { Metadata } from '@/api/types';
 import { deriveUsageLimitRecoveryTiming } from '@/session/usageLimitRecoveryControls/deriveUsageLimitRecoveryTiming';
 import type { ConnectedServiceRuntimeAuthFailureDaemonReport } from '../reportConnectedServiceRuntimeAuthFailureToDaemon';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';
+import { resolveRuntimeAuthRecoveryResultDisposition } from '../resolveRuntimeAuthRecoveryResultDisposition';
 
 const DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS = 3;
 const FALLBACK_WAIT_CHECK_DELAY_MS = 60_000;
@@ -135,23 +136,10 @@ function buildIssueFingerprint(input: Readonly<{
   ].join(':');
 }
 
-function resolveGroupExhaustedNextCheckAtMs(input: Readonly<{
-  switchResult: MetadataRecord;
-  classification: ConnectedServiceRuntimeFailureClassification;
-}>): number | null {
-  if (input.switchResult.groupExhausted !== true) return null;
-  const candidates = [
-    readNonNegativeInteger(input.switchResult.retryAtMs),
-    readNonNegativeInteger(input.switchResult.resetsAtMs),
-    readNonNegativeInteger(input.classification.resetsAtMs),
-  ];
-  const finiteCandidates = candidates.filter((value): value is number => value !== null);
-  return finiteCandidates.length === 0 ? null : Math.min(...finiteCandidates);
-}
-
 function resolveProjectedRecoveryState(input: Readonly<{
   report: ConnectedServiceRuntimeAuthFailureDaemonReport;
   classification: ConnectedServiceRuntimeFailureClassification;
+  nowMs: number;
 }>): ProjectedRecoveryState | null {
   const report = input.report;
   const result = readOuterResult(report.report);
@@ -197,32 +185,28 @@ function resolveProjectedRecoveryState(input: Readonly<{
     }
     case 'switch_attempted': {
       const switchResult = readSwitchResult(result);
+      const disposition = resolveRuntimeAuthRecoveryResultDisposition({
+        result,
+        classificationFailureKind: input.classification.kind,
+        classificationResetsAtMs: input.classification.resetsAtMs ?? null,
+        nowMs: input.nowMs,
+      });
+      if (disposition?.kind === 'durable_wait') {
+        return {
+          status: 'waiting',
+          lastProbeError: disposition.reason,
+          activeProfileId: readString(switchResult?.activeProfileId),
+          nextCheckAtMs: disposition.nextRetryAtMs,
+        };
+      }
+      if (disposition?.kind === 'terminal') {
+        return {
+          status: 'exhausted',
+          lastProbeError: disposition.reason,
+          activeProfileId: readString(switchResult?.activeProfileId),
+        };
+      }
       switch (switchResult?.status) {
-        case 'no_eligible_member': {
-          const nextCheckAtMs = resolveGroupExhaustedNextCheckAtMs({
-            switchResult,
-            classification: input.classification,
-          });
-          if (nextCheckAtMs !== null) {
-            return {
-              status: 'waiting',
-              lastProbeError: 'no_eligible_member',
-              activeProfileId: readString(switchResult.activeProfileId),
-              nextCheckAtMs,
-            };
-          }
-          return {
-            status: 'exhausted',
-            lastProbeError: 'no_eligible_member',
-            activeProfileId: readString(switchResult.activeProfileId),
-          };
-        }
-        case 'switch_limit_reached':
-          return {
-            status: 'waiting',
-            lastProbeError: 'switch_limit_reached',
-            activeProfileId: readString(switchResult.activeProfileId),
-          };
         case 'switched':
           return {
             status: 'waiting',
@@ -275,14 +259,16 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
 }>): ((metadata: Metadata) => Metadata) | null {
   if (input.classification.kind !== 'usage_limit') return null;
 
+  const now = input.nowMs?.() ?? Date.now();
+
   const projectedState = resolveProjectedRecoveryState({
     report: input.report,
     classification: input.classification,
+    nowMs: now,
   });
   if (!projectedState) return null;
 
   const recoveryRecord = readRecoveryRecord(readOuterResult(input.report.report));
-  const now = input.nowMs?.() ?? Date.now();
 
   return (metadata: Metadata): Metadata => {
     const nextMetadataBase = (metadata ?? {}) as Metadata;

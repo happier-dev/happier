@@ -277,7 +277,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     }
   });
 
-  it('does not switch when automatic switching is disabled by group policy', async () => {
+  it('waits after a classified usage limit when switching is disabled but recovery allows waiting', async () => {
     let didCommit = false;
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
@@ -297,9 +297,36 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     await expect(coordinator.switchAfterClassifiedFailure({
       serviceId: 'openai-codex',
       groupId: 'main',
-      reason: 'refresh_failed',
-    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
+      reason: 'usage_limit',
+      resetsAtMs: 9_000,
+    })).resolves.toMatchObject({
+      status: 'no_eligible_member',
+      generation: 1,
+      groupExhausted: true,
+      retryAtMs: 9_000,
+    });
     expect(didCommit).toBe(false);
+  });
+
+  it('does not turn a proactive soft threshold into a durable wait when automatic switching is disabled', async () => {
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      loadState: async () => ({
+        ...state('primary', 1),
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: false },
+      }),
+      commitSwitch: async () => state('backup', 2),
+      applyGeneration: async () => {},
+    });
+
+    await expect(coordinator.switchBeforeTurn({
+      sessionId: 'soft-threshold-session',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({ status: 'auto_switch_disabled', generation: 1 });
   });
 
   it('honors recoveryMode off without committing an automatic recovery switch', async () => {
