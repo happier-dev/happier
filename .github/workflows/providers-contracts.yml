@@ -122,6 +122,7 @@ jobs:
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
+      select_jobs_explicitly: true
       run_ui: false
       run_server: false
       run_cli: false

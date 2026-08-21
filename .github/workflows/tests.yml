@@ -9,6 +9,11 @@ on:
       - main
   workflow_call:
     inputs:
+      select_jobs_explicitly:
+        description: "Honor run_* inputs instead of running the ordinary CI defaults"
+        required: false
+        default: false
+        type: boolean
       run_ui_e2e:
         required: false
         default: false
@@ -181,7 +186,7 @@ env:
 
 jobs:
   ui-e2e:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || (github.event_name == 'workflow_call' && inputs.run_ui_e2e) }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
     name: UI E2E (Playwright) / shard ${{ matrix.shard }}/3
     strategy:
       fail-fast: false
@@ -422,7 +427,7 @@ jobs:
           if-no-files-found: ignore
 
   ui:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
     timeout-minutes: 75
@@ -472,7 +477,7 @@ jobs:
         run: yarn workspace @happier-dev/app test:integration
 
   shared-packages-unit:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
     name: Shared Package Unit Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -522,7 +527,7 @@ jobs:
           yarn --cwd packages/relay-server test
 
   server:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
     name: Server Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -562,7 +567,7 @@ jobs:
         run: yarn --cwd apps/server test:integration
 
   server-db-contract:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server_db_contract }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
     name: Server DB Contract (Postgres)
     runs-on: ubuntu-22.04
     timeout-minutes: 25
@@ -621,7 +626,7 @@ jobs:
         run: yarn --cwd apps/server test:server:db-contract
 
   cli:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
     name: CLI Tests (unit + integration)
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -712,7 +717,7 @@ jobs:
         run: yarn workspace @happier-dev/cli test:integration
 
   stack:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_stack }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
     name: Stack Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -745,7 +750,7 @@ jobs:
         run: yarn --cwd apps/stack test:integration
 
   release-contracts:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_release_contracts }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_release_contracts }}
     name: Release Contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -778,7 +783,7 @@ jobs:
           node scripts/pipeline/run.mjs release-sync-installers --check
 
   installers-smoke-linux:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
     name: Installer Smoke (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -825,7 +830,7 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-macos:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
     name: Installer Smoke (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
@@ -872,7 +877,7 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-windows:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
     name: Installer Smoke (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -919,7 +924,7 @@ jobs:
             --release-channel "$env:INSTALLERS_RELEASE_CHANNEL"
 
   binary-smoke:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_binary_smoke }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_binary_smoke }}
     name: Binary Smoke (isolated cwd)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1311,7 +1316,7 @@ jobs:
         run: node --test apps/stack/scripts/self_host_daemon.real.integration.test.mjs
 
   typecheck:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_typecheck }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_typecheck }}
     name: Typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1350,7 +1355,7 @@ jobs:
         run: yarn typecheck
 
   cli-daemon-e2e:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli_daemon_e2e }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli_daemon_e2e }}
     name: CLI + Server (light/sqlite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1585,7 +1590,7 @@ jobs:
           done
 
   e2e-core:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_e2e_core }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
     name: Core E2E (fast, packages/tests, server-light, sqlite)
     runs-on: ubuntu-22.04
     timeout-minutes: 120

@@ -261,6 +261,7 @@ jobs:
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
+      select_jobs_explicitly: true
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
       run_wsrepl_lima: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}
       run_mobile_e2e_android: ${{ needs.resolve.outputs.run_mobile_e2e_android == 'true' }}

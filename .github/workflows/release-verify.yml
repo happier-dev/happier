@@ -345,6 +345,7 @@ jobs:
     if: ${{ always() && (needs.verify_candidate.result == 'success' || needs.verify_candidate.result == 'skipped') && needs.resolve_validation_profile.result == 'success' }}
     uses: ./.github/workflows/tests.yml
     with:
+      select_jobs_explicitly: true
       run_ui: false
       run_server: false
       run_cli: false
