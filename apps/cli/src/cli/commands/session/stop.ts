@@ -68,6 +68,14 @@ export async function cmdSessionStop(
     return;
   }
 
+  // A confirmed stop with nothing to signal. Before the stop owner could name
+  // this state it fell through to "stop could not be confirmed", which told the
+  // user an already-stopped Session was indeterminate.
+  if (result.stopOutcome?.status === 'already_stopped') {
+    console.log(chalk.green('✓'), 'session already stopped');
+    return;
+  }
+
   if (result.stopOutcome?.status === 'stopped_projection_unconfirmed') {
     console.log(chalk.yellow('!'), 'session stopped; status update not yet observed');
     return;

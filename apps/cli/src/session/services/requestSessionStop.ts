@@ -46,10 +46,33 @@ type StopSessionAttemptResult = StopSessionResult | Readonly<{
     | 'target_daemon_response_unsupported';
 }>;
 
-function stopOutcomeFromAttemptResult(
-  result: Exclude<StopSessionAttemptResult, { status: 'stopped' }>,
-  targetKind: 'caller_local' | 'owning_machine' = 'caller_local',
-): SessionStopOutcome {
+/**
+ * The single liveness observation this owner makes: is the canonical Session
+ * row INACTIVE? `null` means the row could not be read at all, which is not a
+ * liveness answer.
+ *
+ * The post-stop wait and the confirmed-absent classification below both read
+ * THIS fact, so "is it running" has exactly one definition here and no caller
+ * forms a second one.
+ */
+async function readSessionInactive(params: Readonly<{
+  token: string;
+  sessionId: string;
+}>): Promise<boolean | null> {
+  const session = await fetchSessionByIdCompat({
+    token: params.token,
+    sessionId: params.sessionId,
+  }).catch(() => null);
+  return session ? session.active === false : null;
+}
+
+async function stopOutcomeFromAttemptResult(params: Readonly<{
+  result: Exclude<StopSessionAttemptResult, { status: 'stopped' }>;
+  token: string;
+  sessionId: string;
+  targetKind?: 'caller_local' | 'owning_machine';
+}>): Promise<SessionStopOutcome> {
+  const { result } = params;
   if (result.status === 'incomplete') {
     const cleanupReason = SessionStopCleanupIncompleteReasonSchema.safeParse(result.reason);
     if (cleanupReason.success) {
@@ -61,9 +84,25 @@ function stopOutcomeFromAttemptResult(
     return SessionStopOutcomeSchema.parse({ status: 'physical_stop_unconfirmed', reason: result.reason });
   }
   if (result.status === 'not_found') {
+    // Nothing was found to stop. That is either PROOF that no runtime exists or
+    // a failure to determine it, and the fact that separates them is the one
+    // this owner already accepts as a confirmed stop after signalling a runtime:
+    // the canonical Session row reporting inactive. A Session the addressed
+    // daemon does not track AND the server reports inactive is stopped — a cold
+    // Session cannot otherwise satisfy any consumer that requires a confirmed
+    // stop, because there is nothing left to signal.
+    const inactive = await readSessionInactive({ token: params.token, sessionId: params.sessionId });
+    if (inactive === true) {
+      return SessionStopOutcomeSchema.parse({
+        status: 'already_stopped',
+        reason: 'no_runtime_session_inactive',
+      });
+    }
     return SessionStopOutcomeSchema.parse({
       status: 'physical_stop_unconfirmed',
-      reason: targetKind === 'owning_machine' ? 'target_session_not_found' : 'local_session_not_found',
+      reason: params.targetKind === 'owning_machine'
+        ? 'target_session_not_found'
+        : 'local_session_not_found',
     });
   }
   return SessionStopOutcomeSchema.parse({
@@ -138,12 +177,7 @@ async function waitForSessionStopResult(params: Readonly<{
   const deadlineMs = Date.now() + resolveSessionControlStopTimeoutMs();
 
   while (Date.now() <= deadlineMs) {
-    const session = await fetchSessionByIdCompat({
-      token: params.token,
-      sessionId: params.sessionId,
-    }).catch(() => null);
-
-    if (session?.active === false) {
+    if (await readSessionInactive({ token: params.token, sessionId: params.sessionId }) === true) {
       return true;
     }
 
@@ -290,7 +324,12 @@ export async function requestSessionStop(params: Readonly<{
           ok: true,
           sessionId: resolved.sessionId,
           stopped: false,
-          stopOutcome: stopOutcomeFromAttemptResult(physicalStopResult, 'owning_machine'),
+          stopOutcome: await stopOutcomeFromAttemptResult({
+            result: physicalStopResult,
+            token: params.credentials.token,
+            sessionId: resolved.sessionId,
+            targetKind: 'owning_machine',
+          }),
         };
       }
       const stopped = await waitForSessionStopResult({
@@ -350,7 +389,11 @@ export async function requestSessionStop(params: Readonly<{
       if (
         mayRunExactAmbiguousFallback
         && physicalStopResult.status !== 'stopped'
-        && stopOutcomeFromAttemptResult(physicalStopResult).status === 'physical_stop_unconfirmed'
+        && (await stopOutcomeFromAttemptResult({
+          result: physicalStopResult,
+          token: params.credentials.token,
+          sessionId: resolved.sessionId,
+        })).status === 'physical_stop_unconfirmed'
       ) {
         physicalStopResult = { status: 'incomplete', reason: 'transport_ambiguous' };
       }
@@ -360,7 +403,11 @@ export async function requestSessionStop(params: Readonly<{
         ok: true,
         sessionId: resolved.sessionId,
         stopped: false,
-        stopOutcome: stopOutcomeFromAttemptResult(physicalStopResult),
+        stopOutcome: await stopOutcomeFromAttemptResult({
+          result: physicalStopResult,
+          token: params.credentials.token,
+          sessionId: resolved.sessionId,
+        }),
       };
     }
     const stopped = await waitForSessionStopResult({

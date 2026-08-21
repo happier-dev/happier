@@ -359,12 +359,71 @@ describe('requestSessionStop marker fallback', () => {
     // The fallback really ran — otherwise this asserts nothing.
     expect(mocks.listSessionMarkers).toHaveBeenCalled();
     // The reason must not be one that a consumer may read as "nothing was
-    // signalled"; the ambiguity that caused the fallback is what it reports.
+    // signalled".
     expect(result).not.toMatchObject({
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'local_session_not_found' },
     });
-    expect(JSON.stringify((result as { stopOutcome?: unknown }).stopOutcome))
-      .toContain('transport_ambiguous');
+    // The canonical Session row reports it inactive, so the honest answer is
+    // better than the ambiguity: nothing is running and that is established.
+    // This is the same carve-out the masking rule already makes for
+    // `stopped_cleanup_incomplete` — an outcome that PROVES the host is gone
+    // names a strictly more informative residue and is left as reported. The
+    // masking rule itself is unchanged: it is expressed over the classified
+    // status, not over the fallback's raw reason.
+    expect(result).toMatchObject({
+      stopOutcome: { status: 'already_stopped', reason: 'no_runtime_session_inactive' },
+    });
+  });
+
+  it('reports post-ambiguity marker refusal as the ambiguity when liveness is not established', async () => {
+    // Same path, one fact removed: the Session row still reports it running, so
+    // the fallback's `not_found` proves nothing and the ambiguity that caused
+    // the fallback is again the honest answer. This is the original input of the
+    // case above and pins the masking rule that the confirmed arm must not
+    // swallow.
+    const attachmentId = 'attachment-ambiguous-still-live';
+    mocks.stopDaemonSession.mockRejectedValue(new Error('local control timeout'));
+    mocks.listSessionMarkers.mockResolvedValue([]);
+    mocks.fetchSessionByIdCompat.mockResolvedValue({ id: 'sess-marker-stop', active: true });
+    const sessionsDir = join(happyHomeDir, 'terminal', 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(join(sessionsDir, 'sess-marker-stop.json'), JSON.stringify({
+      version: 2,
+      attachmentId,
+      sessionId: 'sess-marker-stop',
+      handle: {
+        attachmentId,
+        kind: 'zellij',
+        sessionName: 'ambiguous-host',
+        paneId: 'terminal_1',
+        socketDir: '/tmp/ambiguous-zellij',
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'shared',
+          locality: 'same_machine',
+          liveProbe: 'required',
+        },
+      },
+      terminal: {
+        mode: 'zellij',
+        zellij: {
+          sessionName: 'ambiguous-host',
+          paneId: 'terminal_1',
+          socketDirV1: '/tmp/ambiguous-zellij',
+        },
+      },
+      updatedAt: 1,
+    }), 'utf8');
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+    const result = await requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' });
+
+    expect(mocks.listSessionMarkers).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      stopped: false,
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
+    });
   });
 
   it('does not let pre-existing inactive metadata turn a daemon-incomplete stop into success', async () => {
@@ -707,4 +766,82 @@ describe('requestSessionStop marker fallback', () => {
       },
     });
   });
+  /**
+   * The user-blocking case: a Session created days ago whose runtime is long
+   * gone. The stop target answers `not_found`, which is PROOF that no runtime
+   * exists rather than a failure to determine it — provided the canonical
+   * Session row agrees, which is the same fact this owner already accepts as a
+   * confirmed stop after signalling a live runtime. Without the distinction a
+   * cold Session can never satisfy a consumer that requires a confirmed stop,
+   * because there is nothing left to signal.
+   */
+  it('confirms a cold Session as already stopped when the owning machine has no runtime', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: { id: 'sess-marker-stop', active: false, machineId: 'machine-owning-session' },
+    });
+    mocks.callMachineRpc.mockResolvedValue({ status: 'not_found' });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({ id: 'sess-marker-stop', active: false });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: { status: 'already_stopped', reason: 'no_runtime_session_inactive' },
+    });
+  });
+
+  it('confirms a cold Session as already stopped when caller-local control tracks nothing', async () => {
+    mocks.stopDaemonSession.mockResolvedValue({ status: 'not_found' });
+    mocks.listSessionMarkers.mockResolvedValue([]);
+    mocks.fetchSessionByIdCompat.mockResolvedValue({ id: 'sess-marker-stop', active: false });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: { status: 'already_stopped', reason: 'no_runtime_session_inactive' },
+    });
+  });
+
+  /**
+   * The mirror that keeps the distinction real. `not_found` alone is not the
+   * proof — the liveness observation is. A row that still reports the Session
+   * running, and a row that cannot be read at all, are both "could not
+   * determine" and must keep the unconfirmed status every consumer treats as
+   * indeterminate.
+   */
+  it.each([
+    ['the Session row still reports it running', () => {
+      mocks.fetchSessionByIdCompat.mockResolvedValue({ id: 'sess-marker-stop', active: true });
+    }],
+    ['the Session row cannot be read at all', () => {
+      mocks.fetchSessionByIdCompat.mockRejectedValue(new Error('relay unreachable'));
+    }],
+  ] as const)(
+    'keeps a not-found stop unconfirmed when %s',
+    async (_label, primeLiveness) => {
+      mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+        ok: true,
+        sessionId: 'sess-marker-stop',
+        rawSession: { id: 'sess-marker-stop', active: true, machineId: 'machine-owning-session' },
+      });
+      mocks.callMachineRpc.mockResolvedValue({ status: 'not_found' });
+      primeLiveness();
+
+      const { requestSessionStop } = await import('./requestSessionStop');
+
+      await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+        ok: true,
+        sessionId: 'sess-marker-stop',
+        stopped: false,
+        stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_session_not_found' },
+      });
+    },
+  );
 });
