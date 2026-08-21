@@ -4,15 +4,9 @@ import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { spawn } from 'node:child_process';
+import { createPiModelCatalogEntry, type PiModelCatalogEntry } from '@/backends/pi/models/piModelCatalog';
 
-type PiProbedModelRow = Readonly<{
-  id: string;
-  name: string;
-  description?: string;
-  supportsThinking?: boolean;
-}>;
-
-function parsePiListModelsOutput(textRaw: string): PiProbedModelRow[] | null {
+function parsePiListModelsOutput(textRaw: string): PiModelCatalogEntry[] | null {
   const text = typeof textRaw === 'string' ? textRaw : '';
   if (!text.trim()) return null;
 
@@ -22,7 +16,7 @@ function parsePiListModelsOutput(textRaw: string): PiProbedModelRow[] | null {
     .filter(Boolean);
   if (lines.length === 0) return null;
 
-  const parsed: PiProbedModelRow[] = [];
+  const parsed: PiModelCatalogEntry[] = [];
   for (const line of lines) {
     const normalized = line.trim();
     if (!normalized) continue;
@@ -48,12 +42,13 @@ function parsePiListModelsOutput(textRaw: string): PiProbedModelRow[] | null {
       : thinkingRaw === 'no' ? false
       : undefined;
 
-    parsed.push({
-      id: `${provider}/${model}`,
+    const entry = createPiModelCatalogEntry({
+      provider,
+      modelId: model,
       name: model,
-      description: provider,
-      ...(typeof supportsThinking === 'boolean' ? { supportsThinking } : {}),
+      supportsThinking,
     });
+    if (entry) parsed.push(entry);
   }
 
   return parsed.length > 0 ? parsed : null;
@@ -63,7 +58,7 @@ async function probePiListModels(params: Readonly<{
   cwd: string;
   timeoutMs: number;
   processEnv?: NodeJS.ProcessEnv;
-}>): Promise<PiProbedModelRow[] | null> {
+}>): Promise<PiModelCatalogEntry[] | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
   const command =
     resolveProviderCliCommand('pi', { processEnv: params.processEnv ?? process.env })?.command
@@ -76,7 +71,7 @@ async function probePiListModels(params: Readonly<{
     let stderr = '';
     let settled = false;
 
-    const finish = (result: PiProbedModelRow[] | null) => {
+    const finish = (result: PiModelCatalogEntry[] | null) => {
       if (settled) return;
       settled = true;
       resolve(result);
@@ -142,24 +137,6 @@ export const piPreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter
   probeModelsRaw: async ({ cwd, timeoutMs, processEnv }) => {
     const models = await probePiListModels({ cwd, timeoutMs, processEnv });
     if (!models) return null;
-    return models.map((m) => ({
-      id: m.id,
-      name: m.name,
-      ...(typeof m.description === 'string' ? { description: m.description } : {}),
-      ...(m.supportsThinking === true ? {
-        modelOptions: [{
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          type: 'select',
-          currentValue: 'medium',
-          options: [
-            { value: 'low', name: 'Low' },
-            { value: 'medium', name: 'Medium' },
-            { value: 'high', name: 'High' },
-            { value: 'xhigh', name: 'Max' },
-          ],
-        }],
-      } : {}),
-    }));
+    return models;
   },
 };
