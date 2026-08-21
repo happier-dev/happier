@@ -63,13 +63,13 @@ const SKILL_MENTION = { kind: MENTION_KIND_V1.skill, ref: SKILL_REF, token: '$re
  * With an empty snapshot there is no seed to burn, and "the seed was not burned" is true of
  * every possible implementation.
  */
-function createSession(opts: Readonly<{ withPendingSeed?: boolean }> = {}) {
+function createSession(opts: Readonly<{ withPendingSeed?: boolean; seedText?: string }> = {}) {
     const updateMetadata = vi.fn();
     const metadata = opts.withPendingSeed
         ? {
             replaySeedV1: {
                 v: 1,
-                seedText: 'previously replayed transcript',
+                seedText: opts.seedText ?? 'previously replayed transcript',
                 sourceSessionId: 'sess-source-1',
                 sourceCutoffSeqInclusive: 7,
                 createdAtMs: 500,
@@ -233,6 +233,41 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
         const brief = resolution.providerPrompt.replace('\n\ndo the thing\n\n', '\n\n');
         expect(brief.length).toBeLessThanOrEqual(configuration.replaySeedMaxChars);
         // The loss is stated, never silent.
+        expect(resolution.providerPrompt).toContain('omitted to fit the replay budget');
+    });
+
+    it('spends the daemon replay budget on a persisted seed even without a Session reference', async () => {
+        // This seed was sealed under a larger producer budget. The missing
+        // Session-reference block must not create a second unbounded dispatch
+        // path for it.
+        const oversizedSeed = buildHappierReplayPromptFromDialog({
+            previousSessionId: 'sess-source-1',
+            strategy: 'recent_messages',
+            recentMessagesCount: 500,
+            dialog: Array.from({ length: 180 }, (_unused, index) => ({
+                role: index % 2 === 0 ? ('User' as const) : ('Assistant' as const),
+                createdAt: index,
+                text: 'T'.repeat(2_000),
+            })),
+            maxPromptChars: Math.min(200_000, configuration.replaySeedMaxChars + 50_000),
+        }).trim();
+        expect(oversizedSeed.length).toBeGreaterThan(configuration.replaySeedMaxChars);
+
+        const { session } = createSession({ withPendingSeed: true, seedText: oversizedSeed });
+        const resolution = await resolveProviderPromptForDispatch({
+            session,
+            userText: 'do the thing',
+            allowSeed: true,
+            localId: 'local-1',
+            nowMs: 1_000,
+            refreshMetadataBeforeRead: false,
+            meta: {},
+        });
+
+        expect(resolution.providerPrompt).not.toContain('<happier_session_reference>');
+        expect(resolution.seedApplied).toBe(true);
+        expect(resolution.providerPrompt.length - 'do the thing'.length - 2)
+            .toBeLessThanOrEqual(configuration.replaySeedMaxChars);
         expect(resolution.providerPrompt).toContain('omitted to fit the replay budget');
     });
 

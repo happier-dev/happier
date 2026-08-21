@@ -146,16 +146,6 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
         refreshMetadataBeforeRead: params.refreshMetadataBeforeRead,
     });
 
-    if (!sessionReferenceBlock) {
-        return {
-            providerPrompt: seedResolution.providerPrompt,
-            meta,
-            seedApplied: seedResolution.seedApplied,
-            seedText: seedResolution.seedText,
-            settleReplaySeedOnProviderAcceptance: seedResolution.settleReplaySeedOnProviderAcceptance,
-        };
-    }
-
     // ONE total, not two. The seed's cap is enforced when the seed is built, but
     // the Session-reference block is appended here — so without this the prompt
     // exceeds the configured seed cap by up to the reference bound. The seed
@@ -168,7 +158,11 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     const fittedSeedText = seedResolution.seedApplied
         ? fitHappierReplaySeedWithinTotalBudget({
             seedText: seedResolution.seedText,
-            reservedChars: sessionReferenceBlock.length + 2,
+            // A persisted seed may have been sealed under a larger Account or
+            // wire cap than this daemon allows. Even without a Session
+            // reference it therefore goes through the one dispatch budget;
+            // only the actual rendered reference block consumes a reservation.
+            reservedChars: sessionReferenceBlock ? sessionReferenceBlock.length + 2 : 0,
             maxPromptChars: configuration.replaySeedMaxChars,
         })
         : '';
@@ -185,7 +179,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     const seedDelivered = seedResolution.seedApplied && fittedSeedText.length > 0;
 
     return {
-        providerPrompt: `${promptBody}\n\n${sessionReferenceBlock}`,
+        providerPrompt: sessionReferenceBlock ? `${promptBody}\n\n${sessionReferenceBlock}` : promptBody,
         meta,
         seedApplied: seedDelivered,
         seedText: fittedSeedText || seedResolution.seedText,
