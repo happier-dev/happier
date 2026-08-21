@@ -28,7 +28,7 @@ vi.mock('@/startServer', () => ({
   startServer: mocks.startServer,
 }));
 
-import { runLightServerMain } from './main.light';
+import { runLightServerMain } from './flavors/light/main';
 
 describe('runLightServerMain', () => {
   beforeEach(() => {

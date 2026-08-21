@@ -196,6 +196,9 @@ async function smokeTestArchive({ archivePath }) {
     if ((result.status ?? 1) !== 0) {
       throw new Error(`[release] smoke test failed for ${archivePath}: ${formatSmokeOutput(result)}`);
     }
+    if (serverBinary) {
+      throw new Error(`[release] server binary exited before the smoke window for ${archivePath}`);
+    }
     if (artifact?.product === 'happier') {
       const actualVersion = String(result.stdout ?? '').trim();
       if (actualVersion !== artifact.version) {
