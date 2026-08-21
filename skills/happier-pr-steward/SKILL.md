@@ -61,6 +61,8 @@ Do not make a destination implementation the design authority for the PR branch.
 
 When the repository workflow designates another development line as a required destination, port the complete PR intent plus every steward-authored and review-driven follow-up. Re-discover the destination's canonical owner, evolved paths, sibling cases, and tests; never blind-cherry-pick, copy whole files, or reintroduce predecessor architecture.
 
+Verify that each named destination exists and is the intended Git checkout. If one is unavailable, continue independent analysis and source work, mark only that port as blocked with the exact missing prerequisite, and ask for its location or authorization to obtain it. Never create, clone, or guess a destination implicitly.
+
 Classify each source intent as already satisfied, applicable with adaptation, applicable to a broader destination corridor, or not applicable with evidence. Commit destination changes separately as related-only commits with the verified PR author as co-author, preserving all unrelated worktree and index bytes.
 
 ## 7. Request review through an exact public preview
