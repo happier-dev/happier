@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Port 0.2 to 0.3"
+  short_description: "Port 0.2 changes safely into evolved 0.3 code"
+  default_prompt: "Use $happier-port-0-2-to-0-3 to port this complete 0.2 change into the 0.3 line by intent without regressing evolved code."

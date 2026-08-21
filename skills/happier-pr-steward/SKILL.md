@@ -1,6 +1,6 @@
 ---
 name: happier-pr-steward
-description: Analyze and shepherd a Happier pull request from intent review through approved refinements, current-head CI and review follow-up, evidence-based comment adjudication, and intent-preserving cross-repository ports. Use when asked to assess whether a PR is correct or mergeable, detect duplicate or split-brain logic, add follow-up commits, request or monitor reviews, address PR feedback, or carry a Remote Dev PR and every accepted follow-up into Dev without regressing Dev's evolved architecture.
+description: Analyze and shepherd a Happier pull request from intent review through approved refinements, current-head CI and review follow-up, evidence-based comment adjudication, and any required intent-preserving version-line port. Use when asked to assess whether a PR is correct or mergeable, detect duplicate or split-brain logic, add follow-up commits, request or monitor reviews, address PR feedback, or carry a 0.2 PR and every accepted follow-up into the evolved 0.3 line.
 ---
 
 # Happier PR Steward
@@ -13,13 +13,14 @@ Use these skills as applicable:
 
 - `skills/happier-review` for the review basis, affected corridor, findings, and merge assessment;
 - `skills/happier-implement` and `skills/happier-testing` for approved behavior changes and RED -> GREEN evidence;
-- `skills/happier-compatibility` for released seams and the Remote Dev -> Dev predecessor relationship;
+- `skills/happier-compatibility` for released seams and version skew;
+- `skills/happier-port-0-2-to-0-3` when a 0.2 PR must be represented in the 0.3 line;
 - `skills/happier-commit-worktree` when a destination checkout is large or actively dirty;
 - `skills/happier-github-ops` for authenticated GitHub reads and every public mutation;
 - `skills/verify-claims` before relying on bot, human, CI, or delegated claims;
 - `skills/attack-conclusion` and `skills/handoff-report` for closeout.
 
-Read [lifecycle.md](references/lifecycle.md) before starting. In Remote Dev, also read [remote-dev-to-dev.md](references/remote-dev-to-dev.md) before proposing or applying changes.
+Read [lifecycle.md](references/lifecycle.md) before starting.
 
 ## 2. Establish the live basis
 
@@ -57,19 +58,15 @@ Apply refinements on the PR branch before porting them. Use TDD for production b
 
 Do not make a destination implementation the design authority for the PR branch. The PR remains the first implementation surface; the destination port follows only after the source change is coherent and validated.
 
-## 6. Port every accepted intent into Dev
+## 6. Invoke the required version-line port
 
-For a PR targeting Remote Dev, port the complete PR intent plus every steward-authored and review-driven follow-up into `../dev`. This is a semantic migration, never a blind cherry-pick or same-file copy. Follow [remote-dev-to-dev.md](references/remote-dev-to-dev.md).
-
-First verify that `../dev` exists and is the intended Git checkout. If it is absent, continue the PR analysis and approved Remote Dev work, mark only the Dev port as blocked with the exact missing prerequisite, and ask the user for the checkout location or authorization to obtain it. Never create, clone, or guess a destination repository implicitly.
-
-Commit the Dev port as its own coherent related-only commit or commits, with the verified PR author as co-author. Preserve all unrelated Dev changes in the worktree and index.
+When the PR belongs to the 0.2 line, invoke `skills/happier-port-0-2-to-0-3` for the complete PR intent plus every steward-authored and review-driven follow-up. Supply explicit checkout locations; do not encode local folder names in the PR lifecycle. The port skill owns destination discovery, adaptation, validation, related-only commits, and attribution.
 
 ## 7. Request review through an exact public preview
 
 Use `happier-github-ops` for comments and reviewer requests. Before each mutation, show the exact target and full outgoing text, including the required maintainer `cc`, and obtain approval for that exact payload. General authorization to shepherd the PR does not waive this gate.
 
-Summarize what changed and why, name deciding checks, and ask the configured reviewers (including CodeRabbit and Greptile when requested) to review the current head. Do not claim the Dev port is complete unless its commit and validation exist.
+Summarize what changed and why, name deciding checks, and ask the configured reviewers (including CodeRabbit and Greptile when requested) to review the current head. Do not claim the 0.3 port is complete unless its commit and validation exist.
 
 ## 8. Monitor and adjudicate, do not obey
 
@@ -79,7 +76,7 @@ Monitor the current head without busy-looping. Read all unresolved existing comm
 2. separate the reported defect from the reviewer's proposed mechanism;
 3. classify it as confirmed, already fixed, invalid, stale, or not applicable;
 4. apply only confirmed, in-scope corrections using the canonical owner;
-5. port an accepted correction into Dev wherever the same intent or gap is reachable there;
+5. port an accepted correction into the required destination line wherever the same intent or gap is reachable there;
 6. validate both repositories, commit related-only changes with attribution, then request review of the new head through a newly approved exact payload.
 
 Passing CI, an approval, or a bot confidence score is evidence, not authority. Conversely, a stale changes-requested state is not blocking when every underlying finding is proven fixed or irrelevant on the current head.
@@ -89,11 +86,11 @@ Passing CI, an approval, or a bot confidence score is evidence, not authority. C
 Continue until the current head is stable and:
 
 - every existing and new finding has an evidence-backed disposition;
-- all accepted changes are present in the PR branch and Dev where applicable;
+- all accepted changes are present in the PR branch and required destination line;
 - relevant current-head checks pass, or each failure is proven unrelated or unavailable;
 - requested reviewers have reviewed the current head, declined, or have no remaining actionable feedback;
 - no unresolved human thread identifies an unaddressed material issue.
 
 Do not merge unless the user separately authorizes that exact merge action. If external review or CI remains pending beyond the available monitoring window, report the head SHA, pending items, last observed state, and exact resumption point rather than declaring success.
 
-Close with the merge recommendation, PR and Dev commit SHAs, validations actually run, dispositions of rejected findings, skipped checks, and residual risk.
+Close with the merge recommendation, PR and destination commit SHAs, validations actually run, dispositions of rejected findings, skipped checks, and residual risk.
