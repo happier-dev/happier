@@ -1152,6 +1152,15 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
     }, '[r34-test]');
 
     expect(deliveredQuotaCall().sourceProviderAccountId).toBe('acct_live_uuid');
+    expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sess_r34_rejected',
+        classification: expect.objectContaining({
+          sourceProviderAccountId: 'acct_live_uuid',
+        }),
+      }),
+      expect.anything(),
+    );
   });
 
   it('fails closed when the materialized config has no oauth account (identity genuinely unknown)', async () => {

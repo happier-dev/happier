@@ -422,16 +422,17 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
         findConnectedServiceChildSelection(process.env, 'claude-subscription')
         ?? findConnectedServiceChildSelection(process.env, 'anthropic')
         ?? undefined;
-    const classification = classifyClaudeConnectedServiceRuntimeAuthFailure({
+    const enrichedDetailsPromise = enrichClaudeUsageDetailsWithRuntimeAccountIdentity(details);
+    const initialClassification = classifyClaudeConnectedServiceRuntimeAuthFailure({
         details,
         selection,
     });
-    if (!classification) return;
+    if (!initialClassification) return;
     const connectedServiceId: RuntimeIssueConnectedService['serviceId'] =
-        classification.serviceId === 'anthropic' ? 'anthropic' : 'claude-subscription';
-    const profileId = classification.profileId ?? (selection ? null : buildNativeClaudeQuotaProfileId());
+        initialClassification.serviceId === 'anthropic' ? 'anthropic' : 'claude-subscription';
+    const profileId = initialClassification.profileId ?? (selection ? null : buildNativeClaudeQuotaProfileId());
     const selectedGroup = selection?.kind === 'group' ? selection : null;
-    const effectiveGroupId = classification.groupId ?? selectedGroup?.groupId ?? null;
+    const effectiveGroupId = initialClassification.groupId ?? selectedGroup?.groupId ?? null;
     const effectiveGroupGeneration = selectedGroup && effectiveGroupId === selectedGroup.groupId
         ? selectedGroup.generation
         : null;
@@ -450,7 +451,7 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
     if (!sidechainSourced) {
         const issue = buildClaudeRateLimitRuntimeIssue({
             details,
-            classification,
+            classification: initialClassification,
             connectedService,
             occurredAt,
         });
@@ -463,11 +464,16 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
             });
         }
     }
+    const enrichedDetails = await enrichedDetailsPromise;
+    const classification = classifyClaudeConnectedServiceRuntimeAuthFailure({
+        details: enrichedDetails,
+        selection,
+    });
+    if (!classification) return;
     // RD-QUO-2: in-band rate-limit evidence is the freshest usage signal for the real quota
     // subject. Record it for BOTH the native identity and the selected member (mirroring Codex)
     // so the canonical quota row does not lag behind the background fetcher for group sessions.
     if (profileId) {
-        const enrichedDetails = await enrichClaudeUsageDetailsWithRuntimeAccountIdentity(details);
         await claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
             sessionId: session.client.sessionId,
             serviceId: connectedServiceId,

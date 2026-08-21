@@ -120,6 +120,11 @@ type RegisteredRuntimeAuthFailureSourceBindingResolver = (input: Readonly<{
   classification: ConnectedServiceRuntimeFailureClassification;
 }>) => RuntimeAuthFailureSourceBinding | null;
 
+type ProviderQualifiedRuntimeAuthFailureSourceResolver = (input: Readonly<{
+  sessionId: string;
+  classification: ConnectedServiceRuntimeFailureClassification;
+}>) => Promise<ConnectedServiceRuntimeFailureClassification>;
+
 type RuntimeAuthRestartFailureObserver = (input: Readonly<{
   sessionId: string;
   tracked: TrackedSession;
@@ -221,6 +226,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
   resolveDurableSessionForRuntimeAuthRecovery?: RuntimeAuthRecoveryDurableSessionResolver | null;
   resolveRegisteredRuntimeAuthFailureSource?: RegisteredRuntimeAuthFailureSourceBindingResolver | null;
   resolveCurrentRuntimeAuthFailureSource?: RuntimeAuthFailureSourceBindingResolver | null;
+  resolveProviderQualifiedRuntimeAuthFailureSource?: ProviderQualifiedRuntimeAuthFailureSourceResolver | null;
   runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability | null;
   sessionId: string;
   classification: ConnectedServiceRuntimeFailureClassification | null;
@@ -236,7 +242,33 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     && directLiveHotAuth.authMode.kind === 'provider_owned'
     && directLiveHotAuth.authMode.name === 'broker_selection_indirection';
   let brokerOwnedSourceBinding: RuntimeAuthFailureSourceBinding | null = null;
+  let providerQualifiedSourceBinding: RuntimeAuthFailureSourceBinding | null = null;
   let classification = input.classification;
+  if (
+    classification
+    && classification.sourceProviderAccountId
+    && input.resolveProviderQualifiedRuntimeAuthFailureSource
+  ) {
+    const resolvedClassification = await input.resolveProviderQualifiedRuntimeAuthFailureSource({
+      sessionId: input.sessionId,
+      classification,
+    });
+    if (
+      resolvedClassification.serviceId === classification.serviceId
+      && resolvedClassification.groupId === classification.groupId
+      && resolvedClassification.profileId !== classification.profileId
+      && resolvedClassification.profileId
+    ) {
+      providerQualifiedSourceBinding = {
+        serviceId: resolvedClassification.serviceId as ConnectedServiceId,
+        groupId: resolvedClassification.groupId,
+        profileId: resolvedClassification.profileId,
+        generation: resolvedClassification.groupGeneration ?? null,
+        credentialRevision: resolvedClassification.credentialRevision ?? null,
+      };
+    }
+    classification = resolvedClassification;
+  }
   const inputHasExactSourceIdentity = classification !== null
     && typeof classification.profileId === 'string'
     && classification.profileId.trim().length > 0
@@ -416,8 +448,9 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
   }
 
   if (classification === null) {
-    return brokerOwnedSourceBinding
-      ? { status: 'authorized', tracked, sourceBinding: brokerOwnedSourceBinding }
+    const sourceBinding = brokerOwnedSourceBinding ?? providerQualifiedSourceBinding;
+    return sourceBinding
+      ? { status: 'authorized', tracked, sourceBinding }
       : { status: 'authorized', tracked };
   }
 
@@ -431,8 +464,9 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
       || !tracked
     );
   if (!requiresPredecessorVerification) {
-    return brokerOwnedSourceBinding
-      ? { status: 'authorized', tracked, sourceBinding: brokerOwnedSourceBinding }
+    const sourceBinding = brokerOwnedSourceBinding ?? providerQualifiedSourceBinding;
+    return sourceBinding
+      ? { status: 'authorized', tracked, sourceBinding }
       : { status: 'authorized', tracked };
   }
   if (!tracked) {
@@ -589,10 +623,12 @@ function normalizeNullableProfileId(value: unknown): string | null {
 function resolveAuthoritativeRecoveryProfileId(input: Readonly<{
   selection: RuntimeRecoverySelection;
   classifiedProfileId?: string | null;
+  providerQualified?: boolean;
 }>): string {
   if (input.selection.kind === 'group') {
     return normalizeSessionId(
-      input.selection.activeProfileId
+      (input.providerQualified ? input.classifiedProfileId : null)
+      ?? input.selection.activeProfileId
       ?? input.selection.fallbackProfileId
       ?? input.classifiedProfileId
       ?? '',
@@ -664,6 +700,7 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
       activeProfileId: resolveAuthoritativeRecoveryProfileId({
         selection: input.selection,
         classifiedProfileId: input.classification.profileId,
+        providerQualified: Boolean(input.classification.sourceProviderAccountId),
       }),
     },
     classification: {
@@ -672,6 +709,7 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
       profileId: normalizeNullableProfileId(resolveAuthoritativeRecoveryProfileId({
         selection: input.selection,
         classifiedProfileId: input.classification.profileId,
+        providerQualified: Boolean(input.classification.sourceProviderAccountId),
       })),
     },
     switchesThisTurn: effectiveSwitchesThisTurn,
@@ -723,14 +761,25 @@ function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
 
 function doesRuntimeGroupSwitchProveUsableReplacement(
   result: ConnectedServiceAuthGroupSwitchResult,
+  failedProfileId: string | null,
+  failedCredentialRevision: string | null,
 ): boolean {
-  return result.status === 'switched'
-    || result.status === 'observed_generation'
-    || result.status === 'superseded_after_apply';
+  if (result.status === 'switched' || result.status === 'superseded_after_apply') return true;
+  if (result.status !== 'observed_generation') return false;
+  const observedProfileId = normalizeNullableProfileId(result.activeProfileId);
+  if (observedProfileId !== null && failedProfileId !== null && observedProfileId !== failedProfileId) {
+    return true;
+  }
+  const observedCredentialRevision = result.credentialRevision ?? null;
+  return observedCredentialRevision !== null
+    && failedCredentialRevision !== null
+    && observedCredentialRevision !== failedCredentialRevision;
 }
 
 function resolveRuntimeGroupSwitchContinuationContext(
   result: ConnectedServiceAuthGroupSwitchResult,
+  failedProfileId: string | null,
+  failedCredentialRevision: string | null,
   supersedingGenerationSettled = false,
 ): Readonly<{
   action: 'hot_applied' | 'restart_requested';
@@ -740,7 +789,14 @@ function resolveRuntimeGroupSwitchContinuationContext(
   if (result.status === 'superseded_after_apply' && supersedingGenerationSettled) {
     return { action: 'hot_applied', activeProfileId: result.activeProfileId, generation: result.generation };
   }
-  if (result.status === 'observed_generation') {
+  if (
+    result.status === 'observed_generation'
+    && doesRuntimeGroupSwitchProveUsableReplacement(
+      result,
+      failedProfileId,
+      failedCredentialRevision,
+    )
+  ) {
     return { action: 'hot_applied', activeProfileId: result.activeProfileId, generation: result.generation };
   }
   if (result.status !== 'switched') return null;
@@ -762,12 +818,16 @@ async function maybeContinueAfterRuntimeGroupSwitch(input: Readonly<{
   sessionId: string;
   selection: Extract<RuntimeRecoverySelection, Readonly<{ kind: 'group' }>>;
   result: ConnectedServiceAuthGroupSwitchResult;
+  failedProfileId: string | null;
+  failedCredentialRevision: string | null;
   supersedingGenerationSettled?: boolean;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
 }>): Promise<void> {
   if (!input.continueAfterRuntimeAuthSwitch) return;
   const continuationContext = resolveRuntimeGroupSwitchContinuationContext(
     input.result,
+    input.failedProfileId,
+    input.failedCredentialRevision,
     input.supersedingGenerationSettled === true,
   );
   if (!continuationContext) return;
@@ -1028,6 +1088,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   resolveDurableSessionForRuntimeAuthRecovery?: RuntimeAuthRecoveryDurableSessionResolver | null;
   resolveRegisteredRuntimeAuthFailureSource?: RegisteredRuntimeAuthFailureSourceBindingResolver | null;
   resolveCurrentRuntimeAuthFailureSource?: RuntimeAuthFailureSourceBindingResolver | null;
+  resolveProviderQualifiedRuntimeAuthFailureSource?: ProviderQualifiedRuntimeAuthFailureSourceResolver | null;
   runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability | null;
   temporaryThrottleRecovery?: TemporaryThrottleRecoveryLike | null;
   credentialRefreshService?: RuntimeCredentialRefreshService | null;
@@ -1254,7 +1315,11 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   if (
     groupRefreshReconnectAction
     && result.status === 'switch_attempted'
-    && !doesRuntimeGroupSwitchProveUsableReplacement(result.result)
+    && !doesRuntimeGroupSwitchProveUsableReplacement(
+      result.result,
+      normalizeNullableProfileId(classification.profileId),
+      classification.credentialRevision ?? null,
+    )
   ) {
     return groupRefreshReconnectAction;
   }
@@ -1325,6 +1390,8 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       sessionId: input.sessionId,
       selection,
       result: result.result,
+      failedProfileId: normalizeNullableProfileId(classification.profileId),
+      failedCredentialRevision: classification.credentialRevision ?? null,
       supersedingGenerationSettled,
       continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch ?? null,
     });

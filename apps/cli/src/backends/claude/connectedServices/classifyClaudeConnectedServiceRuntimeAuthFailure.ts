@@ -154,6 +154,7 @@ export function classifyClaudeConnectedServiceRuntimeAuthFailure(params: Readonl
     const groupId = readString(selection?.groupId);
     const groupGeneration = readSelectionGroupGeneration(selection, groupId);
     const credentialRevision = readSelectionCredentialRevision(selection);
+    const sourceProviderAccountId = readString(params.details.sourceProviderAccountId);
     return {
         kind,
         limitCategory,
@@ -162,6 +163,7 @@ export function classifyClaudeConnectedServiceRuntimeAuthFailure(params: Readonl
         groupId,
         ...(groupGeneration !== null ? { groupGeneration } : {}),
         ...(credentialRevision !== null ? { credentialRevision } : {}),
+        ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
         resetsAtMs: params.details.resetAtMs ?? fallbackTiming?.resetAtMs ?? null,
         retryAfterMs: params.details.retryAfterMs ?? fallbackTiming?.retryAfterMs ?? null,
         quotaScope: params.details.quotaScope,

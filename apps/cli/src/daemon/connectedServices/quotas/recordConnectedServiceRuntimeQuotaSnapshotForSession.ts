@@ -140,6 +140,11 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
   sourceProviderAccountId?: string | null;
   credentialFingerprint?: string | null;
   policyDisposition?: 'evidence_only';
+  resolveProviderQualifiedGroupSource?: (input: Readonly<{
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    providerAccountId: string;
+  }>) => Promise<Readonly<{ profileId: string; groupGeneration: number }> | null>;
   verifyCredentialFingerprint?: (input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
@@ -177,11 +182,27 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
   const bindingsRaw = resolveTrackedConnectedServiceBindingsRaw(tracked);
   const selection = parseConnectedServiceBindingSelections(bindingsRaw)
     .find((candidate) => candidate.serviceId === input.serviceId) ?? null;
+  const sourceProviderAccountId = normalizeNullableString(input.sourceProviderAccountId);
+  const reportedGroupId = normalizeNullableString(input.groupId);
+  const providerQualifiedGroupSource =
+    selection?.kind === 'group'
+    && reportedGroupId === selection.groupId
+    && sourceProviderAccountId
+    && input.resolveProviderQualifiedGroupSource
+      ? await input.resolveProviderQualifiedGroupSource({
+          serviceId: input.serviceId,
+          groupId: selection.groupId,
+          providerAccountId: sourceProviderAccountId,
+        }).catch(() => null)
+      : null;
+  const effectiveSnapshot = providerQualifiedGroupSource
+    && providerQualifiedGroupSource.profileId !== input.snapshot.profileId
+      ? { ...input.snapshot, profileId: providerQualifiedGroupSource.profileId }
+      : input.snapshot;
   const accountUsageSnapshot = buildAccountUsageSnapshotForRuntimeQuota({
-    snapshot: input.snapshot,
+    snapshot: effectiveSnapshot,
     sourceProviderAccountId: input.sourceProviderAccountId,
   });
-  const sourceProviderAccountId = normalizeNullableString(input.sourceProviderAccountId);
   const sourceAccountMatchesSnapshot =
     accountUsageSnapshot.accountSubject.kind === 'providerSubject'
     && sourceProviderAccountId === accountUsageSnapshot.accountSubject.id;
@@ -191,7 +212,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     selection && sourceProviderAccountId && credentialFingerprint && verifyCredentialFingerprint
       ? {
           serviceId: input.serviceId,
-          profileId: input.snapshot.profileId,
+          profileId: effectiveSnapshot.profileId,
           providerAccountId: sourceProviderAccountId,
           credentialFingerprint,
         }
@@ -211,8 +232,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
 
   const activeGroupSelectionMatchesSnapshotProfile =
     activeGroupSelection?.kind === 'group'
-    && activeGroupSelection.activeProfileId === input.snapshot.profileId;
-  const reportedGroupId = normalizeNullableString(input.groupId);
+    && activeGroupSelection.activeProfileId === effectiveSnapshot.profileId;
   const reportedGroupGeneration = normalizeNonNegativeInt(input.groupGeneration);
   const activeGroupGeneration = activeGroupSelectionMatchesSnapshotProfile
     && selection?.kind === 'group'
@@ -233,7 +253,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     ? await input.resolveCurrentGroupGenerationForProfile({
         serviceId: input.serviceId,
         groupId: selection.groupId,
-        profileId: input.snapshot.profileId,
+        profileId: effectiveSnapshot.profileId,
       }).then(normalizeNonNegativeInt).catch(() => null)
     : null;
   const exactCurrentReportedGroupGeneration =
@@ -246,14 +266,19 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     : null;
   // A surviving runner's launch environment is immutable. After exact hot apply, current
   // credential + provider-account + reported/current generation are the live authority.
-  const runtimeGroupGeneration = activeGroupGeneration ?? exactCurrentReportedGroupGeneration;
+  const providerQualifiedGroupGeneration = exactCurrentCredentialAccountBinding
+    ? normalizeNonNegativeInt(providerQualifiedGroupSource?.groupGeneration)
+    : null;
+  const runtimeGroupGeneration = activeGroupGeneration
+    ?? exactCurrentReportedGroupGeneration
+    ?? providerQualifiedGroupGeneration;
   const effectiveGroupRuntimeStateRecorded =
     selection?.kind === 'group' && runtimeGroupGeneration !== null;
   // Provider-account usage is a different fact: once the current credential and provider account
   // are proven, bind it to authoritative current group truth even when a sibling advanced the
   // generation without changing the logical account.
   const accountUsageGroupGeneration = exactCurrentCredentialAccountBinding
-    ? resolvedCurrentGroupGeneration ?? activeGroupGeneration
+    ? resolvedCurrentGroupGeneration ?? providerQualifiedGroupGeneration ?? activeGroupGeneration
     : activeGroupGeneration;
 
   const proofGroupId = selection?.kind === 'group' && runtimeGroupGeneration !== null
@@ -262,7 +287,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
   const proofGroupGeneration = proofGroupId ? runtimeGroupGeneration : null;
   const selectionMatchesSnapshot = selection?.kind === 'group'
     ? proofGroupId !== null
-    : selection?.kind === 'profile' && selection.profileId === input.snapshot.profileId;
+    : selection?.kind === 'profile' && selection.profileId === effectiveSnapshot.profileId;
 
   let quotaStateRecorded = false;
   let recordedAccountUsageSnapshot: ProviderAccountUsageSnapshotV1 | null = null;
@@ -271,7 +296,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
   let recordedAccountUsageEffectiveMutation = false;
   const accountUsageObservation = buildRuntimeQuotaObservation({
     serviceId: input.serviceId,
-    profileId: input.snapshot.profileId,
+    profileId: effectiveSnapshot.profileId,
     selection: credentialVerificationCandidate ? selection : null,
     groupGeneration: accountUsageGroupGeneration,
   });
@@ -315,9 +340,9 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     input.runtimeQuotaSnapshots.recordSnapshot({
       serviceId: input.serviceId,
       groupId: selection.groupId,
-      profileId: input.snapshot.profileId,
+      profileId: effectiveSnapshot.profileId,
       groupGeneration: runtimeGroupGeneration,
-      snapshot: input.snapshot,
+      snapshot: effectiveSnapshot,
     });
   }
 
@@ -337,7 +362,7 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
           sessionId: input.sessionId,
           serviceId: input.serviceId,
           groupId: selection.groupId,
-          profileId: input.snapshot.profileId,
+          profileId: effectiveSnapshot.profileId,
           groupGeneration: accountUsageGroupGeneration,
           recordId: recordedAccountUsageRecordId,
           snapshot: recordedAccountUsageSnapshot,
@@ -358,13 +383,13 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
     ) {
       const expectedAppliedIdentity = await input.resolveExpectedQuotaProbeAppliedIdentity({
         serviceId: input.serviceId,
-        profileId: input.snapshot.profileId,
+        profileId: effectiveSnapshot.profileId,
         groupId: proofGroupId,
         groupGeneration: proofGroupGeneration,
       }).catch(() => null);
       const snapshotAppliedIdentity: QuotaProbeAppliedIdentity = {
         serviceId: input.serviceId,
-        profileId: input.snapshot.profileId,
+        profileId: effectiveSnapshot.profileId,
         groupId: proofGroupId,
         groupGeneration: proofGroupGeneration,
         providerAccountId: normalizeNullableString(input.sourceProviderAccountId),
@@ -372,20 +397,20 @@ export async function recordConnectedServiceRuntimeQuotaSnapshotForSession(input
       };
       const proof = input.resolveQuotaProbeFreshProof({
         serviceId: input.serviceId,
-        profileId: input.snapshot.profileId,
+        profileId: effectiveSnapshot.profileId,
         expectedAppliedIdentity,
         snapshotAppliedIdentity,
-        snapshot: input.snapshot,
+        snapshot: effectiveSnapshot,
       });
       if (proof.status === 'proof') {
         try {
           await input.recordQuotaProbeFreshProof({
             sessionId: input.sessionId,
             serviceId: input.serviceId,
-            profileId: input.snapshot.profileId,
+            profileId: effectiveSnapshot.profileId,
             groupId: proofGroupId,
             proofKind: proof.proofKind,
-            observedAtMs: input.snapshot.fetchedAt,
+            observedAtMs: effectiveSnapshot.fetchedAt,
           });
         } catch {
           // Recovery proof is optional settlement. Canonical quota/account usage remains valid.

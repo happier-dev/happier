@@ -69,6 +69,57 @@ function createTemporaryThrottleClassification(
 }
 
 describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
+  it('authorizes a provider-qualified shared-auth failure from the live group member instead of stale launch metadata', async () => {
+    const tracked = {
+      startedBy: 'daemon' as const,
+      happySessionId: 'sess_provider_qualified_shared_auth',
+      pid: 123,
+      spawnOptions: { directory: '/tmp/project' },
+    } satisfies TrackedSession;
+    const resolveProviderQualifiedRuntimeAuthFailureSource = vi.fn(async (
+      classification: ConnectedServiceRuntimeFailureClassification,
+    ) => ({
+      ...classification,
+      profileId: 'live-profile',
+      groupGeneration: null,
+      credentialRevision: null,
+    }));
+
+    await expect(authorizeConnectedServiceRuntimeAuthFailureSource({
+      getChildren: () => [tracked],
+      sessionId: tracked.happySessionId,
+      classification: {
+        kind: 'usage_limit',
+        serviceId: 'claude-subscription',
+        profileId: 'spawn-profile',
+        groupId: 'main',
+        groupGeneration: 7,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        sourceProviderAccountId: 'acct_live',
+        resetsAtMs: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+        recoveryAction: { kind: 'quota_recovery_required' },
+      },
+      resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => (
+        await resolveProviderQualifiedRuntimeAuthFailureSource(classification)
+      ),
+      runtimeAuthApply: registryOnlyRuntimeAuthCapability,
+    })).resolves.toEqual({
+      status: 'authorized',
+      tracked,
+      sourceBinding: {
+        serviceId: 'claude-subscription',
+        groupId: 'main',
+        profileId: 'live-profile',
+        generation: null,
+        credentialRevision: null,
+      },
+    });
+    expect(resolveProviderQualifiedRuntimeAuthFailureSource).toHaveBeenCalledOnce();
+  });
+
   it('authorizes a reattached exact Codex report from the matching registered runtime binding', async () => {
     const tracked = {
       startedBy: 'daemon' as const,
@@ -4520,6 +4571,70 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         generation: 2,
       },
     });
+  });
+
+  it('does not continue when observed generation still names the failed account', async () => {
+    const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+    const switchAfterClassifiedFailure = vi.fn(async () => ({
+      status: 'observed_generation' as const,
+      activeProfileId: 'primary',
+      generation: 2,
+      credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS',
+    }));
+    const tracked = {
+      startedBy: 'daemon' as const,
+      happySessionId: 'sess_same_account',
+      pid: 123,
+      spawnOptions: {
+        directory: '/tmp/project',
+        connectedServices: {
+          v: 1 as const,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected' as const,
+              selection: 'group' as const,
+              profileId: 'primary',
+              groupId: 'main',
+            },
+          },
+        },
+      },
+    };
+
+    await expect(handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [tracked],
+      switchCoordinator: { switchAfterClassifiedFailure },
+      continueAfterRuntimeAuthSwitch,
+      sourceAuthorization: { status: 'authorized', tracked },
+      sessionId: 'sess_same_account',
+      switchesThisTurn: 0,
+      classification: {
+        kind: 'usage_limit',
+        limitCategory: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'main',
+        groupGeneration: 1,
+        credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS',
+        resetsAtMs: null,
+        retryAfterMs: 30_000,
+        quotaScope: 'account',
+        providerLimitId: 'weekly',
+        action: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+    })).resolves.toMatchObject({
+      status: 'switch_attempted',
+      result: {
+        status: 'observed_generation',
+        activeProfileId: 'primary',
+        generation: 2,
+      },
+    });
+
+    expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
   });
 
   it('settles a superseding generation before continuing the interrupted turn', async () => {

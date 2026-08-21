@@ -992,6 +992,86 @@ describe('recordConnectedServiceRuntimeQuotaSnapshotForSession', () => {
     })).toBe(snapshot);
   });
 
+  it('attributes shared-auth quota evidence to the live provider-qualified group member', async () => {
+    const accountUsage = createAccountUsageHarness();
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const notifyAccountUsageChanged = vi.fn(async () => {});
+    const verifyCredentialFingerprint = vi.fn(async () => true);
+    const snapshot = createSnapshot({
+      serviceId: 'claude-subscription',
+      providerId: 'claude',
+      profileId: 'stale-launch-profile',
+      activeAccountId: 'claude-live-account',
+    });
+
+    await expect(recordConnectedServiceRuntimeQuotaSnapshotForSession({
+      getChildren: () => [{
+        startedBy: 'daemon',
+        happySessionId: 'sess_shared_auth',
+        pid: 123,
+        spawnOptions: {
+          directory: '/tmp/project',
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'claude-subscription': {
+                source: 'connected',
+                selection: 'group',
+                profileId: 'stale-launch-profile',
+                groupId: 'claude',
+              },
+            },
+          },
+          environmentVariables: {
+            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+              kind: 'group',
+              serviceId: 'claude-subscription',
+              groupId: 'claude',
+              activeProfileId: 'stale-launch-profile',
+              fallbackProfileId: 'backup',
+              generation: 7,
+            }]),
+          },
+        },
+      }],
+      accountUsageRecorder: accountUsage.accountUsageRecorder,
+      credentialFingerprint: 'sha256:abcdef12',
+      verifyCredentialFingerprint,
+      resolveProviderQualifiedGroupSource: async () => ({
+        profileId: 'live-profile',
+        groupGeneration: 9,
+      }),
+      resolveCurrentGroupGenerationForProfile: async () => 9,
+      groupId: 'claude',
+      groupGeneration: 7,
+      notifyAccountUsageChanged,
+      runtimeQuotaSnapshots,
+      sessionId: 'sess_shared_auth',
+      serviceId: 'claude-subscription',
+      sourceProviderAccountId: 'claude-live-account',
+      snapshot,
+    })).resolves.toEqual({ status: 'recorded', groupRuntimeStateRecorded: true, quotaStateRecorded: true });
+
+    expect(verifyCredentialFingerprint).toHaveBeenCalledWith(expect.objectContaining({
+      serviceId: 'claude-subscription',
+      profileId: 'live-profile',
+      providerAccountId: 'claude-live-account',
+    }));
+    expect(accountUsage.store.resolveBySource({
+      serviceId: 'claude-subscription',
+      profileId: 'live-profile',
+      bindingKind: 'group_member',
+      groupId: 'claude',
+      groupGeneration: 9,
+    })?.recordKey.accountSubjectId).toBe('claude-live-account');
+    expect(notifyAccountUsageChanged).toHaveBeenCalledWith(expect.objectContaining({
+      serviceId: 'claude-subscription',
+      profileId: 'live-profile',
+      groupId: 'claude',
+      groupGeneration: 9,
+    }));
+  });
+
   it('records runtime projection and quota proof against current live generation after hot apply', async () => {
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
     const recordQuotaProbeFreshProof = vi.fn(async () => {});
