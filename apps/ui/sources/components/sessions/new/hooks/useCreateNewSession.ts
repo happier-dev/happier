@@ -1123,9 +1123,12 @@ export function useCreateNewSession(params: Readonly<{
                 if (switchUnavailable) {
                     current.setIsCreating(false);
                     const startFreshAction = switchUnavailable.actions.find((action) => action.kind === 'start_fresh');
+                    const diagnosticBody = switchUnavailable.bodyParams
+                        ? t(switchUnavailable.bodyKey, switchUnavailable.bodyParams)
+                        : t(switchUnavailable.bodyKey);
                     Modal.alert(
                         t(switchUnavailable.titleKey),
-                        t(switchUnavailable.bodyKey, switchUnavailable.bodyParams),
+                        diagnosticBody,
                         [
                             ...(startFreshAction
                                 ? [{

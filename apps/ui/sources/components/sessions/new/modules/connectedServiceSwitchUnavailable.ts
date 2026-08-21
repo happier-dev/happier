@@ -2,7 +2,6 @@ import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
-    type ConnectedServiceUxDiagnosticV1,
     type SpawnSessionResult,
 } from '@happier-dev/protocol';
 
@@ -32,33 +31,12 @@ export type ConnectedServiceSwitchUnavailableAction = Readonly<{
     labelKey: TranslationKey;
 }>;
 
-/**
- * The explanatory body is a parameterized translation; type its key as the specific literal so the
- * `t(key, params)` generic can infer the interpolation params (a broad `TranslationKey` collapses the
- * params to `never`, which forbids passing params).
- */
-type ConnectedServiceSwitchUnavailableBodyKey = 'newSession.connectedServiceSwitchUnavailable.body';
-
 export type ConnectedServiceSwitchUnavailablePresentation = Readonly<{
-    titleKey: Extract<TranslationKey, 'newSession.connectedServiceSwitchUnavailable.title'>;
-    bodyKey: Extract<TranslationKey, ConnectedServiceSwitchUnavailableBodyKey>;
-    /** Interpolation params for the explanatory body so the user sees WHY it could not continue. */
-    bodyParams: Readonly<{ reason: string; agentId: string }>;
-    /** The concrete machine-readable reason mirrored from the daemon's reachability probe. */
-    reason: string;
-    /** The catalog agent id whose resume was unreachable (e.g. `pi`, `codex`). */
-    agentId: string;
+    titleKey: ConnectedServiceUxDiagnosticPresentation['titleKey'];
+    bodyKey: ConnectedServiceUxDiagnosticPresentation['bodyKey'];
+    bodyParams?: ConnectedServiceUxDiagnosticPresentation['bodyParams'];
     actions: ReadonlyArray<ConnectedServiceSwitchUnavailableAction>;
 }>;
-
-function readDiagnosticReason(diagnostic: ConnectedServiceUxDiagnosticV1): string {
-    const reason = diagnostic.diagnostics?.reason;
-    return typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : diagnostic.code;
-}
-
-function readDiagnosticAgentId(diagnostic: ConnectedServiceUxDiagnosticV1): string {
-    return diagnostic.agentId ?? diagnostic.providerId ?? 'provider';
-}
 
 function buildActions(
     actions: ConnectedServiceUxDiagnosticPresentation['actions'],
@@ -95,13 +73,8 @@ export function resolveConnectedServiceSwitchUnavailablePresentation(
     const diagnostic = resumeDetail?.uxDiagnostic ?? diagnosticDetail?.uxDiagnostic;
     if (!diagnostic) return null;
     const uxPresentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
-    const reason = uxPresentation?.bodyParams?.reason
-        ?? resumeDetail?.reason
-        ?? readDiagnosticReason(diagnostic);
-    const agentId = uxPresentation?.bodyParams?.agentId
-        ?? resumeDetail?.agentId
-        ?? readDiagnosticAgentId(diagnostic);
-    const uxActions = buildActions(uxPresentation?.actions ?? []);
+    if (!uxPresentation) return null;
+    const uxActions = buildActions(uxPresentation.actions);
     const fallbackActions: ConnectedServiceSwitchUnavailableAction[] = resumeDetail
         ? [
             { kind: 'start_fresh', labelKey: 'newSession.connectedServiceSwitchUnavailable.startFreshAction' },
@@ -112,14 +85,9 @@ export function resolveConnectedServiceSwitchUnavailablePresentation(
         ];
 
     return {
-        titleKey: 'newSession.connectedServiceSwitchUnavailable.title',
-        bodyKey: 'newSession.connectedServiceSwitchUnavailable.body',
-        bodyParams: {
-            reason,
-            agentId,
-        },
-        reason,
-        agentId,
+        titleKey: uxPresentation.titleKey,
+        bodyKey: uxPresentation.bodyKey,
+        ...(uxPresentation.bodyParams ? { bodyParams: uxPresentation.bodyParams } : {}),
         actions: uxActions.length > 0
             ? uxActions
             : fallbackActions,
