@@ -21,6 +21,7 @@ import { shouldShowTranscriptRowActions, shouldShowTranscriptRowPinAction } from
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import type { StructuredMessageRendererParams } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
 import { useRouter } from 'expo-router';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
@@ -469,7 +470,12 @@ function RenderBlock(props: {
           radius={TRANSCRIPT_EVENT_ROW_HIGHLIGHT_RADIUS}
           style={styles.eventHighlightSurface}
         >
-          <TranscriptEventRow event={props.message.event} sessionId={props.sessionId} emphasis={props.eventEmphasis} />
+          <TranscriptEventRow
+            event={props.message.event}
+            localId={props.message.localId}
+            sessionId={props.sessionId}
+            emphasis={props.eventEmphasis}
+          />
         </TranscriptJumpAttention>
       );
 
@@ -1509,18 +1515,14 @@ function ForkMessageButton(props: {
       sourceMessageId: props.messageId,
       sourcePreview: restored,
       writeForkInitialPrompt: true,
-      // DELIBERATELY NOT routed through `useNavigateToSession`, unlike the other 21 session-open
-      // call sites. This is a transcript ROW, rendered hundreds of times, and importing the
-      // session-opening owner here hangs this file's suites outright — bisected on a clean base,
-      // one variable: the module import alone reproduces it, while the hook call and the call site
-      // do not, and each of the owner's own imports is harmless in isolation.
-      //
-      // The migration would have bought this one fork-completion navigation server scoping and a
-      // singular history entry. That is real but small, and not worth putting the owner's module
-      // graph inside the hottest render surface in the app. If it is wanted later, pass an opener
-      // down from the host rather than importing the owner here.
-      navigateToSession: (childSessionId) => {
-        router.push((`/session/${childSessionId}`) as any);
+      // Keep the transcript row independent of the session-opening hook, but
+      // carry the fork's server scope into the route so child hydration and
+      // navigation agree on the same Session.
+      navigateToSession: (childSessionId, options) => {
+        router.push(buildScopedSessionRouteHref({
+          sessionId: childSessionId,
+          serverId: options?.serverId ?? serverId,
+        }) as any);
       },
       navigateToNewSession: (route) => {
         router.push(route as any);

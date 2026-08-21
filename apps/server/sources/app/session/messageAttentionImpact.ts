@@ -31,18 +31,17 @@ export function resolvePlainStoredAgentEvent(
 }
 
 /**
- * Content-only resolution: explicit (trusted, write-time) impact wins, then
- * plaintext agent-event derivation, then the conservative "affects user
- * attention" default. Trusted localId/owner hints are NOT derived here — they
- * belong to the write path (`createSessionMessage`), which passes the result
- * through `explicitAttentionImpact` so fan-out stays consistent with the
- * unread/badge state the server actually computed.
+ * Explicit write-time impact wins. Otherwise, plain content is resolved with
+ * the row's outer localId so the transition-divider exception requires both
+ * the strict sidecar and reserved namespace. Encrypted content remains opaque
+ * and conservatively attention-bearing; the client re-evaluates after decrypt.
  */
 export function resolveMessageAttentionImpact(params: Readonly<{
     content: PrismaJson.SessionMessageContent;
+    localId: string | null;
     explicitAttentionImpact?: SessionMessageAttentionImpact;
 }>): SessionMessageAttentionImpact {
     if (params.explicitAttentionImpact) return params.explicitAttentionImpact;
     const event = resolvePlainStoredAgentEvent(params.content);
-    return event ? agentEventAttentionImpact(event) : SESSION_MESSAGE_USER_ATTENTION_IMPACT;
+    return event ? agentEventAttentionImpact(event, params.localId) : SESSION_MESSAGE_USER_ATTENTION_IMPACT;
 }

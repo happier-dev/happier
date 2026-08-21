@@ -71,7 +71,7 @@ function serializeUpdateMessage(message: UpdateMessagePayloadInput, options?: Up
     // list. Write paths that computed a trusted write-time impact pass it via
     // options; otherwise derive the canonical content-only resolution here.
     const attentionImpact = options?.attentionImpact
-        ?? resolveMessageAttentionImpact({ content: message.content });
+        ?? resolveMessageAttentionImpact({ content: message.content, localId: message.localId });
     return {
         id: message.id,
         seq: message.seq,

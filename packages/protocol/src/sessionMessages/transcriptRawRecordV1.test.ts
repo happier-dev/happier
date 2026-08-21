@@ -12,6 +12,7 @@ import {
 } from './transcriptRawRecordV1.js';
 import * as transcriptProtocol from './transcriptRawRecordV1.js';
 import {
+  buildSessionAgentTransitionDividerLocalId,
   SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
   SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
 } from '../sessionAgentTransitionDivider.js';
@@ -286,7 +287,7 @@ describe('TranscriptRawRecordV1Schema', () => {
         toAgentId: 'codex',
         sourceCutoffSeqInclusive: 29_979,
       },
-    } as unknown as TranscriptRawAgentEventV1)).toEqual({
+    } as unknown as TranscriptRawAgentEventV1, buildSessionAgentTransitionDividerLocalId('local-1'))).toEqual({
       affectsUnread: false,
       affectsMeaningfulActivity: false,
     });
@@ -1313,6 +1314,7 @@ describe('runtime-config-outcome timing and sessionMode contract', () => {
  * the transition divider; both re-read resolvers inherit it by delegating here.
  */
 describe('agent-transition divider attention', () => {
+  const DIVIDER_LOCAL_ID = buildSessionAgentTransitionDividerLocalId('local-1');
   const divider = {
     type: 'message',
     message: 'Continued with another Agent.',
@@ -1324,10 +1326,14 @@ describe('agent-transition divider attention', () => {
     },
   };
 
-  it('silences an event carrying the transition sidecar', () => {
-    expect(agentEventAttentionImpact(divider)).toEqual({
+  it('silences only a reserved row carrying the transition sidecar', () => {
+    expect(agentEventAttentionImpact(divider, DIVIDER_LOCAL_ID)).toEqual({
       affectsUnread: false,
       affectsMeaningfulActivity: false,
+    });
+    expect(agentEventAttentionImpact(divider, 'ordinary-local-id')).toEqual({
+      affectsUnread: true,
+      affectsMeaningfulActivity: true,
     });
   });
 

@@ -4105,6 +4105,7 @@ describe("sessionWriteService", () => {
                 take: 100,
                 select: {
                     id: true,
+                    localId: true,
                     seq: true,
                     transcriptObservationProvenance: true,
                 },

@@ -12,8 +12,10 @@ import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessio
 import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
-import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
-import { SessionTranscriptAgentAttributionProvider } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
+import {
+    SessionTranscriptAgentAttributionProvider,
+    useSessionTranscriptAgentAttributionIndexForMessages,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
 import {
     type TranscriptViewportTelemetryEvent,
@@ -298,10 +300,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     // A Session can change Agent without changing identity, and every tool row
     // below this point needs to know which Agent produced it. Rows look the
     // answer up; they never rebuild the index.
-    const agentAttributionIndex = React.useMemo(
-        () => buildSessionTranscriptAgentAttributionIndex(Object.values(props.messagesById)),
-        [props.messagesById],
-    );
+    const agentAttributionIndex = useSessionTranscriptAgentAttributionIndexForMessages(props.messagesById);
 
     const transcriptMessageSelection = useOptionalTranscriptSelectionState();
     const transcriptContentMaxWidth = useLayoutMaxWidth();

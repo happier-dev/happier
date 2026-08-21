@@ -8,6 +8,7 @@ import type { AgentEvent } from '@/sync/typesRaw';
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 
 const MARK_TEST_ID_PREFIX = 'transcript-agent-transition-divider-mark-';
+const DIVIDER_LOCAL_ID = 'agent-transition:local-1';
 
 /**
  * The divider's label, read the way it is laid out: every word in order, with
@@ -99,7 +100,7 @@ describe('Agent transition divider', () => {
 
     it('renders the boundary as a separator naming both Agents, not as an informational row', async () => {
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
         );
 
         expect(screen.findByTestId('transcript-agent-transition-divider')).not.toBeNull();
@@ -117,7 +118,7 @@ describe('Agent transition divider', () => {
      */
     it('sets each Agent’s logo immediately before that Agent’s name', async () => {
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
         );
 
         const run = titleRun(screen.findByTestId('transcript-agent-transition-divider-title'));
@@ -129,7 +130,7 @@ describe('Agent transition divider', () => {
 
     it('still names an Agent the catalog no longer knows, rather than dropping it', async () => {
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'retired-agent', sourceCutoffSeqInclusive: 12 })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'retired-agent', sourceCutoffSeqInclusive: 12 })} />,
         );
 
         const run = titleRun(screen.findByTestId('transcript-agent-transition-divider-title'));
@@ -146,7 +147,7 @@ describe('Agent transition divider', () => {
      */
     it('keeps the whole sentence as the chip’s accessible name', async () => {
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
         );
 
         expect(screen.findByTestId('transcript-agent-transition-divider-chip')?.props.accessibilityLabel)
@@ -161,9 +162,25 @@ describe('Agent transition divider', () => {
         expect(screen.findByTestId('transcript-agent-transition-divider')).toBeNull();
     });
 
+    it('does not trust a valid divider sidecar on an ordinary localId', async () => {
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                localId="ordinary-local-id"
+                event={dividerEvent({
+                    v: 1,
+                    fromAgentId: 'claude',
+                    toAgentId: 'codex',
+                    sourceCutoffSeqInclusive: 29_979,
+                })}
+            />,
+        );
+
+        expect(screen.findByTestId('transcript-agent-transition-divider')).toBeNull();
+    });
+
     it('refuses a malformed sidecar instead of rendering a half-named boundary', async () => {
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude' })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude' })} />,
         );
 
         expect(screen.findByTestId('transcript-agent-transition-divider')).toBeNull();
@@ -180,6 +197,7 @@ describe('Agent transition divider', () => {
         const screen = await renderScreen(
             <TranscriptEventRow
                 sessionId="sess-1"
+                localId={DIVIDER_LOCAL_ID}
                 event={dividerEvent({
                     v: 1,
                     fromAgentId: 'claude',
@@ -217,6 +235,7 @@ describe('Agent transition divider', () => {
         const screen = await renderScreen(
             <TranscriptEventRow
                 sessionId="sess-1"
+                localId={DIVIDER_LOCAL_ID}
                 event={dividerEvent({
                     v: 1,
                     fromAgentId: 'codex',
@@ -243,6 +262,7 @@ describe('Agent transition divider', () => {
         const emptyScreen = await renderScreen(
             <TranscriptEventRow
                 sessionId="sess-1"
+                localId={DIVIDER_LOCAL_ID}
                 event={dividerEvent({
                     v: 1,
                     fromAgentId: 'claude',
@@ -262,7 +282,7 @@ describe('Agent transition divider', () => {
         // Without a Session there is nothing to rebuild against, and a chip that
         // opens a card which can only fail is worse than no chip.
         const screen = await renderScreen(
-            <TranscriptEventRow event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
+            <TranscriptEventRow localId={DIVIDER_LOCAL_ID} event={dividerEvent({ v: 1, fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 29_979 })} />,
         );
 
         expect(screen.findByTestId('transcript-agent-transition-divider-chip')?.props.accessibilityRole)

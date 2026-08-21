@@ -285,6 +285,7 @@ const TerminalComposerClearActionButton = React.memo(function TerminalComposerCl
 
 export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: {
     event: AgentEvent;
+    localId?: string | null;
     sessionId?: string | null;
     emphasis?: TranscriptEventEmphasis;
 }) {
@@ -301,7 +302,10 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     // aside — so it leaves the generic arm entirely rather than restyling it.
     // Recognition goes through the protocol's single divider reader; the shape
     // check is not repeated here.
-    const agentTransitionDivider = readSessionAgentTransitionDividerV1(props.event);
+    const agentTransitionDivider = readSessionAgentTransitionDividerV1({
+        localId: props.localId ?? null,
+        event: props.event,
+    });
     if (agentTransitionDivider) {
         return <AgentTransitionDividerRow divider={agentTransitionDivider} sessionId={props.sessionId ?? null} />;
     }

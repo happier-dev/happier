@@ -22,12 +22,17 @@ import {
   SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
   SessionAgentTransitionDividerV1Schema,
   buildSessionAgentTransitionDividerLocalId,
+  isSameSessionAgentTransitionDividerV1,
   isSessionAgentTransitionDividerLocalId,
   readSessionAgentTransitionDividerV1,
 } from './sessionAgentTransitionDivider.js';
 import { SESSION_AGENT_TRANSITION_VECTORS as V } from './sessionAgentTransitionVectors.js';
 import { SessionSpawnSourceContextV1Schema } from './sessionSpawnSourceContextV1.js';
-import { SessionForkRpcParamsSchema, SessionForkStrategySchema } from './sessionFork.js';
+import {
+  SessionForkRpcParamsSchema,
+  SessionForkRpcResultSchema,
+  SessionForkStrategySchema,
+} from './sessionFork.js';
 import { createTranscriptRawRecordV1Schema } from './sessionMessages/transcriptRawRecordV1.js';
 
 function expectAllParse(schema: z.ZodTypeAny, group: Readonly<Record<string, unknown>>): void {
@@ -87,6 +92,13 @@ describe('session agent transition — request', () => {
   it('promotes localId from optional to required on the reused message input', () => {
     const parsed = SessionAgentTransitionRequestV1Schema.parse(V.request.valid.minimal);
     expect(parsed.input.localId).toBe('local_01');
+  });
+
+  it('closes the nested mutation envelope while preserving opaque metadata', () => {
+    const parsed = SessionAgentTransitionRequestV1Schema.parse(V.request.valid.withOpaqueMeta);
+    expect(parsed.input.meta).toEqual({ futureComposerMetadata: { v: 2 } });
+    expect(SessionAgentTransitionRequestV1Schema.safeParse(V.request.invalid.unknownInputKey).success)
+      .toBe(false);
   });
 });
 
@@ -287,6 +299,32 @@ describe('session agent transition divider', () => {
     expectAllReject(SessionAgentTransitionDividerV1Schema, V.divider.payload.invalid);
   });
 
+  it('treats both replay bounds as part of the divider identity', () => {
+    const original = {
+      v: 1 as const,
+      fromAgentId: 'claude',
+      toAgentId: 'codex',
+      sourceCutoffSeqInclusive: 29_979,
+      returningAgentLastSeenSeqInclusive: 130,
+    };
+
+    expect(isSameSessionAgentTransitionDividerV1(original, { ...original })).toBe(true);
+    expect(isSameSessionAgentTransitionDividerV1(original, {
+      ...original,
+      sourceCutoffSeqInclusive: 29_980,
+    })).toBe(false);
+    expect(isSameSessionAgentTransitionDividerV1(original, {
+      ...original,
+      returningAgentLastSeenSeqInclusive: 131,
+    })).toBe(false);
+    expect(isSameSessionAgentTransitionDividerV1(original, {
+      v: 1,
+      fromAgentId: 'claude',
+      toAgentId: 'codex',
+      sourceCutoffSeqInclusive: 29_979,
+    })).toBe(false);
+  });
+
   it('keeps a conflicting divider distinct from a missing one', () => {
     // Both are committed-view outcomes, but they are different states with
     // different safe recoveries: `divider_missing` may resume and send
@@ -306,30 +344,46 @@ describe('session agent transition divider', () => {
     // handed-over context from: `replaySeedV1.seedText` is blanked the instant
     // the target Agent accepts it. If the sidecar drops it, the boundary can
     // never be explained after the fact.
-    expect(readSessionAgentTransitionDividerV1(V.divider.agentEvent)?.sourceCutoffSeqInclusive)
+    expect(readSessionAgentTransitionDividerV1({
+      localId: V.divider.expectedLocalId,
+      event: V.divider.agentEvent,
+    })?.sourceCutoffSeqInclusive)
       .toBe(29_979);
     // Only an unreleased intermediate build ever wrote a cutoff-less sidecar,
     // so there is no third "recorded no bound" state to model. It degrades
     // through the already-designed path: strict parse fails, the whole sidecar
     // is dropped, and the row renders its stored prose.
-    expect(readSessionAgentTransitionDividerV1(V.divider.cutoffLessSidecarAgentEvent)).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({
+      localId: V.divider.expectedLocalId,
+      event: V.divider.cutoffLessSidecarAgentEvent,
+    })).toBeNull();
     // Zero is a recorded bound and stays a divider — it must not collapse into
     // the rejected case.
     expect(
       readSessionAgentTransitionDividerV1({
-        ...V.divider.agentEvent,
-        sessionAgentTransitionV1: V.divider.payload.valid.emptySourceCutoff,
+        localId: V.divider.expectedLocalId,
+        event: {
+          ...V.divider.agentEvent,
+          sessionAgentTransitionV1: V.divider.payload.valid.emptySourceCutoff,
+        },
       })?.sourceCutoffSeqInclusive,
     ).toBe(0);
   });
 
   it('reads the sidecar only from a well-formed transition message event', () => {
-    expect(readSessionAgentTransitionDividerV1(V.divider.agentEvent))
+    expect(readSessionAgentTransitionDividerV1({
+      localId: V.divider.expectedLocalId,
+      event: V.divider.agentEvent,
+    }))
       .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude', sourceCutoffSeqInclusive: 29_979 });
-    expect(readSessionAgentTransitionDividerV1(V.divider.plainMessageAgentEvent)).toBeNull();
-    expect(readSessionAgentTransitionDividerV1(V.divider.malformedSidecarAgentEvent)).toBeNull();
-    expect(readSessionAgentTransitionDividerV1({ type: 'switch', mode: 'local' })).toBeNull();
-    expect(readSessionAgentTransitionDividerV1(null)).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({ localId: V.divider.expectedLocalId, event: V.divider.plainMessageAgentEvent })).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({ localId: V.divider.expectedLocalId, event: V.divider.malformedSidecarAgentEvent })).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({ localId: V.divider.expectedLocalId, event: { type: 'switch', mode: 'local' } })).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({ localId: V.divider.expectedLocalId, event: null })).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({
+      localId: 'ordinary-local-id',
+      event: V.divider.agentEvent,
+    })).toBeNull();
   });
 
   it('rides the existing message arm of the real transcript record schema', () => {
@@ -341,7 +395,10 @@ describe('session agent transition divider', () => {
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
 
     const content = (parsed.data as { content: { data: unknown } }).content;
-    expect(readSessionAgentTransitionDividerV1(content.data))
+    expect(readSessionAgentTransitionDividerV1({
+      localId: V.divider.expectedLocalId,
+      event: content.data,
+    }))
       .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude', sourceCutoffSeqInclusive: 29_979 });
   });
 
@@ -385,6 +442,11 @@ describe('fork strategy and request identity', () => {
   it('accepts the generic native intent and the predecessor requestId', () => {
     expectAllParse(SessionForkRpcParamsSchema, V.fork.valid);
     expectAllReject(SessionForkRpcParamsSchema, V.fork.invalid);
+  });
+
+  it('accepts only declared mutation-result fields', () => {
+    expectAllParse(SessionForkRpcResultSchema, V.fork.result.valid);
+    expectAllReject(SessionForkRpcResultSchema, V.fork.result.invalid);
   });
 });
 

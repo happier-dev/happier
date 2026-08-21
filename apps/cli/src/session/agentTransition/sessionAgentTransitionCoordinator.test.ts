@@ -611,6 +611,12 @@ describe('runSessionAgentTransition', () => {
       const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
       expect(written.replaySeedV1).toBeUndefined();
       expect(written.flavor).toBe('codex');
+      const dividerPayload = cutover.divider.content.v as { content: { data: Record<string, unknown> } };
+      expect(readSessionAgentTransitionDividerV1({
+        localId: cutover.divider.localId,
+        event: dividerPayload.content.data,
+      }))
+        .toMatchObject({ sourceCutoffSeqInclusive: 100 });
     });
 
     it('does not leave an unconsumed seed from an earlier operation in the target view', async () => {
@@ -1105,7 +1111,10 @@ describe('runSessionAgentTransition', () => {
       // Asserted through the CANONICAL reader, not a literal key. The sidecar key
       // and its schema have one owner; a writer that spells either of them itself
       // seals a row nothing downstream can recognize as a divider.
-      expect(readSessionAgentTransitionDividerV1(dividerPayload.content.data)).toEqual({
+      expect(readSessionAgentTransitionDividerV1({
+        localId: cutover.divider.localId,
+        event: dividerPayload.content.data,
+      })).toEqual({
         v: 1,
         fromAgentId: 'claude',
         toAgentId: 'codex',
@@ -1456,7 +1465,12 @@ describe('runSessionAgentTransition', () => {
     function readCommittedDivider() {
       const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
       const payload = cutover?.divider.content.v as { content: { data: Record<string, unknown> } } | undefined;
-      return payload ? readSessionAgentTransitionDividerV1(payload.content.data) : null;
+      return payload
+        ? readSessionAgentTransitionDividerV1({
+          localId: cutover?.divider.localId,
+          event: payload.content.data,
+        })
+        : null;
     }
 
     function codexSourceMetadata(): Record<string, unknown> {

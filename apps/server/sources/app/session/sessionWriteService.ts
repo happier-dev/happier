@@ -286,6 +286,7 @@ async function findLatestUnreadAffectingMainTranscriptMessageSeq(sessionId: stri
             select: {
                 id: true,
                 seq: true,
+                localId: true,
                 transcriptObservationProvenance: true,
             },
         });
@@ -308,7 +309,7 @@ async function findLatestUnreadAffectingMainTranscriptMessageSeq(sessionId: stri
             for (const row of batch) {
                 const content = SessionStoredMessageContentSchema.safeParse(contentById.get(row.id));
                 if (!content.success) return normalizeReadSeq(row.seq);
-                if (resolveMessageAttentionImpact({ content: content.data }).affectsUnread) {
+                if (resolveMessageAttentionImpact({ content: content.data, localId: row.localId }).affectsUnread) {
                     return normalizeReadSeq(row.seq);
                 }
             }
@@ -1140,6 +1141,7 @@ export async function createSessionMessage(
                 : null;
             const attentionImpact = resolveMessageAttentionImpact({
                 content,
+                localId,
                 explicitAttentionImpact: params.trustedAttentionImpact ?? trustedLocalIdAttentionImpact ?? undefined,
             });
 
@@ -1332,6 +1334,7 @@ export async function createSessionMessage(
                         : null;
                     const attentionImpact = resolveMessageAttentionImpact({
                         content,
+                        localId,
                         explicitAttentionImpact: params.trustedAttentionImpact ?? trustedLocalIdAttentionImpact ?? undefined,
                     });
                     const existing = await tx.sessionMessage.findUnique({

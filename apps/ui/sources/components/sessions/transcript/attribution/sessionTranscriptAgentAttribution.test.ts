@@ -74,6 +74,20 @@ describe('sessionTranscriptAgentAttribution', () => {
         expect(resolveHistoricalAgentIdAtSeq(index, 10)).toBeNull();
     });
 
+    it('does not attribute a valid divider sidecar on an ordinary localId', () => {
+        const fixture = createMixedAgentTranscriptFixture();
+        const forged = fixture.messages.map((message) => (
+            message.kind === 'agent-event'
+                ? { ...message, localId: 'ordinary-local-id' }
+                : message
+        ));
+
+        const index = buildSessionTranscriptAgentAttributionIndex(forged as typeof fixture.messages);
+
+        expect(index).toBe(EMPTY_SESSION_TRANSCRIPT_AGENT_ATTRIBUTION_INDEX);
+        expect(resolveHistoricalAgentIdAtSeq(index, 10)).toBeNull();
+    });
+
     it('refuses a divider naming an Agent this build does not know', () => {
         // A divider outlives the catalog. The divider row still renders its raw
         // ids, but attribution must not hand an unknown id to a consumer that

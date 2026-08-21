@@ -5,6 +5,7 @@ import {
   beginSessionAgentTransitionEffects,
   buildSessionAgentTransitionDividerLocalId,
   isSessionStopConfirmed,
+  matchesSessionAgentTransitionDividerAgentsV1,
   readPendingLocalId,
   readSessionAgentTransitionDividerFromStoredRecordV1,
   rejectUndispatchedSessionAgentTransition,
@@ -25,7 +26,6 @@ import {
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
-import { configuration } from '@/configuration';
 import {
   createConnectedServiceMaterializationIdentity,
 } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
@@ -64,8 +64,6 @@ import {
   hasCanonicalHostedTranscript,
   resolveSessionContinuationTargetAgent,
 } from './sessionContinuationInspection';
-
-const SESSION_AGENT_SWITCHING_FEATURE_TIMEOUT_MS = 800;
 
 /**
  * Same-Session cross-Agent continuation — the predecessor (minimum) vertical.
@@ -390,12 +388,14 @@ async function readDividerEvidence(params: Readonly<{
   } catch {
     return { status: 'unknown' };
   }
-  const divider = readSessionAgentTransitionDividerFromStoredRecordV1(record);
+  const divider = readSessionAgentTransitionDividerFromStoredRecordV1({
+    localId: params.dividerLocalId,
+    record,
+  });
   if (!divider) return { status: 'unknown' };
   return {
     status: 'present',
-    matches: divider.fromAgentId === params.expected.fromAgentId
-      && divider.toAgentId === params.expected.toAgentId,
+    matches: matchesSessionAgentTransitionDividerAgentsV1(divider, params.expected),
   };
 }
 
@@ -500,7 +500,6 @@ export async function runSessionAgentTransition(params: Readonly<{
     featureId: 'sessions.agentSwitching',
     env: process.env,
     serverUrl: resolveServerHttpBaseUrl(),
-    timeoutMs: SESSION_AGENT_SWITCHING_FEATURE_TIMEOUT_MS,
   }).catch(() => null);
   if (featureDecision?.decision.state !== 'enabled') {
     return effects.rejected('unsupported_operation');
@@ -769,11 +768,12 @@ export async function runSessionAgentTransition(params: Readonly<{
       dividerLocalId,
       fromAgentId: sourceAgentId,
       toAgentId: targetAgentId,
-      // The exact bound the brief above was built from, recorded on the
-      // boundary it created. A source with nothing replayable is `0` rows
-      // carried — a fact, not a missing one, and the reader must be able to say
-      // so rather than fall back to "this boundary recorded nothing".
-      sourceCutoffSeqInclusive: seed.status === 'seeded' ? seed.sourceCutoffSeqInclusive : 0,
+      // The exact post-stop upper bound U that this pass observed. A no-dialog
+      // brief leaves the seed absent, but its divider still records U rather
+      // than rewriting a non-empty transcript head as zero.
+      sourceCutoffSeqInclusive: seed.status === 'seeded'
+        ? seed.sourceCutoffSeqInclusive
+        : transcriptHeadSeq,
       // The brief's OTHER bound, from the same resolved record that produced it.
       // A native return handed over only the away-delta, and the departure
       // record that bounded it is overwritten by the next departure — so unless

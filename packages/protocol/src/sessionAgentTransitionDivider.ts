@@ -86,6 +86,42 @@ export const SessionAgentTransitionDividerV1Schema = z
 export type SessionAgentTransitionDividerV1 = z.infer<typeof SessionAgentTransitionDividerV1Schema>;
 
 /**
+ * True only when two dividers describe the exact same handoff boundary.
+ *
+ * The replay bounds are not decoration: together they say exactly which slice
+ * reached the target. Treating an equal Agent pair with different bounds as a
+ * retry would admit or activate against somebody else's boundary.
+ */
+export function isSameSessionAgentTransitionDividerV1(
+  left: Readonly<SessionAgentTransitionDividerV1>,
+  right: Readonly<SessionAgentTransitionDividerV1>,
+): boolean {
+  return left.v === right.v
+    && left.fromAgentId === right.fromAgentId
+    && left.toAgentId === right.toAgentId
+    && left.sourceCutoffSeqInclusive === right.sourceCutoffSeqInclusive
+    && left.returningAgentLastSeenSeqInclusive === right.returningAgentLastSeenSeqInclusive;
+}
+
+/**
+ * Matches only the Agent pair known to a post-cutover reconciliation request.
+ *
+ * A retry that reaches an already-target Session has no surviving candidate
+ * bounds to compare — the durable request carries its localId and Agent pair,
+ * while the original bounded pass is gone. That recovery check must therefore
+ * not impersonate exact-boundary equality. Callers that still hold the
+ * candidate divider (the cutover owner and E2EE verification gate) use
+ * {@link isSameSessionAgentTransitionDividerV1} instead.
+ */
+export function matchesSessionAgentTransitionDividerAgentsV1(
+  divider: Readonly<SessionAgentTransitionDividerV1>,
+  expected: Readonly<Pick<SessionAgentTransitionDividerV1, 'fromAgentId' | 'toAgentId'>>,
+): boolean {
+  return divider.fromAgentId === expected.fromAgentId
+    && divider.toAgentId === expected.toAgentId;
+}
+
+/**
  * Deterministic divider identity: `agent-transition:{submittedLocalId}`. The
  * submitted user-message localId is the single correlation key for the whole
  * transition, so the divider is exactly-once without any receipt or marker.
@@ -101,16 +137,18 @@ export function isSessionAgentTransitionDividerLocalId(localId: unknown): boolea
 }
 
 /**
- * The single canonical "is this agent-event a transition divider?" reader.
+ * The single canonical "is this row a transition divider?" reader.
  *
- * `value` is the agent-event payload (the `data` of a `type:'event'` transcript
- * record). Returns the parsed sidecar, or `null` for every other row. Attention
- * resolvers, the separator renderer, historical attribution, and the bounded
- * context pass all use THIS function — none of them re-implement the shape check.
+ * It requires both halves of the divider identity: a reserved outer localId
+ * and a strictly valid sidecar in the agent-event payload. The sidecar alone is
+ * writable by generic event senders, so it cannot silence attention or create
+ * an attribution boundary.
  */
 export function readSessionAgentTransitionDividerV1(
-  value: unknown,
+  row: Readonly<{ localId: unknown; event: unknown }>,
 ): SessionAgentTransitionDividerV1 | null {
+  if (!isSessionAgentTransitionDividerLocalId(row?.localId)) return null;
+  const value = row.event;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.type !== 'message') return null;
@@ -134,12 +172,13 @@ export function readSessionAgentTransitionDividerV1(
  * wrapper checks.
  */
 export function readSessionAgentTransitionDividerFromStoredRecordV1(
-  value: unknown,
+  row: Readonly<{ localId: unknown; record: unknown }>,
 ): SessionAgentTransitionDividerV1 | null {
+  const value = row?.record;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as { role?: unknown; content?: unknown };
   if (record.role !== 'agent') return null;
   const content = record.content as { type?: unknown; data?: unknown } | undefined;
   if (!content || content.type !== 'event') return null;
-  return readSessionAgentTransitionDividerV1(content.data);
+  return readSessionAgentTransitionDividerV1({ localId: row.localId, event: content.data });
 }

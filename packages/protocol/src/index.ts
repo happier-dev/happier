@@ -1336,7 +1336,9 @@ export {
   SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
   SessionAgentTransitionDividerV1Schema,
   buildSessionAgentTransitionDividerLocalId,
+  isSameSessionAgentTransitionDividerV1,
   isSessionAgentTransitionDividerLocalId,
+  matchesSessionAgentTransitionDividerAgentsV1,
   readSessionAgentTransitionDividerFromStoredRecordV1,
   readSessionAgentTransitionDividerV1,
   type SessionAgentTransitionDividerV1,
@@ -1557,6 +1559,7 @@ export {
   SessionStopCleanupIncompleteReasonSchema,
   SessionStopOutcomeSchema,
   SessionStopResultSchema,
+  isSessionStopConfirmed,
   SessionShareSchema,
   SessionTurnIdentifierV1Schema,
   SessionTurnLifecycleStatusV1Schema,
@@ -2588,6 +2591,8 @@ export {
 export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
+  isLoopbackHostname,
+  normalizeHostnameForLoopbackCheck,
   SERVER_URL_COMPARABLE_KEY_ERROR_CODE,
   ServerUrlComparableKeyError,
 } from './serverUrls/index.js';

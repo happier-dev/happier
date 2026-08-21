@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    buildSessionAgentTransitionDividerLocalId,
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
     SESSION_MESSAGE_USER_ATTENTION_IMPACT,
 } from '@happier-dev/protocol';
@@ -44,17 +45,18 @@ function storedAgentEventContent(data: unknown) {
 }
 
 describe('messageUserAttention — Agent-transition divider', () => {
+    const DIVIDER_LOCAL_ID = buildSessionAgentTransitionDividerLocalId('local-1');
     it('treats a decoded transition divider as carrying no user attention', () => {
-        expect(messageAttentionImpact({ kind: 'agent-event', event: dividerEvent() } as never))
+        expect(messageAttentionImpact({ kind: 'agent-event', localId: DIVIDER_LOCAL_ID, event: dividerEvent() } as never))
             .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
     });
 
     it('treats a re-read stored divider envelope as carrying no user attention', () => {
         const content = storedAgentEventContent(dividerEvent());
 
-        expect(storedSessionMessageContentAttentionImpactOrNull(content))
+        expect(storedSessionMessageContentAttentionImpactOrNull(content, DIVIDER_LOCAL_ID))
             .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
-        expect(storedSessionMessageAttentionImpact({ content }))
+        expect(storedSessionMessageAttentionImpact({ content, localId: DIVIDER_LOCAL_ID }))
             .toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
     });
 
@@ -63,7 +65,7 @@ describe('messageUserAttention — Agent-transition divider', () => {
 
         expect(messageAttentionImpact({ kind: 'agent-event', event: ordinary } as never))
             .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
-        expect(storedSessionMessageContentAttentionImpactOrNull(storedAgentEventContent(ordinary)))
+        expect(storedSessionMessageContentAttentionImpactOrNull(storedAgentEventContent(ordinary), 'ordinary-local-id'))
             .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 
@@ -73,8 +75,19 @@ describe('messageUserAttention — Agent-transition divider', () => {
                 .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
             // A malformed sidecar must never make the stored row unparseable:
             // `null` here would mean "cannot decide", not "attention-bearing".
-            expect(storedSessionMessageContentAttentionImpactOrNull(storedAgentEventContent(dividerEvent(sidecar))))
+            expect(storedSessionMessageContentAttentionImpactOrNull(
+                storedAgentEventContent(dividerEvent(sidecar)),
+                DIVIDER_LOCAL_ID,
+            ))
                 .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
         }
+    });
+
+    it('keeps a valid sidecar on an ordinary localId attention-bearing', () => {
+        const content = storedAgentEventContent(dividerEvent());
+        expect(messageAttentionImpact({ kind: 'agent-event', localId: 'ordinary-local-id', event: dividerEvent() } as never))
+            .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+        expect(storedSessionMessageAttentionImpact({ content, localId: 'ordinary-local-id' }))
+            .toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
     });
 });

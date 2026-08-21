@@ -1134,19 +1134,21 @@ function readRuntimeAuthRecoveryStatusFromLocalId(localId: string): ConnectedSer
 
 export function agentEventAttentionImpact(
   event: (Pick<TranscriptRawAgentEventV1, 'type'> & { status?: unknown }) | null | undefined,
+  localId?: unknown,
 ): SessionMessageAttentionImpact {
   const type = readAgentEventType(event);
   // The same-Session transition divider is a boundary marker, not news for the
   // user. It rides the ordinary passthrough `message` arm, so the decision is
-  // conditioned on a VALID `sessionAgentTransitionV1` sidecar and never on the
-  // event type: adding bare `message` to the type-keyed no-attention set would
-  // silence every unrelated informational passthrough event.
+  // conditioned on the canonical reader's complete identity — the strict
+  // sidecar AND its reserved outer localId — and never on event type. A bare
+  // `message` must remain attention-bearing, and a sidecar on an ordinary row
+  // is not a trusted divider.
   //
   // This is the single attention decision. `attentionImpact` is not a persisted
   // column, so every re-read re-derives from stored content and both the server
   // resolver and the client resolvers reach this function — teaching them
   // separately would create a third decision-maker.
-  if (readSessionAgentTransitionDividerV1(event) !== null) {
+  if (readSessionAgentTransitionDividerV1({ localId, event }) !== null) {
     return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
   }
   if (type === 'connected-service-runtime-auth-recovery') {
@@ -1167,9 +1169,9 @@ export function agentEventLocalIdAttentionImpact(localId: string | null | undefi
     return agentEventAttentionImpact({
       type,
       status: readRuntimeAuthRecoveryStatusFromLocalId(localId),
-    });
+    }, localId);
   }
-  return agentEventAttentionImpact({ type });
+  return agentEventAttentionImpact({ type }, localId);
 }
 
 export const TranscriptRawAgentContentV1Schema = RawAgentContentSchema;
