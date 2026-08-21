@@ -178,6 +178,66 @@ describe('requestSessionStop marker fallback', () => {
     expect(mocks.listSessionMarkers).not.toHaveBeenCalled();
   });
 
+  it('reports an exact machine authorization refusal instead of calling the daemon unavailable', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: true,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockResolvedValue({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'target_daemon_forbidden',
+      },
+    });
+  });
+
+  it('reports an unsupported machine response separately from transport unavailability', async () => {
+    mocks.resolveSessionIdOrPrefix.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      rawSession: {
+        id: 'sess-marker-stop',
+        active: true,
+        machineId: 'machine-owning-session',
+      },
+    });
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess-marker-stop',
+      active: true,
+      machineId: 'machine-owning-session',
+    });
+    mocks.callMachineRpc.mockResolvedValue({ status: 'newer_unknown_status' });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+
+    await expect(requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-marker-stop',
+      stopped: false,
+      stopOutcome: {
+        status: 'physical_stop_unconfirmed',
+        reason: 'target_daemon_response_unsupported',
+      },
+    });
+  });
+
   afterEach(async () => {
     vi.restoreAllMocks();
     if (previousHappyHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;

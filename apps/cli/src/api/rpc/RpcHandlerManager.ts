@@ -138,6 +138,7 @@ export class RpcHandlerManager {
                 method: request.method,
                 params: decryptedParams,
                 authorization: request.authorization,
+                transportResponseEnvelopeVersion: request.transportResponseEnvelopeVersion,
               })
               : { ok: true };
             if (authorizationResult.ok !== true) {

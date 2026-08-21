@@ -220,6 +220,29 @@ describe('sessionStopWithServerScope', () => {
     expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
+  it('surfaces the exact released-relay inner forbidden response instead of calling it unsupported', async () => {
+    mockStorageState.sessions = {
+      'sid-released-relay-forbidden': {
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': { id: 'machine-1', active: true, activeAt: Date.now() },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      error: 'Forbidden',
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+
+    await expect(sessionStopWithServerScope('sid-released-relay-forbidden', { serverId: 'server-a' })).resolves.toEqual({
+      success: false,
+      message: 'Forbidden',
+      code: 'session_stop_failed',
+    });
+    expect(mockSessionRpcWithServerScope).not.toHaveBeenCalled();
+  });
+
   it('falls back to session kill RPC when daemon machine stop returns a method-not-found envelope', async () => {
     mockStorageState.sessions = {
       'sid-old-daemon-envelope': {

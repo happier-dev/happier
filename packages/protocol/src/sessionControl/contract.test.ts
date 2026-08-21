@@ -71,7 +71,12 @@ describe('sessionControl contract exports', () => {
         reason: 'relay_inactive_not_observed',
       },
     })).success).toBe(true);
-    for (const reason of ['target_daemon_unavailable', 'target_session_not_found']) {
+    for (const reason of [
+      'target_daemon_unavailable',
+      'target_daemon_forbidden',
+      'target_daemon_response_unsupported',
+      'target_session_not_found',
+    ]) {
       expect(schema.safeParse(envelope({
         sessionId: 'sess_123',
         stopped: false,
