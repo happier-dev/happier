@@ -131,6 +131,12 @@ export async function resolveReplaySeedDraft(params: Readonly<{
   maxSeedChars: number;
   /** Transcript page size for the backward walk (server caps one request at 500). */
   candidateLimit: number;
+  /**
+   * Display title of the Agent that owned the source Session before an
+   * in-place transition. The caller that knows the catalog owns this fact;
+   * replay framing only renders it.
+   */
+  sourceAgentLabel?: string | null;
   maxTextChars?: number;
   /**
    * The departing Agent's work state, for the same-Session Agent transition whose cutover clears
@@ -273,6 +279,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     workState: params.workState ?? null,
     retrieval: params.retrieval ?? null,
     sessionTitle: readHydratedSourceTitleText(hydrated),
+    sourceAgentLabel: params.sourceAgentLabel ?? null,
     lastUserInstruction: readHydratedLastUserDialogItem(hydrated),
     maxPromptChars: params.maxSeedChars,
     reservedChars: HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,

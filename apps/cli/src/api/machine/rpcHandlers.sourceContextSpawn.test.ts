@@ -56,6 +56,12 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 vi.mock('@/session/replay/fetchEncryptedTranscriptMessages', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/replay/fetchEncryptedTranscriptMessages')>(),
   fetchEncryptedTranscriptMessages,
+  fetchEncryptedTranscriptMessagesPage: async (...args: unknown[]) => ({
+    messages: await fetchEncryptedTranscriptMessages(...args),
+    hasMore: false,
+    nextBeforeSeq: null,
+    nextAfterSeq: null,
+  }),
 }));
 
 vi.mock('@/daemon/controlClient', async (importOriginal) => ({
@@ -113,6 +119,7 @@ function primeSource(): void {
     agentState: null,
     agentStateVersion: 0,
     dataEncryptionKey: null,
+    share: null,
   });
   fetchEncryptedTranscriptMessages.mockResolvedValue([
     {
@@ -121,7 +128,7 @@ function primeSource(): void {
       content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'source question' } } },
     },
   ]);
-  getOrCreateSessionByTag.mockResolvedValue({
+  getOrCreateSessionByTag.mockImplementation(async (request: { metadata: Record<string, unknown> }) => ({
     session: {
       id: 'sess_child',
       seq: 0,
@@ -130,13 +137,13 @@ function primeSource(): void {
       active: false,
       activeAt: 0,
       encryptionMode: 'plain',
-      metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+      metadata: JSON.stringify(request.metadata),
       metadataVersion: 0,
       agentState: null,
       agentStateVersion: 0,
       dataEncryptionKey: null,
     },
-  });
+  }));
 }
 
 function spawnRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -205,6 +212,35 @@ describe('SPAWN_HAPPY_SESSION sourceContext ingress', () => {
     }));
     expect(spawnSession).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: undefined, existingSessionId: undefined }));
     expect(spawnDaemonSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses a shared sourceContext before it creates a child Session', async () => {
+    fetchSessionByIdCompat.mockResolvedValue({
+      id: 'sess_source',
+      seq: SOURCE_HEAD_SEQ,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      dataEncryptionKey: null,
+      share: { accessLevel: 'edit', canApprovePermissions: false },
+    });
+    const spawnSession = vi.fn(async (_options: Record<string, unknown>) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const handler = registerSpawnHandler(spawnSession);
+
+    const result = await handler(spawnRequest());
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('refuses a present-but-invalid recipe instead of stripping it', async () => {

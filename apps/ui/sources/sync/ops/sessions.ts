@@ -9,6 +9,7 @@ import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } fr
 import { readForkSessionRpcTimeoutMsFromEnv, readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { randomUUID } from '@/platform/randomUUID';
 import { storage } from '../domains/state/storage';
+import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { nowServerMs } from '../runtime/time';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -21,7 +22,6 @@ import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/
 import type {
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
-    SessionContinueWithReplayRpcResult,
     SessionAuthoringValueV1,
     SessionForkPoint,
     SessionForkRpcResult,
@@ -32,9 +32,7 @@ import type {
     SpawnSessionResult,
     SendableAskUserQuestionAnswerPayload,
 } from '@happier-dev/protocol';
-import type { AgentId } from '@/agents/catalog/catalog';
 import {
-    SessionContinueWithReplayRpcResultSchema,
     SessionForkRpcResultSchema,
     SessionRollbackRpcResultSchema,
     SessionAuthoringValueV1Schema,
@@ -49,6 +47,7 @@ import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
 import type { Metadata } from '../domains/state/storageTypes';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 export { sessionRipgrep } from './sessionRipgrep';
 export type { SessionRipgrepResponse } from './sessionRipgrep';
 
@@ -391,75 +390,6 @@ export async function ensureSessionRuntimeForPendingInput(
     return await runResumeSession(options, 'ensure_pending_consumer');
 }
 
-export type ContinueSessionWithReplayOptions = Readonly<{
-    machineId: string;
-    serverId?: string | null;
-    directory: string;
-    agent: AgentId;
-    approvedNewDirectoryCreation?: boolean;
-    permissionMode?: PermissionMode;
-    permissionModeUpdatedAt?: number;
-    modelId?: string;
-    modelUpdatedAt?: number;
-    replay: Readonly<{
-        previousSessionId: string;
-        strategy?: 'recent_messages' | 'summary_plus_recent';
-        recentMessagesCount?: number;
-        maxSeedChars?: number;
-        seedMode?: 'draft' | 'daemon_initial_prompt';
-        summaryRunner?: LlmTaskRunnerConfigV1;
-    }>;
-}>;
-
-export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
-    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
-    const replayTarget = readMachineControlTargetForSession(options.replay.previousSessionId);
-    const machineId = replayTarget?.machineId ?? options.machineId;
-    const directory = replayTarget?.basePath ?? options.directory;
-    try {
-        const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId,
-            method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
-            payload: {
-                directory,
-                agent: options.agent,
-                approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
-                permissionMode: options.permissionMode,
-                permissionModeUpdatedAt: options.permissionModeUpdatedAt,
-                modelId: options.modelId,
-                modelUpdatedAt: options.modelUpdatedAt,
-                replay: options.replay,
-            },
-            serverId,
-        });
-
-        const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(raw);
-        if (!parsed.success) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-                errorMessage: 'Unsupported replay response from daemon',
-            };
-        }
-        return parsed.data;
-    } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage:
-                    `Daemon RPC is not available (RPC method not available). ` +
-                    `The daemon may be stopped, still starting, or not connected to the server.`,
-            };
-        }
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: error instanceof Error ? error.message : 'Failed to continue session with replay',
-        };
-    }
-}
-
 export type ForkSessionOptions = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
@@ -490,6 +420,13 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
             errorMessage: 'No reachable machine target found for session fork',
         };
     }
+    const state = storage.getState();
+    const daemonCliVersion = readMachineDaemonCliVersionForServerScope({
+        state,
+        machineId,
+        serverId,
+        activeServerId: state.profileScope?.serverId,
+    });
     try {
         // Stable per-user-action idempotency key: transport-level retries inside
         // machineRpcWithServerScope reuse it, so the daemon coalesces them onto
@@ -497,7 +434,9 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
         // A caller that can reissue the same user attempt supplies its own key;
         // minting one here per call would give that retry a fresh key and defeat
         // the coalescing entirely.
-        const requestId = options.requestId ?? randomUUID();
+        const requestId = supportsSessionForkRequestId(daemonCliVersion)
+            ? options.requestId ?? randomUUID()
+            : null;
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId,
             method: RPC_METHODS.SESSION_FORK,
@@ -508,7 +447,7 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
                 strategy: options.strategy,
                 replaySummaryRunner: options.replaySummaryRunner,
                 replayMaxSeedChars: options.replayMaxSeedChars,
-                requestId,
+                ...(requestId ? { requestId } : {}),
             },
             serverId,
             // Fork can block on the provider-side fork plus an accept-then-async

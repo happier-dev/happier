@@ -5,6 +5,7 @@ import {
     isVersionSupported,
     MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
     MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION,
+    MINIMUM_CLI_SOURCE_CONTEXT_SPAWN_VERSION,
 } from '@/utils/system/versionUtils';
 import type {
     AcpConfigOptionOverridesV1,
@@ -93,11 +94,9 @@ export interface SpawnSessionOptions {
      * and routes it through the canonical Replay-seeded creator.
      *
      * That compat schema is a plain `z.object`, so a daemon predating the field
-     * would strip it silently rather than reject. It is therefore never sent
-     * blind: `machineSpawnNewSession` refuses outright when the machine needs
-     * legacy spawn params, and the pre-send `session.continuation.inspect` call
-     * covers the remaining older builds — a daemon predating `sourceContext`
-     * also predates that operation and answers METHOD_NOT_AVAILABLE.
+     * would strip it silently rather than reject. It is therefore sent only to
+     * daemons positively known to support the field; `machineSpawnNewSession`
+     * fails unknown and older versions closed before custody or RPC submission.
      */
     sourceContext?: SessionSpawnSourceContextV1;
     /**
@@ -178,6 +177,12 @@ export function supportsSpawnPendingFirstInput(daemonCliVersion?: string | null)
     const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
     return normalizedVersion.length > 0
         && isVersionSupported(normalizedVersion, MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION);
+}
+
+export function supportsSpawnSourceContext(daemonCliVersion?: string | null): boolean {
+    const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
+    return normalizedVersion.length > 0
+        && isVersionSupported(normalizedVersion, MINIMUM_CLI_SOURCE_CONTEXT_SPAWN_VERSION);
 }
 
 function resolveLegacyWindowsRemoteSessionConsole(params: Readonly<{

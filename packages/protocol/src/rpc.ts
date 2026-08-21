@@ -97,9 +97,8 @@ export const RPC_METHODS = {
    */
   SESSION_AGENT_TRANSITION: 'session.agentTransition',
   /**
-   * Read-only live eligibility probe for the transition and for a
-   * source-context spawn on this machine. Grants no authority and persists
-   * nothing; the mutation revalidates every fact.
+   * Read-only live eligibility probe for an in-place transition. Grants no
+   * authority and persists nothing; the mutation revalidates every fact.
    */
   SESSION_CONTINUATION_INSPECT: 'session.continuation.inspect',
   /**

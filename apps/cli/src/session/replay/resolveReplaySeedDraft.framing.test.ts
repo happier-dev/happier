@@ -25,7 +25,7 @@ const CREDENTIALS = { token: 'token', secret: new Uint8Array(32) } as never;
 
 type Source = Parameters<typeof import('./resolveReplaySeedDraft').resolveReplaySeedDraft>[0]['source'];
 
-async function resolve(source: Source) {
+async function resolve(source: Source, sourceAgentLabel?: string) {
   const { resolveReplaySeedDraft } = await import('./resolveReplaySeedDraft');
   return await resolveReplaySeedDraft({
     credentials: CREDENTIALS,
@@ -35,6 +35,7 @@ async function resolve(source: Source) {
     recentMessagesCount: 8,
     maxSeedChars: 4_000,
     candidateLimit: 8,
+    ...(sourceAgentLabel === undefined ? {} : { sourceAgentLabel }),
   });
 }
 
@@ -99,6 +100,19 @@ describe('resolveReplaySeedDraft — truthful framing', () => {
     expect(resolved.status).toBe('seeded');
     if (resolved.status !== 'seeded') return;
     expect(resolved.seedDraft).not.toContain('could not be read');
+  });
+
+  it('renders the production-supplied source Agent label for an in-place change', async () => {
+    mocks.hydrateReplayDialogFromForkChain.mockResolvedValueOnce(hydrated());
+
+    const resolved = await resolve(
+      { kind: 'same_session_agent_change', sessionId: 'session-1', upToSeqInclusive: 9 },
+      'Claude Code CLI',
+    );
+
+    expect(resolved.status).toBe('seeded');
+    if (resolved.status !== 'seeded') return;
+    expect(resolved.seedDraft).toContain('- Original agent: Claude Code CLI');
   });
 
   /**

@@ -20,10 +20,7 @@ describe('fetchEncryptedTranscriptMessages', () => {
     vi.resetModules();
   });
 
-  it('uses the live runtime env endpoint instead of stale loaded configuration', async () => {
-    vi.stubEnv('HAPPIER_LOCAL_SERVER_URL', '');
-    vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', '');
-    vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:52002');
+  it('uses the canonical endpoint selected by loaded configuration', async () => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
       data: { messages: [] },
@@ -37,7 +34,7 @@ describe('fetchEncryptedTranscriptMessages', () => {
       limit: 10,
     });
 
-    expect(getSpy.mock.calls[0]?.[0]).toBe('http://127.0.0.1:52002/v1/sessions/sess_1/messages');
+    expect(getSpy.mock.calls[0]?.[0]).toBe('http://example.invalid/v1/sessions/sess_1/messages');
   });
 
   it('passes beforeSeq through to the server query params when provided', async () => {

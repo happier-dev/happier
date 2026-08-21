@@ -574,9 +574,9 @@ const SessionSpawnNewInputSchema = z.object({
    * When present this is required semantics: the daemon resolves the source
    * transcript and Replay seed before creating the child, and a failure creates
    * no child. This schema is `.strict()`, so a daemon that predates the field
-   * rejects the whole request — the intended operation-scoped degradation,
-   * surfaced ahead of the send by `session.continuation.inspect`, which such a
-   * daemon also predates and answers METHOD_NOT_AVAILABLE.
+   * rejects the whole request rather than silently creating an ordinary child.
+   * This is required semantics on the Action input, not an inspection-negotiated
+   * capability.
    */
   sourceContext: SessionSpawnSourceContextV1Schema.optional(),
 }).strict().superRefine((value, ctx) => {

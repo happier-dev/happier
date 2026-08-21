@@ -538,72 +538,6 @@ describe('sessions ops server-scoped routing', () => {
         expect(result.errorMessage.length).toBeGreaterThan(0);
     });
 
-    it('routes continue-with-replay through server-scoped machine rpc with requested server id', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-2' });
-        const { continueSessionWithReplay } = await sessionsModulePromise;
-        const summaryRunner = {
-            v: 1,
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            modelId: 'default',
-            permissionMode: 'no_tools',
-        } as const;
-
-        const result = await continueSessionWithReplay({
-            machineId: 'machine-1',
-            directory: '/tmp',
-            agent: 'claude',
-            approvedNewDirectoryCreation: true,
-            replay: {
-                previousSessionId: 'sess-prev',
-                strategy: 'summary_plus_recent',
-                recentMessagesCount: 2,
-                maxSeedChars: 12_345,
-                summaryRunner,
-            },
-            serverId: 'server-b',
-        } as any);
-
-        expect(result).toEqual({ type: 'success', sessionId: 'sess-2' });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            method: 'session.continueWithReplay',
-            serverId: 'server-b',
-            payload: expect.objectContaining({
-                replay: expect.objectContaining({ summaryRunner, maxSeedChars: 12_345 }),
-            }),
-        }));
-    });
-
-    it('prefers the replacement-aware previous session target for continue-with-replay', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-2' });
-        readMachineTargetForSessionMock.mockReturnValueOnce({
-            machineId: 'replacement-machine',
-            basePath: '/replacement/worktree',
-        });
-        const { continueSessionWithReplay } = await sessionsModulePromise;
-
-        const result = await continueSessionWithReplay({
-            machineId: 'replaced-machine',
-            directory: '/stale/worktree',
-            agent: 'claude',
-            replay: {
-                previousSessionId: 'sess-prev',
-            },
-            serverId: 'server-b',
-        } as any);
-
-        expect(result).toEqual({ type: 'success', sessionId: 'sess-2' });
-        expect(readMachineTargetForSessionMock).toHaveBeenCalledWith('sess-prev');
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'replacement-machine',
-            method: 'session.continueWithReplay',
-            serverId: 'server-b',
-            payload: expect.objectContaining({
-                directory: '/replacement/worktree',
-            }),
-        }));
-    });
-
     it('routes session fork through server-scoped machine rpc with requested server id', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess-child' });
         const { forkSession } = await sessionsModulePromise;
@@ -631,6 +565,47 @@ describe('sessions ops server-scoped routing', () => {
             timeoutMs: readForkSessionRpcTimeoutMsFromEnv(),
             payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
         }));
+    });
+
+    it('omits fork requestId for older daemons and preserves it for the first supporting daemon', async () => {
+        const setDaemonVersion = (version: string) => {
+            storage.setState((state) => ({
+                profileScope: { serverId: 'server-a', accountId: 'account-a' },
+                machines: {
+                    ...state.machines,
+                    'machine-1': { id: 'machine-1', daemonState: { startedWithCliVersion: version } } as any,
+                },
+                machineListByServerId: {
+                    ...state.machineListByServerId,
+                    'server-b': [{ id: 'machine-1', daemonState: { startedWithCliVersion: version } } as any],
+                },
+            }));
+        };
+        const { forkSession } = await sessionsModulePromise;
+
+        setDaemonVersion('0.2.0');
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'child-old' });
+        await forkSession({
+            machineId: 'machine-1',
+            parentSessionId: 'sess-parent',
+            forkPoint: { type: 'latest' },
+            serverId: 'server-b',
+            requestId: 'retryable-replay-attempt',
+        });
+        expect((machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any).payload)
+            .not.toHaveProperty('requestId');
+
+        setDaemonVersion('0.2.10-dev.41');
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'child-new' });
+        await forkSession({
+            machineId: 'machine-1',
+            parentSessionId: 'sess-parent',
+            forkPoint: { type: 'latest' },
+            serverId: 'server-b',
+            requestId: 'retryable-replay-attempt',
+        });
+        expect((machineRpcWithServerScopeMock.mock.calls[1]?.[0] as any).payload)
+            .toHaveProperty('requestId', 'retryable-replay-attempt');
     });
 
     it('prefers reachable machine target from parent session for forkSession', async () => {
@@ -681,19 +656,4 @@ describe('sessions ops server-scoped routing', () => {
         expect((result as any).errorCode).toBe('DAEMON_RPC_UNAVAILABLE');
     });
 
-    it('maps RPC method-not-available to DAEMON_RPC_UNAVAILABLE for continueSessionWithReplay', async () => {
-        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }));
-        const { continueSessionWithReplay } = await sessionsModulePromise;
-        const result = await continueSessionWithReplay({
-            machineId: 'machine-1',
-            directory: '/tmp',
-            agent: 'claude',
-            approvedNewDirectoryCreation: true,
-            replay: { previousSessionId: 'sess-prev' },
-            serverId: 'server-b',
-        } as any);
-
-        expect(result.type).toBe('error');
-        expect((result as any).errorCode).toBe('DAEMON_RPC_UNAVAILABLE');
-    });
 });

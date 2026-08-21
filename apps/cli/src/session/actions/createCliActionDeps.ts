@@ -34,6 +34,7 @@ import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionCon
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createSpawnedSession, type CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
+import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import {
   normalizeSessionAgentSpawnActionRequest,
   resolveSessionAgentSpawnPolicy,
@@ -1369,6 +1370,23 @@ export function createCliActionDeps(params: Readonly<{
       // Replay-seeded mode, so this ingress adds no second row creator.
       let replaySeededCreation: CreateSpawnedSessionParams['replaySeededCreation'];
       if (sourceContext) {
+        const sourceAuthority = await resolveReplaySourceContextAuthority({
+          credentials: params.credentials,
+          sourceSessionId: sourceContext.sourceSessionId,
+        });
+        if (sourceAuthority.status !== 'owned') {
+          return sourceAuthority.status === 'not_owned'
+            ? {
+              type: 'error',
+              errorCode: 'permission_denied',
+              errorMessage: 'permission_denied',
+            }
+            : {
+              type: 'error',
+              errorCode: 'invalid_parameters',
+              errorMessage: 'source_context_unavailable',
+            };
+        }
         const spawnAgentId = normalized.createParams.backendTarget.kind === 'builtInAgent'
           ? normalized.createParams.backendTarget.agentId
           : null;

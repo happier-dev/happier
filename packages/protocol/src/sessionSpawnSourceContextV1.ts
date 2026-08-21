@@ -29,12 +29,11 @@ import { SessionForkPointSchema } from './sessionForkPoint.js';
  * the daemon-local spawn contract beneath the Action owner, not the ingress the
  * authoring client sends `sourceContext` on.
  *
- * The pre-send live inspection call therefore remains the primary defence — the
- * UI must not issue a source-context spawn without an `available` result from
- * `session.continuation.inspect` on the exact selected target machine. A daemon
- * that predates this field also predates that operation and answers
- * METHOD_NOT_AVAILABLE, so operation availability IS the answer; the strict
- * rejection is the backstop.
+ * The strict Action input is the safety boundary for this carrier: it rejects
+ * an undeclared recipe rather than treating it as an ignorable hint. The
+ * source-context field is not a separate inspection-negotiated capability;
+ * `session.continuation.inspect` remains the read-only in-place-transition
+ * operation and does not authorize this spawn.
  */
 export const SessionSpawnSourceContextV1Schema = z
   .object({

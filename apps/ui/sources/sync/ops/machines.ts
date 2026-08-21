@@ -22,6 +22,7 @@ import {
     buildCompatibleSpawnHappySessionRpcParams,
     buildSpawnHappySessionRpcParams,
     shouldUseLegacySpawnHappySessionRpcParams,
+    supportsSpawnSourceContext,
     type CompatibleSpawnHappySessionRpcParams,
     type SpawnHappySessionRpcParams,
     type SpawnSessionOptions,
@@ -38,6 +39,7 @@ import {
 } from '../domains/session/spawn/spawnAttemptNonceStore';
 import { createUiSessionSpawnUserAttemptId } from '../domains/session/spawn/spawnSessionNonce';
 import { storage } from '../domains/state/storage';
+import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
@@ -135,11 +137,12 @@ function readMachineDaemonCliVersion(params: Readonly<{
     activeServerId: string;
 }>): string | null {
     const state = storage.getState();
-    const machine = params.effectiveServerId === params.activeServerId
-        ? state.machines[params.machineId]
-        : state.machineListByServerId[params.effectiveServerId]?.find((candidate) => candidate.id === params.machineId);
-    const rawVersion = machine?.daemonState?.startedWithCliVersion;
-    return typeof rawVersion === 'string' && rawVersion.trim().length > 0 ? rawVersion.trim() : null;
+    return readMachineDaemonCliVersionForServerScope({
+        state,
+        machineId: params.machineId,
+        serverId: params.effectiveServerId,
+        activeServerId: params.activeServerId,
+    });
 }
 
 function remapLegacyDirectoryCompatibilityError(params: Readonly<{
@@ -228,7 +231,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
 
         if (
             preparedOptions.sourceContext
-            && shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
+            && !supportsSpawnSourceContext(daemonCliVersion)
         ) {
             // The legacy params shape has no `sourceContext`, and the daemon
             // behind it would strip an unknown field silently — creating an
@@ -240,7 +243,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                 errorMessage:
                     'Update or reconnect the CLI to continue from this Session. Continuing from an existing '
-                    + 'Session requires a compatible 0.1.0-dev build or Happier CLI v0.2.0 or newer on this '
+                    + 'Session requires Happier CLI 0.2.10-dev.76 or newer on this '
                     + `machine (detected ${versionLabel}).`,
             };
         }

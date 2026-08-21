@@ -1393,7 +1393,69 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a source-context spawn when the daemon version is unknown', async () => {
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'sess_source',
+        forkPoint: { type: 'latest' },
+      },
+    } as any);
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a source-context spawn for a supported older v0.2 daemon', async () => {
+    storage.setState((state) => ({
+      machines: {
+        ...state.machines,
+        'machine-1': {
+          ...state.machines['machine-1']!,
+          daemonState: { startedWithCliVersion: '0.2.0' },
+        },
+      },
+    }));
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'sess_source',
+        forkPoint: { type: 'latest' },
+      },
+    } as any);
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+  });
+
   it('sends a source-context spawn to a machine whose daemon carries the field', async () => {
+    storage.setState((state) => ({
+      machines: {
+        ...state.machines,
+        'machine-1': {
+          ...state.machines['machine-1']!,
+          daemonState: { startedWithCliVersion: '0.2.10-dev.76' },
+        },
+      },
+    }));
     machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_child' });
 
     const { machineSpawnNewSession } = await import('./machines');

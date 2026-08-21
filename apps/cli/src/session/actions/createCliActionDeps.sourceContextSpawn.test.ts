@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
     sourceCutoffSeqInclusive: 12,
   })),
   readSettings: vi.fn(async () => ({ machineId: 'machine-local' })),
+  fetchSessionByIdCompat: vi.fn(),
 }));
 
 vi.mock('@/session/services/createSpawnedSession', () => ({
@@ -47,6 +48,11 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', async (importOriginal) => ({
 vi.mock('@/persistence', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/persistence')>()),
   readSettings: mocks.readSettings,
+}));
+
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>()),
+  fetchSessionByIdCompat: mocks.fetchSessionByIdCompat,
 }));
 
 import { createCliActionDeps } from './createCliActionDeps';
@@ -97,6 +103,8 @@ describe('createCliActionDeps session.spawn_new sourceContext', () => {
     });
     mocks.readSettings.mockReset();
     mocks.readSettings.mockResolvedValue({ machineId: 'machine-local' });
+    mocks.fetchSessionByIdCompat.mockReset();
+    mocks.fetchSessionByIdCompat.mockResolvedValue({ share: null });
   });
 
   it('delegates a sourceContext spawn to the canonical creator as a replay-seeded creation', async () => {
@@ -148,6 +156,22 @@ describe('createCliActionDeps session.spawn_new sourceContext', () => {
     } as any);
 
     expect(result).toMatchObject({ type: 'error' });
+    expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses a shared sourceContext before it creates a child Session', async () => {
+    mocks.fetchSessionByIdCompat.mockResolvedValue({
+      share: { accessLevel: 'edit', canApprovePermissions: false },
+    });
+    const deps = createDeps();
+
+    const result = await deps.sessionSpawnNew({
+      directory: '/repo',
+      agentId: 'claude',
+      sourceContext: SOURCE_CONTEXT,
+    } as any);
+
+    expect(result).toMatchObject({ type: 'error', errorCode: 'permission_denied' });
     expect(mocks.createSpawnedSession).not.toHaveBeenCalled();
   });
 

@@ -5347,6 +5347,188 @@ describe('registerMachineRpcHandlers', () => {
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
+  it('does not replay or dispose a Codex app-server fork after an indeterminate dispatched request', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const request = vi.fn(async () => {
+      throw new Error('request timed out after 300000ms');
+    });
+    const dispose = vi.fn(async () => {});
+    createCodexAppServerClientMock.mockResolvedValueOnce({
+      request,
+      notify: vi.fn(async () => {}),
+      registerRequestHandler: vi.fn(() => () => {}),
+      registerNotificationHandler: vi.fn(() => () => {}),
+      dispose,
+    } as any);
+
+    const parentSession = {
+      id: 'sess_parent',
+      seq: 5,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '/repo',
+        flavor: 'codex',
+        codexSessionId: 'codex-thread-parent',
+        codexBackendMode: 'appServer',
+      }),
+      metadataVersion: 7,
+      agentState: null,
+      agentStateVersion: 0,
+      dataEncryptionKey: null,
+    };
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({ status: 200, data: { session: parentSession } } as any)
+      .mockResolvedValueOnce({ status: 200, data: { session: parentSession } } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'msg-1' } } },
+            },
+          ],
+        },
+      } as any);
+    const postSpy = vi.spyOn(axios, 'post');
+    postSpy.mockImplementationOnce(echoCreatedSessionRow({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'codex' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    }) as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: 'The native fork may have completed. Check for a new session before retrying.',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    // Local transport cleanup cannot undo an already-dispatched remote fork.
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['auto', 'provider_native'] as const)(
+    'surfaces a Codex initialization failure for the %s strategy instead of replaying it',
+    async (strategy) => {
+      const registered = new Map<string, (params: any) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+      registerMachineRpcHandlers({
+        rpcHandlerManager,
+        handlers: {
+          spawnSession,
+          stopSession: async () => true,
+          requestShutdown: () => {},
+        },
+      });
+
+      const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+      expect(handler).toBeDefined();
+
+      readCredentialsMock.mockResolvedValueOnce({
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      });
+      createCodexAppServerClientMock.mockRejectedValueOnce(new Error('initialize rejected'));
+      vi.spyOn(axios, 'get').mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({
+              path: '/repo',
+              flavor: 'codex',
+              codexSessionId: 'codex-thread-parent',
+              codexBackendMode: 'appServer',
+            }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+      const result = await handler!({
+        v: 1,
+        parentSessionId: 'sess_parent',
+        forkPoint: { type: 'latest' },
+        strategy,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'initialize rejected',
+      });
+      expect(spawnSession).not.toHaveBeenCalled();
+    },
+  );
+
   it('accepts legacy codex flavor aliases when resolving provider-native fork support', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {

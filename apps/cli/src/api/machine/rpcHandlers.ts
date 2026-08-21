@@ -18,6 +18,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
   BackendTargetRefSchema,
+  ConnectedServiceBindingsV1Schema,
   PendingFirstInputV1Schema,
   RestartAllSessionRunnersRequestV1Schema,
   RestartSessionRunnerRequestV1Schema,
@@ -44,6 +45,7 @@ import { runSessionAgentTransition } from '@/session/agentTransition/sessionAgen
 import { previewSessionAgentTransitionBrief } from '@/session/agentTransition/previewSessionAgentTransitionBrief';
 import { inspectSessionContinuation } from '@/session/agentTransition/sessionContinuationInspection';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
+import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import { readReplaySeededCreationFailure } from '@/session/replay/replaySeededCreationFailure';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -115,6 +117,7 @@ import {
 } from '@/backends/opencode/utils/opencodeSessionAffinity';
 import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { getAcpForkContinuationHandler } from '@/backends/catalog';
+import { isProviderNativeForkIndeterminateError } from '@/backends/forking/providerNativeForkHandler';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, normalizeDaemonSpawnSessionEnvelope } from '@/session/services/awaitSpawnedSessionId';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
@@ -195,13 +198,6 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
-  /**
-   * Exact authenticated machine bound to this daemon instance. The two
-   * continuation operations refuse a Session hosted elsewhere with it: a client
-   * can address a machine other than the Session's recorded host, and the server
-   * routes by the named machine without checking that it hosts the Session.
-   */
-  currentMachineId?: string;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
   promptAssetsHappierHomeDir?: () => string;
@@ -385,6 +381,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+    const sourceAuthority = await resolveReplaySourceContextAuthority({
+      credentials,
+      sourceSessionId: args.sourceContext.sourceSessionId,
+    });
+    if (sourceAuthority.status !== 'owned') {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: sourceAuthority.status === 'not_owned'
+          ? 'The source Session must be owned by the current Account'
+          : 'The source Session is unavailable',
+      };
+    }
+
     const recipe = await buildReplaySeededSpawnRecipe({
       credentials,
       cwd: args.directory,
@@ -410,11 +420,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const creationTag = args.spawnNonce
       ?? `sourceContext:${args.sourceContext.sourceSessionId}:${recipe.recipe.cutoffSeqInclusive}:${randomUUID()}`;
 
+    // The canonical creator commits the row and then attaches this launch to it through
+    // `existingSessionId`, so it — not this ingress — owns the fresh materialization identity
+    // a connected-service binding needs on a brand-new row. Hand it the bindings this spawn
+    // actually carries so it can make that decision.
+    const connectedServices = ConnectedServiceBindingsV1Schema.safeParse(
+      args.baseSpawnOptions.connectedServices,
+    );
+
     try {
       const created = await createSpawnedSession({
         credentials,
         directory: args.directory,
         backendTarget: args.backendTarget,
+        ...(connectedServices.success ? { connectedServices: connectedServices.data } : {}),
         ...(args.spawnNonce ? { spawnNonce: args.spawnNonce } : {}),
         replaySeededCreation: {
           tag: creationTag,
@@ -1249,16 +1268,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
 
     // `native` is the generic user intent the fork strategy modal sends. It
-    // enables exactly the native attempts `auto` enables, in the same order;
-    // the tail check below is what keeps it from ever falling through to
-    // Replay, which the user did not choose.
+    // enables exactly the native attempts `auto` enables, in the same order.
     const genericNativeIntent = requestedStrategy === 'auto' || requestedStrategy === 'native';
 
     const shouldAttemptProviderNative =
       (genericNativeIntent || requestedStrategy === 'provider_native');
 
     if (shouldAttemptProviderNative) {
-      let nativeForkCommitted = false;
       try {
         const nativeFork = await dispatchProviderNativeFork({
           credentials,
@@ -1274,7 +1290,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
         });
 
         if (nativeFork) {
-          nativeForkCommitted = true;
           const result = await spawnSession({
             directory: normalizedDirectory,
             backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
@@ -1347,16 +1362,21 @@ export function registerMachineRpcHandlers(params: Readonly<{
         }
       } catch (error) {
         if (isAuthenticationError(error)) throw error;
-        // Once the provider-side fork committed, falling through to another
-        // strategy would orphan the forked vendor thread (and any spawned
-        // child) — surface the failure for every requested strategy.
-        if (requestedStrategy === 'provider_native' || nativeForkCommitted) {
+        if (isProviderNativeForkIndeterminateError(error)) {
           return {
             ok: false,
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: error instanceof Error ? error.message : 'Provider-native fork failed',
+            errorMessage: error.message,
           };
         }
+        // `null` is the provider-native handler's only unsupported outcome.
+        // A thrown error is a failed attempt and must never silently fall
+        // through to another effectful fork strategy.
+        return {
+          ok: false,
+          errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+          errorMessage: error instanceof Error ? error.message : 'Provider-native fork failed',
+        };
       }
     }
 
@@ -1709,11 +1729,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return rejectUndispatchedSessionAgentTransition('forbidden');
     }
-    return await runSessionAgentTransition({
-      credentials,
-      request: parsed.data,
-      ...(params.deps?.currentMachineId ? { currentMachineId: params.deps.currentMachineId } : {}),
-    });
+    return await runSessionAgentTransition({ credentials, request: parsed.data });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUATION_INSPECT, async (raw: unknown) => {
@@ -1725,11 +1741,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return { type: 'unavailable', reason: 'unsupported_session' };
     }
-    return await inspectSessionContinuation({
-      credentials,
-      request: parsed.data,
-      ...(params.deps?.currentMachineId ? { currentMachineId: params.deps.currentMachineId } : {}),
-    });
+    return await inspectSessionContinuation({ credentials, request: parsed.data });
   });
 
   rpcHandlerManager.registerHandler(

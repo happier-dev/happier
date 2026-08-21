@@ -15,6 +15,10 @@ export const MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION = '0.1.0-dev.0';
 export const MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION = '0.1.0-dev.0';
 // First CLI build whose fresh-session runner consumes pendingFirstInput from daemon spawn custody.
 export const MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION = '0.2.10-dev.41';
+// First CLI build whose daemon spawn schema accepts a Replay sourceContext.
+export const MINIMUM_CLI_SOURCE_CONTEXT_SPAWN_VERSION = '0.2.10-dev.76';
+// First CLI build whose strict session-fork request schema accepts requestId.
+export const MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION = '0.2.10-dev.41';
 function normalizeComparableVersion(version: string): {
     baseParts: number[];
     prereleaseChannel: 'dev' | 'preview' | null;
@@ -106,6 +110,12 @@ export function isVersionSupported(version: string | undefined, minimumVersion: 
         // If version comparison fails, assume it's not supported
         return false;
     }
+}
+
+export function supportsSessionForkRequestId(daemonCliVersion?: string | null): boolean {
+    const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
+    return normalizedVersion.length > 0
+        && isVersionSupported(normalizedVersion, MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION);
 }
 
 /**

@@ -18,9 +18,8 @@ import { SessionForkRpcParamsSchema } from './sessionFork.js';
  * predates the field rejects the operation exactly as the successor does. The
  * daemon-local `SpawnDaemonSessionRequestCompatSchema` beneath it is a plain
  * `z.object`, but it is not the ingress a client sends `sourceContext` on. The
- * pre-send `session.continuation.inspect` call remains the primary defence — a
- * daemon predating `sourceContext` also predates that operation — with that
- * strict rejection as the backstop; the direction is covered below.
+ * Action input's strict rejection is the compatibility boundary here;
+ * `session.continuation.inspect` is not a source-context capability handshake.
  */
 
 /** The strategy vocabulary as released, before `native` existed. */
@@ -80,9 +79,8 @@ describe('compat — sourceContext on the session.spawn_new Action input', () =>
   it('is refused outright by a daemon that predates the field', () => {
     // The input is `.strict()`, so a daemon whose build does not declare a
     // field rejects the whole operation rather than stripping it and creating a
-    // child with no source lineage. `sourceContext` inherits that behaviour on
-    // any predecessor build, which is the operation-scoped degradation the
-    // authoring flow's pre-send inspection gate is designed around.
+    // child with no source lineage. This Action input is the operation-scoped
+    // degradation boundary; authoring does not negotiate it through inspection.
     expect(
       spawnNewInputSchema.safeParse({
         directory: '/repo',
