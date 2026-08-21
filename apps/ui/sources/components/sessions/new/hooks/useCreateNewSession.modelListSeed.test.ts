@@ -10,6 +10,7 @@ import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScree
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 
@@ -192,6 +193,7 @@ async function runCreateSession(
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
         targetServerId?: string;
+        backendTarget?: BackendTargetRefV1;
     }>,
 ): Promise<void> {
     let handleCreateSession: null | (() => Promise<void>) = null;
@@ -219,6 +221,7 @@ async function runCreateSession(
             profileMap: new Map(),
             recentMachinePaths: [],
             agentType: params.agentType,
+            backendTarget: params.backendTarget,
             permissionMode: 'default' as PermissionMode,
             modelMode: params.modelMode ?? ('default' as ModelMode),
             promptStore: createNewSessionPromptStore(''),
@@ -334,6 +337,19 @@ describe('useCreateNewSession model list seeding', () => {
             preflightModels: PI_PREFLIGHT_MODELS,
         });
 
+        expect(harness.publishModelsSeedSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not seed configured ACP backend sessions', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+
+        await runCreateSession(harness, {
+            agentType: 'customAcp',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'backend-1' },
+            preflightModels: PI_PREFLIGHT_MODELS,
+        });
+
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
         expect(harness.publishModelsSeedSpy).not.toHaveBeenCalled();
     });
 });

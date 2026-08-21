@@ -83,15 +83,15 @@ describe('computeNextSessionModelsSeedMetadata', () => {
     it('drops rows the session-models schema would reject', () => {
         const next = computeNextSessionModelsSeedMetadata({
             metadata: buildSpawnMetadata(),
-            provider: 'pi',
-            currentModelId: 'default',
+            provider: '  pi  ',
+            currentModelId: '  default  ',
             availableModels: [
                 { id: 'zai/glm-5.3', name: 'GLM-5.3', description: '' },
                 { id: '', name: 'Missing id' },
                 // A model-scoped option row that fails the id/name requirement must be dropped.
                 { id: 'missing-name' } as unknown as PreflightModelList['availableModels'][number],
                 {
-                    id: 'zai/glm-5.3-air',
+                    id: '  zai/glm-5.3-air  ',
                     name: 'GLM-5.3 Air',
                     description: 'Fast variant',
                     extendedContextModelId: '  zai/glm-5.3-air-long  ',
@@ -110,6 +110,10 @@ describe('computeNextSessionModelsSeedMetadata', () => {
                 extendedContextModelId: 'zai/glm-5.3-air-long',
             },
         ]);
+        expect(next.sessionModelsV1).toMatchObject({
+            provider: 'pi',
+            currentModelId: 'default',
+        });
     });
 });
 
