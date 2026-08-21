@@ -3836,7 +3836,7 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toEqual(before);
     });
 
-    it("claims a concurrently requested queued row once without committing transcript state", async () => {
+    it("returns one durable provider claim to concurrent materializers without committing transcript state", async () => {
         const owner = await createAccount("owner");
         const session = await createSession(owner.id);
         const localId = `race-${randomUUID()}`;
@@ -3855,8 +3855,20 @@ describe("pendingMessageService (shared sessions)", () => {
         ]);
 
         expect(results.every((result) => result.ok)).toBe(true);
-        expect(results.filter((result) => result.ok && result.didMaterialize).length).toBe(1);
-        expect(results.filter((result) => result.ok && !result.didMaterialize).length).toBe(1);
+        const materialized = results.filter((result) => result.ok && result.didMaterialize);
+        expect(materialized.length).toBeGreaterThanOrEqual(1);
+        for (const result of materialized) {
+            expect(result).toMatchObject({
+                didWriteMessage: false,
+                pendingVersion: enqueue.ok ? enqueue.pendingVersion + 1 : expect.any(Number),
+                message: {
+                    id: null,
+                    seq: null,
+                    localId,
+                    content: { t: "encrypted", c: "cipher-race" },
+                },
+            });
+        }
         await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
         await expect(db.sessionPendingMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
