@@ -95,6 +95,7 @@ describe('Pi ACP runtime permission mode wiring', () => {
 
     const runtime = createPiAcpRuntime({
       directory: '/tmp',
+      credentials,
       machineId: 'machine-1',
       session: createApiSessionClientFixture(),
       messageBuffer: createMessageBufferFixture(),
