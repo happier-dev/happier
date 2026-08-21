@@ -81,6 +81,7 @@ import {
     showDaemonUnavailableAlert,
 } from '@/utils/errors/daemonUnavailableAlert';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
@@ -978,13 +979,17 @@ export function useCreateNewSession(params: Readonly<{
                     && agentModelConfig.dynamicProbe !== 'static-only'
                     && !hasCuratedStaticModels
                 ) {
-                    void sync.publishSessionModelsSeedToMetadata({
+                    fireAndForget(sync.publishSessionModelsSeedToMetadata({
                         sessionId: createdSessionId,
+                        serverId: resolvedTargetServerId,
                         agentId: current.agentType,
                         currentModelId: spawnModelId ?? 'default',
                         availableModels: preflightModelsForSeed.availableModels,
                         updatedAt: spawnPermissionModeUpdatedAt,
-                    }).catch(() => undefined);
+                    }), {
+                        tag: 'new-session-model-list-seed',
+                        onError: captureExceptionIfEnabled,
+                    });
                 }
 
                 if (!postSpawnFollowUpError && opts?.afterCreated) {

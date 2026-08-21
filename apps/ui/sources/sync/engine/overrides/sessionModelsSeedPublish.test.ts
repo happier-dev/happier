@@ -105,7 +105,11 @@ describe('computeNextSessionModelsSeedMetadata', () => {
 
 describe('publishSessionModelsSeedToMetadata', () => {
     it('writes through the session metadata CAS path with the seed updater', async () => {
-        const updateSessionMetadataWithRetry = vi.fn(async (_sessionId: string, updater: (metadata: Metadata) => Metadata) => {
+        const updateSessionMetadataWithRetry = vi.fn(async (
+            _sessionId: string,
+            updater: (metadata: Metadata) => Metadata,
+            _options?: Readonly<{ serverId?: string | null }>,
+        ) => {
             const seeded = updater(buildSpawnMetadata());
             expect(readSessionModelsState(seeded)?.provider).toBe('pi');
         });
@@ -116,11 +120,13 @@ describe('publishSessionModelsSeedToMetadata', () => {
             currentModelId: 'default',
             availableModels: PROBED_MODELS,
             updatedAt: 1234,
+            serverId: 'server-b',
             updateSessionMetadataWithRetry,
         });
 
         expect(updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
         expect(updateSessionMetadataWithRetry.mock.calls[0][0]).toBe('session-1');
+        expect(updateSessionMetadataWithRetry.mock.calls[0][2]).toEqual({ serverId: 'server-b' });
     });
 });
 

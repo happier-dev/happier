@@ -3248,6 +3248,7 @@ class Sync {
      */
     async publishSessionModelsSeedToMetadata(params: {
         sessionId: string;
+        serverId?: string | null;
         agentId: string;
         currentModelId: string;
         availableModels: PreflightModelList['availableModels'];
@@ -3255,11 +3256,12 @@ class Sync {
     }): Promise<void> {
         await publishSessionModelsSeedToMetadataEngine({
             sessionId: params.sessionId,
+            serverId: params.serverId,
             provider: params.agentId,
             currentModelId: params.currentModelId,
             availableModels: params.availableModels,
             updatedAt: params.updatedAt,
-            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+            updateSessionMetadataWithRetry: (sessionId, updater, options) => this.updateSessionMetadataWithRetry(sessionId, updater, options),
         });
     }
 

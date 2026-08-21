@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -10,8 +9,9 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
+import type { AgentId } from '@/agents/catalog/catalog';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 
 const PI_PREFLIGHT_MODELS: PreflightModelList = {
     availableModels: [
@@ -32,8 +32,12 @@ type AgentCoreModelConfig = {
 async function setupUseCreateNewSessionHarness(params: Readonly<{
     agentModelConfigByAgentType?: Record<string, AgentCoreModelConfig>;
     staticModelsByAgentType?: Record<string, readonly { id: string; name: string }[]>;
+    publishModelsSeedError?: Error;
 }> = {}) {
-    const publishModelsSeedSpy = vi.fn(async (..._args: unknown[]) => {});
+    const publishModelsSeedSpy = vi.fn(async (..._args: unknown[]) => {
+        if (params.publishModelsSeedError) throw params.publishModelsSeedError;
+    });
+    const captureExceptionSpy = vi.fn();
     const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
     const modalConfirmSpy = vi.fn(async () => false);
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
@@ -130,7 +134,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         resolveLocalFeaturePolicyEnabled: vi.fn((_featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[_featureId] === true),
     }));
     vi.doMock('@/utils/system/sentry', () => ({
-        captureExceptionIfEnabled: vi.fn(),
+        captureExceptionIfEnabled: captureExceptionSpy,
     }));
     vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
         switchConnectionToActiveServer: vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' })),
@@ -198,6 +202,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
     return {
         useCreateNewSession,
         publishModelsSeedSpy,
+        captureExceptionSpy,
         machineSpawnNewSessionSpy,
         modalAlertSpy,
     };
@@ -208,9 +213,10 @@ type Harness = Awaited<ReturnType<typeof setupUseCreateNewSessionHarness>>;
 async function runCreateSession(
     harness: Harness,
     params: Readonly<{
-        agentType: string;
+        agentType: AgentId;
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
+        targetServerId?: string;
     }>,
 ): Promise<void> {
     let handleCreateSession: null | (() => Promise<void>) = null;
@@ -237,7 +243,7 @@ async function runCreateSession(
             selectedProfileId: null,
             profileMap: new Map(),
             recentMachinePaths: [],
-            agentType: params.agentType as any,
+            agentType: params.agentType,
             permissionMode: 'default' as PermissionMode,
             modelMode: params.modelMode ?? ('default' as ModelMode),
             promptStore: createNewSessionPromptStore(''),
@@ -249,8 +255,8 @@ async function runCreateSession(
             selectedSecretIdByProfileIdByEnvVarName: {},
             sessionOnlySecretValueByProfileIdByEnvVarName: {},
             selectedMachineCapabilities: null,
-            targetServerId: 'server-a',
-            allowedTargetServerIds: ['server-a'],
+            targetServerId: params.targetServerId ?? 'server-b',
+            allowedTargetServerIds: [params.targetServerId ?? 'server-b'],
             preflightModels: params.preflightModels,
         });
 
@@ -259,9 +265,6 @@ async function runCreateSession(
     }
 
     await renderScreen(React.createElement(Test));
-    // Keep the renderer reference alive until the act() run finishes.
-    void renderer;
-
     await act(async () => {
         await handleCreateSession?.();
     });
@@ -288,11 +291,26 @@ describe('useCreateNewSession model list seeding', () => {
         expect(harness.publishModelsSeedSpy).toHaveBeenCalledTimes(1);
         expect(harness.publishModelsSeedSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_pi_1',
+            serverId: 'server-b',
             agentId: 'pi',
             currentModelId: 'lmstudio/hadees/lfm2.5-2.6b@q8_0',
             availableModels: PI_PREFLIGHT_MODELS.availableModels,
             updatedAt: expect.any(Number),
         }));
+    });
+
+    it('reports a best-effort seed failure without failing session creation', async () => {
+        const seedError = new Error('seed metadata unavailable');
+        const harness = await setupUseCreateNewSessionHarness({ publishModelsSeedError: seedError });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await runCreateSession(harness, {
+            agentType: 'pi',
+            preflightModels: PI_PREFLIGHT_MODELS,
+        });
+
+        expect(harness.captureExceptionSpy).toHaveBeenCalledWith(seedError);
+        expect(harness.modalAlertSpy).not.toHaveBeenCalled();
     });
 
     it('seeds with the default model marker when no model override was selected', async () => {

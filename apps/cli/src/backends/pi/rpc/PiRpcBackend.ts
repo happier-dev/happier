@@ -63,6 +63,11 @@ import type {
   PiRpcSessionStatsData,
   PiRpcStateData,
 } from './types';
+import {
+  createPiModelCatalogEntry,
+  normalizePiThinkingEffort,
+  qualifyPiModelId,
+} from '@/backends/pi/models/piModelCatalog';
 
 type PendingRpcRequest = {
   resolve: (response: PiRpcResponse) => void;
@@ -195,8 +200,6 @@ function isPromptResponseTimeoutError(error: Error): boolean {
   }
   return error.message.toLowerCase() === 'timed out waiting for pi rpc response (prompt)';
 }
-
-type PiThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 const DEFAULT_PI_RPC_TURN_STALL_TIMEOUT_MS = 180_000;
 /** Existing Pi new-session command budget; also owns broker readiness for that session open. */
@@ -563,13 +566,6 @@ async function stopPiRpcProcess(child: ChildProcessWithoutNullStreams): Promise<
   });
   await killProcessTree(child, { graceMs: 2_000 });
   await closed;
-}
-
-function normalizePiThinkingEffort(raw: unknown): PiThinkingEffort | null {
-  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') return value;
-  if (value === 'max') return 'xhigh';
-  return null;
 }
 
 export type PiRpcSpawnOptions = {
@@ -2639,8 +2635,11 @@ export class PiRpcBackend implements AgentBackend {
 
   private async publishRuntimeState(state: PiRpcStateData): Promise<void> {
     const modelRecord = asRecord(state.model);
-    const currentModelId = asNonEmptyString(modelRecord?.id) ?? '';
+    const currentModelIdRaw = asNonEmptyString(modelRecord?.id) ?? '';
     const currentModelProvider = asNonEmptyString(modelRecord?.provider);
+    const currentModelId = currentModelProvider
+      ? qualifyPiModelId(currentModelProvider, currentModelIdRaw) ?? currentModelIdRaw
+      : currentModelIdRaw;
     if (currentModelProvider) {
       this.currentModelProvider = currentModelProvider;
     }
@@ -2663,30 +2662,17 @@ export class PiRpcBackend implements AgentBackend {
           const id = asNonEmptyString(model?.id);
           const provider = asNonEmptyString(model?.provider);
           if (!id || !provider) return null;
-          const name = asNonEmptyString(model?.name) ?? `${provider}/${id}`;
+          const qualifiedId = qualifyPiModelId(provider, id);
+          const name = asNonEmptyString(model?.name) ?? qualifiedId ?? id;
           this.modelProviderById.set(id, provider);
-          this.modelProviderById.set(`${provider}/${id}`, provider);
-          const supportsThinking = model?.reasoning === true;
-          const modelOptions: unknown[] | undefined = supportsThinking
-            ? [{
-                id: 'reasoning_effort',
-                name: 'Thinking',
-                type: 'select',
-                currentValue: thinkingLevelFromState,
-                options: [
-                  { value: 'low', name: 'Low' },
-                  { value: 'medium', name: 'Medium' },
-                  { value: 'high', name: 'High' },
-                  { value: 'xhigh', name: 'Max' },
-                ],
-              }]
-            : undefined;
-          return {
-            id,
+          if (qualifiedId) this.modelProviderById.set(qualifiedId, provider);
+          return createPiModelCatalogEntry({
+            provider,
+            modelId: id,
             name,
-            description: provider,
-            ...(modelOptions ? { modelOptions } : {}),
-          };
+            supportsThinking: model?.reasoning === true,
+            thinkingEffort: thinkingLevelFromState,
+          });
         })
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     } catch {

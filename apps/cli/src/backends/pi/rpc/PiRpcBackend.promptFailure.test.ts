@@ -2266,8 +2266,8 @@ describe('PiRpcBackend prompt error handling', () => {
       await backend.startSession();
       const state = (backend as any).getSessionModelState?.() ?? null;
       expect(state).toEqual({
-        currentModelId: 'gpt-4o-mini',
-        availableModels: [{ id: 'gpt-4o-mini', name: 'GPT-4o mini', description: 'openai' }],
+        currentModelId: 'openai/gpt-4o-mini',
+        availableModels: [{ id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', description: 'openai' }],
       });
     } finally {
       await backend.dispose();

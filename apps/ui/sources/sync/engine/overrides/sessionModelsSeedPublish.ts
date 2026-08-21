@@ -71,11 +71,16 @@ export function computeNextSessionModelsSeedMetadata(params: Readonly<{
 
 export async function publishSessionModelsSeedToMetadata(params: Readonly<{
     sessionId: string;
+    serverId?: string | null;
     provider: string;
     currentModelId: string;
     availableModels: PreflightModelList['availableModels'];
     updatedAt: number;
-    updateSessionMetadataWithRetry: (sessionId: string, updater: (metadata: Metadata) => Metadata) => Promise<void>;
+    updateSessionMetadataWithRetry: (
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+        options?: Readonly<{ serverId?: string | null }>,
+    ) => Promise<void>;
 }>): Promise<void> {
     await params.updateSessionMetadataWithRetry(params.sessionId, (metadata) => computeNextSessionModelsSeedMetadata({
         metadata,
@@ -83,5 +88,5 @@ export async function publishSessionModelsSeedToMetadata(params: Readonly<{
         currentModelId: params.currentModelId,
         availableModels: params.availableModels,
         updatedAt: params.updatedAt,
-    }));
+    }), { serverId: params.serverId });
 }
