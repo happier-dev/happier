@@ -186,6 +186,22 @@ export const IMAGES = {
         webp: "/images/_opt/features-review-480.webp 480w, /images/_opt/features-review-720.webp 720w, /images/_opt/features-review-900.webp 900w, /images/_opt/features-review-1400.webp 1400w, /images/_opt/features-review-1800.webp 1800w",
         fallback: "/images/_opt/features-review-900.png",
     },
+    feature_agent_switching: {
+        width: 2000,
+        height: 1205,
+        sizes: "(max-width: 767px) 110vw, min(61vw, 890px)",
+        avif: "/images/_opt/features-agent-switching-480.avif 480w, /images/_opt/features-agent-switching-720.avif 720w, /images/_opt/features-agent-switching-900.avif 900w, /images/_opt/features-agent-switching-1400.avif 1400w, /images/_opt/features-agent-switching-1800.avif 1800w",
+        webp: "/images/_opt/features-agent-switching-480.webp 480w, /images/_opt/features-agent-switching-720.webp 720w, /images/_opt/features-agent-switching-900.webp 900w, /images/_opt/features-agent-switching-1400.webp 1400w, /images/_opt/features-agent-switching-1800.webp 1800w",
+        fallback: "/images/_opt/features-agent-switching-900.png",
+    },
+    feature_navigation: {
+        width: 2000,
+        height: 1226,
+        sizes: "(max-width: 767px) 110vw, min(61vw, 890px)",
+        avif: "/images/_opt/features-navigation-480.avif 480w, /images/_opt/features-navigation-720.avif 720w, /images/_opt/features-navigation-900.avif 900w, /images/_opt/features-navigation-1400.avif 1400w, /images/_opt/features-navigation-1800.avif 1800w",
+        webp: "/images/_opt/features-navigation-480.webp 480w, /images/_opt/features-navigation-720.webp 720w, /images/_opt/features-navigation-900.webp 900w, /images/_opt/features-navigation-1400.webp 1400w, /images/_opt/features-navigation-1800.webp 1800w",
+        fallback: "/images/_opt/features-navigation-900.png",
+    },
     feature_voice: {
         width: 2000,
         height: 1474,

@@ -261,6 +261,20 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'Change the engine mid-conversation and the same session keeps going. Your recent conversation carries over, and the new agent gets tools to read the rest — plus the previous agent’s own transcript, where it keeps one. Switch back later and it resumes its own thread, receiving only what it missed.',
         visual: 'mobileAndDesktop',
         accent: 'blue',
+        /**
+         * Carries BOTH mechanisms the body describes, which is why this asset
+         * and not a cleaner single-surface one: the phone shows the in-place
+         * "Continue with …" button the composer grows once another engine is
+         * armed, and the sheet behind it shows the three fork routes.
+         *
+         * No `ownShadow`. The source is a hard cut-out — 0.7% of its pixels are
+         * partially transparent, which is antialiasing, not a baked halo (the
+         * one asset that does carry its own shadow, `anywhere`, measures 10%).
+         * So CSS still owns the shadow here, as it does for every sibling.
+         */
+        image: {
+            id: 'feature_agent_switching',
+        },
     },
     {
         /**
@@ -288,6 +302,15 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'Swipe across the bottom bar to slide between sessions — keep going in one gesture to skip several, each one named as you pass it. At a keyboard, Alt+↑/↓ walks the list and Ctrl+Tab walks your most recent sessions. Every shortcut is remappable.',
         visual: 'mobileAndDesktop',
         accent: 'blue',
+        /**
+         * The picker mid-gesture, which is the only frame that proves the claim:
+         * five session names stacked at once with the reach counter beside them,
+         * rather than a single next/previous transition that would look like a
+         * tab switch. Same cut-out treatment as `agentSwitching` above.
+         */
+        image: {
+            id: 'feature_navigation',
+        },
     },
     {
         id: 'voice',
