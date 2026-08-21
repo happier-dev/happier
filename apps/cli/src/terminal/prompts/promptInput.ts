@@ -4,12 +4,80 @@
  * Shared interactive input helpers for CLI flows (server add flows, OAuth paste fallback, etc).
  */
 
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
+/**
+ * Decide whether we can ask the user a question, given what the process can see.
+ *
+ * Pure so the `curl | bash` case can be tested without a terminal.
+ */
+export function resolveInteractiveTerminal(params: Readonly<{
+  stdinIsTty: boolean;
+  stdoutIsTty: boolean;
+  platform: NodeJS.Platform | string;
+  hasControllingTty: () => boolean;
+  /**
+   * A caller has stated that nobody is watching this run, whatever the terminal
+   * looks like. Installers set this for their whole run, and `happier setup
+   * --yes` sets it for the commands it spawns — a controlling terminal is still
+   * attached in both cases, so nothing below can tell.
+   */
+  unattended?: boolean;
+}>): boolean {
+  if (params.unattended) {
+    return false;
+  }
+  if (params.stdinIsTty && params.stdoutIsTty) {
+    return true;
+  }
+  if (params.platform === 'win32') {
+    return false;
+  }
+  return params.hasControllingTty();
+}
+
+/**
+ * A device node at /dev/tty is not proof of a terminal — in a container it can
+ * exist and still fail to open with ENXIO. Opening it is the only real check.
+ */
+function hasControllingTty(): boolean {
+  let fd: number | null = null;
+  try {
+    fd = openSync('/dev/tty', 'r+');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best effort: we only opened it to find out whether we could.
+      }
+    }
+  }
+}
+
+/**
+ * Whether the CLI can prompt.
+ *
+ * `process.stdin` is not the whole story. Under `curl … | bash -s -- --run <cmd>`
+ * the installer hands us an exhausted pipe on stdin while the user is still sat
+ * at a terminal — and `promptInput` below already prompts through a freshly
+ * opened /dev/tty in exactly that case. Gating on stdin alone made every
+ * installer-invoked command run blind, which is why those call sites had to pass
+ * `--yes`.
+ */
 export function isInteractiveTerminal(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  return resolveInteractiveTerminal({
+    stdinIsTty: Boolean(process.stdin.isTTY),
+    stdoutIsTty: Boolean(process.stdout.isTTY),
+    platform: process.platform,
+    hasControllingTty,
+    unattended: String(process.env.HAPPIER_NONINTERACTIVE ?? '') === '1',
+  });
 }
 
 /**
