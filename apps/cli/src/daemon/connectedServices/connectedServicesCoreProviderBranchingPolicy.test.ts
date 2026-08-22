@@ -27,6 +27,9 @@ const providerQuotaLeafImportPattern =
  * Paths are relative to `daemonConnectedServicesRoot`.
  */
 const allowedDaemonProviderLiteralFiles: Readonly<Record<string, string>> = {
+  'broker/trackedSessionBrokerSelectionIdentity.ts':
+    'the canonical tracked-session metadata reader retains provider-owned env keys only for '
+    + 'released daemon-marker compatibility; current writers publish the generic identity',
   'descriptors/connectedAccountDescriptors.ts':
     'canonical connected-account descriptors own service ids and OAuth defaults',
   'github/githubConnectedAccountTarget.ts':
