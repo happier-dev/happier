@@ -190,4 +190,27 @@ describe('enableContentTypeParsers', () => {
       code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
     }));
   });
+
+  it('rejects whitespace-only bodies with unsupported media types', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-unsupported-whitespace', async (request) => {
+      return { received: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-unsupported-whitespace',
+      headers: {
+        'content-type': 'application/x-happier-proxy',
+      },
+      payload: '   ',
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toEqual(expect.objectContaining({
+      code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
+    }));
+  });
 });
