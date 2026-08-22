@@ -156,5 +156,27 @@ describe('enableContentTypeParsers', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true });
   });
-});
 
+  it('rejects non-empty bodies with unsupported media types', async () => {
+    const app = fastify();
+    enableContentTypeParsers(app);
+    app.post('/test-unsupported', async (request) => {
+      return { received: request.body };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/test-unsupported',
+      headers: {
+        'content-type': 'application/x-happier-proxy',
+      },
+      payload: JSON.stringify({ hello: 'world' }),
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toEqual(expect.objectContaining({
+      code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
+    }));
+  });
+});
